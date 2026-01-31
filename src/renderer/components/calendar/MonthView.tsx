@@ -1,0 +1,213 @@
+import React, { useMemo, useState, useCallback } from 'react';
+import {
+  format,
+  startOfMonth,
+  endOfMonth,
+  startOfWeek,
+  endOfWeek,
+  eachDayOfInterval,
+  isSameMonth,
+  isSameDay,
+} from 'date-fns';
+import type { Appointment, AppointmentStatus } from '../../../shared/types';
+
+interface MonthViewProps {
+  currentDate: Date;
+  appointments: Appointment[];
+  onDayClick: (date: Date) => void;
+  onAppointmentClick: (appt: Appointment) => void;
+  onAppointmentDrop: (apptId: number, newDate: string) => void;
+}
+
+const STATUS_BORDER: Record<AppointmentStatus, string> = {
+  scheduled: 'border-l-2 border-l-blue-500 bg-blue-50',
+  completed: 'border-l-2 border-l-emerald-500 bg-emerald-50',
+  cancelled: 'border-l-2 border-l-gray-400 bg-gray-50 opacity-60',
+  'no-show': 'border-l-2 border-l-red-500 bg-red-50',
+};
+
+const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const MAX_VISIBLE_APPOINTMENTS = 3;
+
+function formatTime12(time24: string): string {
+  const [hStr, mStr] = time24.split(':');
+  const h = parseInt(hStr, 10);
+  const suffix = h >= 12 ? 'PM' : 'AM';
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return `${h12}:${mStr} ${suffix}`;
+}
+
+export default function MonthView({
+  currentDate,
+  appointments,
+  onDayClick,
+  onAppointmentClick,
+  onAppointmentDrop,
+}: MonthViewProps) {
+  const today = new Date();
+  const [dragOverDate, setDragOverDate] = useState<string | null>(null);
+
+  // Compute the calendar grid days
+  const calendarDays = useMemo(() => {
+    const monthStart = startOfMonth(currentDate);
+    const monthEnd = endOfMonth(currentDate);
+    const calStart = startOfWeek(monthStart, { weekStartsOn: 1 });
+    const calEnd = endOfWeek(monthEnd, { weekStartsOn: 1 });
+    return eachDayOfInterval({ start: calStart, end: calEnd });
+  }, [currentDate.getFullYear(), currentDate.getMonth()]);
+
+  // Group appointments by date string
+  const appointmentsByDate = useMemo(() => {
+    const map = new Map<string, Appointment[]>();
+    for (const appt of appointments) {
+      const existing = map.get(appt.scheduled_date) || [];
+      existing.push(appt);
+      map.set(appt.scheduled_date, existing);
+    }
+    // Sort each day's appointments by time
+    for (const [key, appts] of map) {
+      appts.sort((a, b) => a.scheduled_time.localeCompare(b.scheduled_time));
+    }
+    return map;
+  }, [appointments]);
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  }, []);
+
+  const handleDragEnter = useCallback(
+    (dateStr: string) => (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      setDragOverDate(dateStr);
+    },
+    []
+  );
+
+  const handleDragLeave = useCallback(
+    (dateStr: string) => (e: React.DragEvent<HTMLDivElement>) => {
+      if (dragOverDate === dateStr) {
+        setDragOverDate(null);
+      }
+    },
+    [dragOverDate]
+  );
+
+  const handleDrop = useCallback(
+    (dateStr: string) => (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      setDragOverDate(null);
+      const apptId = parseInt(e.dataTransfer.getData('text/plain'), 10);
+      if (!isNaN(apptId)) {
+        onAppointmentDrop(apptId, dateStr);
+      }
+    },
+    [onAppointmentDrop]
+  );
+
+  const handleApptDragStart = useCallback(
+    (apptId: number) => (e: React.DragEvent<HTMLDivElement>) => {
+      e.dataTransfer.setData('text/plain', apptId.toString());
+      e.dataTransfer.effectAllowed = 'move';
+    },
+    []
+  );
+
+  // Compute number of weeks (rows)
+  const weekCount = Math.ceil(calendarDays.length / 7);
+
+  return (
+    <div className="border border-[var(--color-border)] rounded-lg bg-white overflow-hidden">
+      {/* Weekday Header */}
+      <div className="grid grid-cols-7 border-b border-[var(--color-border)]">
+        {WEEKDAY_LABELS.map((label) => (
+          <div
+            key={label}
+            className="py-2 text-center text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider"
+          >
+            {label}
+          </div>
+        ))}
+      </div>
+
+      {/* Calendar Grid */}
+      <div
+        className="grid grid-cols-7"
+        style={{
+          gridTemplateRows: `repeat(${weekCount}, minmax(120px, 1fr))`,
+        }}
+      >
+        {calendarDays.map((day) => {
+          const dateStr = format(day, 'yyyy-MM-dd');
+          const isCurrentMonth = isSameMonth(day, currentDate);
+          const isToday = isSameDay(day, today);
+          const dayAppts = appointmentsByDate.get(dateStr) || [];
+          const visibleAppts = dayAppts.slice(0, MAX_VISIBLE_APPOINTMENTS);
+          const moreCount = dayAppts.length - MAX_VISIBLE_APPOINTMENTS;
+          const isDragTarget = dragOverDate === dateStr;
+
+          return (
+            <div
+              key={dateStr}
+              className={`border-b border-r border-[var(--color-border)] p-1.5 cursor-pointer transition-colors hover:bg-gray-50/50 ${
+                !isCurrentMonth ? 'opacity-40' : ''
+              } ${isToday ? 'ring-2 ring-[var(--color-primary)] ring-inset' : ''} ${
+                isDragTarget ? 'bg-blue-50/60' : ''
+              }`}
+              onClick={() => onDayClick(day)}
+              onDragOver={handleDragOver}
+              onDragEnter={handleDragEnter(dateStr)}
+              onDragLeave={handleDragLeave(dateStr)}
+              onDrop={handleDrop(dateStr)}
+            >
+              {/* Day Number */}
+              <div
+                className={`text-sm font-medium mb-1 ${
+                  isToday
+                    ? 'text-[var(--color-primary)] font-bold'
+                    : 'text-[var(--color-text)]'
+                }`}
+              >
+                {format(day, 'd')}
+              </div>
+
+              {/* Appointment Entries */}
+              <div className="space-y-0.5">
+                {visibleAppts.map((appt) => {
+                  const clientName = `${appt.first_name || 'Unknown'} ${
+                    appt.last_name ? appt.last_name.charAt(0) + '.' : ''
+                  }`;
+
+                  return (
+                    <div
+                      key={appt.id}
+                      className={`flex items-center gap-1 px-1 py-0.5 rounded text-xs truncate cursor-grab active:cursor-grabbing ${STATUS_BORDER[appt.status]}`}
+                      draggable={true}
+                      onDragStart={handleApptDragStart(appt.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAppointmentClick(appt);
+                      }}
+                      title={`${formatTime12(appt.scheduled_time)} - ${clientName}`}
+                    >
+                      <span className="font-medium whitespace-nowrap">
+                        {formatTime12(appt.scheduled_time)}
+                      </span>
+                      <span className="truncate">{clientName}</span>
+                    </div>
+                  );
+                })}
+
+                {moreCount > 0 && (
+                  <div className="text-xs text-[var(--color-text-secondary)] font-medium pl-1">
+                    +{moreCount} more
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
