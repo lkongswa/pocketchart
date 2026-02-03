@@ -164,8 +164,9 @@ export default function BillingPage() {
       setToast('Please enter a Stripe API key');
       return;
     }
-    if (!stripeKeyInput.startsWith('sk_')) {
-      setToast('Invalid Stripe key format. Key should start with sk_');
+    // Accept both restricted keys (rk_) and standard secret keys (sk_)
+    if (!stripeKeyInput.startsWith('rk_') && !stripeKeyInput.startsWith('sk_')) {
+      setToast('Invalid Stripe key format. Key should start with rk_ (restricted) or sk_ (secret)');
       return;
     }
     try {
@@ -860,68 +861,102 @@ export default function BillingPage() {
               <div className="space-y-4">
                 {showStripeSetup ? (
                   <div className="space-y-5">
-                    {/* Step-by-step guide */}
-                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-                      <h4 className="font-medium text-amber-800 mb-3">Setup Instructions</h4>
-                      <ol className="space-y-2 text-sm text-amber-700">
+                    {/* Step-by-step guide for Restricted Key (Best Practice) */}
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+                      <h4 className="font-medium text-emerald-800 mb-3">
+                        <span className="inline-flex items-center gap-1.5">
+                          <CheckCircle className="w-4 h-4" />
+                          Recommended: Create a Restricted Key
+                        </span>
+                      </h4>
+                      <p className="text-sm text-emerald-700 mb-3">
+                        Stripe recommends using restricted keys for third-party apps. This limits what PocketChart can access.
+                      </p>
+                      <ol className="space-y-2 text-sm text-emerald-700">
                         <li className="flex gap-2">
-                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-200 text-amber-800 flex items-center justify-center text-xs font-bold">1</span>
+                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">1</span>
                           <span>Go to your <a href="https://dashboard.stripe.com/apikeys" target="_blank" rel="noopener noreferrer" className="font-medium underline">Stripe Dashboard → API Keys</a></span>
                         </li>
                         <li className="flex gap-2">
-                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-200 text-amber-800 flex items-center justify-center text-xs font-bold">2</span>
-                          <span>Find <strong>"Secret key"</strong> under "Standard keys" (NOT the Publishable key)</span>
+                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">2</span>
+                          <span>Click <strong>"Create restricted key"</strong> button</span>
                         </li>
                         <li className="flex gap-2">
-                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-200 text-amber-800 flex items-center justify-center text-xs font-bold">3</span>
-                          <span>Click "Reveal test key" or the eye icon to show the key</span>
+                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">3</span>
+                          <span>Name it something like <code className="bg-emerald-100 px-1 rounded">PocketChart</code></span>
                         </li>
                         <li className="flex gap-2">
-                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-200 text-amber-800 flex items-center justify-center text-xs font-bold">4</span>
-                          <span>Copy the key that starts with <code className="bg-amber-100 px-1 rounded">sk_live_</code> or <code className="bg-amber-100 px-1 rounded">sk_test_</code></span>
+                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">4</span>
+                          <div>
+                            <span>Enable these permissions (Write access):</span>
+                            <ul className="ml-4 mt-1 space-y-0.5 text-xs">
+                              <li>• <strong>Charges</strong> - to process payments</li>
+                              <li>• <strong>Customers</strong> - to save customer info</li>
+                              <li>• <strong>Payment Intents</strong> - for payment flows</li>
+                            </ul>
+                          </div>
                         </li>
                         <li className="flex gap-2">
-                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-200 text-amber-800 flex items-center justify-center text-xs font-bold">5</span>
+                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">5</span>
+                          <span>For the URL field, enter your business website or <code className="bg-emerald-100 px-1 rounded">https://pocketchart.app</code></span>
+                        </li>
+                        <li className="flex gap-2">
+                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">6</span>
+                          <span>Click "Create key" and copy the key (starts with <code className="bg-emerald-100 px-1 rounded">rk_live_</code> or <code className="bg-emerald-100 px-1 rounded">rk_test_</code>)</span>
+                        </li>
+                        <li className="flex gap-2">
+                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">7</span>
                           <span>Paste it below</span>
                         </li>
                       </ol>
                     </div>
 
                     {/* Warning about key types */}
-                    <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-                      <p className="text-sm text-red-700">
-                        <strong>Important:</strong> Use the <strong>Secret key</strong> (starts with <code className="bg-red-100 px-1 rounded">sk_</code>),
-                        NOT the Publishable key (which starts with <code className="bg-red-100 px-1 rounded">pk_</code>).
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                      <p className="text-sm text-amber-700">
+                        <strong>Note:</strong> Use a <strong>Restricted key</strong> (starts with <code className="bg-amber-100 px-1 rounded">rk_</code>) for best security,
+                        or a Secret key (<code className="bg-amber-100 px-1 rounded">sk_</code>) if needed.
+                        Never use the Publishable key (<code className="bg-amber-100 px-1 rounded">pk_</code>).
                       </p>
                     </div>
 
                     <div>
-                      <label className="label">Stripe Secret Key</label>
+                      <label className="label">Stripe API Key</label>
                       <input
                         type="password"
                         className="input font-mono"
-                        placeholder="sk_live_... or sk_test_..."
+                        placeholder="rk_live_... or rk_test_... (restricted key)"
                         value={stripeKeyInput}
                         onChange={(e) => setStripeKeyInput(e.target.value)}
                       />
-                      {stripeKeyInput && !stripeKeyInput.startsWith('sk_') && (
-                        <p className="text-xs text-red-600 mt-1.5">
-                          ⚠️ This doesn't look like a Secret key. Make sure it starts with "sk_"
-                        </p>
-                      )}
                       {stripeKeyInput && stripeKeyInput.startsWith('pk_') && (
                         <p className="text-xs text-red-600 mt-1.5">
-                          ❌ This is a Publishable key. You need the Secret key instead (starts with "sk_")
+                          ❌ This is a Publishable key. You need a Restricted key (rk_) or Secret key (sk_) instead.
+                        </p>
+                      )}
+                      {stripeKeyInput && !stripeKeyInput.startsWith('rk_') && !stripeKeyInput.startsWith('sk_') && !stripeKeyInput.startsWith('pk_') && stripeKeyInput.length > 3 && (
+                        <p className="text-xs text-red-600 mt-1.5">
+                          ⚠️ This doesn't look like a valid Stripe key. It should start with "rk_" (restricted) or "sk_" (secret).
+                        </p>
+                      )}
+                      {stripeKeyInput && stripeKeyInput.startsWith('rk_test_') && (
+                        <p className="text-xs text-amber-600 mt-1.5">
+                          ℹ️ Restricted test key - great for testing! Use rk_live_ for real payments.
+                        </p>
+                      )}
+                      {stripeKeyInput && stripeKeyInput.startsWith('rk_live_') && (
+                        <p className="text-xs text-emerald-600 mt-1.5">
+                          ✓ Live restricted key - secure and ready for real payments!
                         </p>
                       )}
                       {stripeKeyInput && stripeKeyInput.startsWith('sk_test_') && (
                         <p className="text-xs text-amber-600 mt-1.5">
-                          ℹ️ This is a test key - good for testing! Use sk_live_ for real payments.
+                          ℹ️ Secret test key detected. Consider using a restricted key (rk_) for better security.
                         </p>
                       )}
                       {stripeKeyInput && stripeKeyInput.startsWith('sk_live_') && (
-                        <p className="text-xs text-emerald-600 mt-1.5">
-                          ✓ Live key detected - you'll be able to accept real payments.
+                        <p className="text-xs text-amber-600 mt-1.5">
+                          ⚠️ Live secret key detected. For better security, consider creating a restricted key (rk_) instead.
                         </p>
                       )}
                     </div>
@@ -929,7 +964,7 @@ export default function BillingPage() {
                       <button
                         className="btn-primary"
                         onClick={handleSaveStripeKey}
-                        disabled={!stripeKeyInput.startsWith('sk_')}
+                        disabled={!stripeKeyInput.startsWith('rk_') && !stripeKeyInput.startsWith('sk_')}
                       >
                         Save API Key
                       </button>
