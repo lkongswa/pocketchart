@@ -211,3 +211,101 @@ export function seedDefaultData(db: Database.Database): void {
 
   seedTransaction();
 }
+
+// Seed common payers for V3 insurance billing
+export function seedPayers(db: Database.Database): void {
+  // Check if payers table exists and has data
+  try {
+    const hasData = db.prepare('SELECT COUNT(*) as count FROM payers').get() as any;
+    if (hasData.count > 0) return;
+  } catch {
+    // Table doesn't exist yet (migrations haven't run)
+    return;
+  }
+
+  const insertPayer = db.prepare(
+    'INSERT INTO payers (name, edi_payer_id, clearinghouse, enrollment_required, enrollment_status, notes) VALUES (?, ?, ?, ?, ?, ?)'
+  );
+
+  const commonPayers = [
+    { name: 'Medicare', edi_payer_id: 'CMS', clearinghouse: '', enrollment_required: 1, notes: 'Federal Medicare program' },
+    { name: 'Medicaid (California)', edi_payer_id: '', clearinghouse: '', enrollment_required: 1, notes: 'Medi-Cal' },
+    { name: 'Blue Shield of California', edi_payer_id: '94146', clearinghouse: '', enrollment_required: 1, notes: '' },
+    { name: 'Blue Cross of California', edi_payer_id: '47198', clearinghouse: '', enrollment_required: 1, notes: '' },
+    { name: 'Aetna', edi_payer_id: '60054', clearinghouse: '', enrollment_required: 1, notes: '' },
+    { name: 'Cigna', edi_payer_id: '62308', clearinghouse: '', enrollment_required: 1, notes: '' },
+    { name: 'UnitedHealthcare', edi_payer_id: '87726', clearinghouse: '', enrollment_required: 1, notes: '' },
+    { name: 'Anthem', edi_payer_id: '47198', clearinghouse: '', enrollment_required: 1, notes: '' },
+    { name: 'Humana', edi_payer_id: '61101', clearinghouse: '', enrollment_required: 1, notes: '' },
+    { name: 'Kaiser Permanente', edi_payer_id: '94154', clearinghouse: '', enrollment_required: 1, notes: '' },
+    { name: 'TRICARE', edi_payer_id: '99726', clearinghouse: '', enrollment_required: 1, notes: 'Military health system' },
+  ];
+
+  const seedTransaction = db.transaction(() => {
+    for (const payer of commonPayers) {
+      insertPayer.run(payer.name, payer.edi_payer_id, payer.clearinghouse, payer.enrollment_required, 'not_started', payer.notes);
+    }
+  });
+
+  seedTransaction();
+}
+
+// Seed common fee schedule entries for V2 billing
+export function seedFeeSchedule(db: Database.Database): void {
+  // Check if fee_schedule table exists and has data
+  try {
+    const hasData = db.prepare('SELECT COUNT(*) as count FROM fee_schedule').get() as any;
+    if (hasData.count > 0) return;
+  } catch {
+    // Table doesn't exist yet (migrations haven't run)
+    return;
+  }
+
+  const insertFee = db.prepare(
+    'INSERT INTO fee_schedule (cpt_code, description, default_units, amount, effective_date) VALUES (?, ?, ?, ?, ?)'
+  );
+
+  const commonCPTCodes = [
+    // Speech Therapy
+    { cpt_code: '92507', description: 'Speech/language treatment', default_units: 1, amount: 75.00 },
+    { cpt_code: '92508', description: 'Speech/language treatment (group)', default_units: 1, amount: 50.00 },
+    { cpt_code: '92521', description: 'Evaluation of speech fluency', default_units: 1, amount: 150.00 },
+    { cpt_code: '92522', description: 'Evaluation of speech production', default_units: 1, amount: 150.00 },
+    { cpt_code: '92523', description: 'Speech/language evaluation', default_units: 1, amount: 200.00 },
+    { cpt_code: '92524', description: 'Behavioral/qualitative voice analysis', default_units: 1, amount: 150.00 },
+    { cpt_code: '92526', description: 'Oral function treatment', default_units: 1, amount: 75.00 },
+    { cpt_code: '92610', description: 'Swallowing function evaluation', default_units: 1, amount: 175.00 },
+    // Physical/Occupational Therapy
+    { cpt_code: '97110', description: 'Therapeutic exercises', default_units: 1, amount: 50.00 },
+    { cpt_code: '97112', description: 'Neuromuscular reeducation', default_units: 1, amount: 50.00 },
+    { cpt_code: '97116', description: 'Gait training', default_units: 1, amount: 50.00 },
+    { cpt_code: '97140', description: 'Manual therapy', default_units: 1, amount: 50.00 },
+    { cpt_code: '97530', description: 'Therapeutic activities', default_units: 1, amount: 50.00 },
+    { cpt_code: '97533', description: 'Sensory integration', default_units: 1, amount: 50.00 },
+    { cpt_code: '97535', description: 'Self-care/home management training', default_units: 1, amount: 50.00 },
+    { cpt_code: '97542', description: 'Wheelchair management training', default_units: 1, amount: 50.00 },
+    { cpt_code: '97750', description: 'Physical performance test', default_units: 1, amount: 75.00 },
+    { cpt_code: '97755', description: 'Assistive technology assessment', default_units: 1, amount: 100.00 },
+    { cpt_code: '97760', description: 'Orthotic management/training', default_units: 1, amount: 50.00 },
+    { cpt_code: '97761', description: 'Prosthetic training', default_units: 1, amount: 50.00 },
+    // Evaluations
+    { cpt_code: '97161', description: 'PT evaluation - low complexity', default_units: 1, amount: 125.00 },
+    { cpt_code: '97162', description: 'PT evaluation - moderate complexity', default_units: 1, amount: 150.00 },
+    { cpt_code: '97163', description: 'PT evaluation - high complexity', default_units: 1, amount: 175.00 },
+    { cpt_code: '97164', description: 'PT re-evaluation', default_units: 1, amount: 100.00 },
+    { cpt_code: '97165', description: 'OT evaluation - low complexity', default_units: 1, amount: 125.00 },
+    { cpt_code: '97166', description: 'OT evaluation - moderate complexity', default_units: 1, amount: 150.00 },
+    { cpt_code: '97167', description: 'OT evaluation - high complexity', default_units: 1, amount: 175.00 },
+    { cpt_code: '97168', description: 'OT re-evaluation', default_units: 1, amount: 100.00 },
+  ];
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  const seedTransaction = db.transaction(() => {
+    for (const fee of commonCPTCodes) {
+      insertFee.run(fee.cpt_code, fee.description, fee.default_units, fee.amount, today);
+    }
+  });
+
+  seedTransaction();
+}

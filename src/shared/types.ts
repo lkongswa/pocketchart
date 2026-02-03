@@ -5,6 +5,70 @@ export type GoalStatus = 'active' | 'met' | 'discontinued' | 'modified';
 export type AppointmentStatus = 'scheduled' | 'completed' | 'cancelled' | 'no-show';
 export type SOAPSection = 'S' | 'O' | 'A' | 'P';
 
+// V2/V3 Billing Types
+
+// Gender for 837P compliance
+export type Gender = 'M' | 'F' | 'U' | '';
+
+// Subscriber relationship codes (SBR segment)
+export type SubscriberRelationship =
+  | '18' // Self
+  | '01' // Spouse
+  | '19' // Child
+  | '20' // Employee
+  | '21' // Unknown
+  | 'G8' // Other
+  | '';
+
+// Place of service codes
+export type PlaceOfService =
+  | '02' // Telehealth (other than home)
+  | '10' // Telehealth in patient home
+  | '11' // Office
+  | '12' // Home
+  | '22' // Outpatient hospital
+  | '31' // Skilled nursing facility
+  | '32' // Nursing facility
+  | '99' // Other
+  | '';
+
+// Common CPT modifiers for therapy
+export type CPTModifier =
+  | '59' // Distinct procedural service
+  | '76' // Repeat procedure same physician
+  | '77' // Repeat procedure different physician
+  | 'GP' // Physical therapy services
+  | 'GO' // Occupational therapy services
+  | 'GN' // Speech-language pathology services
+  | 'KX' // Requirements met
+  | 'CO' // Concurrent outpatient rehab
+  | '';
+
+// Invoice status
+export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'partial' | 'void' | 'overdue';
+
+// Payment method
+export type PaymentMethod = 'card' | 'cash' | 'check' | 'insurance' | 'other';
+
+// Claim status
+export type ClaimStatus =
+  | 'draft'
+  | 'ready'
+  | 'submitted'
+  | 'accepted'
+  | 'rejected'
+  | 'pending'
+  | 'paid'
+  | 'denied'
+  | 'appealed'
+  | 'void';
+
+// Authorization status
+export type AuthorizationStatus = 'active' | 'expired' | 'exhausted' | 'pending';
+
+// Payer enrollment status
+export type EnrollmentStatus = 'not_started' | 'pending' | 'active' | 'rejected';
+
 export interface CptLine {
   code: string;
   units: number;
@@ -21,12 +85,16 @@ export interface Practice {
   id: number;
   name: string;
   address: string;
+  city: string;           // V2/V3: EDI-ready
+  state: string;          // V2/V3: EDI-ready
+  zip: string;            // V2/V3: EDI-ready
   phone: string;
   npi: string;
   tax_id: string;
   license_number: string;
   license_state: string;
   discipline: Discipline | 'MULTI';
+  taxonomy_code: string;  // V2/V3: EDI-ready
 }
 
 export interface Client {
@@ -37,6 +105,10 @@ export interface Client {
   phone: string;
   email: string;
   address: string;
+  city: string;                              // V2/V3: EDI-ready
+  state: string;                             // V2/V3: EDI-ready
+  zip: string;                               // V2/V3: EDI-ready
+  gender: Gender;                            // V2/V3: EDI-ready
   primary_dx_code: string;
   primary_dx_description: string;
   secondary_dx: string; // JSON array
@@ -44,12 +116,21 @@ export interface Client {
   insurance_payer: string;
   insurance_member_id: string;
   insurance_group: string;
+  insurance_payer_id: string;                // V2/V3: EDI payer ID
+  subscriber_relationship: SubscriberRelationship; // V2/V3: EDI-ready
+  subscriber_first_name: string;             // V2/V3: EDI-ready
+  subscriber_last_name: string;              // V2/V3: EDI-ready
+  subscriber_dob: string;                    // V2/V3: EDI-ready
   referring_physician: string;
   referring_npi: string;
+  referral_source: string;                   // V2/V3: Tracking
+  stripe_customer_id: string;                // V2: Stripe integration
   status: ClientStatus;
   discipline: Discipline;
+  assigned_user_id: number | null;           // V4: Multi-provider
   created_at: string;
   updated_at: string;
+  deleted_at: string | null;
 }
 
 export interface Goal {
@@ -61,7 +142,9 @@ export interface Goal {
   status: GoalStatus;
   target_date: string;
   met_date: string;
+  created_by_user_id: number | null;         // V4: Multi-provider
   created_at: string;
+  deleted_at: string | null;
 }
 
 export interface Evaluation {
@@ -73,8 +156,10 @@ export interface Evaluation {
   signature_image: string;
   signature_typed: string;
   signed_at: string;
+  created_by_user_id: number | null;         // V4: Multi-provider
   created_at: string;
   updated_at: string;
+  deleted_at: string | null;
 }
 
 export interface Note {
@@ -86,6 +171,11 @@ export interface Note {
   units: number;
   cpt_code: string;
   cpt_codes: string; // JSON array of CptLine[]
+  cpt_modifiers: string;                     // V2/V3: JSON array like ["GN", "59"]
+  charge_amount: number;                     // V2/V3: Charge per service
+  place_of_service: PlaceOfService;          // V2/V3: EDI-ready
+  diagnosis_pointers: string;                // V2/V3: JSON array like [1] or [1,2]
+  rendering_provider_npi: string;            // V2/V3: EDI-ready
   subjective: string;
   objective: string;
   assessment: string;
@@ -94,8 +184,10 @@ export interface Note {
   signature_image: string;
   signature_typed: string;
   signed_at: string;
+  created_by_user_id: number | null;         // V4: Multi-provider
   created_at: string;
   updated_at: string;
+  deleted_at: string | null;
 }
 
 export interface Appointment {
@@ -106,7 +198,12 @@ export interface Appointment {
   duration_minutes: number;
   status: AppointmentStatus;
   note_id: number | null;
+  user_id: number | null;                    // V4: Multi-provider
+  cancelled_at: string | null;               // V2/V3: Cancellation tracking
+  cancellation_reason: string;               // V2/V3: Cancellation tracking
+  late_cancel: boolean;                      // V2/V3: Cancellation tracking
   created_at: string;
+  deleted_at: string | null;
   // Joined fields
   first_name?: string;
   last_name?: string;
@@ -185,6 +282,158 @@ export interface LicenseStatus {
 export interface LicenseActivateResult {
   success: boolean;
   tier: AppTier;
+}
+
+// V2 Billing Interfaces
+
+export interface FeeScheduleEntry {
+  id: number;
+  cpt_code: string;
+  description: string;
+  default_units: number;
+  amount: number;
+  effective_date: string;
+  created_at: string;
+  deleted_at: string | null;
+}
+
+export interface Invoice {
+  id: number;
+  client_id: number;
+  invoice_number: string;
+  invoice_date: string;
+  due_date: string;
+  subtotal: number;
+  discount_amount: number;
+  total_amount: number;
+  status: InvoiceStatus;
+  notes: string;
+  stripe_invoice_id: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface InvoiceItem {
+  id: number;
+  invoice_id: number;
+  note_id: number | null;
+  description: string;
+  cpt_code: string;
+  service_date: string;
+  units: number;
+  unit_price: number;
+  amount: number;
+  created_at: string;
+}
+
+export interface Payment {
+  id: number;
+  client_id: number;
+  invoice_id: number | null;
+  payment_date: string;
+  amount: number;
+  payment_method: PaymentMethod;
+  reference_number: string;
+  stripe_payment_intent_id: string;
+  notes: string;
+  created_at: string;
+  deleted_at: string | null;
+}
+
+// V3 Insurance Billing Interfaces
+
+export interface Payer {
+  id: number;
+  name: string;
+  edi_payer_id: string;
+  clearinghouse: string;
+  enrollment_required: boolean;
+  enrollment_status: EnrollmentStatus;
+  enrollment_date: string;
+  notes: string;
+  created_at: string;
+}
+
+export interface Authorization {
+  id: number;
+  client_id: number;
+  payer_name: string;
+  payer_id: string;
+  auth_number: string;
+  start_date: string;
+  end_date: string;
+  units_approved: number;
+  units_used: number;
+  cpt_codes: string; // JSON array
+  status: AuthorizationStatus;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface Claim {
+  id: number;
+  client_id: number;
+  claim_number: string;
+  clearinghouse_claim_id: string;
+  payer_claim_number: string;
+  payer_name: string;
+  payer_id: string;
+  service_date_start: string;
+  service_date_end: string;
+  total_charge: number;
+  status: ClaimStatus;
+  submitted_at: string | null;
+  accepted_at: string | null;
+  paid_at: string | null;
+  rejection_codes: string; // JSON array
+  rejection_reasons: string; // JSON array
+  paid_amount: number;
+  adjustment_amount: number;
+  patient_responsibility: number;
+  era_id: number | null;
+  edi_837_content: string;
+  edi_835_content: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface ClaimLine {
+  id: number;
+  claim_id: number;
+  note_id: number | null;
+  line_number: number;
+  service_date: string;
+  cpt_code: string;
+  modifiers: string; // JSON array
+  units: number;
+  charge_amount: number;
+  diagnosis_pointers: string; // JSON array
+  place_of_service: PlaceOfService;
+  paid_amount: number;
+  adjustment_amount: number;
+  adjustment_reason_codes: string; // JSON array
+  patient_responsibility: number;
+  created_at: string;
+}
+
+// Audit Log
+export interface AuditLogEntry {
+  id: number;
+  entity_type: string;
+  entity_id: number | null;
+  action: string;
+  old_values: string | null; // JSON
+  new_values: string | null; // JSON
+  user_id: number | null;
+  client_id: number | null;
+  amount: number | null;
+  description: string | null;
+  ip_address: string | null;
+  created_at: string;
 }
 
 // API interface exposed through preload
@@ -292,6 +541,83 @@ export interface PocketChartAPI {
     getStatus: () => Promise<LicenseStatus>;
     activate: (licenseKey: string) => Promise<LicenseActivateResult>;
     deactivate: () => Promise<LicenseActivateResult>;
+  };
+  secureStorage: {
+    /** Check if OS-level encryption is available */
+    isAvailable: () => Promise<boolean>;
+    /** Store a value securely (encrypted at rest) */
+    set: (key: string, value: string) => Promise<boolean>;
+    /** Retrieve a securely stored value (decrypted) */
+    get: (key: string) => Promise<string | null>;
+    /** Get a masked version of a secret for display (e.g., sk_live_...1234) */
+    getMasked: (key: string) => Promise<string | null>;
+    /** Delete a securely stored value */
+    delete: (key: string) => Promise<boolean>;
+    /** Check if a key exists in secure storage */
+    exists: (key: string) => Promise<boolean>;
+  };
+  // V2 Billing APIs
+  feeSchedule: {
+    list: () => Promise<FeeScheduleEntry[]>;
+    get: (id: number) => Promise<FeeScheduleEntry>;
+    create: (data: Partial<FeeScheduleEntry>) => Promise<FeeScheduleEntry>;
+    update: (id: number, data: Partial<FeeScheduleEntry>) => Promise<FeeScheduleEntry>;
+    delete: (id: number) => Promise<boolean>;
+  };
+  invoices: {
+    list: (filters?: { clientId?: number; status?: InvoiceStatus; startDate?: string; endDate?: string }) => Promise<Invoice[]>;
+    get: (id: number) => Promise<Invoice & { items: InvoiceItem[] }>;
+    create: (data: Partial<Invoice>, items: Partial<InvoiceItem>[]) => Promise<Invoice>;
+    update: (id: number, data: Partial<Invoice>) => Promise<Invoice>;
+    delete: (id: number) => Promise<boolean>;
+    generateFromNotes: (clientId: number, noteIds: number[]) => Promise<Invoice>;
+    generatePdf: (invoiceId: number) => Promise<{ base64Pdf: string; filename: string }>;
+    savePdf: (data: { base64Pdf: string; filename: string }) => Promise<string | null>;
+  };
+  payments: {
+    list: (filters?: { clientId?: number; startDate?: string; endDate?: string }) => Promise<Payment[]>;
+    create: (data: Partial<Payment>) => Promise<Payment>;
+    delete: (id: number) => Promise<boolean>;
+  };
+  // V3 Insurance Billing APIs
+  authorizations: {
+    listByClient: (clientId: number) => Promise<Authorization[]>;
+    create: (data: Partial<Authorization>) => Promise<Authorization>;
+    update: (id: number, data: Partial<Authorization>) => Promise<Authorization>;
+    delete: (id: number) => Promise<boolean>;
+  };
+  claims: {
+    list: (filters?: { clientId?: number; status?: ClaimStatus; startDate?: string; endDate?: string }) => Promise<Claim[]>;
+    get: (id: number) => Promise<Claim & { lines: ClaimLine[] }>;
+    create: (data: Partial<Claim>, lines: Partial<ClaimLine>[]) => Promise<Claim>;
+    update: (id: number, data: Partial<Claim>) => Promise<Claim>;
+    delete: (id: number) => Promise<boolean>;
+  };
+  payers: {
+    list: () => Promise<Payer[]>;
+    create: (data: Partial<Payer>) => Promise<Payer>;
+    update: (id: number, data: Partial<Payer>) => Promise<Payer>;
+    delete: (id: number) => Promise<boolean>;
+  };
+  auditLog: {
+    list: (filters?: {
+      entityType?: string;
+      entityId?: number;
+      clientId?: number;
+      startDate?: string;
+      endDate?: string;
+      limit?: number;
+    }) => Promise<AuditLogEntry[]>;
+    create: (data: {
+      entityType: string;
+      entityId?: number;
+      action: string;
+      oldValues?: any;
+      newValues?: any;
+      clientId?: number;
+      amount?: number;
+      description?: string;
+    }) => Promise<AuditLogEntry>;
   };
   update: {
     check: () => Promise<{ updateAvailable: boolean }>;

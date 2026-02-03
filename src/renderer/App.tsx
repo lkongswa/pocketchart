@@ -7,6 +7,7 @@ import {
   Settings,
   ClipboardList,
   HelpCircle,
+  DollarSign,
 } from 'lucide-react';
 import DashboardPage from './pages/DashboardPage';
 import ClientsPage from './pages/ClientsPage';
@@ -17,6 +18,7 @@ import CalendarPage from './pages/CalendarPage';
 import SettingsPage from './pages/SettingsPage';
 import SuperbillPage from './pages/SuperbillPage';
 import HelpPage from './pages/HelpPage';
+import BillingPage from './pages/BillingPage';
 import PinLockScreen from './components/PinLockScreen';
 import ErrorBoundary from './components/ErrorBoundary';
 import OnboardingScreen from './components/OnboardingScreen';
@@ -34,6 +36,7 @@ const navItems: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
   { to: '/clients', label: 'Clients', icon: <Users size={20} />, matchPrefix: '/clients' },
   { to: '/calendar', label: 'Calendar', icon: <Calendar size={20} /> },
+  { to: '/billing', label: 'Billing', icon: <DollarSign size={20} /> },
   { to: '/help', label: 'Help', icon: <HelpCircle size={20} /> },
   { to: '/settings', label: 'Settings', icon: <Settings size={20} /> },
 ];
@@ -109,6 +112,7 @@ const AppLayout: React.FC = () => {
           <Route path="/clients/:id/eval/:evalId" element={<EvalFormPage />} />
           <Route path="/clients/:id/superbill" element={<SuperbillPage />} />
           <Route path="/calendar" element={<CalendarPage />} />
+          <Route path="/billing" element={<BillingPage />} />
           <Route path="/help" element={<HelpPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>

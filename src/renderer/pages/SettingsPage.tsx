@@ -51,15 +51,49 @@ const DISCIPLINES: Array<{ value: Discipline | 'MULTI'; label: string }> = [
   { value: 'MULTI', label: 'Multi-Discipline (MULTI)' },
 ];
 
+// US States for dropdown
+const US_STATES = [
+  { value: '', label: 'Select State...' },
+  { value: 'AL', label: 'Alabama' }, { value: 'AK', label: 'Alaska' }, { value: 'AZ', label: 'Arizona' },
+  { value: 'AR', label: 'Arkansas' }, { value: 'CA', label: 'California' }, { value: 'CO', label: 'Colorado' },
+  { value: 'CT', label: 'Connecticut' }, { value: 'DE', label: 'Delaware' }, { value: 'FL', label: 'Florida' },
+  { value: 'GA', label: 'Georgia' }, { value: 'HI', label: 'Hawaii' }, { value: 'ID', label: 'Idaho' },
+  { value: 'IL', label: 'Illinois' }, { value: 'IN', label: 'Indiana' }, { value: 'IA', label: 'Iowa' },
+  { value: 'KS', label: 'Kansas' }, { value: 'KY', label: 'Kentucky' }, { value: 'LA', label: 'Louisiana' },
+  { value: 'ME', label: 'Maine' }, { value: 'MD', label: 'Maryland' }, { value: 'MA', label: 'Massachusetts' },
+  { value: 'MI', label: 'Michigan' }, { value: 'MN', label: 'Minnesota' }, { value: 'MS', label: 'Mississippi' },
+  { value: 'MO', label: 'Missouri' }, { value: 'MT', label: 'Montana' }, { value: 'NE', label: 'Nebraska' },
+  { value: 'NV', label: 'Nevada' }, { value: 'NH', label: 'New Hampshire' }, { value: 'NJ', label: 'New Jersey' },
+  { value: 'NM', label: 'New Mexico' }, { value: 'NY', label: 'New York' }, { value: 'NC', label: 'North Carolina' },
+  { value: 'ND', label: 'North Dakota' }, { value: 'OH', label: 'Ohio' }, { value: 'OK', label: 'Oklahoma' },
+  { value: 'OR', label: 'Oregon' }, { value: 'PA', label: 'Pennsylvania' }, { value: 'RI', label: 'Rhode Island' },
+  { value: 'SC', label: 'South Carolina' }, { value: 'SD', label: 'South Dakota' }, { value: 'TN', label: 'Tennessee' },
+  { value: 'TX', label: 'Texas' }, { value: 'UT', label: 'Utah' }, { value: 'VT', label: 'Vermont' },
+  { value: 'VA', label: 'Virginia' }, { value: 'WA', label: 'Washington' }, { value: 'WV', label: 'West Virginia' },
+  { value: 'WI', label: 'Wisconsin' }, { value: 'WY', label: 'Wyoming' }, { value: 'DC', label: 'Washington DC' },
+];
+
+// Taxonomy code presets for therapy disciplines
+const TAXONOMY_OPTIONS = [
+  { value: '', label: 'Select or enter manually...' },
+  { value: '235Z00000X', label: 'Speech-Language Pathologist (235Z00000X)' },
+  { value: '225X00000X', label: 'Occupational Therapist (225X00000X)' },
+  { value: '225100000X', label: 'Physical Therapist (225100000X)' },
+];
+
 const emptyPractice: Omit<Practice, 'id'> = {
   name: '',
   address: '',
+  city: '',
+  state: '',
+  zip: '',
   phone: '',
   npi: '',
   tax_id: '',
   license_number: '',
   license_state: '',
   discipline: 'PT',
+  taxonomy_code: '',
 };
 
 export default function SettingsPage() {
@@ -585,8 +619,24 @@ export default function SettingsPage() {
             <input type="text" className="input" placeholder="Enter practice name" value={formData.name} onChange={(e) => handleChange('name', e.target.value)} />
           </div>
           <div className="md:col-span-2">
-            <label className="label">Address</label>
-            <input type="text" className="input" placeholder="Enter full address" value={formData.address} onChange={(e) => handleChange('address', e.target.value)} />
+            <label className="label">Street Address</label>
+            <input type="text" className="input" placeholder="123 Main Street, Suite 100" value={formData.address} onChange={(e) => handleChange('address', e.target.value)} />
+          </div>
+          <div>
+            <label className="label">City</label>
+            <input type="text" className="input" placeholder="City" value={formData.city} onChange={(e) => handleChange('city', e.target.value)} />
+          </div>
+          <div>
+            <label className="label">State</label>
+            <select className="select" value={formData.state} onChange={(e) => handleChange('state', e.target.value)}>
+              {US_STATES.map((st) => (
+                <option key={st.value} value={st.value}>{st.label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label">ZIP Code</label>
+            <input type="text" className="input" placeholder="12345" maxLength={10} value={formData.zip} onChange={(e) => handleChange('zip', e.target.value)} />
           </div>
           <div>
             <label className="label">Phone</label>
@@ -617,6 +667,30 @@ export default function SettingsPage() {
           <div>
             <label className="label">License State</label>
             <input type="text" className="input" placeholder="e.g. CA, NY, TX" maxLength={2} value={formData.license_state} onChange={(e) => handleChange('license_state', e.target.value.toUpperCase())} />
+          </div>
+          <div className="md:col-span-2">
+            <label className="label">Taxonomy Code</label>
+            <div className="flex gap-2">
+              <select
+                className="select flex-1"
+                value={TAXONOMY_OPTIONS.some(t => t.value === formData.taxonomy_code) ? formData.taxonomy_code : ''}
+                onChange={(e) => handleChange('taxonomy_code', e.target.value)}
+              >
+                {TAXONOMY_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+              <input
+                type="text"
+                className="input w-40"
+                placeholder="Or enter code"
+                value={formData.taxonomy_code}
+                onChange={(e) => handleChange('taxonomy_code', e.target.value)}
+              />
+            </div>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+              Required for electronic claims (837P). Select from common codes or enter manually.
+            </p>
           </div>
         </div>
       </CollapsibleSection>

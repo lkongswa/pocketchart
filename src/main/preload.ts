@@ -138,6 +138,75 @@ const api = {
     deactivate: () => ipcRenderer.invoke('license:deactivate'),
   },
 
+  // Secure Storage (OS-level encryption for API keys, etc.)
+  secureStorage: {
+    isAvailable: () => ipcRenderer.invoke('secureStorage:isAvailable'),
+    set: (key: string, value: string) => ipcRenderer.invoke('secureStorage:set', key, value),
+    get: (key: string) => ipcRenderer.invoke('secureStorage:get', key),
+    getMasked: (key: string) => ipcRenderer.invoke('secureStorage:getMasked', key),
+    delete: (key: string) => ipcRenderer.invoke('secureStorage:delete', key),
+    exists: (key: string) => ipcRenderer.invoke('secureStorage:exists', key),
+  },
+
+  // V2 Billing - Fee Schedule
+  feeSchedule: {
+    list: () => ipcRenderer.invoke('feeSchedule:list'),
+    get: (id: number) => ipcRenderer.invoke('feeSchedule:get', id),
+    create: (data: any) => ipcRenderer.invoke('feeSchedule:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('feeSchedule:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('feeSchedule:delete', id),
+  },
+
+  // V2 Billing - Invoices
+  invoices: {
+    list: (filters?: any) => ipcRenderer.invoke('invoices:list', filters),
+    get: (id: number) => ipcRenderer.invoke('invoices:get', id),
+    create: (data: any, items: any[]) => ipcRenderer.invoke('invoices:create', data, items),
+    update: (id: number, data: any) => ipcRenderer.invoke('invoices:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('invoices:delete', id),
+    generateFromNotes: (clientId: number, noteIds: number[]) => ipcRenderer.invoke('invoices:generateFromNotes', clientId, noteIds),
+    generatePdf: (invoiceId: number) => ipcRenderer.invoke('invoices:generatePdf', invoiceId),
+    savePdf: (data: { base64Pdf: string; filename: string }) => ipcRenderer.invoke('invoices:savePdf', data),
+  },
+
+  // V2 Billing - Payments
+  payments: {
+    list: (filters?: any) => ipcRenderer.invoke('payments:list', filters),
+    create: (data: any) => ipcRenderer.invoke('payments:create', data),
+    delete: (id: number) => ipcRenderer.invoke('payments:delete', id),
+  },
+
+  // V3 Insurance Billing - Authorizations
+  authorizations: {
+    listByClient: (clientId: number) => ipcRenderer.invoke('authorizations:listByClient', clientId),
+    create: (data: any) => ipcRenderer.invoke('authorizations:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('authorizations:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('authorizations:delete', id),
+  },
+
+  // V3 Insurance Billing - Claims
+  claims: {
+    list: (filters?: any) => ipcRenderer.invoke('claims:list', filters),
+    get: (id: number) => ipcRenderer.invoke('claims:get', id),
+    create: (data: any, lines: any[]) => ipcRenderer.invoke('claims:create', data, lines),
+    update: (id: number, data: any) => ipcRenderer.invoke('claims:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('claims:delete', id),
+  },
+
+  // V3 Insurance Billing - Payers
+  payers: {
+    list: () => ipcRenderer.invoke('payers:list'),
+    create: (data: any) => ipcRenderer.invoke('payers:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('payers:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('payers:delete', id),
+  },
+
+  // Audit Log
+  auditLog: {
+    list: (filters?: any) => ipcRenderer.invoke('auditLog:list', filters),
+    create: (data: any) => ipcRenderer.invoke('auditLog:create', data),
+  },
+
   // Auto-Update
   update: {
     check: () => ipcRenderer.invoke('update:check'),

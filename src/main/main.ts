@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, safeStorage } from 'electron';
 import path from 'path';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -7,6 +7,51 @@ import { jsPDF } from 'jspdf';
 import { v4 as uuidv4 } from 'uuid';
 import archiver from 'archiver';
 import { autoUpdater } from 'electron-updater';
+
+// ── Secure Storage Helpers ──
+// Uses Electron's safeStorage API which leverages OS credential storage:
+// - Windows: Credential Manager (DPAPI)
+// - macOS: Keychain
+// - Linux: Secret Service API / libsecret
+
+/**
+ * Encrypts a string using Electron's safeStorage API
+ * Returns base64-encoded encrypted data for storage in SQLite
+ */
+function encryptSecure(plaintext: string): string {
+  if (!safeStorage.isEncryptionAvailable()) {
+    console.warn('Secure storage not available, falling back to obfuscation');
+    // Basic obfuscation fallback (NOT secure, but better than plaintext)
+    return Buffer.from(plaintext).toString('base64') + '.fallback';
+  }
+  const encrypted = safeStorage.encryptString(plaintext);
+  return encrypted.toString('base64');
+}
+
+/**
+ * Decrypts a string that was encrypted with encryptSecure()
+ */
+function decryptSecure(encryptedBase64: string): string {
+  // Check for fallback encoding
+  if (encryptedBase64.endsWith('.fallback')) {
+    const base64Data = encryptedBase64.slice(0, -9);
+    return Buffer.from(base64Data, 'base64').toString('utf-8');
+  }
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error('Cannot decrypt: secure storage not available');
+  }
+  const encrypted = Buffer.from(encryptedBase64, 'base64');
+  return safeStorage.decryptString(encrypted);
+}
+
+/**
+ * Masks a secret string for display (e.g., API keys)
+ * Shows first 7 chars and last 4 chars: sk_live_...1234
+ */
+function maskSecret(secret: string): string {
+  if (!secret || secret.length < 16) return '••••••••';
+  return `${secret.slice(0, 7)}...${secret.slice(-4)}`;
+}
 
 let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
@@ -791,6 +836,52 @@ function registerIpcHandlers() {
     return true;
   });
 
+  // ── Secure Credentials ──
+  // Store sensitive data (API keys, etc.) using OS-level encryption
+
+  safeHandle('secureStorage:isAvailable', () => {
+    return safeStorage.isEncryptionAvailable();
+  });
+
+  safeHandle('secureStorage:set', (_event, key: string, value: string) => {
+    const encrypted = encryptSecure(value);
+    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(`secure_${key}`, encrypted);
+    return true;
+  });
+
+  safeHandle('secureStorage:get', (_event, key: string) => {
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(`secure_${key}`) as any;
+    if (!row?.value) return null;
+    try {
+      return decryptSecure(row.value);
+    } catch (err) {
+      console.error('Failed to decrypt secure setting:', err);
+      return null;
+    }
+  });
+
+  safeHandle('secureStorage:getMasked', (_event, key: string) => {
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(`secure_${key}`) as any;
+    if (!row?.value) return null;
+    try {
+      const decrypted = decryptSecure(row.value);
+      return maskSecret(decrypted);
+    } catch (err) {
+      console.error('Failed to decrypt secure setting for masking:', err);
+      return null;
+    }
+  });
+
+  safeHandle('secureStorage:delete', (_event, key: string) => {
+    db.prepare('DELETE FROM settings WHERE key = ?').run(`secure_${key}`);
+    return true;
+  });
+
+  safeHandle('secureStorage:exists', (_event, key: string) => {
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(`secure_${key}`) as any;
+    return !!row?.value;
+  });
+
   // ── License ──
   safeHandle('license:getStatus', () => {
     const tier = (db.prepare("SELECT value FROM settings WHERE key = 'app_tier'").get() as any)?.value || 'free';
@@ -1412,6 +1503,770 @@ function registerIpcHandlers() {
     const dataDir = getDataPath();
     return path.join(dataDir, 'documents', String(doc.client_id), doc.filename);
   });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // V2/V3 BILLING IPC HANDLERS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // ── Fee Schedule ──
+  safeHandle('feeSchedule:list', () => {
+    return db.prepare('SELECT * FROM fee_schedule WHERE deleted_at IS NULL ORDER BY cpt_code').all();
+  });
+
+  safeHandle('feeSchedule:get', (_event, id: number) => {
+    return db.prepare('SELECT * FROM fee_schedule WHERE id = ? AND deleted_at IS NULL').get(id);
+  });
+
+  safeHandle('feeSchedule:create', (_event, data: any) => {
+    const result = db.prepare(`
+      INSERT INTO fee_schedule (cpt_code, description, default_units, amount, effective_date)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      data.cpt_code,
+      data.description || '',
+      data.default_units || 1,
+      data.amount || 0,
+      data.effective_date || null
+    );
+    return db.prepare('SELECT * FROM fee_schedule WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('feeSchedule:update', (_event, id: number, data: any) => {
+    db.prepare(`
+      UPDATE fee_schedule SET
+        cpt_code = COALESCE(?, cpt_code),
+        description = COALESCE(?, description),
+        default_units = COALESCE(?, default_units),
+        amount = COALESCE(?, amount),
+        effective_date = COALESCE(?, effective_date)
+      WHERE id = ? AND deleted_at IS NULL
+    `).run(data.cpt_code, data.description, data.default_units, data.amount, data.effective_date, id);
+    return db.prepare('SELECT * FROM fee_schedule WHERE id = ?').get(id);
+  });
+
+  safeHandle('feeSchedule:delete', (_event, id: number) => {
+    db.prepare('UPDATE fee_schedule SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
+    return true;
+  });
+
+  // ── Invoices ──
+  safeHandle('invoices:list', (_event, filters?: { clientId?: number; status?: string; startDate?: string; endDate?: string }) => {
+    let query = 'SELECT * FROM invoices WHERE deleted_at IS NULL';
+    const params: any[] = [];
+
+    if (filters?.clientId) {
+      query += ' AND client_id = ?';
+      params.push(filters.clientId);
+    }
+    if (filters?.status) {
+      query += ' AND status = ?';
+      params.push(filters.status);
+    }
+    if (filters?.startDate) {
+      query += ' AND invoice_date >= ?';
+      params.push(filters.startDate);
+    }
+    if (filters?.endDate) {
+      query += ' AND invoice_date <= ?';
+      params.push(filters.endDate);
+    }
+
+    query += ' ORDER BY invoice_date DESC';
+    return db.prepare(query).all(...params);
+  });
+
+  safeHandle('invoices:get', (_event, id: number) => {
+    const invoice = db.prepare('SELECT * FROM invoices WHERE id = ? AND deleted_at IS NULL').get(id) as any;
+    if (!invoice) throw new Error('Invoice not found');
+    const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(id);
+    return { ...invoice, items };
+  });
+
+  safeHandle('invoices:create', (_event, data: any, items: any[]) => {
+    const invoiceNumber = `INV-${Date.now().toString(36).toUpperCase()}`;
+    const result = db.prepare(`
+      INSERT INTO invoices (client_id, invoice_number, invoice_date, due_date, subtotal, discount_amount, total_amount, status, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      data.client_id,
+      invoiceNumber,
+      data.invoice_date || new Date().toISOString().slice(0, 10),
+      data.due_date || null,
+      data.subtotal || 0,
+      data.discount_amount || 0,
+      data.total_amount || 0,
+      data.status || 'draft',
+      data.notes || ''
+    );
+    const invoiceId = result.lastInsertRowid;
+
+    // Insert line items
+    const insertItem = db.prepare(`
+      INSERT INTO invoice_items (invoice_id, note_id, description, cpt_code, service_date, units, unit_price, amount)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const item of items || []) {
+      insertItem.run(
+        invoiceId,
+        item.note_id || null,
+        item.description || '',
+        item.cpt_code || '',
+        item.service_date || '',
+        item.units || 1,
+        item.unit_price || 0,
+        item.amount || 0
+      );
+    }
+
+    const invoice = db.prepare('SELECT * FROM invoices WHERE id = ?').get(invoiceId) as any;
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_log (entity_type, entity_id, action, new_values, client_id, amount, description)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'invoice',
+      invoiceId,
+      'create',
+      JSON.stringify({ invoice_number: invoiceNumber, status: 'draft', items_count: (items || []).length }),
+      data.client_id,
+      data.total_amount || 0,
+      `Invoice ${invoiceNumber} created for $${data.total_amount || 0}`
+    );
+
+    return invoice;
+  });
+
+  safeHandle('invoices:update', (_event, id: number, data: any) => {
+    db.prepare(`
+      UPDATE invoices SET
+        invoice_date = COALESCE(?, invoice_date),
+        due_date = COALESCE(?, due_date),
+        subtotal = COALESCE(?, subtotal),
+        discount_amount = COALESCE(?, discount_amount),
+        total_amount = COALESCE(?, total_amount),
+        status = COALESCE(?, status),
+        notes = COALESCE(?, notes),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND deleted_at IS NULL
+    `).run(data.invoice_date, data.due_date, data.subtotal, data.discount_amount, data.total_amount, data.status, data.notes, id);
+    return db.prepare('SELECT * FROM invoices WHERE id = ?').get(id);
+  });
+
+  safeHandle('invoices:delete', (_event, id: number) => {
+    db.prepare('UPDATE invoices SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
+    return true;
+  });
+
+  // Generate invoice PDF
+  safeHandle('invoices:generatePdf', async (_event, invoiceId: number) => {
+    const invoice = db.prepare('SELECT * FROM invoices WHERE id = ? AND deleted_at IS NULL').get(invoiceId) as any;
+    if (!invoice) throw new Error('Invoice not found');
+
+    const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(invoiceId) as any[];
+    const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(invoice.client_id) as any;
+    const practice = db.prepare('SELECT * FROM practice WHERE id = 1').get() as any;
+
+    const { base64Pdf, filename } = buildInvoicePdf(invoice, items, client, practice);
+    return { base64Pdf, filename };
+  });
+
+  safeHandle('invoices:savePdf', async (_event, data: { base64Pdf: string; filename: string }) => {
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      title: 'Save Invoice PDF',
+      defaultPath: data.filename,
+      filters: [{ name: 'PDF Document', extensions: ['pdf'] }],
+    });
+    if (canceled || !filePath) return null;
+    const buffer = Buffer.from(data.base64Pdf, 'base64');
+    fs.writeFileSync(filePath, buffer);
+    return filePath;
+  });
+
+  safeHandle('invoices:generateFromNotes', (_event, clientId: number, noteIds: number[]) => {
+    const feeSchedule = db.prepare('SELECT * FROM fee_schedule WHERE deleted_at IS NULL').all() as any[];
+    const feeMap = new Map(feeSchedule.map(f => [f.cpt_code, f]));
+
+    const placeholders = noteIds.map(() => '?').join(',');
+    const notes = db.prepare(
+      `SELECT * FROM notes WHERE id IN (${placeholders}) AND client_id = ? AND deleted_at IS NULL`
+    ).all(...noteIds, clientId) as any[];
+
+    let subtotal = 0;
+    const items: any[] = [];
+
+    for (const note of notes) {
+      const fee = feeMap.get(note.cpt_code);
+      const unitPrice = fee?.amount || note.charge_amount || 0;
+      const amount = unitPrice * (note.units || 1);
+      subtotal += amount;
+      items.push({
+        note_id: note.id,
+        description: fee?.description || `Service on ${note.date_of_service}`,
+        cpt_code: note.cpt_code,
+        service_date: note.date_of_service,
+        units: note.units || 1,
+        unit_price: unitPrice,
+        amount,
+      });
+    }
+
+    const invoiceNumber = `INV-${Date.now().toString(36).toUpperCase()}`;
+    const result = db.prepare(`
+      INSERT INTO invoices (client_id, invoice_number, invoice_date, subtotal, total_amount, status)
+      VALUES (?, ?, ?, ?, ?, 'draft')
+    `).run(clientId, invoiceNumber, new Date().toISOString().slice(0, 10), subtotal, subtotal);
+    const invoiceId = result.lastInsertRowid;
+
+    const insertItem = db.prepare(`
+      INSERT INTO invoice_items (invoice_id, note_id, description, cpt_code, service_date, units, unit_price, amount)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const item of items) {
+      insertItem.run(invoiceId, item.note_id, item.description, item.cpt_code, item.service_date, item.units, item.unit_price, item.amount);
+    }
+
+    return db.prepare('SELECT * FROM invoices WHERE id = ?').get(invoiceId);
+  });
+
+  // ── Payments ──
+  safeHandle('payments:list', (_event, filters?: { clientId?: number; startDate?: string; endDate?: string }) => {
+    let query = 'SELECT * FROM payments WHERE deleted_at IS NULL';
+    const params: any[] = [];
+
+    if (filters?.clientId) {
+      query += ' AND client_id = ?';
+      params.push(filters.clientId);
+    }
+    if (filters?.startDate) {
+      query += ' AND payment_date >= ?';
+      params.push(filters.startDate);
+    }
+    if (filters?.endDate) {
+      query += ' AND payment_date <= ?';
+      params.push(filters.endDate);
+    }
+
+    query += ' ORDER BY payment_date DESC';
+    return db.prepare(query).all(...params);
+  });
+
+  safeHandle('payments:create', (_event, data: any) => {
+    const result = db.prepare(`
+      INSERT INTO payments (client_id, invoice_id, payment_date, amount, payment_method, reference_number, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      data.client_id,
+      data.invoice_id || null,
+      data.payment_date || new Date().toISOString().slice(0, 10),
+      data.amount,
+      data.payment_method || 'other',
+      data.reference_number || '',
+      data.notes || ''
+    );
+    const payment = db.prepare('SELECT * FROM payments WHERE id = ?').get(result.lastInsertRowid) as any;
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_log (entity_type, entity_id, action, new_values, client_id, amount, description)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'payment',
+      payment.id,
+      'create',
+      JSON.stringify({ payment_method: data.payment_method, invoice_id: data.invoice_id }),
+      data.client_id,
+      data.amount,
+      `Payment recorded: $${data.amount} via ${data.payment_method || 'other'}`
+    );
+
+    return payment;
+  });
+
+  safeHandle('payments:delete', (_event, id: number) => {
+    db.prepare('UPDATE payments SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
+    return true;
+  });
+
+  // ── Authorizations ──
+  safeHandle('authorizations:listByClient', (_event, clientId: number) => {
+    return db.prepare(
+      'SELECT * FROM authorizations WHERE client_id = ? AND deleted_at IS NULL ORDER BY start_date DESC'
+    ).all(clientId);
+  });
+
+  safeHandle('authorizations:create', (_event, data: any) => {
+    const result = db.prepare(`
+      INSERT INTO authorizations (client_id, payer_name, payer_id, auth_number, start_date, end_date, units_approved, units_used, cpt_codes, status, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      data.client_id,
+      data.payer_name || '',
+      data.payer_id || '',
+      data.auth_number,
+      data.start_date || null,
+      data.end_date || null,
+      data.units_approved || 0,
+      data.units_used || 0,
+      JSON.stringify(data.cpt_codes || []),
+      data.status || 'active',
+      data.notes || ''
+    );
+    return db.prepare('SELECT * FROM authorizations WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('authorizations:update', (_event, id: number, data: any) => {
+    db.prepare(`
+      UPDATE authorizations SET
+        payer_name = COALESCE(?, payer_name),
+        payer_id = COALESCE(?, payer_id),
+        auth_number = COALESCE(?, auth_number),
+        start_date = COALESCE(?, start_date),
+        end_date = COALESCE(?, end_date),
+        units_approved = COALESCE(?, units_approved),
+        units_used = COALESCE(?, units_used),
+        cpt_codes = COALESCE(?, cpt_codes),
+        status = COALESCE(?, status),
+        notes = COALESCE(?, notes),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND deleted_at IS NULL
+    `).run(
+      data.payer_name,
+      data.payer_id,
+      data.auth_number,
+      data.start_date,
+      data.end_date,
+      data.units_approved,
+      data.units_used,
+      data.cpt_codes ? JSON.stringify(data.cpt_codes) : null,
+      data.status,
+      data.notes,
+      id
+    );
+    return db.prepare('SELECT * FROM authorizations WHERE id = ?').get(id);
+  });
+
+  safeHandle('authorizations:delete', (_event, id: number) => {
+    db.prepare('UPDATE authorizations SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
+    return true;
+  });
+
+  // ── Claims (V3) ──
+  safeHandle('claims:list', (_event, filters?: { clientId?: number; status?: string; startDate?: string; endDate?: string }) => {
+    let query = 'SELECT * FROM claims WHERE deleted_at IS NULL';
+    const params: any[] = [];
+
+    if (filters?.clientId) {
+      query += ' AND client_id = ?';
+      params.push(filters.clientId);
+    }
+    if (filters?.status) {
+      query += ' AND status = ?';
+      params.push(filters.status);
+    }
+    if (filters?.startDate) {
+      query += ' AND service_date_start >= ?';
+      params.push(filters.startDate);
+    }
+    if (filters?.endDate) {
+      query += ' AND service_date_end <= ?';
+      params.push(filters.endDate);
+    }
+
+    query += ' ORDER BY created_at DESC';
+    return db.prepare(query).all(...params);
+  });
+
+  safeHandle('claims:get', (_event, id: number) => {
+    const claim = db.prepare('SELECT * FROM claims WHERE id = ? AND deleted_at IS NULL').get(id) as any;
+    if (!claim) throw new Error('Claim not found');
+    const lines = db.prepare('SELECT * FROM claim_lines WHERE claim_id = ? ORDER BY line_number').all(id);
+    return { ...claim, lines };
+  });
+
+  safeHandle('claims:create', (_event, data: any, lines: any[]) => {
+    const claimNumber = `CLM-${Date.now().toString(36).toUpperCase()}`;
+    const result = db.prepare(`
+      INSERT INTO claims (client_id, claim_number, payer_name, payer_id, service_date_start, service_date_end, total_charge, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      data.client_id,
+      claimNumber,
+      data.payer_name || '',
+      data.payer_id || '',
+      data.service_date_start || '',
+      data.service_date_end || '',
+      data.total_charge || 0,
+      data.status || 'draft'
+    );
+    const claimId = result.lastInsertRowid;
+
+    const insertLine = db.prepare(`
+      INSERT INTO claim_lines (claim_id, note_id, line_number, service_date, cpt_code, modifiers, units, charge_amount, diagnosis_pointers, place_of_service)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    let lineNum = 1;
+    for (const line of lines || []) {
+      insertLine.run(
+        claimId,
+        line.note_id || null,
+        lineNum++,
+        line.service_date || '',
+        line.cpt_code || '',
+        JSON.stringify(line.modifiers || []),
+        line.units || 1,
+        line.charge_amount || 0,
+        JSON.stringify(line.diagnosis_pointers || [1]),
+        line.place_of_service || '11'
+      );
+    }
+
+    return db.prepare('SELECT * FROM claims WHERE id = ?').get(claimId);
+  });
+
+  safeHandle('claims:update', (_event, id: number, data: any) => {
+    db.prepare(`
+      UPDATE claims SET
+        payer_name = COALESCE(?, payer_name),
+        payer_id = COALESCE(?, payer_id),
+        service_date_start = COALESCE(?, service_date_start),
+        service_date_end = COALESCE(?, service_date_end),
+        total_charge = COALESCE(?, total_charge),
+        status = COALESCE(?, status),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND deleted_at IS NULL
+    `).run(data.payer_name, data.payer_id, data.service_date_start, data.service_date_end, data.total_charge, data.status, id);
+    return db.prepare('SELECT * FROM claims WHERE id = ?').get(id);
+  });
+
+  safeHandle('claims:delete', (_event, id: number) => {
+    db.prepare('UPDATE claims SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
+    return true;
+  });
+
+  // ── Payers ──
+  safeHandle('payers:list', () => {
+    return db.prepare('SELECT * FROM payers ORDER BY name').all();
+  });
+
+  safeHandle('payers:create', (_event, data: any) => {
+    const result = db.prepare(`
+      INSERT INTO payers (name, edi_payer_id, clearinghouse, enrollment_required, enrollment_status, enrollment_date, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      data.name,
+      data.edi_payer_id || '',
+      data.clearinghouse || '',
+      data.enrollment_required ? 1 : 0,
+      data.enrollment_status || 'not_started',
+      data.enrollment_date || null,
+      data.notes || ''
+    );
+    return db.prepare('SELECT * FROM payers WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('payers:update', (_event, id: number, data: any) => {
+    db.prepare(`
+      UPDATE payers SET
+        name = COALESCE(?, name),
+        edi_payer_id = COALESCE(?, edi_payer_id),
+        clearinghouse = COALESCE(?, clearinghouse),
+        enrollment_required = COALESCE(?, enrollment_required),
+        enrollment_status = COALESCE(?, enrollment_status),
+        enrollment_date = COALESCE(?, enrollment_date),
+        notes = COALESCE(?, notes)
+      WHERE id = ?
+    `).run(
+      data.name,
+      data.edi_payer_id,
+      data.clearinghouse,
+      data.enrollment_required !== undefined ? (data.enrollment_required ? 1 : 0) : null,
+      data.enrollment_status,
+      data.enrollment_date,
+      data.notes,
+      id
+    );
+    return db.prepare('SELECT * FROM payers WHERE id = ?').get(id);
+  });
+
+  safeHandle('payers:delete', (_event, id: number) => {
+    db.prepare('DELETE FROM payers WHERE id = ?').run(id);
+    return true;
+  });
+
+  // ── Audit Log ──
+  safeHandle('auditLog:list', (_event, filters?: {
+    entityType?: string;
+    entityId?: number;
+    clientId?: number;
+    startDate?: string;
+    endDate?: string;
+    limit?: number;
+  }) => {
+    let query = 'SELECT * FROM audit_log WHERE 1=1';
+    const params: any[] = [];
+
+    if (filters?.entityType) {
+      query += ' AND entity_type = ?';
+      params.push(filters.entityType);
+    }
+    if (filters?.entityId) {
+      query += ' AND entity_id = ?';
+      params.push(filters.entityId);
+    }
+    if (filters?.clientId) {
+      query += ' AND client_id = ?';
+      params.push(filters.clientId);
+    }
+    if (filters?.startDate) {
+      query += ' AND created_at >= ?';
+      params.push(filters.startDate);
+    }
+    if (filters?.endDate) {
+      query += ' AND created_at <= ?';
+      params.push(filters.endDate);
+    }
+
+    query += ' ORDER BY created_at DESC';
+
+    if (filters?.limit) {
+      query += ' LIMIT ?';
+      params.push(filters.limit);
+    }
+
+    return db.prepare(query).all(...params);
+  });
+
+  safeHandle('auditLog:create', (_event, data: {
+    entityType: string;
+    entityId?: number;
+    action: string;
+    oldValues?: any;
+    newValues?: any;
+    clientId?: number;
+    amount?: number;
+    description?: string;
+  }) => {
+    const result = db.prepare(`
+      INSERT INTO audit_log (entity_type, entity_id, action, old_values, new_values, client_id, amount, description)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      data.entityType,
+      data.entityId || null,
+      data.action,
+      data.oldValues ? JSON.stringify(data.oldValues) : null,
+      data.newValues ? JSON.stringify(data.newValues) : null,
+      data.clientId || null,
+      data.amount || null,
+      data.description || null
+    );
+    return db.prepare('SELECT * FROM audit_log WHERE id = ?').get(result.lastInsertRowid);
+  });
+}
+
+// Helper: build an invoice PDF and return as base64
+function buildInvoicePdf(invoice: any, items: any[], client: any, practice: any): { base64Pdf: string; filename: string } {
+  const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const marginLeft = 40;
+  const marginRight = 40;
+  const maxWidth = pageWidth - marginLeft - marginRight;
+  let y = 40;
+
+  // Format currency
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+  };
+
+  // ── Header: Practice Info ──
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.text(practice?.name || 'Practice Name', marginLeft, y);
+  y += 20;
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  if (practice?.address) {
+    doc.text(practice.address, marginLeft, y);
+    y += 14;
+  }
+  const cityStateZip = [practice?.city, practice?.state, practice?.zip].filter(Boolean).join(', ');
+  if (cityStateZip) {
+    doc.text(cityStateZip, marginLeft, y);
+    y += 14;
+  }
+  if (practice?.phone) {
+    doc.text(`Phone: ${practice.phone}`, marginLeft, y);
+    y += 14;
+  }
+  if (practice?.npi) {
+    doc.text(`NPI: ${practice.npi}`, marginLeft, y);
+    y += 14;
+  }
+
+  // ── Invoice Title & Number (right aligned) ──
+  const invoiceRightX = pageWidth - marginRight;
+  doc.setFontSize(24);
+  doc.setFont('helvetica', 'bold');
+  doc.text('INVOICE', invoiceRightX, 60, { align: 'right' });
+
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Invoice #: ${invoice.invoice_number}`, invoiceRightX, 80, { align: 'right' });
+  doc.text(`Date: ${invoice.invoice_date}`, invoiceRightX, 95, { align: 'right' });
+  if (invoice.due_date) {
+    doc.text(`Due: ${invoice.due_date}`, invoiceRightX, 110, { align: 'right' });
+  }
+
+  y = Math.max(y, 130);
+
+  // ── Divider ──
+  doc.setDrawColor(200, 200, 200);
+  doc.setLineWidth(1);
+  doc.line(marginLeft, y, pageWidth - marginRight, y);
+  y += 20;
+
+  // ── Bill To Section ──
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Bill To:', marginLeft, y);
+  y += 16;
+
+  doc.setFont('helvetica', 'normal');
+  doc.text(`${client?.first_name || ''} ${client?.last_name || ''}`, marginLeft, y);
+  y += 14;
+
+  if (client?.address) {
+    doc.text(client.address, marginLeft, y);
+    y += 14;
+  }
+  const clientCityStateZip = [client?.city, client?.state, client?.zip].filter(Boolean).join(', ');
+  if (clientCityStateZip) {
+    doc.text(clientCityStateZip, marginLeft, y);
+    y += 14;
+  }
+  if (client?.email) {
+    doc.text(client.email, marginLeft, y);
+    y += 14;
+  }
+
+  y += 20;
+
+  // ── Line Items Table ──
+  const colX = {
+    description: marginLeft,
+    cpt: marginLeft + 250,
+    units: marginLeft + 340,
+    rate: marginLeft + 400,
+    amount: pageWidth - marginRight - 70,
+  };
+
+  // Table header
+  doc.setFillColor(245, 245, 245);
+  doc.rect(marginLeft, y - 12, maxWidth, 20, 'F');
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Description', colX.description, y);
+  doc.text('CPT', colX.cpt, y);
+  doc.text('Units', colX.units, y);
+  doc.text('Rate', colX.rate, y);
+  doc.text('Amount', colX.amount, y);
+  y += 20;
+
+  // Table rows
+  doc.setFont('helvetica', 'normal');
+  for (const item of items) {
+    if (y > pageHeight - 100) {
+      doc.addPage();
+      y = 50;
+    }
+
+    // Description (wrap if needed)
+    const descLines = doc.splitTextToSize(item.description || 'Service', 230);
+    doc.text(descLines, colX.description, y);
+    doc.text(item.cpt_code || '-', colX.cpt, y);
+    doc.text(String(item.units || 1), colX.units, y);
+    doc.text(formatCurrency(item.unit_price || 0), colX.rate, y);
+    doc.text(formatCurrency(item.amount || 0), colX.amount, y);
+
+    y += Math.max(descLines.length * 14, 18);
+  }
+
+  y += 10;
+  doc.setDrawColor(200, 200, 200);
+  doc.line(marginLeft, y, pageWidth - marginRight, y);
+  y += 20;
+
+  // ── Totals ──
+  const totalsX = pageWidth - marginRight - 150;
+
+  doc.setFont('helvetica', 'normal');
+  doc.text('Subtotal:', totalsX, y);
+  doc.text(formatCurrency(invoice.subtotal || 0), colX.amount, y);
+  y += 16;
+
+  if (invoice.discount_amount > 0) {
+    doc.text('Discount:', totalsX, y);
+    doc.text(`-${formatCurrency(invoice.discount_amount)}`, colX.amount, y);
+    y += 16;
+  }
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.text('Total:', totalsX, y);
+  doc.text(formatCurrency(invoice.total_amount || 0), colX.amount, y);
+  y += 30;
+
+  // ── Status Badge ──
+  const statusColors: Record<string, { bg: [number, number, number]; text: [number, number, number] }> = {
+    draft: { bg: [229, 231, 235], text: [55, 65, 81] },
+    sent: { bg: [219, 234, 254], text: [29, 78, 216] },
+    paid: { bg: [209, 250, 229], text: [21, 128, 61] },
+    partial: { bg: [254, 243, 199], text: [180, 83, 9] },
+    overdue: { bg: [254, 226, 226], text: [185, 28, 28] },
+    void: { bg: [254, 226, 226], text: [185, 28, 28] },
+  };
+  const statusColor = statusColors[invoice.status] || statusColors.draft;
+
+  doc.setFillColor(statusColor.bg[0], statusColor.bg[1], statusColor.bg[2]);
+  doc.roundedRect(marginLeft, y, 80, 22, 4, 4, 'F');
+  doc.setFontSize(10);
+  doc.setTextColor(statusColor.text[0], statusColor.text[1], statusColor.text[2]);
+  doc.text(invoice.status.toUpperCase(), marginLeft + 40, y + 15, { align: 'center' });
+  doc.setTextColor(0, 0, 0);
+
+  // ── Notes ──
+  if (invoice.notes) {
+    y += 40;
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Notes:', marginLeft, y);
+    y += 14;
+    doc.setFont('helvetica', 'normal');
+    const noteLines = doc.splitTextToSize(invoice.notes, maxWidth);
+    doc.text(noteLines, marginLeft, y);
+  }
+
+  // ── Footer ──
+  doc.setFontSize(8);
+  doc.setTextColor(128, 128, 128);
+  doc.text(
+    'Thank you for your business!',
+    pageWidth / 2,
+    pageHeight - 30,
+    { align: 'center' }
+  );
+  doc.setTextColor(0, 0, 0);
+
+  // Generate filename
+  const clientLastName = (client?.last_name || 'Client').replace(/[^a-zA-Z0-9]/g, '');
+  const filename = `Invoice_${invoice.invoice_number}_${clientLastName}.pdf`;
+
+  const pdfOutput = doc.output('arraybuffer');
+  const base64Pdf = Buffer.from(pdfOutput).toString('base64');
+
+  return { base64Pdf, filename };
 }
 
 // Helper: build a single-client chart PDF and return as Buffer

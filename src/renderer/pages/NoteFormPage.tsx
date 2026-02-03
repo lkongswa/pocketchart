@@ -19,7 +19,29 @@ import {
   PenLine,
   Trash2,
 } from 'lucide-react';
-import type { Client, Note, Goal, GoalStatus, Discipline, SOAPSection, CptLine } from '../../shared/types';
+import type { Client, Note, Goal, GoalStatus, Discipline, SOAPSection, CptLine, PlaceOfService } from '../../shared/types';
+
+// Place of service options
+const PLACE_OF_SERVICE_OPTIONS = [
+  { value: '11', label: 'Office' },
+  { value: '12', label: 'Home' },
+  { value: '02', label: 'Telehealth' },
+  { value: '10', label: 'Telehealth (Patient Home)' },
+  { value: '22', label: 'Outpatient Hospital' },
+  { value: '31', label: 'Skilled Nursing Facility' },
+];
+
+// Common modifiers for therapy
+const MODIFIER_OPTIONS = [
+  { value: 'GN', label: 'GN - Speech-Language Pathology' },
+  { value: 'GO', label: 'GO - Occupational Therapy' },
+  { value: 'GP', label: 'GP - Physical Therapy' },
+  { value: '59', label: '59 - Distinct Procedural Service' },
+  { value: 'KX', label: 'KX - Requirements Met' },
+  { value: '76', label: '76 - Repeat Procedure Same Physician' },
+  { value: '77', label: '77 - Repeat Procedure Different Physician' },
+  { value: 'CO', label: 'CO - Concurrent Outpatient Rehab' },
+];
 import NoteBankPopover from '../components/NoteBankPopover';
 import SmartTextarea from '../components/SmartTextarea';
 import SignaturePad from '../components/SignaturePad';
@@ -79,6 +101,10 @@ export default function NoteFormPage() {
   const [signatureImage, setSignatureImage] = useState('');
   const [signatureTyped, setSignatureTyped] = useState('');
   const [existingSignedAt, setExistingSignedAt] = useState('');
+  // V2/V3 Billing fields
+  const [placeOfService, setPlaceOfService] = useState<PlaceOfService>('11');
+  const [cptModifiers, setCptModifiers] = useState<string[]>([]);
+  const [chargeAmount, setChargeAmount] = useState<number>(0);
 
   // UI state
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -168,6 +194,15 @@ export default function NoteFormPage() {
         setSignatureImage(note.signature_image || '');
         setSignatureTyped(note.signature_typed || '');
         setExistingSignedAt(note.signed_at || '');
+        // V2/V3 Billing fields
+        setPlaceOfService((note.place_of_service as PlaceOfService) || '11');
+        setChargeAmount(note.charge_amount || 0);
+        try {
+          const parsedModifiers = JSON.parse(note.cpt_modifiers || '[]');
+          setCptModifiers(Array.isArray(parsedModifiers) ? parsedModifiers : []);
+        } catch {
+          setCptModifiers([]);
+        }
       }
     } catch (err) {
       console.error('Failed to load data:', err);
@@ -283,6 +318,10 @@ export default function NoteFormPage() {
         units: filteredCptLines.reduce((sum, l) => sum + (l.units || 0), 0),
         cpt_code: filteredCptLines[0]?.code || '',
         cpt_codes: JSON.stringify(filteredCptLines),
+        // V2/V3 Billing fields
+        cpt_modifiers: JSON.stringify(cptModifiers),
+        place_of_service: placeOfService,
+        charge_amount: chargeAmount,
         subjective,
         objective,
         assessment,
@@ -504,6 +543,75 @@ export default function NoteFormPage() {
                   )}
                 </div>
               ))}
+            </div>
+          </div>
+
+          {/* Billing Fields */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 pt-4 border-t border-[var(--color-border)]">
+            <div>
+              <label className="label">Place of Service</label>
+              <select
+                className="select"
+                value={placeOfService}
+                onChange={(e) => setPlaceOfService(e.target.value as PlaceOfService)}
+              >
+                {PLACE_OF_SERVICE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label">Modifiers</label>
+              <select
+                className="select"
+                value=""
+                onChange={(e) => {
+                  if (e.target.value && !cptModifiers.includes(e.target.value)) {
+                    setCptModifiers(prev => [...prev, e.target.value]);
+                  }
+                  e.target.value = '';
+                }}
+              >
+                <option value="">Add modifier...</option>
+                {MODIFIER_OPTIONS.filter(m => !cptModifiers.includes(m.value)).map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+              {cptModifiers.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {cptModifiers.map((mod) => (
+                    <span
+                      key={mod}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs"
+                    >
+                      {mod}
+                      <button
+                        type="button"
+                        className="hover:text-blue-900"
+                        onClick={() => setCptModifiers(prev => prev.filter(m => m !== mod))}
+                      >
+                        <X size={12} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div>
+              <label className="label">Charge Amount</label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)]">$</span>
+                <input
+                  type="number"
+                  className="input pl-7"
+                  placeholder="0.00"
+                  min={0}
+                  step={0.01}
+                  value={chargeAmount || ''}
+                  onChange={(e) => setChargeAmount(parseFloat(e.target.value) || 0)}
+                />
+              </div>
+              <p className="text-xs text-[var(--color-text-tertiary)] mt-1">For billing purposes</p>
             </div>
           </div>
         </div>
