@@ -875,7 +875,14 @@ export default function BillingPage() {
                       <ol className="space-y-2 text-sm text-emerald-700">
                         <li className="flex gap-2">
                           <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">1</span>
-                          <span>Go to your <button onClick={() => window.api.shell.openExternal('https://dashboard.stripe.com/apikeys')} className="font-medium underline text-emerald-700 hover:text-emerald-900 cursor-pointer">Stripe Dashboard → API Keys</button></span>
+                          <span>Go to your <a
+                            href="https://dashboard.stripe.com/apikeys"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              window.api.shell.openExternal('https://dashboard.stripe.com/apikeys');
+                            }}
+                            className="font-medium underline text-emerald-700 hover:text-emerald-900 cursor-pointer"
+                          >Stripe Dashboard → API Keys</a></span>
                         </li>
                         <li className="flex gap-2">
                           <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">2</span>
