@@ -240,6 +240,26 @@ function createWindow() {
     }, 800);
   });
 
+  // Intercept all navigation attempts and open external URLs in system browser
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    // Open external URLs in the default system browser
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      shell.openExternal(url);
+      return { action: 'deny' }; // Prevent Electron from opening a new window
+    }
+    return { action: 'allow' };
+  });
+
+  // Also handle clicks on links with target="_blank" or navigation away from app
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    // If navigating away from our app, open in external browser instead
+    const appUrl = isDev ? 'http://localhost:3000' : 'file://';
+    if (!url.startsWith(appUrl)) {
+      event.preventDefault();
+      shell.openExternal(url);
+    }
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
