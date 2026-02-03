@@ -230,6 +230,19 @@ const api = {
   shell: {
     openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   },
+
+  // Stripe Payment Integration
+  stripe: {
+    /** Get or create a Stripe customer for a client */
+    getOrCreateCustomer: (clientId: number) =>
+      ipcRenderer.invoke('stripe:getOrCreateCustomer', clientId),
+    /** Create a payment link for an invoice (opens in browser for client to pay) */
+    createPaymentLink: (invoiceId: number) =>
+      ipcRenderer.invoke('stripe:createPaymentLink', invoiceId),
+    /** Check if an invoice's payment link has been paid (polling-based) */
+    checkPaymentStatus: (invoiceId: number) =>
+      ipcRenderer.invoke('stripe:checkPaymentStatus', invoiceId),
+  },
 };
 
 contextBridge.exposeInMainWorld('api', api);

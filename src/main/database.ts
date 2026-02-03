@@ -478,6 +478,19 @@ function runMigrations(): void {
         `);
       },
     },
+    {
+      version: 14,
+      description: 'Add Stripe payment link columns for invoices',
+      up: () => {
+        // Add payment link tracking to invoices
+        db.exec(`
+          ALTER TABLE invoices ADD COLUMN stripe_payment_link_id TEXT DEFAULT '';
+        `);
+        db.exec(`
+          ALTER TABLE invoices ADD COLUMN stripe_payment_link_url TEXT DEFAULT '';
+        `);
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);

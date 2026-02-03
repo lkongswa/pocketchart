@@ -24,6 +24,12 @@ import {
   File,
   FileImage,
   FileType,
+  DollarSign,
+  CreditCard,
+  Receipt,
+  ExternalLink,
+  AlertCircle,
+  Loader2,
 } from 'lucide-react';
 import type {
   Client,
@@ -34,6 +40,10 @@ import type {
   Evaluation,
   Goal,
   GoalStatus,
+  Invoice,
+  InvoiceStatus,
+  Payment,
+  PaymentMethod,
 } from '../../shared/types';
 import ClientFormModal from '../components/ClientFormModal';
 import GoalFormModal from '../components/GoalFormModal';
@@ -65,7 +75,31 @@ const goalStatusConfig: Record<GoalStatus, { className: string; icon: React.Elem
   modified: { className: 'bg-amber-100 text-amber-700', icon: RefreshCw, label: 'Modified' },
 };
 
-type Tab = 'overview' | 'notes' | 'evaluations' | 'goals' | 'documents';
+type Tab = 'overview' | 'notes' | 'evaluations' | 'goals' | 'documents' | 'billing';
+
+const STATUS_COLORS: Record<InvoiceStatus, { bg: string; text: string }> = {
+  draft: { bg: 'bg-gray-100', text: 'text-gray-700' },
+  sent: { bg: 'bg-blue-100', text: 'text-blue-700' },
+  paid: { bg: 'bg-emerald-100', text: 'text-emerald-700' },
+  partial: { bg: 'bg-amber-100', text: 'text-amber-700' },
+  void: { bg: 'bg-red-100', text: 'text-red-700' },
+  overdue: { bg: 'bg-red-100', text: 'text-red-700' },
+};
+
+const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
+  card: 'Card',
+  cash: 'Cash',
+  check: 'Check',
+  insurance: 'Insurance',
+  other: 'Other',
+};
+
+const formatCurrency = (amount: number) => {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+  }).format(amount);
+};
 
 const DOCUMENT_CATEGORIES = [
   { value: 'all', label: 'All' },
@@ -136,12 +170,19 @@ const ClientDetailPage: React.FC = () => {
   const [evaluations, setEvaluations] = useState<Evaluation[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [documents, setDocuments] = useState<ClientDocument[]>([]);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [docCategoryFilter, setDocCategoryFilter] = useState<string>('all');
   const [deletingDocId, setDeletingDocId] = useState<number | null>(null);
   const [deletingNoteId, setDeletingNoteId] = useState<number | null>(null);
   const [deletingEvalId, setDeletingEvalId] = useState<number | null>(null);
+
+  // Billing state
+  const [generatingPaymentLink, setGeneratingPaymentLink] = useState<number | null>(null);
+  const [checkingPaymentStatus, setCheckingPaymentStatus] = useState<number | null>(null);
+  const [billingToast, setBillingToast] = useState<string | null>(null);
 
   // Modals
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -153,18 +194,22 @@ const ClientDetailPage: React.FC = () => {
     if (!clientId) return;
     setLoading(true);
     try {
-      const [clientData, notesData, evalsData, goalsData, docsData] = await Promise.all([
+      const [clientData, notesData, evalsData, goalsData, docsData, invoicesData, paymentsData] = await Promise.all([
         window.api.clients.get(clientId),
         window.api.notes.listByClient(clientId),
         window.api.evaluations.listByClient(clientId),
         window.api.goals.listByClient(clientId),
         window.api.documents.list({ clientId }),
+        window.api.invoices.list({ clientId }),
+        window.api.payments.list({ clientId }),
       ]);
       setClient(clientData);
       setNotes(notesData);
       setEvaluations(evalsData);
       setGoals(goalsData);
       setDocuments(docsData);
+      setInvoices(invoicesData);
+      setPayments(paymentsData);
     } catch (err) {
       console.error('Failed to load client data:', err);
     } finally {
@@ -808,6 +853,271 @@ const ClientDetailPage: React.FC = () => {
     );
   };
 
+  // --- Billing Handlers ---
+
+  const handleGeneratePaymentLink = async (invoiceId: number) => {
+    setGeneratingPaymentLink(invoiceId);
+    try {
+      const result = await window.api.stripe.createPaymentLink(invoiceId);
+      if (result.url) {
+        await window.api.shell.openExternal(result.url);
+        setBillingToast(result.existing ? 'Payment link opened in browser' : 'Payment link created and opened in browser');
+        // Refresh invoices to get the updated payment link info
+        const invoicesData = await window.api.invoices.list({ clientId });
+        setInvoices(invoicesData);
+      }
+    } catch (err: any) {
+      console.error('Failed to create payment link:', err);
+      setBillingToast(err.message || 'Failed to create payment link');
+    } finally {
+      setGeneratingPaymentLink(null);
+    }
+  };
+
+  const handleCheckPaymentStatus = async (invoiceId: number) => {
+    setCheckingPaymentStatus(invoiceId);
+    try {
+      const result = await window.api.stripe.checkPaymentStatus(invoiceId);
+      if (result.status === 'paid') {
+        setBillingToast('Payment received! Invoice marked as paid.');
+        // Refresh data
+        const [invoicesData, paymentsData] = await Promise.all([
+          window.api.invoices.list({ clientId }),
+          window.api.payments.list({ clientId }),
+        ]);
+        setInvoices(invoicesData);
+        setPayments(paymentsData);
+      } else if (result.status === 'pending') {
+        setBillingToast('Payment not yet received. Client may still be completing payment.');
+      } else if (result.status === 'no_payment_link') {
+        setBillingToast('No payment link exists for this invoice. Click "Pay Now" to create one.');
+      }
+    } catch (err: any) {
+      console.error('Failed to check payment status:', err);
+      setBillingToast(err.message || 'Failed to check payment status');
+    } finally {
+      setCheckingPaymentStatus(null);
+    }
+  };
+
+  const handleCopyPaymentLink = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setBillingToast('Payment link copied to clipboard');
+    } catch (err) {
+      console.error('Failed to copy link:', err);
+    }
+  };
+
+  // Clear billing toast
+  useEffect(() => {
+    if (billingToast) {
+      const timer = setTimeout(() => setBillingToast(null), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [billingToast]);
+
+  // --- Render Billing Tab ---
+
+  const renderBilling = () => {
+    const balanceDue = invoices
+      .filter((i) => i.status !== 'paid' && i.status !== 'void')
+      .reduce((sum, i) => sum + i.total_amount, 0);
+
+    const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+
+    const totalInvoiced = invoices
+      .filter((i) => i.status !== 'void')
+      .reduce((sum, i) => sum + i.total_amount, 0);
+
+    return (
+      <div className="space-y-6">
+        {/* Billing Toast */}
+        {billingToast && (
+          <div className="fixed top-4 right-4 z-50 flex items-center gap-2 bg-emerald-600 text-white px-4 py-3 rounded-lg shadow-lg animate-fade-in">
+            <CheckCircle className="w-4 h-4" />
+            <span className="text-sm font-medium">{billingToast}</span>
+          </div>
+        )}
+
+        {/* Balance Summary Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="card p-5">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm text-[var(--color-text-secondary)]">Balance Due</span>
+              <AlertCircle className={`w-5 h-5 ${balanceDue > 0 ? 'text-amber-500' : 'text-gray-300'}`} />
+            </div>
+            <p className={`text-2xl font-bold ${balanceDue > 0 ? 'text-amber-600' : 'text-[var(--color-text)]'}`}>
+              {formatCurrency(balanceDue)}
+            </p>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+              {invoices.filter((i) => i.status !== 'paid' && i.status !== 'void').length} unpaid invoice(s)
+            </p>
+          </div>
+
+          <div className="card p-5">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm text-[var(--color-text-secondary)]">Total Paid</span>
+              <DollarSign className="w-5 h-5 text-emerald-500" />
+            </div>
+            <p className="text-2xl font-bold text-emerald-600">{formatCurrency(totalPaid)}</p>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+              {payments.length} payment(s) recorded
+            </p>
+          </div>
+
+          <div className="card p-5">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm text-[var(--color-text-secondary)]">Total Invoiced</span>
+              <Receipt className="w-5 h-5 text-blue-500" />
+            </div>
+            <p className="text-2xl font-bold text-[var(--color-text)]">{formatCurrency(totalInvoiced)}</p>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+              {invoices.length} invoice(s) created
+            </p>
+          </div>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="flex items-center gap-3">
+          <button
+            className="btn-primary gap-2"
+            onClick={() => navigate(`/billing?newInvoice=${clientId}`)}
+          >
+            <Plus size={16} />
+            New Invoice
+          </button>
+          <button
+            className="btn-secondary gap-2"
+            onClick={() => navigate(`/billing?newPayment=${clientId}`)}
+          >
+            <CreditCard size={16} />
+            Record Payment
+          </button>
+        </div>
+
+        {/* Invoices List */}
+        <div className="card">
+          <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
+            <h3 className="font-semibold text-[var(--color-text)]">Invoices</h3>
+          </div>
+          {invoices.length === 0 ? (
+            <div className="p-8 text-center text-[var(--color-text-secondary)]">
+              <Receipt className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+              <p>No invoices yet</p>
+              <p className="text-sm mt-1">Create an invoice to start billing this client</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-[var(--color-border)]">
+              {invoices.map((invoice) => (
+                <div key={invoice.id} className="flex items-center justify-between p-4 hover:bg-gray-50">
+                  <div className="flex items-center gap-4">
+                    <div>
+                      <p className="font-medium text-[var(--color-text)]">{invoice.invoice_number}</p>
+                      <p className="text-sm text-[var(--color-text-secondary)]">
+                        {formatDate(invoice.invoice_date)}
+                        {invoice.due_date && ` · Due ${formatDate(invoice.due_date)}`}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <div className="text-right">
+                      <p className="font-medium text-[var(--color-text)]">
+                        {formatCurrency(invoice.total_amount)}
+                      </p>
+                      <span
+                        className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
+                          STATUS_COLORS[invoice.status].bg
+                        } ${STATUS_COLORS[invoice.status].text}`}
+                      >
+                        {invoice.status}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {invoice.status !== 'paid' && invoice.status !== 'void' && (
+                        <>
+                          <button
+                            className="btn-primary btn-sm gap-1.5"
+                            onClick={() => handleGeneratePaymentLink(invoice.id)}
+                            disabled={generatingPaymentLink === invoice.id}
+                          >
+                            {generatingPaymentLink === invoice.id ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                              <ExternalLink size={14} />
+                            )}
+                            Pay Now
+                          </button>
+                          {invoice.stripe_payment_link_url && (
+                            <>
+                              <button
+                                className="btn-secondary btn-sm gap-1.5"
+                                onClick={() => handleCheckPaymentStatus(invoice.id)}
+                                disabled={checkingPaymentStatus === invoice.id}
+                                title="Check if payment was completed"
+                              >
+                                {checkingPaymentStatus === invoice.id ? (
+                                  <Loader2 size={14} className="animate-spin" />
+                                ) : (
+                                  <RefreshCw size={14} />
+                                )}
+                                Check
+                              </button>
+                              <button
+                                className="btn-ghost btn-sm"
+                                onClick={() => handleCopyPaymentLink(invoice.stripe_payment_link_url)}
+                                title="Copy payment link"
+                              >
+                                Copy Link
+                              </button>
+                            </>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Payments History */}
+        <div className="card">
+          <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
+            <h3 className="font-semibold text-[var(--color-text)]">Payment History</h3>
+          </div>
+          {payments.length === 0 ? (
+            <div className="p-8 text-center text-[var(--color-text-secondary)]">
+              <CreditCard className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+              <p>No payments recorded</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-[var(--color-border)]">
+              {payments.map((payment) => (
+                <div key={payment.id} className="flex items-center justify-between p-4 hover:bg-gray-50">
+                  <div>
+                    <p className="font-medium text-[var(--color-text)]">
+                      {formatDate(payment.payment_date)}
+                    </p>
+                    <p className="text-sm text-[var(--color-text-secondary)]">
+                      {PAYMENT_METHOD_LABELS[payment.payment_method]}
+                      {payment.reference_number && ` · Ref: ${payment.reference_number}`}
+                    </p>
+                    {payment.notes && (
+                      <p className="text-xs text-[var(--color-text-secondary)] mt-1">{payment.notes}</p>
+                    )}
+                  </div>
+                  <p className="font-medium text-emerald-600">+{formatCurrency(payment.amount)}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   // --- Tab config ---
 
   const tabDotColor: Record<Tab, string> = {
@@ -816,7 +1126,13 @@ const ClientDetailPage: React.FC = () => {
     evaluations: 'bg-violet-400',
     goals: 'bg-amber-400',
     documents: 'bg-slate-400',
+    billing: 'bg-emerald-400',
   };
+
+  // Calculate balance due for tab label
+  const balanceDue = invoices
+    .filter((i) => i.status !== 'paid' && i.status !== 'void')
+    .reduce((sum, i) => sum + i.total_amount, 0);
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'overview', label: 'Overview' },
@@ -824,6 +1140,7 @@ const ClientDetailPage: React.FC = () => {
     { key: 'evaluations', label: `Evaluations (${evaluations.length})` },
     { key: 'goals', label: `Goals (${goals.length})` },
     { key: 'documents', label: `Documents (${documents.length})` },
+    { key: 'billing', label: balanceDue > 0 ? `Billing (${formatCurrency(balanceDue)})` : 'Billing' },
   ];
 
   const tabContent: Record<Tab, () => React.ReactElement> = {
@@ -832,6 +1149,7 @@ const ClientDetailPage: React.FC = () => {
     evaluations: renderEvaluations,
     goals: renderGoals,
     documents: renderDocuments,
+    billing: renderBilling,
   };
 
   // --- Main Render ---

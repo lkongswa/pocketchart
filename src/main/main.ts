@@ -7,6 +7,7 @@ import { jsPDF } from 'jspdf';
 import { v4 as uuidv4 } from 'uuid';
 import archiver from 'archiver';
 import { autoUpdater } from 'electron-updater';
+import Stripe from 'stripe';
 
 // ── Secure Storage Helpers ──
 // Uses Electron's safeStorage API which leverages OS credential storage:
@@ -910,6 +911,200 @@ function registerIpcHandlers() {
       return true;
     }
     return false;
+  });
+
+  // ── Stripe Payment Integration ──
+
+  // Helper to get decrypted Stripe API key
+  const getStripeClient = (): Stripe | null => {
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('secure_stripe_secret_key') as any;
+    if (!row?.value) return null;
+
+    try {
+      const stripeKey = decryptSecure(row.value);
+      if (!stripeKey) return null;
+      return new Stripe(stripeKey);
+    } catch (err) {
+      console.error('Failed to initialize Stripe client:', err);
+      return null;
+    }
+  };
+
+  // Create or get Stripe customer for a client
+  safeHandle('stripe:getOrCreateCustomer', async (_event, clientId: number) => {
+    const stripe = getStripeClient();
+    if (!stripe) throw new Error('Stripe API key not configured');
+
+    const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(clientId) as any;
+    if (!client) throw new Error('Client not found');
+
+    // If customer already exists, return it
+    if (client.stripe_customer_id) {
+      return { customerId: client.stripe_customer_id, created: false };
+    }
+
+    // Create new Stripe customer
+    const customer = await stripe.customers.create({
+      email: client.email || undefined,
+      name: `${client.first_name} ${client.last_name}`,
+      phone: client.phone || undefined,
+      metadata: {
+        pocketchart_client_id: clientId.toString(),
+      },
+    });
+
+    // Save customer ID to database
+    db.prepare('UPDATE clients SET stripe_customer_id = ? WHERE id = ?')
+      .run(customer.id, clientId);
+
+    return { customerId: customer.id, created: true };
+  });
+
+  // Create a Payment Link for an invoice
+  safeHandle('stripe:createPaymentLink', async (_event, invoiceId: number) => {
+    const stripe = getStripeClient();
+    if (!stripe) throw new Error('Stripe API key not configured');
+
+    const invoice = db.prepare('SELECT * FROM invoices WHERE id = ?').get(invoiceId) as any;
+    if (!invoice) throw new Error('Invoice not found');
+
+    const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(invoice.client_id) as any;
+    if (!client) throw new Error('Client not found');
+
+    // If payment link already exists and invoice not yet paid, return existing
+    if (invoice.stripe_payment_link_url && invoice.status !== 'paid') {
+      return {
+        url: invoice.stripe_payment_link_url,
+        id: invoice.stripe_payment_link_id,
+        existing: true
+      };
+    }
+
+    // Ensure customer exists in Stripe
+    let customerId = client.stripe_customer_id;
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        email: client.email || undefined,
+        name: `${client.first_name} ${client.last_name}`,
+        metadata: { pocketchart_client_id: client.id.toString() },
+      });
+      customerId = customer.id;
+      db.prepare('UPDATE clients SET stripe_customer_id = ? WHERE id = ?')
+        .run(customerId, client.id);
+    }
+
+    // Create a one-time price for this invoice amount
+    const amountInCents = Math.round(invoice.total_amount * 100);
+
+    const price = await stripe.prices.create({
+      currency: 'usd',
+      unit_amount: amountInCents,
+      product_data: {
+        name: `Invoice ${invoice.invoice_number}`,
+        metadata: {
+          pocketchart_invoice_id: invoiceId.toString(),
+        },
+      },
+    });
+
+    // Create the payment link
+    const paymentLink = await stripe.paymentLinks.create({
+      line_items: [{ price: price.id, quantity: 1 }],
+      metadata: {
+        pocketchart_invoice_id: invoiceId.toString(),
+        pocketchart_client_id: client.id.toString(),
+      },
+      after_completion: {
+        type: 'hosted_confirmation',
+        hosted_confirmation: {
+          custom_message: `Thank you for your payment! Invoice ${invoice.invoice_number} has been paid.`,
+        },
+      },
+    });
+
+    // Store the payment link in the database
+    db.prepare(`
+      UPDATE invoices SET
+        stripe_payment_link_id = ?,
+        stripe_payment_link_url = ?
+      WHERE id = ?
+    `).run(paymentLink.id, paymentLink.url, invoiceId);
+
+    return { url: paymentLink.url, id: paymentLink.id, existing: false };
+  });
+
+  // Check payment status for an invoice (polling-based)
+  safeHandle('stripe:checkPaymentStatus', async (_event, invoiceId: number) => {
+    const stripe = getStripeClient();
+    if (!stripe) throw new Error('Stripe API key not configured');
+
+    const invoice = db.prepare('SELECT * FROM invoices WHERE id = ?').get(invoiceId) as any;
+    if (!invoice) throw new Error('Invoice not found');
+
+    // If already marked as paid, no need to check
+    if (invoice.status === 'paid') {
+      return { status: 'paid', alreadyRecorded: true };
+    }
+
+    // If no payment link exists, nothing to check
+    if (!invoice.stripe_payment_link_id) {
+      return { status: 'no_payment_link' };
+    }
+
+    // Check for completed checkout sessions associated with this payment link
+    const sessions = await stripe.checkout.sessions.list({
+      payment_link: invoice.stripe_payment_link_id,
+      limit: 5,
+    });
+
+    for (const session of sessions.data) {
+      if (session.payment_status === 'paid') {
+        // Check if we've already recorded this payment
+        const existingPayment = db.prepare(
+          'SELECT id FROM payments WHERE stripe_payment_intent_id = ?'
+        ).get(session.payment_intent as string);
+
+        if (!existingPayment) {
+          // Record the payment
+          db.prepare(`
+            INSERT INTO payments (
+              client_id, invoice_id, payment_date, amount,
+              payment_method, stripe_payment_intent_id, notes
+            ) VALUES (?, ?, ?, ?, 'card', ?, ?)
+          `).run(
+            invoice.client_id,
+            invoiceId,
+            new Date().toISOString().slice(0, 10),
+            invoice.total_amount,
+            session.payment_intent,
+            'Paid via Stripe Payment Link'
+          );
+
+          // Update invoice status to paid
+          db.prepare('UPDATE invoices SET status = ? WHERE id = ?')
+            .run('paid', invoiceId);
+
+          // Log the payment
+          db.prepare(`
+            INSERT INTO audit_log (entity_type, entity_id, action, client_id, amount, description)
+            VALUES ('payment', ?, 'stripe_payment_received', ?, ?, ?)
+          `).run(
+            invoiceId,
+            invoice.client_id,
+            invoice.total_amount,
+            `Payment received via Stripe for Invoice ${invoice.invoice_number}`
+          );
+        }
+
+        return {
+          status: 'paid',
+          paymentIntentId: session.payment_intent,
+          amountPaid: session.amount_total ? session.amount_total / 100 : invoice.total_amount
+        };
+      }
+    }
+
+    return { status: 'pending' };
   });
 
   // ── License ──

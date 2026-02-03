@@ -309,6 +309,8 @@ export interface Invoice {
   status: InvoiceStatus;
   notes: string;
   stripe_invoice_id: string;
+  stripe_payment_link_id: string;
+  stripe_payment_link_url: string;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -632,6 +634,20 @@ export interface PocketChartAPI {
     onNotAvailable: (callback: () => void) => void;
     onProgress: (callback: (progress: { percent: number; transferred: number; total: number }) => void) => void;
     onDownloaded: (callback: (info: { version: string }) => void) => void;
+  };
+  /** Stripe Payment Integration */
+  stripe: {
+    /** Get or create a Stripe customer for a client */
+    getOrCreateCustomer: (clientId: number) => Promise<{ customerId: string; created: boolean }>;
+    /** Create a payment link for an invoice (client pays via browser) */
+    createPaymentLink: (invoiceId: number) => Promise<{ url: string; id: string; existing: boolean }>;
+    /** Check if an invoice's payment link has been paid (polling-based) */
+    checkPaymentStatus: (invoiceId: number) => Promise<{
+      status: 'paid' | 'pending' | 'no_payment_link';
+      alreadyRecorded?: boolean;
+      paymentIntentId?: string;
+      amountPaid?: number;
+    }>;
   };
 }
 
