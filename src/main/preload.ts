@@ -225,6 +225,11 @@ const api = {
       ipcRenderer.on('update:downloaded', (_event, info) => callback(info));
     },
   },
+
+  // Shell (open external links in default browser)
+  shell: {
+    openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  },
 };
 
 contextBridge.exposeInMainWorld('api', api);

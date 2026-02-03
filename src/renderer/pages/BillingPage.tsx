@@ -875,7 +875,7 @@ export default function BillingPage() {
                       <ol className="space-y-2 text-sm text-emerald-700">
                         <li className="flex gap-2">
                           <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">1</span>
-                          <span>Go to your <a href="https://dashboard.stripe.com/apikeys" target="_blank" rel="noopener noreferrer" className="font-medium underline">Stripe Dashboard → API Keys</a></span>
+                          <span>Go to your <button onClick={() => window.api.shell.openExternal('https://dashboard.stripe.com/apikeys')} className="font-medium underline text-emerald-700 hover:text-emerald-900 cursor-pointer">Stripe Dashboard → API Keys</button></span>
                         </li>
                         <li className="flex gap-2">
                           <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">2</span>
@@ -987,15 +987,13 @@ export default function BillingPage() {
                         <CreditCard className="w-4 h-4" />
                         Connect Stripe
                       </button>
-                      <a
-                        href="https://dashboard.stripe.com/register"
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <button
+                        onClick={() => window.api.shell.openExternal('https://dashboard.stripe.com/register')}
                         className="btn-ghost gap-2"
                       >
                         <ExternalLink className="w-4 h-4" />
                         Create Stripe Account
-                      </a>
+                      </button>
                     </div>
                   </div>
                 )}

@@ -882,6 +882,16 @@ function registerIpcHandlers() {
     return !!row?.value;
   });
 
+  // ── Shell (open external links in default system browser) ──
+  safeHandle('shell:openExternal', async (_event, url: string) => {
+    // Only allow http/https URLs for security
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      await shell.openExternal(url);
+      return true;
+    }
+    return false;
+  });
+
   // ── License ──
   safeHandle('license:getStatus', () => {
     const tier = (db.prepare("SELECT value FROM settings WHERE key = 'app_tier'").get() as any)?.value || 'free';

@@ -556,6 +556,11 @@ export interface PocketChartAPI {
     /** Check if a key exists in secure storage */
     exists: (key: string) => Promise<boolean>;
   };
+  /** Shell operations - open URLs in default system browser */
+  shell: {
+    /** Open a URL in the user's default browser (only http/https allowed) */
+    openExternal: (url: string) => Promise<boolean>;
+  };
   // V2 Billing APIs
   feeSchedule: {
     list: () => Promise<FeeScheduleEntry[]>;
