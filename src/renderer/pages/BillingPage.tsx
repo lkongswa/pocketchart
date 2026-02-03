@@ -859,30 +859,78 @@ export default function BillingPage() {
             ) : (
               <div className="space-y-4">
                 {showStripeSetup ? (
-                  <div className="space-y-4">
+                  <div className="space-y-5">
+                    {/* Step-by-step guide */}
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                      <h4 className="font-medium text-amber-800 mb-3">Setup Instructions</h4>
+                      <ol className="space-y-2 text-sm text-amber-700">
+                        <li className="flex gap-2">
+                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-200 text-amber-800 flex items-center justify-center text-xs font-bold">1</span>
+                          <span>Go to your <a href="https://dashboard.stripe.com/apikeys" target="_blank" rel="noopener noreferrer" className="font-medium underline">Stripe Dashboard → API Keys</a></span>
+                        </li>
+                        <li className="flex gap-2">
+                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-200 text-amber-800 flex items-center justify-center text-xs font-bold">2</span>
+                          <span>Find <strong>"Secret key"</strong> under "Standard keys" (NOT the Publishable key)</span>
+                        </li>
+                        <li className="flex gap-2">
+                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-200 text-amber-800 flex items-center justify-center text-xs font-bold">3</span>
+                          <span>Click "Reveal test key" or the eye icon to show the key</span>
+                        </li>
+                        <li className="flex gap-2">
+                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-200 text-amber-800 flex items-center justify-center text-xs font-bold">4</span>
+                          <span>Copy the key that starts with <code className="bg-amber-100 px-1 rounded">sk_live_</code> or <code className="bg-amber-100 px-1 rounded">sk_test_</code></span>
+                        </li>
+                        <li className="flex gap-2">
+                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-200 text-amber-800 flex items-center justify-center text-xs font-bold">5</span>
+                          <span>Paste it below</span>
+                        </li>
+                      </ol>
+                    </div>
+
+                    {/* Warning about key types */}
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                      <p className="text-sm text-red-700">
+                        <strong>Important:</strong> Use the <strong>Secret key</strong> (starts with <code className="bg-red-100 px-1 rounded">sk_</code>),
+                        NOT the Publishable key (which starts with <code className="bg-red-100 px-1 rounded">pk_</code>).
+                      </p>
+                    </div>
+
                     <div>
                       <label className="label">Stripe Secret Key</label>
                       <input
                         type="password"
                         className="input font-mono"
-                        placeholder="sk_live_..."
+                        placeholder="sk_live_... or sk_test_..."
                         value={stripeKeyInput}
                         onChange={(e) => setStripeKeyInput(e.target.value)}
                       />
-                      <p className="text-xs text-[var(--color-text-secondary)] mt-1.5">
-                        Find your API keys in your{' '}
-                        <a
-                          href="https://dashboard.stripe.com/apikeys"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[var(--color-primary)] hover:underline"
-                        >
-                          Stripe Dashboard <ExternalLink className="w-3 h-3 inline" />
-                        </a>
-                      </p>
+                      {stripeKeyInput && !stripeKeyInput.startsWith('sk_') && (
+                        <p className="text-xs text-red-600 mt-1.5">
+                          ⚠️ This doesn't look like a Secret key. Make sure it starts with "sk_"
+                        </p>
+                      )}
+                      {stripeKeyInput && stripeKeyInput.startsWith('pk_') && (
+                        <p className="text-xs text-red-600 mt-1.5">
+                          ❌ This is a Publishable key. You need the Secret key instead (starts with "sk_")
+                        </p>
+                      )}
+                      {stripeKeyInput && stripeKeyInput.startsWith('sk_test_') && (
+                        <p className="text-xs text-amber-600 mt-1.5">
+                          ℹ️ This is a test key - good for testing! Use sk_live_ for real payments.
+                        </p>
+                      )}
+                      {stripeKeyInput && stripeKeyInput.startsWith('sk_live_') && (
+                        <p className="text-xs text-emerald-600 mt-1.5">
+                          ✓ Live key detected - you'll be able to accept real payments.
+                        </p>
+                      )}
                     </div>
                     <div className="flex gap-2">
-                      <button className="btn-primary" onClick={handleSaveStripeKey}>
+                      <button
+                        className="btn-primary"
+                        onClick={handleSaveStripeKey}
+                        disabled={!stripeKeyInput.startsWith('sk_')}
+                      >
                         Save API Key
                       </button>
                       <button className="btn-ghost" onClick={() => setShowStripeSetup(false)}>
@@ -894,15 +942,26 @@ export default function BillingPage() {
                   <div className="space-y-4">
                     <p className="text-sm text-[var(--color-text-secondary)]">
                       Connect your Stripe account to accept credit card payments directly from
-                      invoices.
+                      invoices. You'll need a Stripe account (free to create).
                     </p>
-                    <button
-                      className="btn-primary gap-2"
-                      onClick={() => setShowStripeSetup(true)}
-                    >
-                      <CreditCard className="w-4 h-4" />
-                      Connect Stripe
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        className="btn-primary gap-2"
+                        onClick={() => setShowStripeSetup(true)}
+                      >
+                        <CreditCard className="w-4 h-4" />
+                        Connect Stripe
+                      </button>
+                      <a
+                        href="https://dashboard.stripe.com/register"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn-ghost gap-2"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                        Create Stripe Account
+                      </a>
+                    </div>
                   </div>
                 )}
               </div>
