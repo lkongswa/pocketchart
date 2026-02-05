@@ -154,7 +154,13 @@ export default function CalendarPage() {
     if (appt.status === 'completed' && appt.note_id) {
       navigate(`/clients/${appt.client_id}/note/${appt.note_id}`);
     } else if (appt.status === 'completed' || appt.status === 'scheduled') {
-      navigate(`/clients/${appt.client_id}/note/new`);
+      navigate(`/clients/${appt.client_id}/note/new`, {
+        state: {
+          appointmentDate: appt.scheduled_date,
+          appointmentTime: appt.scheduled_time,
+          appointmentDuration: appt.duration_minutes,
+        },
+      });
     }
   };
 

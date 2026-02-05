@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   ArrowLeft,
   FileText,
@@ -61,6 +61,14 @@ function nowTime(): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+function addMinutesToTime(time: string, minutes: number): string {
+  const [h, m] = time.split(':').map(Number);
+  const total = h * 60 + m + minutes;
+  const newH = Math.floor(total / 60) % 24;
+  const newM = total % 60;
+  return `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`;
+}
+
 function calculateUnits(timeIn: string, timeOut: string): number {
   if (!timeIn || !timeOut) return 0;
   const [hIn, mIn] = timeIn.split(':').map(Number);
@@ -81,7 +89,15 @@ function formatDate(dateStr: string): string {
 export default function NoteFormPage() {
   const { id: clientId, noteId } = useParams<{ id: string; noteId?: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const isEditing = Boolean(noteId);
+
+  // Appointment context passed from calendar
+  const apptState = (location.state as {
+    appointmentDate?: string;
+    appointmentTime?: string;
+    appointmentDuration?: number;
+  }) || {};
 
   // Data
   const [client, setClient] = useState<Client | null>(null);
@@ -91,10 +107,14 @@ export default function NoteFormPage() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
-  // Form state
-  const [dateOfService, setDateOfService] = useState(todayISO());
-  const [timeIn, setTimeIn] = useState('');
-  const [timeOut, setTimeOut] = useState('');
+  // Form state — pre-fill from appointment context if available
+  const [dateOfService, setDateOfService] = useState(apptState.appointmentDate || todayISO());
+  const [timeIn, setTimeIn] = useState(apptState.appointmentTime || '');
+  const [timeOut, setTimeOut] = useState(
+    apptState.appointmentTime && apptState.appointmentDuration
+      ? addMinutesToTime(apptState.appointmentTime, apptState.appointmentDuration)
+      : ''
+  );
   const [cptLines, setCptLines] = useState<CptLine[]>([{ code: '', units: 1 }]);
   const [subjective, setSubjective] = useState('');
   const [objective, setObjective] = useState('');

@@ -195,7 +195,7 @@ const DashboardPage: React.FC = () => {
       count: stats.notesThisWeek,
       icon: <FileText size={24} className="text-blue-600" />,
       bgClass: 'bg-blue-50',
-      onClick: () => navigate('/clients'),
+      onClick: () => navigate('/notes'),
     },
     {
       label: 'Upcoming Appointments',
@@ -209,7 +209,7 @@ const DashboardPage: React.FC = () => {
       count: stats.unsignedNotes,
       icon: <PenLine size={24} className="text-amber-600" />,
       bgClass: 'bg-amber-50',
-      onClick: () => navigate('/clients'),
+      onClick: () => navigate('/notes'),
     },
   ];
 

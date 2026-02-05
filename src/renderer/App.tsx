@@ -30,6 +30,7 @@ import VaultPage from './pages/VaultPage';
 import MileagePage from './pages/MileagePage';
 import CaseloadDashboardPage from './pages/CaseloadDashboardPage';
 import YearEndSummaryPage from './pages/YearEndSummaryPage';
+import NotesOverviewPage from './pages/NotesOverviewPage';
 import PinLockScreen from './components/PinLockScreen';
 import ErrorBoundary from './components/ErrorBoundary';
 import OnboardingScreen from './components/OnboardingScreen';
@@ -127,6 +128,7 @@ const AppLayout: React.FC = () => {
           <Route path="/clients/:id/eval/new" element={<EvalFormPage />} />
           <Route path="/clients/:id/eval/:evalId" element={<EvalFormPage />} />
           <Route path="/clients/:id/superbill" element={<SuperbillPage />} />
+          <Route path="/notes" element={<NotesOverviewPage />} />
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/billing" element={<BillingPage />} />
           <Route path="/entities" element={<ContractedEntitiesPage />} />
