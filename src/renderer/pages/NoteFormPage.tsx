@@ -48,6 +48,7 @@ const MODIFIER_OPTIONS = [
 import NoteBankPopover from '../components/NoteBankPopover';
 import SmartTextarea from '../components/SmartTextarea';
 import SignaturePad from '../components/SignaturePad';
+import QuickChips from '../components/QuickChips';
 
 // ── Helpers ──
 
@@ -850,7 +851,7 @@ export default function NoteFormPage() {
 
         {/* Assessment */}
         <div className="card p-6 mb-6 bg-violet-50/50">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-3">
             <h2 className="section-title mb-0">Assessment</h2>
             <div className="relative">
               <button
@@ -861,7 +862,7 @@ export default function NoteFormPage() {
                 }
               >
                 <BookOpen className="w-3.5 h-3.5" />
-                Insert from Note Bank
+                Note Bank
               </button>
               <NoteBankPopover
                 isOpen={noteBankOpen === 'A'}
@@ -873,6 +874,18 @@ export default function NoteFormPage() {
               />
             </div>
           </div>
+
+          {/* Quick Chips Row */}
+          <div className="mb-3">
+            <QuickChips
+              discipline={discipline}
+              section="A"
+              onInsert={getNoteBankInsertHandler('A')}
+              maxChips={6}
+              onOpenFullBank={() => setNoteBankOpen('A')}
+            />
+          </div>
+
           <SmartTextarea
             ref={assessmentRef}
             className="textarea"
@@ -1256,7 +1269,7 @@ function SOAPSectionCard({
 }: SOAPSectionCardProps) {
   return (
     <div className={`card p-6 mb-6 ${soapSectionTint[sectionCode]}`}>
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-3">
         <h2 className="section-title mb-0">{title}</h2>
         <div className="relative">
           <button
@@ -1267,7 +1280,7 @@ function SOAPSectionCard({
             }
           >
             <BookOpen className="w-3.5 h-3.5" />
-            Insert from Note Bank
+            Note Bank
           </button>
           <NoteBankPopover
             isOpen={noteBankOpen === sectionCode}
@@ -1279,6 +1292,18 @@ function SOAPSectionCard({
           />
         </div>
       </div>
+
+      {/* Quick Chips Row */}
+      <div className="mb-3">
+        <QuickChips
+          discipline={discipline}
+          section={sectionCode}
+          onInsert={onInsert}
+          maxChips={6}
+          onOpenFullBank={() => setNoteBankOpen(sectionCode)}
+        />
+      </div>
+
       <SmartTextarea
         ref={textareaRef}
         className="textarea"
