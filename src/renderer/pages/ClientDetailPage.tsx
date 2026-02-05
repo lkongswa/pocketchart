@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   ArrowLeft,
   FileText,
@@ -30,6 +30,13 @@ import {
   ExternalLink,
   AlertCircle,
   Loader2,
+  TrendingUp,
+  ChevronDown,
+  ChevronRight,
+  Shield,
+  Stethoscope,
+  User,
+  Activity,
 } from 'lucide-react';
 import type {
   Client,
@@ -78,8 +85,6 @@ const goalStatusConfig: Record<GoalStatus, { className: string; icon: React.Elem
   modified: { className: 'bg-amber-100 text-amber-700', icon: RefreshCw, label: 'Modified' },
 };
 
-type Tab = 'overview' | 'notes' | 'evaluations' | 'goals' | 'documents' | 'billing' | 'compliance';
-
 const STATUS_COLORS: Record<InvoiceStatus, { bg: string; text: string }> = {
   draft: { bg: 'bg-gray-100', text: 'text-gray-700' },
   sent: { bg: 'bg-blue-100', text: 'text-blue-700' },
@@ -97,12 +102,8 @@ const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   other: 'Other',
 };
 
-const formatCurrency = (amount: number) => {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-  }).format(amount);
-};
+const formatCurrency = (amount: number) =>
+  new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
 
 const DOCUMENT_CATEGORIES = [
   { value: 'all', label: 'All' },
@@ -155,17 +156,72 @@ const truncate = (str: string, max: number): string => {
   return str.length > max ? str.slice(0, max) + '...' : str;
 };
 
-const formatCategory = (category: string): string => {
-  return category
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-};
+const formatCategory = (category: string): string =>
+  category.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 
-// --- Component ---
+// --- Simple bar chart for billing ---
+
+interface MonthlyData {
+  month: string;
+  invoiced: number;
+  paid: number;
+}
+
+function BillingChart({ invoices, payments }: { invoices: Invoice[]; payments: Payment[] }) {
+  // Build last 6 months of data
+  const monthlyData = useMemo(() => {
+    const months: MonthlyData[] = [];
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const label = d.toLocaleDateString('en-US', { month: 'short' });
+      const invoiced = invoices
+        .filter((inv) => inv.status !== 'void' && inv.invoice_date?.startsWith(key))
+        .reduce((sum, inv) => sum + (inv.total_amount || 0), 0);
+      const paid = payments
+        .filter((p) => p.payment_date?.startsWith(key))
+        .reduce((sum, p) => sum + (p.amount || 0), 0);
+      months.push({ month: label, invoiced, paid });
+    }
+    return months;
+  }, [invoices, payments]);
+
+  const maxVal = Math.max(...monthlyData.map((m) => Math.max(m.invoiced, m.paid)), 1);
+
+  return (
+    <div className="flex items-end gap-3 h-36 px-2">
+      {monthlyData.map((m, i) => (
+        <div key={i} className="flex-1 flex flex-col items-center gap-1">
+          <div className="flex items-end gap-0.5 w-full h-28">
+            {/* Invoiced bar */}
+            <div
+              className="flex-1 bg-blue-200 rounded-t-sm transition-all"
+              style={{ height: `${Math.max((m.invoiced / maxVal) * 100, m.invoiced > 0 ? 4 : 0)}%` }}
+              title={`Invoiced: ${formatCurrency(m.invoiced)}`}
+            />
+            {/* Paid bar */}
+            <div
+              className="flex-1 bg-emerald-400 rounded-t-sm transition-all"
+              style={{ height: `${Math.max((m.paid / maxVal) * 100, m.paid > 0 ? 4 : 0)}%` }}
+              title={`Paid: ${formatCurrency(m.paid)}`}
+            />
+          </div>
+          <span className="text-[10px] text-[var(--color-text-secondary)]">{m.month}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// --- Main Component ---
+
+type BottomTab = 'documents' | 'compliance';
 
 const ClientDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const clientId = Number(id);
 
   const [client, setClient] = useState<Client | null>(null);
@@ -176,11 +232,15 @@ const ClientDetailPage: React.FC = () => {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [docCategoryFilter, setDocCategoryFilter] = useState<string>('all');
   const [deletingDocId, setDeletingDocId] = useState<number | null>(null);
   const [deletingNoteId, setDeletingNoteId] = useState<number | null>(null);
   const [deletingEvalId, setDeletingEvalId] = useState<number | null>(null);
+
+  // Collapsible sections
+  const [showAllNotes, setShowAllNotes] = useState(false);
+  const [showAllGoals, setShowAllGoals] = useState(false);
+  const [bottomTab, setBottomTab] = useState<BottomTab>('documents');
 
   // Billing state
   const [generatingPaymentLink, setGeneratingPaymentLink] = useState<number | null>(null);
@@ -192,6 +252,9 @@ const ClientDetailPage: React.FC = () => {
   const [goalModalOpen, setGoalModalOpen] = useState(false);
   const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
+
+  // Route state (e.g., navigate from invoice creation)
+  const routeState = (location.state as { tab?: string; invoiceId?: number }) || {};
 
   const loadData = useCallback(async () => {
     if (!clientId) return;
@@ -211,7 +274,6 @@ const ClientDetailPage: React.FC = () => {
       setEvaluations(evalsData || []);
       setGoals(goalsData || []);
       setDocuments(docsData || []);
-      // Ensure invoices have all required fields with safe defaults
       const safeInvoices = (invoicesData || []).map((inv: any) => ({
         ...inv,
         stripe_payment_link_id: inv.stripe_payment_link_id || '',
@@ -220,7 +282,6 @@ const ClientDetailPage: React.FC = () => {
         total_amount: typeof inv.total_amount === 'number' ? inv.total_amount : 0,
       }));
       setInvoices(safeInvoices);
-      // Ensure payments have all required fields
       const safePayments = (paymentsData || []).map((pay: any) => ({
         ...pay,
         payment_method: pay.payment_method || 'other',
@@ -238,13 +299,14 @@ const ClientDetailPage: React.FC = () => {
     loadData();
   }, [loadData]);
 
-  // Clear billing toast after 4 seconds
   useEffect(() => {
     if (billingToast) {
       const timer = setTimeout(() => setBillingToast(null), 4000);
       return () => clearTimeout(timer);
     }
   }, [billingToast]);
+
+  // --- Handlers ---
 
   const handleArchiveToggle = async () => {
     if (!client) return;
@@ -257,9 +319,7 @@ const ClientDetailPage: React.FC = () => {
     }
   };
 
-  const handleClientSaved = (updated: Client) => {
-    setClient(updated);
-  };
+  const handleClientSaved = (updated: Client) => setClient(updated);
 
   const handleGoalSaved = () => {
     window.api.goals.listByClient(clientId).then(setGoals).catch(console.error);
@@ -311,7 +371,6 @@ const ClientDetailPage: React.FC = () => {
 
   const handleDeleteDocument = async (documentId: number) => {
     if (deletingDocId === documentId) {
-      // Confirmed - actually delete
       try {
         await window.api.documents.delete({ documentId });
         const docsData = await window.api.documents.list({ clientId });
@@ -322,9 +381,7 @@ const ClientDetailPage: React.FC = () => {
         setDeletingDocId(null);
       }
     } else {
-      // First click - ask for confirmation
       setDeletingDocId(documentId);
-      // Auto-reset after 3 seconds if not confirmed
       setTimeout(() => setDeletingDocId((prev) => (prev === documentId ? null : prev)), 3000);
     }
   };
@@ -361,523 +418,6 @@ const ClientDetailPage: React.FC = () => {
     }
   };
 
-  // --- Loading / Not Found ---
-
-  if (loading) {
-    return (
-      <div className="p-6">
-        <div className="card p-12 text-center text-[var(--color-text-secondary)]">
-          Loading client...
-        </div>
-      </div>
-    );
-  }
-
-  if (!client) {
-    return (
-      <div className="p-6">
-        <div className="card p-12 text-center">
-          <h3 className="text-lg font-semibold text-[var(--color-text)] mb-2">Client not found</h3>
-          <button className="btn-secondary gap-2 mt-4" onClick={() => navigate('/clients')}>
-            <ArrowLeft size={16} />
-            Back to Clients
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // --- Tab Content Renderers ---
-
-  const renderOverview = () => (
-    <div className="grid grid-cols-2 gap-6">
-      {/* Demographics */}
-      <div
-        className="card p-5 cursor-pointer hover:shadow-md hover:border-[var(--color-primary)]/30 transition-all group"
-        onClick={() => setEditModalOpen(true)}
-      >
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="section-title mb-0">Demographics</h3>
-          <Edit size={14} className="text-gray-300 group-hover:text-[var(--color-primary)] transition-colors" />
-        </div>
-        <dl className="space-y-3">
-          <div className="flex items-start gap-2">
-            <Calendar size={15} className="text-[var(--color-text-secondary)] mt-0.5 shrink-0" />
-            <div>
-              <dt className="text-xs text-[var(--color-text-secondary)]">Date of Birth</dt>
-              <dd className="text-sm font-medium">{formatDate(client.dob)}</dd>
-            </div>
-          </div>
-          <div className="flex items-start gap-2">
-            <Phone size={15} className="text-[var(--color-text-secondary)] mt-0.5 shrink-0" />
-            <div>
-              <dt className="text-xs text-[var(--color-text-secondary)]">Phone</dt>
-              <dd className="text-sm font-medium">{client.phone || '--'}</dd>
-            </div>
-          </div>
-          <div className="flex items-start gap-2">
-            <Mail size={15} className="text-[var(--color-text-secondary)] mt-0.5 shrink-0" />
-            <div>
-              <dt className="text-xs text-[var(--color-text-secondary)]">Email</dt>
-              <dd className="text-sm font-medium">{client.email || '--'}</dd>
-            </div>
-          </div>
-          <div className="flex items-start gap-2">
-            <MapPin size={15} className="text-[var(--color-text-secondary)] mt-0.5 shrink-0" />
-            <div>
-              <dt className="text-xs text-[var(--color-text-secondary)]">Address</dt>
-              <dd className="text-sm font-medium">{client.address || '--'}</dd>
-            </div>
-          </div>
-        </dl>
-      </div>
-
-      {/* Insurance */}
-      <div
-        className="card p-5 cursor-pointer hover:shadow-md hover:border-[var(--color-primary)]/30 transition-all group"
-        onClick={() => setEditModalOpen(true)}
-      >
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="section-title mb-0">Insurance</h3>
-          <Edit size={14} className="text-gray-300 group-hover:text-[var(--color-primary)] transition-colors" />
-        </div>
-        <dl className="space-y-3">
-          <div>
-            <dt className="text-xs text-[var(--color-text-secondary)]">Payer</dt>
-            <dd className="text-sm font-medium">{client.insurance_payer || '--'}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-[var(--color-text-secondary)]">Member ID</dt>
-            <dd className="text-sm font-medium">{client.insurance_member_id || '--'}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-[var(--color-text-secondary)]">Group Number</dt>
-            <dd className="text-sm font-medium">{client.insurance_group || '--'}</dd>
-          </div>
-        </dl>
-      </div>
-
-      {/* Diagnosis */}
-      <div
-        className="card p-5 cursor-pointer hover:shadow-md hover:border-[var(--color-primary)]/30 transition-all group"
-        onClick={() => setEditModalOpen(true)}
-      >
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="section-title mb-0">Diagnosis</h3>
-          <Edit size={14} className="text-gray-300 group-hover:text-[var(--color-primary)] transition-colors" />
-        </div>
-        <dl className="space-y-3">
-          <div>
-            <dt className="text-xs text-[var(--color-text-secondary)]">Primary Dx Code</dt>
-            <dd className="text-sm font-medium">{client.primary_dx_code || '--'}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-[var(--color-text-secondary)]">Description</dt>
-            <dd className="text-sm font-medium">{client.primary_dx_description || '--'}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-[var(--color-text-secondary)]">Default CPT</dt>
-            <dd className="text-sm font-medium">{client.default_cpt_code || '--'}</dd>
-          </div>
-          {(() => {
-            try {
-              const secDx = JSON.parse(client.secondary_dx || '[]');
-              if (Array.isArray(secDx) && secDx.length > 0 && secDx[0].code) {
-                return (
-                  <>
-                    <div>
-                      <dt className="text-xs text-[var(--color-text-secondary)]">Secondary Dx Code</dt>
-                      <dd className="text-sm font-medium">{secDx[0].code}</dd>
-                    </div>
-                    {secDx[0].description && (
-                      <div>
-                        <dt className="text-xs text-[var(--color-text-secondary)]">Secondary Dx Description</dt>
-                        <dd className="text-sm font-medium">{secDx[0].description}</dd>
-                      </div>
-                    )}
-                  </>
-                );
-              }
-            } catch {}
-            return null;
-          })()}
-        </dl>
-      </div>
-
-      {/* Referring Provider */}
-      <div
-        className="card p-5 cursor-pointer hover:shadow-md hover:border-[var(--color-primary)]/30 transition-all group"
-        onClick={() => setEditModalOpen(true)}
-      >
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="section-title mb-0">Referring Provider</h3>
-          <Edit size={14} className="text-gray-300 group-hover:text-[var(--color-primary)] transition-colors" />
-        </div>
-        <dl className="space-y-3">
-          <div>
-            <dt className="text-xs text-[var(--color-text-secondary)]">Physician</dt>
-            <dd className="text-sm font-medium">{client.referring_physician || '--'}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-[var(--color-text-secondary)]">NPI</dt>
-            <dd className="text-sm font-medium">{client.referring_npi || '--'}</dd>
-          </div>
-        </dl>
-      </div>
-    </div>
-  );
-
-  const renderNotes = () => (
-    <div className="space-y-3">
-      {notes.length === 0 ? (
-        <div className="card p-8 text-center">
-          <FileText size={40} className="mx-auto text-[var(--color-text-secondary)] mb-3 opacity-40" />
-          <p className="text-sm text-[var(--color-text-secondary)]">No SOAP notes yet.</p>
-          <button
-            className="btn-primary gap-2 mt-4"
-            onClick={() => navigate(`/clients/${clientId}/note/new`)}
-          >
-            <Plus size={16} />
-            Create First Note
-          </button>
-        </div>
-      ) : (
-        notes.map((note) => {
-          let cptBadges: Array<{ code: string; units: number }> = [];
-          try {
-            const parsed = JSON.parse(note.cpt_codes || '[]');
-            if (Array.isArray(parsed) && parsed.length > 0) cptBadges = parsed;
-          } catch {}
-          if (cptBadges.length === 0 && note.cpt_code) {
-            cptBadges = [{ code: note.cpt_code, units: note.units || 1 }];
-          }
-          return (
-            <div
-              key={note.id}
-              className="card p-4 hover:shadow-md transition-shadow cursor-pointer bg-blue-50/60 border-l-4 border-l-blue-400"
-              onClick={() => navigate(`/clients/${clientId}/note/${note.id}`)}
-            >
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-3 flex-wrap">
-                  <span className="text-sm font-semibold text-[var(--color-text)]">
-                    {formatDate(note.date_of_service)}
-                  </span>
-                  {cptBadges.map((line, i) => (
-                    <span key={i} className="badge bg-gray-100 text-gray-600">
-                      {line.code} ({line.units}u)
-                    </span>
-                  ))}
-                  {note.signed_at ? (
-                    <span className="badge bg-emerald-100 text-emerald-700">
-                      <CheckCircle size={12} className="mr-1" />
-                      Signed
-                    </span>
-                  ) : (
-                    <span className="badge bg-amber-100 text-amber-700">
-                      <Clock size={12} className="mr-1" />
-                      Unsigned
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  {!note.signed_at && (
-                    <button
-                      className={`btn-sm gap-1.5 ${
-                        deletingNoteId === note.id
-                          ? 'bg-red-600 text-white hover:bg-red-700'
-                          : 'btn-ghost text-red-600 hover:bg-red-50'
-                      }`}
-                      onClick={(e) => { e.stopPropagation(); handleDeleteNote(note.id); }}
-                    >
-                      <Trash2 size={14} />
-                      {deletingNoteId === note.id ? 'Confirm?' : 'Delete'}
-                    </button>
-                  )}
-                  <button className="btn-ghost btn-sm gap-1.5">
-                    <Eye size={14} />
-                    View
-                  </button>
-                </div>
-              </div>
-              {note.subjective && (
-                <p className="text-sm text-[var(--color-text-secondary)]">
-                  <span className="font-medium text-[var(--color-text)]">S: </span>
-                  {truncate(note.subjective, 150)}
-                </p>
-              )}
-            </div>
-          );
-        })
-      )}
-    </div>
-  );
-
-  const renderEvaluations = () => (
-    <div className="space-y-3">
-      {evaluations.length === 0 ? (
-        <div className="card p-8 text-center">
-          <ClipboardList size={40} className="mx-auto text-[var(--color-text-secondary)] mb-3 opacity-40" />
-          <p className="text-sm text-[var(--color-text-secondary)]">No evaluations yet.</p>
-          <button
-            className="btn-primary gap-2 mt-4"
-            onClick={() => navigate(`/clients/${clientId}/eval/new`)}
-          >
-            <Plus size={16} />
-            Create First Evaluation
-          </button>
-        </div>
-      ) : (
-        evaluations.map((evalItem) => (
-          <div
-            key={evalItem.id}
-            className="card p-4 hover:shadow-md transition-shadow cursor-pointer bg-violet-50/60 border-l-4 border-l-violet-400"
-            onClick={() => navigate(`/clients/${clientId}/eval/${evalItem.id}`)}
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="text-sm font-semibold text-[var(--color-text)]">
-                  {formatDate(evalItem.eval_date)}
-                </span>
-                <span className={disciplineBadgeClass[evalItem.discipline]}>
-                  {evalItem.discipline}
-                </span>
-                {evalItem.signed_at ? (
-                  <span className="badge bg-emerald-100 text-emerald-700">
-                    <CheckCircle size={12} className="mr-1" />
-                    Signed
-                  </span>
-                ) : (
-                  <span className="badge bg-amber-100 text-amber-700">
-                    <Clock size={12} className="mr-1" />
-                    Unsigned
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                {!evalItem.signed_at && (
-                  <button
-                    className={`btn-sm gap-1.5 ${
-                      deletingEvalId === evalItem.id
-                        ? 'bg-red-600 text-white hover:bg-red-700'
-                        : 'btn-ghost text-red-600 hover:bg-red-50'
-                    }`}
-                    onClick={(e) => { e.stopPropagation(); handleDeleteEval(evalItem.id); }}
-                  >
-                    <Trash2 size={14} />
-                    {deletingEvalId === evalItem.id ? 'Confirm?' : 'Delete'}
-                  </button>
-                )}
-                <button className="btn-ghost btn-sm gap-1.5">
-                  <Eye size={14} />
-                  View
-                </button>
-              </div>
-            </div>
-          </div>
-        ))
-      )}
-    </div>
-  );
-
-  const renderGoals = () => (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h3 className="section-title mb-0">Goals</h3>
-        <button className="btn-primary btn-sm gap-1.5" onClick={openAddGoal}>
-          <Plus size={14} />
-          Add Goal
-        </button>
-      </div>
-
-      {goals.length === 0 ? (
-        <div className="card p-8 text-center">
-          <Target size={40} className="mx-auto text-[var(--color-text-secondary)] mb-3 opacity-40" />
-          <p className="text-sm text-[var(--color-text-secondary)]">No goals set yet.</p>
-          <button className="btn-primary gap-2 mt-4" onClick={openAddGoal}>
-            <Plus size={16} />
-            Add First Goal
-          </button>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {goals.map((goal) => {
-            const config = goalStatusConfig[goal.status];
-            const StatusIcon = config.icon;
-            return (
-              <div
-                key={goal.id}
-                className="card p-4 hover:shadow-md transition-shadow bg-amber-50/60 border-l-4 border-l-amber-400"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <span className="badge bg-gray-100 text-gray-700 font-semibold">
-                        {goal.goal_type}
-                      </span>
-                      {goal.category && (
-                        <span className="badge bg-blue-50 text-blue-600">
-                          {formatCategory(goal.category)}
-                        </span>
-                      )}
-                      <span className={`badge ${config.className}`}>
-                        <StatusIcon size={12} className="mr-1" />
-                        {config.label}
-                      </span>
-                    </div>
-                    <p className="text-sm text-[var(--color-text)]">{goal.goal_text}</p>
-                    {goal.target_date && (
-                      <p className="text-xs text-[var(--color-text-secondary)] mt-1.5">
-                        Target: {formatDate(goal.target_date)}
-                        {goal.met_date && (
-                          <span className="ml-3">
-                            Met: {formatDate(goal.met_date)}
-                          </span>
-                        )}
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <select
-                      className="text-xs border border-[var(--color-border)] rounded px-2 py-1 bg-white cursor-pointer"
-                      value={goal.status}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={async (e) => {
-                        const newStatus = e.target.value as GoalStatus;
-                        try {
-                          await window.api.goals.update(goal.id, {
-                            ...goal,
-                            status: newStatus,
-                            met_date: newStatus === 'met' ? new Date().toISOString().slice(0, 10) : goal.met_date,
-                          });
-                          const updatedGoals = await window.api.goals.listByClient(clientId);
-                          setGoals(updatedGoals);
-                        } catch (err) {
-                          console.error('Failed to update goal status:', err);
-                        }
-                      }}
-                    >
-                      <option value="active">Active</option>
-                      <option value="met">Met</option>
-                      <option value="discontinued">Discontinued</option>
-                      <option value="modified">Modified</option>
-                    </select>
-                    <button
-                      className="btn-ghost btn-sm gap-1.5"
-                      onClick={() => openEditGoal(goal)}
-                    >
-                      <Edit size={14} />
-                      Edit
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-
-  const renderDocuments = () => {
-    const filteredDocs = docCategoryFilter === 'all'
-      ? documents
-      : documents.filter((d) => d.category === docCategoryFilter);
-
-    return (
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <h3 className="section-title mb-0">Documents</h3>
-            <select
-              className="input py-1.5 text-sm w-44"
-              value={docCategoryFilter}
-              onChange={(e) => setDocCategoryFilter(e.target.value)}
-            >
-              {DOCUMENT_CATEGORIES.map((cat) => (
-                <option key={cat.value} value={cat.value}>
-                  {cat.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <button className="btn-primary btn-sm gap-1.5" onClick={() => handleUploadDocument()}>
-            <Upload size={14} />
-            Upload Document
-          </button>
-        </div>
-
-        {filteredDocs.length === 0 ? (
-          <div className="card p-8 text-center">
-            <FolderOpen size={40} className="mx-auto text-[var(--color-text-secondary)] mb-3 opacity-40" />
-            <p className="text-sm text-[var(--color-text-secondary)]">
-              {docCategoryFilter === 'all'
-                ? 'No documents uploaded yet.'
-                : `No documents in the "${DOCUMENT_CATEGORIES.find((c) => c.value === docCategoryFilter)?.label}" category.`}
-            </p>
-            <button className="btn-primary gap-2 mt-4" onClick={() => handleUploadDocument()}>
-              <Upload size={16} />
-              Upload First Document
-            </button>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {filteredDocs.map((doc) => {
-              const DocIcon = getFileIcon(doc.file_type);
-              const badgeColor = categoryBadgeColors[doc.category] || categoryBadgeColors.other;
-              return (
-                <div key={doc.id} className="card p-4 hover:shadow-md transition-shadow bg-slate-50 border-l-4 border-l-slate-300">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-3 min-w-0 flex-1">
-                      <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center shrink-0">
-                        <DocIcon size={20} className="text-[var(--color-text-secondary)]" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-[var(--color-text)] truncate">
-                          {doc.original_name}
-                        </p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className={`badge text-xs ${badgeColor}`}>
-                            {DOCUMENT_CATEGORIES.find((c) => c.value === doc.category)?.label || doc.category}
-                          </span>
-                          <span className="text-xs text-[var(--color-text-secondary)]">
-                            {formatFileSize(doc.file_size)}
-                          </span>
-                          <span className="text-xs text-[var(--color-text-secondary)]">
-                            {formatDate(doc.created_at)}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        className="btn-secondary btn-sm gap-1.5"
-                        onClick={() => handleOpenDocument(doc.id)}
-                      >
-                        <FolderOpen size={14} />
-                        Open
-                      </button>
-                      <button
-                        className={`btn-sm gap-1.5 ${
-                          deletingDocId === doc.id
-                            ? 'bg-red-600 text-white hover:bg-red-700'
-                            : 'btn-ghost text-red-600 hover:bg-red-50'
-                        }`}
-                        onClick={() => handleDeleteDocument(doc.id)}
-                      >
-                        <Trash2 size={14} />
-                        {deletingDocId === doc.id ? 'Confirm?' : 'Delete'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    );
-  };
-
   // --- Billing Handlers ---
 
   const handleGeneratePaymentLink = async (invoiceId: number) => {
@@ -887,7 +427,6 @@ const ClientDetailPage: React.FC = () => {
       if (result.url) {
         await window.api.shell.openExternal(result.url);
         setBillingToast(result.existing ? 'Payment link opened in browser' : 'Payment link created and opened in browser');
-        // Refresh invoices to get the updated payment link info
         const invoicesData = await window.api.invoices.list({ clientId });
         setInvoices(invoicesData);
       }
@@ -905,7 +444,6 @@ const ClientDetailPage: React.FC = () => {
       const result = await window.api.stripe.checkPaymentStatus(invoiceId);
       if (result.status === 'paid') {
         setBillingToast('Payment received! Invoice marked as paid.');
-        // Refresh data
         const [invoicesData, paymentsData] = await Promise.all([
           window.api.invoices.list({ clientId }),
           window.api.payments.list({ clientId }),
@@ -915,7 +453,7 @@ const ClientDetailPage: React.FC = () => {
       } else if (result.status === 'pending') {
         setBillingToast('Payment not yet received. Client may still be completing payment.');
       } else if (result.status === 'no_payment_link') {
-        setBillingToast('No payment link exists for this invoice. Click "Pay Now" to create one.');
+        setBillingToast('No payment link exists for this invoice.');
       }
     } catch (err: any) {
       console.error('Failed to check payment status:', err);
@@ -934,379 +472,779 @@ const ClientDetailPage: React.FC = () => {
     }
   };
 
-  // --- Render Billing Tab ---
+  // --- Loading / Not Found ---
 
-  const renderBilling = () => {
-    const balanceDue = invoices
-      .filter((i) => i.status !== 'paid' && i.status !== 'void')
-      .reduce((sum, i) => sum + i.total_amount, 0);
-
-    const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
-
-    const totalInvoiced = invoices
-      .filter((i) => i.status !== 'void')
-      .reduce((sum, i) => sum + i.total_amount, 0);
-
+  if (loading) {
     return (
-      <div className="space-y-6">
-        {/* Billing Toast */}
-        {billingToast && (
-          <div className="fixed top-4 right-4 z-50 flex items-center gap-2 bg-emerald-600 text-white px-4 py-3 rounded-lg shadow-lg animate-fade-in">
-            <CheckCircle className="w-4 h-4" />
-            <span className="text-sm font-medium">{billingToast}</span>
-          </div>
-        )}
+      <div className="p-6">
+        <div className="card p-12 text-center text-[var(--color-text-secondary)]">Loading client...</div>
+      </div>
+    );
+  }
 
-        {/* Balance Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="card p-5">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-[var(--color-text-secondary)]">Balance Due</span>
-              <AlertCircle className={`w-5 h-5 ${balanceDue > 0 ? 'text-amber-500' : 'text-gray-300'}`} />
-            </div>
-            <p className={`text-2xl font-bold ${balanceDue > 0 ? 'text-amber-600' : 'text-[var(--color-text)]'}`}>
-              {formatCurrency(balanceDue)}
-            </p>
-            <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-              {invoices.filter((i) => i.status !== 'paid' && i.status !== 'void').length} unpaid invoice(s)
-            </p>
-          </div>
-
-          <div className="card p-5">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-[var(--color-text-secondary)]">Total Paid</span>
-              <DollarSign className="w-5 h-5 text-emerald-500" />
-            </div>
-            <p className="text-2xl font-bold text-emerald-600">{formatCurrency(totalPaid)}</p>
-            <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-              {payments.length} payment(s) recorded
-            </p>
-          </div>
-
-          <div className="card p-5">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-[var(--color-text-secondary)]">Total Invoiced</span>
-              <Receipt className="w-5 h-5 text-blue-500" />
-            </div>
-            <p className="text-2xl font-bold text-[var(--color-text)]">{formatCurrency(totalInvoiced)}</p>
-            <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-              {invoices.length} invoice(s) created
-            </p>
-          </div>
-        </div>
-
-        {/* Action Buttons */}
-        <div className="flex items-center gap-3">
-          <button
-            className="btn-primary gap-2"
-            onClick={() => navigate(`/billing?newInvoice=${clientId}`)}
-          >
-            <Plus size={16} />
-            New Invoice
+  if (!client) {
+    return (
+      <div className="p-6">
+        <div className="card p-12 text-center">
+          <h3 className="text-lg font-semibold text-[var(--color-text)] mb-2">Client not found</h3>
+          <button className="btn-secondary gap-2 mt-4" onClick={() => navigate('/clients')}>
+            <ArrowLeft size={16} />
+            Back to Clients
           </button>
-          <button
-            className="btn-secondary gap-2"
-            onClick={() => navigate(`/billing?newPayment=${clientId}`)}
-          >
-            <CreditCard size={16} />
-            Record Payment
-          </button>
-        </div>
-
-        {/* Invoices List */}
-        <div className="card">
-          <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
-            <h3 className="font-semibold text-[var(--color-text)]">Invoices</h3>
-          </div>
-          {invoices.length === 0 ? (
-            <div className="p-8 text-center text-[var(--color-text-secondary)]">
-              <Receipt className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-              <p>No invoices yet</p>
-              <p className="text-sm mt-1">Create an invoice to start billing this client</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-[var(--color-border)]">
-              {invoices.map((invoice) => (
-                <div key={invoice.id} className="flex items-center justify-between p-4 hover:bg-gray-50">
-                  <div className="flex items-center gap-4">
-                    <div>
-                      <p className="font-medium text-[var(--color-text)]">{invoice.invoice_number}</p>
-                      <p className="text-sm text-[var(--color-text-secondary)]">
-                        {formatDate(invoice.invoice_date)}
-                        {invoice.due_date && ` · Due ${formatDate(invoice.due_date)}`}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <div className="text-right">
-                      <p className="font-medium text-[var(--color-text)]">
-                        {formatCurrency(invoice.total_amount)}
-                      </p>
-                      <span
-                        className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-                          (STATUS_COLORS[invoice.status] || STATUS_COLORS.draft).bg
-                        } ${(STATUS_COLORS[invoice.status] || STATUS_COLORS.draft).text}`}
-                      >
-                        {invoice.status || 'draft'}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {invoice.status !== 'paid' && invoice.status !== 'void' && (
-                        <>
-                          <button
-                            className="btn-primary btn-sm gap-1.5"
-                            onClick={() => handleGeneratePaymentLink(invoice.id)}
-                            disabled={generatingPaymentLink === invoice.id}
-                          >
-                            {generatingPaymentLink === invoice.id ? (
-                              <Loader2 size={14} className="animate-spin" />
-                            ) : (
-                              <ExternalLink size={14} />
-                            )}
-                            Pay Now
-                          </button>
-                          {invoice.stripe_payment_link_url && (
-                            <>
-                              <button
-                                className="btn-secondary btn-sm gap-1.5"
-                                onClick={() => handleCheckPaymentStatus(invoice.id)}
-                                disabled={checkingPaymentStatus === invoice.id}
-                                title="Check if payment was completed"
-                              >
-                                {checkingPaymentStatus === invoice.id ? (
-                                  <Loader2 size={14} className="animate-spin" />
-                                ) : (
-                                  <RefreshCw size={14} />
-                                )}
-                                Check
-                              </button>
-                              <button
-                                className="btn-ghost btn-sm"
-                                onClick={() => handleCopyPaymentLink(invoice.stripe_payment_link_url)}
-                                title="Copy payment link"
-                              >
-                                Copy Link
-                              </button>
-                            </>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Payments History */}
-        <div className="card">
-          <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
-            <h3 className="font-semibold text-[var(--color-text)]">Payment History</h3>
-          </div>
-          {payments.length === 0 ? (
-            <div className="p-8 text-center text-[var(--color-text-secondary)]">
-              <CreditCard className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-              <p>No payments recorded</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-[var(--color-border)]">
-              {payments.map((payment) => (
-                <div key={payment.id} className="flex items-center justify-between p-4 hover:bg-gray-50">
-                  <div>
-                    <p className="font-medium text-[var(--color-text)]">
-                      {formatDate(payment.payment_date)}
-                    </p>
-                    <p className="text-sm text-[var(--color-text-secondary)]">
-                      {PAYMENT_METHOD_LABELS[payment.payment_method] || payment.payment_method || 'Other'}
-                      {payment.reference_number && ` · Ref: ${payment.reference_number}`}
-                    </p>
-                    {payment.notes && (
-                      <p className="text-xs text-[var(--color-text-secondary)] mt-1">{payment.notes}</p>
-                    )}
-                  </div>
-                  <p className="font-medium text-emerald-600">+{formatCurrency(payment.amount)}</p>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </div>
     );
-  };
+  }
 
-  // --- Tab config ---
+  // --- Computed values ---
 
-  const tabDotColor: Record<Tab, string> = {
-    overview: '',
-    notes: 'bg-blue-400',
-    evaluations: 'bg-violet-400',
-    goals: 'bg-amber-400',
-    documents: 'bg-slate-400',
-    billing: 'bg-emerald-400',
-    compliance: 'bg-red-400',
-  };
-
-  // Calculate balance due for tab label
   const balanceDue = invoices
     .filter((i) => i.status !== 'paid' && i.status !== 'void')
     .reduce((sum, i) => sum + i.total_amount, 0);
+  const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+  const totalInvoiced = invoices.filter((i) => i.status !== 'void').reduce((sum, i) => sum + i.total_amount, 0);
+  const activeGoals = goals.filter((g) => g.status === 'active');
+  const signedNotes = notes.filter((n) => n.signed_at);
+  const unsignedNotes = notes.filter((n) => !n.signed_at);
+  const displayNotes = showAllNotes ? notes : notes.slice(0, 5);
+  const displayGoals = showAllGoals ? goals : goals.slice(0, 4);
 
-  const tabs: { key: Tab; label: string }[] = [
-    { key: 'overview', label: 'Overview' },
-    { key: 'notes', label: `Notes (${notes.length})` },
-    { key: 'evaluations', label: `Evaluations (${evaluations.length})` },
-    { key: 'goals', label: `Goals (${goals.length})` },
-    { key: 'documents', label: `Documents (${documents.length})` },
-    { key: 'billing', label: balanceDue > 0 ? `Billing (${formatCurrency(balanceDue)})` : 'Billing' },
-    { key: 'compliance', label: 'Compliance' },
-  ];
-
-  const renderCompliance = (): React.ReactElement => (
-    <ProFeatureGate feature="compliance_engine">
-      <div className="space-y-6">
-        <ComplianceSection clientId={client!.id} />
-        <CommunicationLogSection clientId={client!.id} />
-      </div>
-    </ProFeatureGate>
-  );
-
-  const tabContent: Record<Tab, () => React.ReactElement> = {
-    overview: renderOverview,
-    notes: renderNotes,
-    evaluations: renderEvaluations,
-    goals: renderGoals,
-    documents: renderDocuments,
-    billing: renderBilling,
-    compliance: renderCompliance,
-  };
-
-  // --- Main Render ---
+  // --- Render ---
 
   return (
-    <div className="p-6">
+    <div className="p-6 space-y-6">
+      {/* Billing Toast */}
+      {billingToast && (
+        <div className="fixed top-4 right-4 z-50 flex items-center gap-2 bg-emerald-600 text-white px-4 py-3 rounded-lg shadow-lg">
+          <CheckCircle className="w-4 h-4" />
+          <span className="text-sm font-medium">{billingToast}</span>
+        </div>
+      )}
+
       {/* Back Button */}
-      <button
-        className="btn-ghost gap-2 mb-4 -ml-2"
-        onClick={() => navigate('/clients')}
-      >
+      <button className="btn-ghost gap-2 -ml-2" onClick={() => navigate('/clients')}>
         <ArrowLeft size={16} />
         Back to Clients
       </button>
 
-      {/* Client Header */}
-      <div className="card p-6 mb-6">
+      {/* ══════════ HEADER ══════════ */}
+      <div className="card p-5">
         <div className="flex items-start justify-between">
-          <div>
-            <div className="flex items-center gap-3 mb-2">
-              <h1 className="text-2xl font-bold text-[var(--color-text)]">
-                {client.first_name} {client.last_name}
-              </h1>
-              <span className="text-xs font-mono px-2 py-0.5 rounded bg-gray-100 text-gray-500 border border-gray-200">
-                ID: {client.id}
-              </span>
-              <span className={statusBadgeClass[client.status]}>
-                {statusLabel[client.status]}
-              </span>
-              <span className={disciplineBadgeClass[client.discipline]}>
-                {client.discipline}
-              </span>
+          <div className="flex items-center gap-4">
+            {/* Avatar circle */}
+            <div className="w-14 h-14 rounded-full bg-gradient-to-br from-teal-400 to-teal-600 flex items-center justify-center text-white text-xl font-bold shrink-0">
+              {client.first_name[0]}{client.last_name[0]}
             </div>
-            <div className="flex items-center gap-5 text-sm text-[var(--color-text-secondary)]">
-              {client.dob && (
-                <span className="flex items-center gap-1.5">
-                  <Calendar size={14} />
-                  DOB: {formatDate(client.dob)}
-                </span>
-              )}
-              {client.phone && (
-                <span className="flex items-center gap-1.5">
-                  <Phone size={14} />
-                  {client.phone}
-                </span>
-              )}
-              {client.email && (
-                <span className="flex items-center gap-1.5">
-                  <Mail size={14} />
-                  {client.email}
-                </span>
-              )}
+            <div>
+              <div className="flex items-center gap-2.5 mb-1">
+                <h1 className="text-2xl font-bold text-[var(--color-text)]">
+                  {client.first_name} {client.last_name}
+                </h1>
+                <span className={statusBadgeClass[client.status]}>{statusLabel[client.status]}</span>
+                <span className={disciplineBadgeClass[client.discipline]}>{client.discipline}</span>
+              </div>
+              <div className="flex items-center gap-4 text-sm text-[var(--color-text-secondary)]">
+                {client.dob && (
+                  <span className="flex items-center gap-1"><Calendar size={13} /> {formatDate(client.dob)}</span>
+                )}
+                {client.phone && (
+                  <span className="flex items-center gap-1"><Phone size={13} /> {client.phone}</span>
+                )}
+                {client.email && (
+                  <span className="flex items-center gap-1"><Mail size={13} /> {client.email}</span>
+                )}
+              </div>
             </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button className="btn-primary btn-sm gap-1.5" onClick={() => navigate(`/clients/${clientId}/note/new`)}>
+              <FileText size={14} /> New Note
+            </button>
+            <button className="btn-secondary btn-sm gap-1.5" onClick={() => setEditModalOpen(true)}>
+              <Edit size={14} /> Edit
+            </button>
+            <button className="btn-ghost btn-sm gap-1.5" onClick={handleExportPdf} disabled={exportingPdf}>
+              <Download size={14} /> {exportingPdf ? 'Exporting...' : 'Export PDF'}
+            </button>
+            <button className="btn-ghost btn-sm gap-1.5" onClick={handleArchiveToggle}>
+              <Archive size={14} /> {client.status === 'active' ? 'Discharge' : 'Reactivate'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ══════════ TWO COLUMN: CLIENT INFO + CLINICAL ══════════ */}
+      <div className="grid grid-cols-12 gap-6">
+        {/* LEFT COLUMN: Client Information (4 cols) */}
+        <div className="col-span-4 space-y-4">
+          {/* Demographics */}
+          <div
+            className="card p-4 cursor-pointer hover:shadow-md hover:border-[var(--color-primary)]/30 transition-all group"
+            onClick={() => setEditModalOpen(true)}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-1.5">
+                <User size={14} className="text-[var(--color-primary)]" /> Demographics
+              </h3>
+              <Edit size={12} className="text-gray-300 group-hover:text-[var(--color-primary)] transition-colors" />
+            </div>
+            <dl className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <dt className="text-[var(--color-text-secondary)]">DOB</dt>
+                <dd className="font-medium">{formatDate(client.dob)}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-[var(--color-text-secondary)]">Phone</dt>
+                <dd className="font-medium">{client.phone || '--'}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-[var(--color-text-secondary)]">Email</dt>
+                <dd className="font-medium truncate ml-4">{client.email || '--'}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-[var(--color-text-secondary)]">Address</dt>
+                <dd className="font-medium text-right ml-4">{client.address || '--'}</dd>
+              </div>
+            </dl>
+          </div>
+
+          {/* Insurance */}
+          <div
+            className="card p-4 cursor-pointer hover:shadow-md hover:border-[var(--color-primary)]/30 transition-all group"
+            onClick={() => setEditModalOpen(true)}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-1.5">
+                <Shield size={14} className="text-purple-500" /> Insurance
+              </h3>
+              <Edit size={12} className="text-gray-300 group-hover:text-[var(--color-primary)] transition-colors" />
+            </div>
+            <dl className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <dt className="text-[var(--color-text-secondary)]">Payer</dt>
+                <dd className="font-medium">{client.insurance_payer || '--'}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-[var(--color-text-secondary)]">Member ID</dt>
+                <dd className="font-medium">{client.insurance_member_id || '--'}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-[var(--color-text-secondary)]">Group</dt>
+                <dd className="font-medium">{client.insurance_group || '--'}</dd>
+              </div>
+            </dl>
+          </div>
+
+          {/* Diagnosis */}
+          <div
+            className="card p-4 cursor-pointer hover:shadow-md hover:border-[var(--color-primary)]/30 transition-all group"
+            onClick={() => setEditModalOpen(true)}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-1.5">
+                <Stethoscope size={14} className="text-rose-500" /> Diagnosis
+              </h3>
+              <Edit size={12} className="text-gray-300 group-hover:text-[var(--color-primary)] transition-colors" />
+            </div>
+            <dl className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <dt className="text-[var(--color-text-secondary)]">Primary Dx</dt>
+                <dd className="font-medium">{client.primary_dx_code || '--'}</dd>
+              </div>
+              {client.primary_dx_description && (
+                <p className="text-xs text-[var(--color-text-secondary)] italic">{client.primary_dx_description}</p>
+              )}
+              <div className="flex justify-between">
+                <dt className="text-[var(--color-text-secondary)]">Default CPT</dt>
+                <dd className="font-medium">{client.default_cpt_code || '--'}</dd>
+              </div>
+              {(() => {
+                try {
+                  const secDx = JSON.parse(client.secondary_dx || '[]');
+                  if (Array.isArray(secDx) && secDx.length > 0 && secDx[0].code) {
+                    return (
+                      <div className="flex justify-between">
+                        <dt className="text-[var(--color-text-secondary)]">Secondary Dx</dt>
+                        <dd className="font-medium">{secDx[0].code}</dd>
+                      </div>
+                    );
+                  }
+                } catch {}
+                return null;
+              })()}
+            </dl>
+          </div>
+
+          {/* Referring Provider */}
+          <div
+            className="card p-4 cursor-pointer hover:shadow-md hover:border-[var(--color-primary)]/30 transition-all group"
+            onClick={() => setEditModalOpen(true)}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-1.5">
+                <Activity size={14} className="text-blue-500" /> Referring Provider
+              </h3>
+              <Edit size={12} className="text-gray-300 group-hover:text-[var(--color-primary)] transition-colors" />
+            </div>
+            <dl className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <dt className="text-[var(--color-text-secondary)]">Physician</dt>
+                <dd className="font-medium">{client.referring_physician || '--'}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-[var(--color-text-secondary)]">NPI</dt>
+                <dd className="font-medium">{client.referring_npi || '--'}</dd>
+              </div>
+            </dl>
           </div>
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex flex-wrap items-center gap-3 mt-5 pt-5 border-t border-[var(--color-border)]">
-          <button
-            className="btn-primary gap-2 min-w-[160px] justify-center"
-            onClick={() => navigate(`/clients/${clientId}/note/new`)}
-          >
-            <FileText size={16} />
-            New SOAP Note
-          </button>
-          <button
-            className="btn-accent gap-2 min-w-[160px] justify-center"
-            onClick={() => navigate(`/clients/${clientId}/eval/new`)}
-          >
-            <ClipboardList size={16} />
-            New Evaluation
-          </button>
-          <button
-            className="btn-secondary gap-2 min-w-[160px] justify-center"
-            onClick={() => navigate(`/clients/${clientId}/superbill`)}
-          >
-            <FileText size={16} />
-            Generate Superbill
-          </button>
-          <button
-            className="btn-secondary gap-2"
-            onClick={() => setEditModalOpen(true)}
-          >
-            <Edit size={16} />
-            Edit Client
-          </button>
-          <button
-            className="btn-secondary gap-2"
-            onClick={handleExportPdf}
-            disabled={exportingPdf}
-          >
-            <Download size={16} />
-            {exportingPdf ? 'Exporting...' : 'Export Chart (PDF)'}
-          </button>
-          <button
-            className="btn-ghost gap-2"
-            onClick={handleArchiveToggle}
-          >
-            <Archive size={16} />
-            {client.status === 'active' ? 'Discharge' : 'Reactivate'}
-          </button>
+        {/* RIGHT COLUMN: Clinical (8 cols) */}
+        <div className="col-span-8 space-y-6">
+          {/* Quick Stats Row */}
+          <div className="grid grid-cols-4 gap-3">
+            <div className="card p-3 text-center">
+              <p className="text-xl font-bold text-blue-600">{notes.length}</p>
+              <p className="text-xs text-[var(--color-text-secondary)]">Notes</p>
+            </div>
+            <div className="card p-3 text-center">
+              <p className="text-xl font-bold text-violet-600">{evaluations.length}</p>
+              <p className="text-xs text-[var(--color-text-secondary)]">Evaluations</p>
+            </div>
+            <div className="card p-3 text-center">
+              <p className="text-xl font-bold text-amber-600">{activeGoals.length}</p>
+              <p className="text-xs text-[var(--color-text-secondary)]">Active Goals</p>
+            </div>
+            <div className="card p-3 text-center">
+              <p className="text-xl font-bold text-red-500">{unsignedNotes.length}</p>
+              <p className="text-xs text-[var(--color-text-secondary)]">Unsigned</p>
+            </div>
+          </div>
+
+          {/* Notes Section */}
+          <div className="card">
+            <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
+              <h3 className="font-semibold text-[var(--color-text)] flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-blue-400" />
+                SOAP Notes
+                <span className="text-xs font-normal text-[var(--color-text-secondary)]">({notes.length})</span>
+              </h3>
+              <div className="flex items-center gap-2">
+                <button
+                  className="btn-primary btn-sm gap-1.5"
+                  onClick={() => navigate(`/clients/${clientId}/note/new`)}
+                >
+                  <Plus size={14} /> New Note
+                </button>
+              </div>
+            </div>
+            {notes.length === 0 ? (
+              <div className="p-6 text-center text-sm text-[var(--color-text-secondary)]">
+                No SOAP notes yet. Create one to get started.
+              </div>
+            ) : (
+              <div className="divide-y divide-[var(--color-border)]">
+                {displayNotes.map((note) => {
+                  let cptBadges: Array<{ code: string; units: number }> = [];
+                  try {
+                    const parsed = JSON.parse(note.cpt_codes || '[]');
+                    if (Array.isArray(parsed) && parsed.length > 0) cptBadges = parsed;
+                  } catch {}
+                  if (cptBadges.length === 0 && note.cpt_code) {
+                    cptBadges = [{ code: note.cpt_code, units: note.units || 1 }];
+                  }
+                  return (
+                    <div
+                      key={note.id}
+                      className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
+                      onClick={() => navigate(`/clients/${clientId}/note/${note.id}`)}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="text-sm font-medium text-[var(--color-text)] w-28 shrink-0">
+                          {formatDate(note.date_of_service)}
+                        </span>
+                        {cptBadges.slice(0, 2).map((line, i) => (
+                          <span key={i} className="badge bg-gray-100 text-gray-600 text-xs">
+                            {line.code} ({line.units}u)
+                          </span>
+                        ))}
+                        <span className="text-xs text-[var(--color-text-secondary)] truncate">
+                          {truncate(note.subjective || '', 50)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {note.signed_at ? (
+                          <span className="flex items-center gap-1 text-xs text-emerald-600">
+                            <CheckCircle size={12} /> Signed
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1 text-xs text-amber-600">
+                            <Clock size={12} /> Draft
+                          </span>
+                        )}
+                        {!note.signed_at && (
+                          <button
+                            className={`btn-sm text-xs px-1.5 py-0.5 ${
+                              deletingNoteId === note.id ? 'bg-red-600 text-white' : 'btn-ghost text-red-500'
+                            }`}
+                            onClick={(e) => { e.stopPropagation(); handleDeleteNote(note.id); }}
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {notes.length > 5 && (
+              <button
+                className="w-full py-2 text-xs text-[var(--color-primary)] font-medium hover:bg-gray-50 flex items-center justify-center gap-1"
+                onClick={() => setShowAllNotes(!showAllNotes)}
+              >
+                {showAllNotes ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                {showAllNotes ? 'Show less' : `Show all ${notes.length} notes`}
+              </button>
+            )}
+          </div>
+
+          {/* Evaluations Row */}
+          <div className="card">
+            <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
+              <h3 className="font-semibold text-[var(--color-text)] flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-violet-400" />
+                Evaluations
+                <span className="text-xs font-normal text-[var(--color-text-secondary)]">({evaluations.length})</span>
+              </h3>
+              <button
+                className="btn-accent btn-sm gap-1.5"
+                onClick={() => navigate(`/clients/${clientId}/eval/new`)}
+              >
+                <Plus size={14} /> New Evaluation
+              </button>
+            </div>
+            {evaluations.length === 0 ? (
+              <div className="p-6 text-center text-sm text-[var(--color-text-secondary)]">
+                No evaluations yet.
+              </div>
+            ) : (
+              <div className="divide-y divide-[var(--color-border)]">
+                {evaluations.map((evalItem) => (
+                  <div
+                    key={evalItem.id}
+                    className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
+                    onClick={() => navigate(`/clients/${clientId}/eval/${evalItem.id}`)}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm font-medium text-[var(--color-text)] w-28 shrink-0">
+                        {formatDate(evalItem.eval_date)}
+                      </span>
+                      <span className={disciplineBadgeClass[evalItem.discipline]}>{evalItem.discipline}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {evalItem.signed_at ? (
+                        <span className="flex items-center gap-1 text-xs text-emerald-600">
+                          <CheckCircle size={12} /> Signed
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-xs text-amber-600">
+                          <Clock size={12} /> Draft
+                        </span>
+                      )}
+                      {!evalItem.signed_at && (
+                        <button
+                          className={`btn-sm text-xs px-1.5 py-0.5 ${
+                            deletingEvalId === evalItem.id ? 'bg-red-600 text-white' : 'btn-ghost text-red-500'
+                          }`}
+                          onClick={(e) => { e.stopPropagation(); handleDeleteEval(evalItem.id); }}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Goals Section */}
+          <div className="card">
+            <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
+              <h3 className="font-semibold text-[var(--color-text)] flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-amber-400" />
+                Goals
+                <span className="text-xs font-normal text-[var(--color-text-secondary)]">
+                  ({activeGoals.length} active / {goals.length} total)
+                </span>
+              </h3>
+              <button className="btn-primary btn-sm gap-1.5" onClick={openAddGoal}>
+                <Plus size={14} /> Add Goal
+              </button>
+            </div>
+            {goals.length === 0 ? (
+              <div className="p-6 text-center text-sm text-[var(--color-text-secondary)]">
+                No goals set yet. Add one to track progress.
+              </div>
+            ) : (
+              <div className="divide-y divide-[var(--color-border)]">
+                {displayGoals.map((goal) => {
+                  const config = goalStatusConfig[goal.status];
+                  const StatusIcon = config.icon;
+                  return (
+                    <div key={goal.id} className="px-4 py-3 hover:bg-gray-50 transition-colors">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <span className="badge bg-gray-100 text-gray-700 text-xs font-semibold">{goal.goal_type}</span>
+                            {goal.category && (
+                              <span className="badge bg-blue-50 text-blue-600 text-xs">{formatCategory(goal.category)}</span>
+                            )}
+                            <span className={`badge text-xs ${config.className}`}>
+                              <StatusIcon size={10} className="mr-0.5" /> {config.label}
+                            </span>
+                          </div>
+                          <p className="text-sm text-[var(--color-text)]">{goal.goal_text}</p>
+                          {goal.target_date && (
+                            <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+                              Target: {formatDate(goal.target_date)}
+                              {goal.met_date && <span className="ml-2">Met: {formatDate(goal.met_date)}</span>}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <select
+                            className="text-xs border border-[var(--color-border)] rounded px-1.5 py-0.5 bg-white cursor-pointer"
+                            value={goal.status}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={async (e) => {
+                              const newStatus = e.target.value as GoalStatus;
+                              try {
+                                await window.api.goals.update(goal.id, {
+                                  ...goal,
+                                  status: newStatus,
+                                  met_date: newStatus === 'met' ? new Date().toISOString().slice(0, 10) : goal.met_date,
+                                });
+                                const updatedGoals = await window.api.goals.listByClient(clientId);
+                                setGoals(updatedGoals);
+                              } catch (err) {
+                                console.error('Failed to update goal status:', err);
+                              }
+                            }}
+                          >
+                            <option value="active">Active</option>
+                            <option value="met">Met</option>
+                            <option value="discontinued">Discontinued</option>
+                            <option value="modified">Modified</option>
+                          </select>
+                          <button className="btn-ghost p-1" onClick={() => openEditGoal(goal)}>
+                            <Edit size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {goals.length > 4 && (
+              <button
+                className="w-full py-2 text-xs text-[var(--color-primary)] font-medium hover:bg-gray-50 flex items-center justify-center gap-1"
+                onClick={() => setShowAllGoals(!showAllGoals)}
+              >
+                {showAllGoals ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                {showAllGoals ? 'Show less' : `Show all ${goals.length} goals`}
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="border-b border-[var(--color-border)] mb-6">
-        <div className="flex gap-1">
-          {tabs.map((tab) => (
+      {/* ══════════ FULL-WIDTH: BILLING SECTION ══════════ */}
+      <div className="card">
+        <div className="flex items-center justify-between p-5 border-b border-[var(--color-border)]">
+          <h2 className="text-lg font-semibold text-[var(--color-text)] flex items-center gap-2">
+            <DollarSign size={20} className="text-emerald-500" />
+            Billing & Payments
+          </h2>
+          <div className="flex items-center gap-2">
             <button
-              key={tab.key}
-              className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
-                activeTab === tab.key
-                  ? 'border-[var(--color-primary)] text-[var(--color-primary)]'
-                  : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:border-gray-300'
-              }`}
-              onClick={() => setActiveTab(tab.key)}
+              className="btn-primary btn-sm gap-1.5"
+              onClick={() => navigate(`/billing?newInvoice=${clientId}`)}
             >
-              {tabDotColor[tab.key] && (
-                <span className={`w-2 h-2 rounded-full ${tabDotColor[tab.key]}`} />
+              <Plus size={14} /> New Invoice
+            </button>
+            <button
+              className="btn-secondary btn-sm gap-1.5"
+              onClick={() => navigate(`/billing?newPayment=${clientId}`)}
+            >
+              <CreditCard size={14} /> Record Payment
+            </button>
+            <button
+              className="btn-secondary btn-sm gap-1.5"
+              onClick={() => navigate(`/clients/${clientId}/superbill`)}
+            >
+              <FileText size={14} /> Superbill
+            </button>
+          </div>
+        </div>
+
+        <div className="p-5">
+          {/* Summary Cards + Chart Row */}
+          <div className="grid grid-cols-12 gap-5 mb-6">
+            {/* Summary Cards */}
+            <div className="col-span-5 grid grid-cols-1 gap-3">
+              <div className="flex items-center justify-between p-3 rounded-lg bg-amber-50 border border-amber-200">
+                <div>
+                  <p className="text-xs text-amber-600 font-medium">Balance Due</p>
+                  <p className={`text-lg font-bold ${balanceDue > 0 ? 'text-amber-700' : 'text-gray-500'}`}>
+                    {formatCurrency(balanceDue)}
+                  </p>
+                </div>
+                <AlertCircle className={`w-5 h-5 ${balanceDue > 0 ? 'text-amber-500' : 'text-gray-300'}`} />
+              </div>
+              <div className="flex items-center justify-between p-3 rounded-lg bg-emerald-50 border border-emerald-200">
+                <div>
+                  <p className="text-xs text-emerald-600 font-medium">Total Collected</p>
+                  <p className="text-lg font-bold text-emerald-700">{formatCurrency(totalPaid)}</p>
+                </div>
+                <DollarSign className="w-5 h-5 text-emerald-500" />
+              </div>
+              <div className="flex items-center justify-between p-3 rounded-lg bg-blue-50 border border-blue-200">
+                <div>
+                  <p className="text-xs text-blue-600 font-medium">Total Invoiced</p>
+                  <p className="text-lg font-bold text-blue-700">{formatCurrency(totalInvoiced)}</p>
+                </div>
+                <Receipt className="w-5 h-5 text-blue-500" />
+              </div>
+            </div>
+
+            {/* Chart */}
+            <div className="col-span-7 rounded-lg border border-[var(--color-border)] p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-1.5">
+                  <TrendingUp size={14} className="text-[var(--color-primary)]" />
+                  Last 6 Months
+                </h4>
+                <div className="flex items-center gap-3 text-xs text-[var(--color-text-secondary)]">
+                  <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-blue-200" /> Invoiced</span>
+                  <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-400" /> Collected</span>
+                </div>
+              </div>
+              <BillingChart invoices={invoices} payments={payments} />
+            </div>
+          </div>
+
+          {/* Invoices Table */}
+          <div className="mb-6">
+            <h4 className="text-sm font-semibold text-[var(--color-text)] mb-3">Invoices</h4>
+            {invoices.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center text-sm text-[var(--color-text-secondary)]">
+                No invoices yet. Create one to start billing.
+              </div>
+            ) : (
+              <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+                {invoices.map((invoice) => (
+                  <div key={invoice.id} className="flex items-center justify-between px-4 py-3 hover:bg-gray-50">
+                    <div className="flex items-center gap-4">
+                      <div>
+                        <p className="text-sm font-medium text-[var(--color-text)]">{invoice.invoice_number}</p>
+                        <p className="text-xs text-[var(--color-text-secondary)]">
+                          {formatDate(invoice.invoice_date)}
+                          {invoice.due_date && ` · Due ${formatDate(invoice.due_date)}`}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="text-right">
+                        <p className="text-sm font-medium text-[var(--color-text)]">{formatCurrency(invoice.total_amount)}</p>
+                        <span
+                          className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
+                            (STATUS_COLORS[invoice.status] || STATUS_COLORS.draft).bg
+                          } ${(STATUS_COLORS[invoice.status] || STATUS_COLORS.draft).text}`}
+                        >
+                          {invoice.status || 'draft'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        {invoice.status !== 'paid' && invoice.status !== 'void' && (
+                          <>
+                            <button
+                              className="btn-primary btn-sm gap-1"
+                              onClick={() => handleGeneratePaymentLink(invoice.id)}
+                              disabled={generatingPaymentLink === invoice.id}
+                            >
+                              {generatingPaymentLink === invoice.id ? (
+                                <Loader2 size={12} className="animate-spin" />
+                              ) : (
+                                <ExternalLink size={12} />
+                              )}
+                              Pay
+                            </button>
+                            {invoice.stripe_payment_link_url && (
+                              <>
+                                <button
+                                  className="btn-secondary btn-sm gap-1"
+                                  onClick={() => handleCheckPaymentStatus(invoice.id)}
+                                  disabled={checkingPaymentStatus === invoice.id}
+                                  title="Check payment status"
+                                >
+                                  {checkingPaymentStatus === invoice.id ? (
+                                    <Loader2 size={12} className="animate-spin" />
+                                  ) : (
+                                    <RefreshCw size={12} />
+                                  )}
+                                </button>
+                                <button
+                                  className="btn-ghost btn-sm text-xs"
+                                  onClick={() => handleCopyPaymentLink(invoice.stripe_payment_link_url)}
+                                  title="Copy payment link"
+                                >
+                                  Copy
+                                </button>
+                              </>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Payments History */}
+          <div>
+            <h4 className="text-sm font-semibold text-[var(--color-text)] mb-3">Payment History</h4>
+            {payments.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center text-sm text-[var(--color-text-secondary)]">
+                No payments recorded yet.
+              </div>
+            ) : (
+              <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+                {payments.map((payment) => (
+                  <div key={payment.id} className="flex items-center justify-between px-4 py-3 hover:bg-gray-50">
+                    <div>
+                      <p className="text-sm font-medium text-[var(--color-text)]">{formatDate(payment.payment_date)}</p>
+                      <p className="text-xs text-[var(--color-text-secondary)]">
+                        {PAYMENT_METHOD_LABELS[payment.payment_method] || payment.payment_method || 'Other'}
+                        {payment.reference_number && ` · Ref: ${payment.reference_number}`}
+                      </p>
+                      {payment.notes && (
+                        <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">{payment.notes}</p>
+                      )}
+                    </div>
+                    <p className="font-medium text-emerald-600">+{formatCurrency(payment.amount)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ══════════ DOCUMENTS & COMPLIANCE ══════════ */}
+      <div className="card">
+        <div className="flex items-center border-b border-[var(--color-border)]">
+          {(['documents', 'compliance'] as BottomTab[]).map((tab) => (
+            <button
+              key={tab}
+              className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
+                bottomTab === tab
+                  ? 'border-[var(--color-primary)] text-[var(--color-primary)]'
+                  : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
+              }`}
+              onClick={() => setBottomTab(tab)}
+            >
+              {tab === 'documents' ? (
+                <span className="flex items-center gap-1.5"><FolderOpen size={14} /> Documents ({documents.length})</span>
+              ) : (
+                <span className="flex items-center gap-1.5"><Shield size={14} /> Compliance</span>
               )}
-              {tab.label}
             </button>
           ))}
         </div>
-      </div>
 
-      {/* Tab Content */}
-      {tabContent[activeTab]()}
+        <div className="p-5">
+          {bottomTab === 'documents' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <select
+                  className="input py-1.5 text-sm w-44"
+                  value={docCategoryFilter}
+                  onChange={(e) => setDocCategoryFilter(e.target.value)}
+                >
+                  {DOCUMENT_CATEGORIES.map((cat) => (
+                    <option key={cat.value} value={cat.value}>{cat.label}</option>
+                  ))}
+                </select>
+                <button className="btn-primary btn-sm gap-1.5" onClick={() => handleUploadDocument()}>
+                  <Upload size={14} /> Upload Document
+                </button>
+              </div>
+
+              {(() => {
+                const filteredDocs = docCategoryFilter === 'all'
+                  ? documents
+                  : documents.filter((d) => d.category === docCategoryFilter);
+
+                return filteredDocs.length === 0 ? (
+                  <div className="py-8 text-center text-sm text-[var(--color-text-secondary)]">
+                    No documents found.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {filteredDocs.map((doc) => {
+                      const DocIcon = getFileIcon(doc.file_type);
+                      const badgeColor = categoryBadgeColors[doc.category] || categoryBadgeColors.other;
+                      return (
+                        <div key={doc.id} className="flex items-center justify-between p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <DocIcon size={18} className="text-[var(--color-text-secondary)] shrink-0" />
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-[var(--color-text)] truncate">{doc.original_name}</p>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className={`badge text-xs ${badgeColor}`}>
+                                  {DOCUMENT_CATEGORIES.find((c) => c.value === doc.category)?.label || doc.category}
+                                </span>
+                                <span className="text-xs text-[var(--color-text-secondary)]">{formatFileSize(doc.file_size)}</span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button className="btn-ghost btn-sm" onClick={() => handleOpenDocument(doc.id)}>
+                              <Eye size={14} />
+                            </button>
+                            <button
+                              className={`btn-sm ${
+                                deletingDocId === doc.id ? 'bg-red-600 text-white' : 'btn-ghost text-red-500'
+                              }`}
+                              onClick={() => handleDeleteDocument(doc.id)}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          {bottomTab === 'compliance' && (
+            <ProFeatureGate feature="compliance_engine">
+              <div className="space-y-6">
+                <ComplianceSection clientId={client.id} />
+                <CommunicationLogSection clientId={client.id} />
+              </div>
+            </ProFeatureGate>
+          )}
+        </div>
+      </div>
 
       {/* Edit Client Modal */}
       <ClientFormModal
