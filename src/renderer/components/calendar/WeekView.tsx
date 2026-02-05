@@ -3,6 +3,7 @@ import { format, addDays, isSameDay } from 'date-fns';
 import type { Appointment } from '../../../shared/types';
 import TimeGrid from './TimeGrid';
 import type { TimeGridColumn } from './TimeGrid';
+import type { PaymentIndicator } from './AppointmentBlock';
 
 interface WeekViewProps {
   weekStart: Date;
@@ -10,6 +11,7 @@ interface WeekViewProps {
   onSlotClick: (date: string, time: string) => void;
   onAppointmentClick: (appt: Appointment) => void;
   onAppointmentDrop: (apptId: number, newDate: string, newTime: string) => void;
+  paymentStatusMap?: Record<number, PaymentIndicator>;
 }
 
 export default function WeekView({
@@ -18,6 +20,7 @@ export default function WeekView({
   onSlotClick,
   onAppointmentClick,
   onAppointmentDrop,
+  paymentStatusMap = {},
 }: WeekViewProps) {
   const today = new Date();
 
@@ -75,6 +78,7 @@ export default function WeekView({
         onSlotClick={onSlotClick}
         onAppointmentClick={onAppointmentClick}
         onAppointmentDrop={onAppointmentDrop}
+        paymentStatusMap={paymentStatusMap}
       />
     </div>
   );

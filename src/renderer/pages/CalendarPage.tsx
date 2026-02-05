@@ -10,7 +10,8 @@ import {
   endOfMonth,
 } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
-import type { Appointment } from '../../shared/types';
+import type { Appointment, Invoice, InvoiceItem } from '../../shared/types';
+import type { PaymentIndicator } from '../components/calendar/AppointmentBlock';
 import AppointmentModal from '../components/AppointmentModal';
 import CalendarToolbar from '../components/calendar/CalendarToolbar';
 import DayView from '../components/calendar/DayView';
@@ -30,6 +31,7 @@ export default function CalendarPage() {
   const [selectedDate, setSelectedDate] = useState<string | undefined>(undefined);
   const [selectedTime, setSelectedTime] = useState<string | undefined>(undefined);
   const [searchQuery, setSearchQuery] = useState('');
+  const [paymentStatusMap, setPaymentStatusMap] = useState<Record<number, PaymentIndicator>>({});
 
   // Compute date range based on current view
   const getDateRange = useCallback((): { startDate: string; endDate: string } => {
@@ -57,6 +59,42 @@ export default function CalendarPage() {
       const { startDate, endDate } = getDateRange();
       const result = await window.api.appointments.list({ startDate, endDate });
       setAppointments(result);
+
+      // Build payment status map for completed appointments
+      const statusMap: Record<number, PaymentIndicator> = {};
+      const completedWithNotes = result.filter(a => a.note_id && a.status === 'completed');
+      if (completedWithNotes.length > 0) {
+        try {
+          const invoices = await window.api.invoices.list({ startDate, endDate });
+          // Build a set of note_ids that have paid invoices vs unpaid
+          const notePaymentStatus = new Map<number, 'paid' | 'unpaid'>();
+          for (const inv of invoices) {
+            try {
+              const full = await window.api.invoices.get(inv.id);
+              for (const item of full.items) {
+                if (item.note_id) {
+                  if (inv.status === 'paid') {
+                    notePaymentStatus.set(item.note_id, 'paid');
+                  } else if (!notePaymentStatus.has(item.note_id)) {
+                    notePaymentStatus.set(item.note_id, 'unpaid');
+                  }
+                }
+              }
+            } catch {}
+          }
+          for (const appt of completedWithNotes) {
+            if (appt.note_id && notePaymentStatus.has(appt.note_id)) {
+              statusMap[appt.id] = notePaymentStatus.get(appt.note_id)!;
+            } else if (appt.note_id) {
+              // Has a note but no invoice yet — mark as unpaid
+              statusMap[appt.id] = 'unpaid';
+            }
+          }
+        } catch {
+          // Invoice lookup failed — don't show indicators
+        }
+      }
+      setPaymentStatusMap(statusMap);
     } catch (err) {
       console.error('Failed to load appointments:', err);
     } finally {
@@ -196,6 +234,7 @@ export default function CalendarPage() {
             onSlotClick={handleSlotClick}
             onAppointmentClick={handleAppointmentClick}
             onAppointmentDrop={handleAppointmentDrop}
+            paymentStatusMap={paymentStatusMap}
           />
         ) : currentView === 'week' ? (
           <WeekView
@@ -204,6 +243,7 @@ export default function CalendarPage() {
             onSlotClick={handleSlotClick}
             onAppointmentClick={handleAppointmentClick}
             onAppointmentDrop={handleAppointmentDrop}
+            paymentStatusMap={paymentStatusMap}
           />
         ) : (
           <MonthView
@@ -212,6 +252,7 @@ export default function CalendarPage() {
             onDayClick={handleDayClick}
             onAppointmentClick={handleAppointmentClick}
             onAppointmentDrop={(apptId, newDate) => handleAppointmentDrop(apptId, newDate)}
+            paymentStatusMap={paymentStatusMap}
           />
         )}
       </div>

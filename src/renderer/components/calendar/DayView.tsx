@@ -3,6 +3,7 @@ import { format, isSameDay } from 'date-fns';
 import type { Appointment } from '../../../shared/types';
 import TimeGrid from './TimeGrid';
 import type { TimeGridColumn } from './TimeGrid';
+import type { PaymentIndicator } from './AppointmentBlock';
 
 interface DayViewProps {
   date: Date;
@@ -10,6 +11,7 @@ interface DayViewProps {
   onSlotClick: (date: string, time: string) => void;
   onAppointmentClick: (appt: Appointment) => void;
   onAppointmentDrop: (apptId: number, newDate: string, newTime: string) => void;
+  paymentStatusMap?: Record<number, PaymentIndicator>;
 }
 
 export default function DayView({
@@ -18,6 +20,7 @@ export default function DayView({
   onSlotClick,
   onAppointmentClick,
   onAppointmentDrop,
+  paymentStatusMap = {},
 }: DayViewProps) {
   const isToday = isSameDay(date, new Date());
   const dateStr = format(date, 'yyyy-MM-dd');
@@ -58,6 +61,7 @@ export default function DayView({
         onSlotClick={onSlotClick}
         onAppointmentClick={onAppointmentClick}
         onAppointmentDrop={onAppointmentDrop}
+        paymentStatusMap={paymentStatusMap}
       />
     </div>
   );

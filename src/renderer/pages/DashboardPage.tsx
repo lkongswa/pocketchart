@@ -4,7 +4,7 @@ import {
   Users,
   FileText,
   Calendar,
-  Target,
+  PenLine,
   UserPlus,
   CalendarDays,
   Clock,
@@ -12,13 +12,13 @@ import {
   ShieldAlert,
   X,
 } from 'lucide-react';
-import type { Client, Note, Appointment, Goal } from '../../shared/types';
+import type { Client, Note, Appointment } from '../../shared/types';
 
 interface DashboardStats {
   activeClients: number;
   notesThisWeek: number;
   upcomingAppointments: number;
-  goalsMetThisMonth: number;
+  unsignedNotes: number;
 }
 
 interface RecentNote {
@@ -34,7 +34,7 @@ const DashboardPage: React.FC = () => {
     activeClients: 0,
     notesThisWeek: 0,
     upcomingAppointments: 0,
-    goalsMetThisMonth: 0,
+    unsignedNotes: 0,
   });
   const [recentNotes, setRecentNotes] = useState<RecentNote[]>([]);
   const [upcomingAppointments, setUpcomingAppointments] = useState<Appointment[]>([]);
@@ -109,10 +109,6 @@ const DashboardPage: React.FC = () => {
       weekStart.setHours(0, 0, 0, 0);
       const weekStartStr = weekStart.toISOString().split('T')[0];
 
-      // Start of this month
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      const monthStartStr = monthStart.toISOString().split('T')[0];
-
       // End of week (Sunday)
       const weekEnd = new Date(weekStart);
       weekEnd.setDate(weekStart.getDate() + 6);
@@ -151,22 +147,14 @@ const DashboardPage: React.FC = () => {
         .slice(0, 5);
       setUpcomingAppointments(upcoming);
 
-      // Count goals met this month
-      let goalsMetThisMonth = 0;
-      for (const client of allClients) {
-        const goals: Goal[] = await window.api.goals.listByClient(client.id);
-        for (const goal of goals) {
-          if (goal.status === 'met' && goal.met_date && goal.met_date >= monthStartStr) {
-            goalsMetThisMonth++;
-          }
-        }
-      }
+      // Count unsigned notes
+      const unsignedNotes = allNotes.filter((item) => !item.note.signed_at).length;
 
       setStats({
         activeClients: clients.length,
         notesThisWeek,
         upcomingAppointments: appointments.filter((a) => a.status === 'scheduled').length,
-        goalsMetThisMonth,
+        unsignedNotes,
       });
     } catch (error) {
       console.error('Failed to load dashboard data:', error);
@@ -217,10 +205,10 @@ const DashboardPage: React.FC = () => {
       onClick: () => navigate('/calendar'),
     },
     {
-      label: 'Goals Met This Month',
-      count: stats.goalsMetThisMonth,
-      icon: <Target size={24} className="text-[var(--color-success)]" />,
-      bgClass: 'bg-emerald-50',
+      label: 'Unsigned Notes',
+      count: stats.unsignedNotes,
+      icon: <PenLine size={24} className="text-amber-600" />,
+      bgClass: 'bg-amber-50',
       onClick: () => navigate('/clients'),
     },
   ];

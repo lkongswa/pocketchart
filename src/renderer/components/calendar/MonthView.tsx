@@ -10,6 +10,7 @@ import {
   isSameDay,
 } from 'date-fns';
 import type { Appointment, AppointmentStatus } from '../../../shared/types';
+import type { PaymentIndicator } from './AppointmentBlock';
 
 interface MonthViewProps {
   currentDate: Date;
@@ -17,6 +18,7 @@ interface MonthViewProps {
   onDayClick: (date: Date) => void;
   onAppointmentClick: (appt: Appointment) => void;
   onAppointmentDrop: (apptId: number, newDate: string) => void;
+  paymentStatusMap?: Record<number, PaymentIndicator>;
 }
 
 const STATUS_BORDER: Record<AppointmentStatus, string> = {
@@ -43,6 +45,7 @@ export default function MonthView({
   onDayClick,
   onAppointmentClick,
   onAppointmentDrop,
+  paymentStatusMap = {},
 }: MonthViewProps) {
   const today = new Date();
   const [dragOverDate, setDragOverDate] = useState<string | null>(null);
@@ -194,6 +197,12 @@ export default function MonthView({
                         {formatTime12(appt.scheduled_time)}
                       </span>
                       <span className="truncate">{clientName}</span>
+                      {paymentStatusMap[appt.id] === 'paid' && (
+                        <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-emerald-500 text-white text-[8px] font-bold flex-shrink-0" title="Paid">$</span>
+                      )}
+                      {paymentStatusMap[appt.id] === 'unpaid' && (
+                        <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full bg-amber-400 text-white text-[8px] font-bold flex-shrink-0" title="Unpaid">$</span>
+                      )}
                     </div>
                   );
                 })}

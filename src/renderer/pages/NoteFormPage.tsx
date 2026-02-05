@@ -18,6 +18,9 @@ import {
   X,
   PenLine,
   Trash2,
+  Receipt,
+  DollarSign,
+  CreditCard,
 } from 'lucide-react';
 import type { Client, Note, Goal, GoalStatus, Discipline, SOAPSection, CptLine, PlaceOfService, ContractedEntity, EntityFeeSchedule } from '../../shared/types';
 
@@ -124,6 +127,11 @@ export default function NoteFormPage() {
 
   // Delete state
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  // Post-sign state
+  const [justSigned, setJustSigned] = useState(false);
+  const [savedNoteId, setSavedNoteId] = useState<number | null>(null);
+  const [creatingInvoice, setCreatingInvoice] = useState(false);
 
   // Refs for textareas (for cursor insertion)
   const subjectiveRef = useRef<HTMLTextAreaElement>(null);
@@ -362,14 +370,25 @@ export default function NoteFormPage() {
         note_type: isContractedVisit ? noteType as Note['note_type'] : undefined,
       };
 
+      let resultNoteId: number | null = null;
       if (isEditing && noteId) {
         await window.api.notes.update(parseInt(noteId, 10), noteData);
+        resultNoteId = parseInt(noteId, 10);
       } else {
-        await window.api.notes.create(noteData);
+        const created = await window.api.notes.create(noteData);
+        resultNoteId = created?.id ?? null;
       }
 
-      setToast(sign ? 'Note signed and saved' : 'Draft saved');
-      setTimeout(() => navigate(`/clients/${clientId}`), 500);
+      if (sign && resultNoteId) {
+        setToast('Note signed and saved');
+        setSavedNoteId(resultNoteId);
+        setJustSigned(true);
+        setExistingSignedAt(new Date().toISOString());
+        // Don't navigate away — show invoice prompt
+      } else {
+        setToast('Draft saved');
+        setTimeout(() => navigate(`/clients/${clientId}`), 500);
+      }
     } catch (err) {
       console.error('Failed to save note:', err);
       setToast('Failed to save note. Please try again.');
@@ -392,6 +411,25 @@ export default function NoteFormPage() {
     } catch (err) {
       console.error('Failed to delete note:', err);
       setToast('Failed to delete note.');
+    }
+  };
+
+  const handleCreateInvoice = async () => {
+    if (!clientId || !savedNoteId) return;
+    try {
+      setCreatingInvoice(true);
+      const invoice = await window.api.invoices.generateFromNotes(
+        parseInt(clientId, 10),
+        [savedNoteId]
+      );
+      setToast('Invoice created');
+      // Navigate to billing tab on the client page
+      setTimeout(() => navigate(`/clients/${clientId}`, { state: { tab: 'billing', invoiceId: invoice.id } }), 500);
+    } catch (err) {
+      console.error('Failed to create invoice:', err);
+      setToast('Failed to create invoice');
+    } finally {
+      setCreatingInvoice(false);
     }
   };
 
@@ -922,49 +960,81 @@ export default function NoteFormPage() {
         </div>
 
         {/* Action Buttons */}
-        <div className="flex items-center justify-between pb-8">
-          <div>
-            {isEditing && !existingSignedAt && (
-              <button
-                className={`flex items-center gap-2 text-sm font-medium px-3 py-2 rounded-lg transition-colors ${
-                  confirmingDelete
-                    ? 'bg-red-600 text-white hover:bg-red-700'
-                    : 'text-red-600 hover:bg-red-50'
-                }`}
-                onClick={handleDelete}
-                disabled={saving}
-              >
-                <Trash2 className="w-4 h-4" />
-                {confirmingDelete ? 'Click again to confirm' : 'Delete Note'}
-              </button>
-            )}
+        {justSigned ? (
+          <div className="card p-5 mb-8 border-l-4 border-l-emerald-400 bg-emerald-50/50">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-emerald-800 flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4" />
+                  Note signed and saved
+                </p>
+                <p className="text-xs text-emerald-700 mt-1">
+                  Would you like to create an invoice for this session?
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  className="btn-ghost btn-sm"
+                  onClick={() => navigate(`/clients/${clientId}`)}
+                >
+                  Skip
+                </button>
+                <button
+                  className="btn-primary btn-sm flex items-center gap-1.5"
+                  onClick={handleCreateInvoice}
+                  disabled={creatingInvoice}
+                >
+                  <Receipt className="w-4 h-4" />
+                  {creatingInvoice ? 'Creating...' : 'Create Invoice'}
+                </button>
+              </div>
+            </div>
           </div>
-          <div className="flex items-center gap-3">
-          <button
-            className="btn-ghost"
-            onClick={() => navigate(`/clients/${clientId}`)}
-            disabled={saving}
-          >
-            Cancel
-          </button>
-          <button
-            className="btn-secondary flex items-center gap-2"
-            onClick={() => handleSave(false)}
-            disabled={saving}
-          >
-            <Save className="w-4 h-4" />
-            {saving ? 'Saving...' : 'Save Draft'}
-          </button>
-          <button
-            className="btn-primary flex items-center gap-2"
-            onClick={() => handleSave(true)}
-            disabled={saving}
-          >
-            <CheckCircle className="w-4 h-4" />
-            {saving ? 'Saving...' : 'Sign & Save'}
-          </button>
+        ) : (
+          <div className="flex items-center justify-between pb-8">
+            <div>
+              {isEditing && !existingSignedAt && (
+                <button
+                  className={`flex items-center gap-2 text-sm font-medium px-3 py-2 rounded-lg transition-colors ${
+                    confirmingDelete
+                      ? 'bg-red-600 text-white hover:bg-red-700'
+                      : 'text-red-600 hover:bg-red-50'
+                  }`}
+                  onClick={handleDelete}
+                  disabled={saving}
+                >
+                  <Trash2 className="w-4 h-4" />
+                  {confirmingDelete ? 'Click again to confirm' : 'Delete Note'}
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-3">
+            <button
+              className="btn-ghost"
+              onClick={() => navigate(`/clients/${clientId}`)}
+              disabled={saving}
+            >
+              Cancel
+            </button>
+            <button
+              className="btn-secondary flex items-center gap-2"
+              onClick={() => handleSave(false)}
+              disabled={saving}
+            >
+              <Save className="w-4 h-4" />
+              {saving ? 'Saving...' : 'Save Draft'}
+            </button>
+            <button
+              className="btn-primary flex items-center gap-2"
+              onClick={() => handleSave(true)}
+              disabled={saving || Boolean(existingSignedAt)}
+            >
+              <CheckCircle className="w-4 h-4" />
+              {saving ? 'Saving...' : 'Sign & Save'}
+            </button>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Quick Lookback Sidebar */}
@@ -1100,6 +1170,27 @@ export default function NoteFormPage() {
                 </div>
               )}
             </div>
+
+            {/* Quick Invoice Action */}
+            {existingSignedAt && clientId && (
+              <div className="mt-5 pt-4 border-t border-[var(--color-border)]">
+                <button
+                  className="w-full btn-primary btn-sm flex items-center justify-center gap-1.5"
+                  onClick={handleCreateInvoice}
+                  disabled={creatingInvoice || !savedNoteId}
+                >
+                  <Receipt className="w-3.5 h-3.5" />
+                  {creatingInvoice ? 'Creating...' : 'Create Invoice'}
+                </button>
+                <button
+                  className="w-full btn-ghost btn-sm flex items-center justify-center gap-1.5 mt-1"
+                  onClick={() => navigate(`/clients/${clientId}`, { state: { tab: 'billing' } })}
+                >
+                  <CreditCard className="w-3.5 h-3.5" />
+                  View Billing
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

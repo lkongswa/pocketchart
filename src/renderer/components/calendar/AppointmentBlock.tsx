@@ -1,12 +1,15 @@
 import React from 'react';
 import type { Appointment, AppointmentStatus } from '../../../shared/types';
 
+export type PaymentIndicator = 'paid' | 'unpaid' | 'none';
+
 interface AppointmentBlockProps {
   appointment: Appointment;
   slotHeight: number;
   startHour: number;
   onClick: (appt: Appointment) => void;
   compact?: boolean;
+  paymentStatus?: PaymentIndicator;
 }
 
 const STATUS_CLASSES: Record<AppointmentStatus, string> = {
@@ -36,6 +39,7 @@ export default function AppointmentBlock({
   startHour,
   onClick,
   compact = false,
+  paymentStatus = 'none',
 }: AppointmentBlockProps) {
   const [hStr, mStr] = appointment.scheduled_time.split(':');
   const hour = parseInt(hStr, 10);
@@ -52,6 +56,12 @@ export default function AppointmentBlock({
     e.dataTransfer.setData('text/plain', appointment.id.toString());
     e.dataTransfer.effectAllowed = 'move';
   };
+
+  const dollarBadge = paymentStatus === 'paid'
+    ? <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-emerald-500 text-white text-[9px] font-bold flex-shrink-0" title="Paid">$</span>
+    : paymentStatus === 'unpaid'
+    ? <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-amber-400 text-white text-[9px] font-bold flex-shrink-0" title="Unpaid">$</span>
+    : null;
 
   // Compact mode: inline rendering for month view
   if (compact) {
@@ -70,6 +80,7 @@ export default function AppointmentBlock({
           {formatTime12(appointment.scheduled_time)}
         </span>
         <span className="truncate">{clientName}</span>
+        {dollarBadge}
       </div>
     );
   }
@@ -87,8 +98,11 @@ export default function AppointmentBlock({
       }}
       title={`${clientName} - ${formatTime12(appointment.scheduled_time)} (${appointment.duration_minutes}m)`}
     >
-      <div className="text-xs text-[var(--color-text-secondary)] leading-tight">
-        {formatTime12(appointment.scheduled_time)}
+      <div className="flex items-center justify-between">
+        <div className="text-xs text-[var(--color-text-secondary)] leading-tight">
+          {formatTime12(appointment.scheduled_time)}
+        </div>
+        {dollarBadge}
       </div>
       <div
         className={`text-sm font-medium truncate leading-tight ${

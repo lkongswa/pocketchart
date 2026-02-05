@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { format, isSameDay } from 'date-fns';
 import type { Appointment } from '../../../shared/types';
 import AppointmentBlock from './AppointmentBlock';
+import type { PaymentIndicator } from './AppointmentBlock';
 
 export interface TimeGridColumn {
   date: Date;
@@ -17,6 +18,7 @@ interface TimeGridProps {
   onSlotClick: (date: string, time: string) => void;
   onAppointmentClick: (appt: Appointment) => void;
   onAppointmentDrop: (apptId: number, newDate: string, newTime: string) => void;
+  paymentStatusMap?: Record<number, PaymentIndicator>;
 }
 
 const SLOT_HEIGHT = 48; // pixels per 30-min slot
@@ -120,6 +122,7 @@ export default function TimeGrid({
   onSlotClick,
   onAppointmentClick,
   onAppointmentDrop,
+  paymentStatusMap = {},
 }: TimeGridProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [dragOverSlot, setDragOverSlot] = useState<string | null>(null);
@@ -320,6 +323,7 @@ export default function TimeGrid({
                         slotHeight={SLOT_HEIGHT}
                         startHour={startHour}
                         onClick={onAppointmentClick}
+                        paymentStatus={paymentStatusMap[appt.id] || 'none'}
                       />
                     </div>
                   </div>
