@@ -185,9 +185,21 @@ export interface Note {
   signature_typed: string;
   signed_at: string;
   created_by_user_id: number | null;         // V4: Multi-provider
+  // Contractor module fields
+  entity_id: number | null;
+  rate_override: number | null;
+  rate_override_reason: string;
+  // Frequency/duration structured data (for evals/progress reports)
+  frequency_per_week: number | null;
+  duration_weeks: number | null;
+  frequency_notes: string;
+  // Note type for compliance engine
+  note_type: 'soap' | 'progress_report' | 'recertification' | 'discharge';
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  // Joined fields
+  entity_name?: string;
 }
 
 export interface Appointment {
@@ -202,12 +214,17 @@ export interface Appointment {
   cancelled_at: string | null;               // V2/V3: Cancellation tracking
   cancellation_reason: string;               // V2/V3: Cancellation tracking
   late_cancel: boolean;                      // V2/V3: Cancellation tracking
+  // Contractor module fields
+  entity_id: number | null;
+  entity_rate: number | null;
+  rate_override_reason: string;
   created_at: string;
   deleted_at: string | null;
   // Joined fields
   first_name?: string;
   last_name?: string;
   client_discipline?: Discipline;
+  entity_name?: string;
 }
 
 export interface NoteBankEntry {
@@ -271,17 +288,211 @@ export interface PinSetupResult {
   error?: string;
 }
 
-export type AppTier = 'free' | 'pro';
+export type AppTier = 'free' | 'basic' | 'pro';
 
 export interface LicenseStatus {
   tier: AppTier;
   licenseKey: string | null;
   activatedAt: string | null;
+  subscriptionStatus: 'active' | 'expired' | 'cancelled' | null;
+  subscriptionExpiresAt: string | null;
+  lastValidatedAt: string | null;
 }
 
 export interface LicenseActivateResult {
   success: boolean;
   tier: AppTier;
+  error?: string;
+}
+
+// ── Contractor Module Types ──
+
+export interface ContractedEntity {
+  id: number;
+  name: string;
+  contact_name: string;
+  contact_email: string;
+  contact_phone: string;
+  billing_address_street: string;
+  billing_address_city: string;
+  billing_address_state: string;
+  billing_address_zip: string;
+  default_note_type: 'soap' | 'evaluation' | 'progress_report';
+  notes: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export type EntityFeeUnit = 'per_visit' | 'per_hour' | 'per_unit';
+
+export interface EntityFeeSchedule {
+  id: number;
+  entity_id: number;
+  service_type: string;
+  description: string;
+  default_rate: number;
+  unit: EntityFeeUnit;
+  effective_date: string;
+  notes: string;
+  created_at: string;
+  deleted_at: string | null;
+}
+
+export type EntityDocumentCategory = 'contract' | 'credentialing' | 'w9' | 'other';
+
+export interface EntityDocument {
+  id: number;
+  entity_id: number;
+  filename: string;
+  original_name: string;
+  file_path: string;
+  category: EntityDocumentCategory;
+  expiration_date: string | null;
+  notes: string;
+  uploaded_at: string;
+  deleted_at: string | null;
+}
+
+// ── Professional Vault Types ──
+
+export type VaultDocumentType =
+  | 'state_license'
+  | 'malpractice_insurance'
+  | 'asha_certification'
+  | 'npi_confirmation'
+  | 'tb_test'
+  | 'flu_shot'
+  | 'cpr_certification'
+  | 'drivers_license'
+  | 'auto_insurance'
+  | 'resume_cv'
+  | 'w9'
+  | 'business_license'
+  | 'dei_training'
+  | 'hipaa_training'
+  | 'background_check'
+  | 'other';
+
+export interface VaultDocument {
+  id: number;
+  document_type: VaultDocumentType;
+  custom_label: string | null;
+  filename: string;
+  original_name: string;
+  file_path: string;
+  issue_date: string | null;
+  expiration_date: string | null;
+  reminder_days_before: number;
+  notes: string;
+  uploaded_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+// ── Compliance Engine Types ──
+
+export type CompliancePreset = 'medicare' | 'custom' | 'none';
+
+export interface ComplianceTracking {
+  id: number;
+  client_id: number;
+  tracking_enabled: boolean;
+  compliance_preset: CompliancePreset;
+  progress_visit_threshold: number;
+  progress_day_threshold: number;
+  recert_day_threshold: number;
+  visits_since_last_progress: number;
+  last_progress_date: string | null;
+  last_recert_date: string | null;
+  next_progress_due: string | null;
+  next_recert_due: string | null;
+  recert_md_signature_received: boolean;
+  physician_order_required: boolean;
+  physician_order_expiration: string | null;
+  physician_order_document_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ── Mileage Types ──
+
+export interface MileageEntry {
+  id: number;
+  date: string;
+  appointment_id: number | null;
+  client_id: number | null;
+  entity_id: number | null;
+  origin_address: string;
+  destination_address: string;
+  miles: number;
+  reimbursement_rate: number | null;
+  reimbursement_amount: number | null;
+  is_reimbursable: boolean;
+  notes: string;
+  created_at: string;
+  deleted_at: string | null;
+  // Joined fields
+  client_name?: string;
+  entity_name?: string;
+}
+
+// ── Communication Log Types ──
+
+export type CommunicationType = 'phone' | 'email' | 'fax' | 'in_person' | 'other';
+export type CommunicationDirection = 'outgoing' | 'incoming';
+
+export interface CommunicationLogEntry {
+  id: number;
+  client_id: number;
+  entity_id: number | null;
+  communication_date: string;
+  type: CommunicationType;
+  direction: CommunicationDirection;
+  contact_name: string;
+  summary: string;
+  created_at: string;
+  deleted_at: string | null;
+}
+
+// ── Dashboard Types ──
+
+export interface DashboardOverview {
+  todayAppointments: Appointment[];
+  complianceAlerts: ComplianceAlert[];
+  unsignedNotes: UnsignedNote[];
+  expiringCredentials: VaultDocument[];
+  expiringOrders: ComplianceTracking[];
+  authorizationAlerts: Authorization[];
+  outstandingInvoices: Invoice[];
+}
+
+export interface ComplianceAlert {
+  client_id: number;
+  client_name: string;
+  alert_type: 'progress_due' | 'progress_overdue' | 'recert_due' | 'recert_overdue';
+  detail: string;
+  visits_count?: number;
+  threshold?: number;
+}
+
+export interface UnsignedNote {
+  id: number;
+  client_id: number;
+  client_name: string;
+  date_of_service: string;
+  created_at: string;
+}
+
+// ── Year-End Tax Summary Types ──
+
+export interface YearEndSummary {
+  revenueByEntity: { entity_id: number; entity_name: string; total: number }[];
+  revenuePrivatePay: number;
+  totalMileage: number;
+  reimbursedMileage: number;
+  deductibleMileage: number;
+  visitsByEntity: { entity_id: number; entity_name: string; count: number }[];
 }
 
 // V2 Billing Interfaces
@@ -300,6 +511,7 @@ export interface FeeScheduleEntry {
 export interface Invoice {
   id: number;
   client_id: number;
+  entity_id: number | null;
   invoice_number: string;
   invoice_date: string;
   due_date: string;
@@ -314,6 +526,8 @@ export interface Invoice {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  // Joined fields
+  entity_name?: string;
 }
 
 export interface InvoiceItem {
@@ -360,6 +574,7 @@ export interface Payer {
 export interface Authorization {
   id: number;
   client_id: number;
+  entity_id: number | null;
   payer_name: string;
   payer_id: string;
   auth_number: string;
@@ -648,6 +863,74 @@ export interface PocketChartAPI {
       paymentIntentId?: string;
       amountPaid?: number;
     }>;
+  };
+  // ── Contracted Entities (Pro) ──
+  contractedEntities: {
+    list: () => Promise<ContractedEntity[]>;
+    get: (id: number) => Promise<ContractedEntity>;
+    create: (data: Partial<ContractedEntity>) => Promise<ContractedEntity>;
+    update: (id: number, data: Partial<ContractedEntity>) => Promise<ContractedEntity>;
+    delete: (id: number) => Promise<boolean>;
+    listFeeSchedule: (entityId: number) => Promise<EntityFeeSchedule[]>;
+    createFeeScheduleEntry: (data: Partial<EntityFeeSchedule>) => Promise<EntityFeeSchedule>;
+    updateFeeScheduleEntry: (id: number, data: Partial<EntityFeeSchedule>) => Promise<EntityFeeSchedule>;
+    deleteFeeScheduleEntry: (id: number) => Promise<boolean>;
+  };
+  // ── Entity Documents (Pro) ──
+  entityDocuments: {
+    list: (entityId: number) => Promise<EntityDocument[]>;
+    upload: (data: { entityId: number; category?: EntityDocumentCategory }) => Promise<EntityDocument | null>;
+    open: (documentId: number) => Promise<string>;
+    delete: (documentId: number) => Promise<boolean>;
+  };
+  // ── Professional Vault (Pro) ──
+  vault: {
+    list: () => Promise<VaultDocument[]>;
+    upload: (data: { documentType: VaultDocumentType; customLabel?: string; expirationDate?: string; issueDate?: string; reminderDaysBefore?: number }) => Promise<VaultDocument | null>;
+    update: (id: number, data: Partial<VaultDocument>) => Promise<VaultDocument>;
+    delete: (id: number) => Promise<boolean>;
+    open: (id: number) => Promise<string>;
+    getExpiringDocuments: () => Promise<VaultDocument[]>;
+    exportCredentialingPacket: (documentIds: number[]) => Promise<string | null>;
+  };
+  // ── Compliance Tracking (Pro) ──
+  compliance: {
+    getByClient: (clientId: number) => Promise<ComplianceTracking | null>;
+    updateSettings: (clientId: number, data: Partial<ComplianceTracking>) => Promise<ComplianceTracking>;
+    incrementVisit: (clientId: number) => Promise<ComplianceTracking>;
+    resetProgressCounter: (clientId: number) => Promise<ComplianceTracking>;
+    resetRecertCounter: (clientId: number) => Promise<ComplianceTracking>;
+    getAlerts: () => Promise<ComplianceAlert[]>;
+    getDueItems: (clientId: number) => Promise<ComplianceAlert[]>;
+  };
+  // ── Mileage (Pro) ──
+  mileage: {
+    list: (filters?: { startDate?: string; endDate?: string; entityId?: number; clientId?: number }) => Promise<MileageEntry[]>;
+    create: (data: Partial<MileageEntry>) => Promise<MileageEntry>;
+    update: (id: number, data: Partial<MileageEntry>) => Promise<MileageEntry>;
+    delete: (id: number) => Promise<boolean>;
+    getSummary: (startDate: string, endDate: string) => Promise<{ totalMiles: number; reimbursable: number; deductible: number }>;
+    exportCsv: (startDate: string, endDate: string) => Promise<string | null>;
+  };
+  // ── Communication Log (Pro) ──
+  communicationLog: {
+    list: (clientId: number) => Promise<CommunicationLogEntry[]>;
+    create: (data: Partial<CommunicationLogEntry>) => Promise<CommunicationLogEntry>;
+    delete: (id: number) => Promise<boolean>;
+  };
+  // ── Dashboard (Pro) ──
+  dashboard: {
+    getOverview: () => Promise<DashboardOverview>;
+  };
+  // ── Reports (Pro) ──
+  reports: {
+    yearEndSummary: (year: number) => Promise<YearEndSummary>;
+    exportYearEnd: (year: number, format: 'pdf' | 'csv') => Promise<string | null>;
+  };
+  // ── Direct Access Rules ──
+  directAccess: {
+    requiresReferral: (state: string, discipline: Discipline) => Promise<boolean>;
+    getRules: () => Promise<Array<{ state: string; discipline: Discipline; requires_referral: boolean }>>;
   };
 }
 

@@ -31,6 +31,9 @@ const VALID_TABLES = new Set([
   'payers', 'authorizations', 'claims', 'claim_lines',
   // Audit log
   'audit_log',
+  // V2 Pro tables
+  'contracted_entities', 'entity_fee_schedules', 'entity_documents',
+  'vault_documents', 'compliance_tracking', 'mileage_log', 'communication_log',
 ]);
 
 export function getDataPath(): string {
@@ -491,6 +494,190 @@ function runMigrations(): void {
         `);
       },
     },
+    {
+      version: 15,
+      description: 'V2 Pro: Contractor module, Professional Vault, Compliance Engine, Mileage, Communication Log',
+      up: () => {
+        // ── New Tables ──
+
+        // Contracted Entities
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS contracted_entities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            contact_name TEXT DEFAULT '',
+            contact_email TEXT DEFAULT '',
+            contact_phone TEXT DEFAULT '',
+            billing_address_street TEXT DEFAULT '',
+            billing_address_city TEXT DEFAULT '',
+            billing_address_state TEXT DEFAULT '',
+            billing_address_zip TEXT DEFAULT '',
+            default_note_type TEXT DEFAULT 'soap',
+            notes TEXT DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            deleted_at DATETIME DEFAULT NULL
+          )
+        `);
+
+        // Entity Fee Schedules
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS entity_fee_schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_id INTEGER NOT NULL REFERENCES contracted_entities(id),
+            service_type TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            default_rate REAL NOT NULL,
+            unit TEXT DEFAULT 'per_visit',
+            effective_date TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            deleted_at DATETIME DEFAULT NULL
+          )
+        `);
+
+        // Entity Documents
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS entity_documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_id INTEGER NOT NULL REFERENCES contracted_entities(id),
+            filename TEXT NOT NULL,
+            original_name TEXT NOT NULL DEFAULT '',
+            file_path TEXT NOT NULL,
+            category TEXT DEFAULT 'other',
+            expiration_date TEXT DEFAULT NULL,
+            notes TEXT DEFAULT '',
+            uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            deleted_at DATETIME DEFAULT NULL
+          )
+        `);
+
+        // Professional Vault
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS vault_documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_type TEXT NOT NULL,
+            custom_label TEXT DEFAULT NULL,
+            filename TEXT NOT NULL,
+            original_name TEXT NOT NULL DEFAULT '',
+            file_path TEXT NOT NULL,
+            issue_date TEXT DEFAULT NULL,
+            expiration_date TEXT DEFAULT NULL,
+            reminder_days_before INTEGER DEFAULT 60,
+            notes TEXT DEFAULT '',
+            uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            deleted_at DATETIME DEFAULT NULL
+          )
+        `);
+
+        // Compliance Tracking (per-client)
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS compliance_tracking (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            client_id INTEGER NOT NULL REFERENCES clients(id),
+            tracking_enabled INTEGER DEFAULT 1,
+            compliance_preset TEXT DEFAULT 'medicare',
+            progress_visit_threshold INTEGER DEFAULT 10,
+            progress_day_threshold INTEGER DEFAULT 30,
+            recert_day_threshold INTEGER DEFAULT 90,
+            visits_since_last_progress INTEGER DEFAULT 0,
+            last_progress_date TEXT DEFAULT NULL,
+            last_recert_date TEXT DEFAULT NULL,
+            next_progress_due TEXT DEFAULT NULL,
+            next_recert_due TEXT DEFAULT NULL,
+            recert_md_signature_received INTEGER DEFAULT 0,
+            physician_order_required INTEGER DEFAULT 0,
+            physician_order_expiration TEXT DEFAULT NULL,
+            physician_order_document_id INTEGER DEFAULT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+
+        // Mileage Log
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS mileage_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            appointment_id INTEGER REFERENCES appointments(id),
+            client_id INTEGER REFERENCES clients(id),
+            entity_id INTEGER REFERENCES contracted_entities(id),
+            origin_address TEXT DEFAULT '',
+            destination_address TEXT DEFAULT '',
+            miles REAL NOT NULL,
+            reimbursement_rate REAL DEFAULT NULL,
+            reimbursement_amount REAL DEFAULT NULL,
+            is_reimbursable INTEGER DEFAULT 1,
+            notes TEXT DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            deleted_at DATETIME DEFAULT NULL
+          )
+        `);
+
+        // Communication Log
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS communication_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            client_id INTEGER NOT NULL REFERENCES clients(id),
+            entity_id INTEGER REFERENCES contracted_entities(id),
+            communication_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+            type TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            contact_name TEXT DEFAULT '',
+            summary TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            deleted_at DATETIME DEFAULT NULL
+          )
+        `);
+
+        // ── Column additions to existing tables ──
+
+        // Notes: contractor + frequency/duration + note_type
+        if (!columnExists('notes', 'entity_id')) {
+          db.exec("ALTER TABLE notes ADD COLUMN entity_id INTEGER DEFAULT NULL REFERENCES contracted_entities(id)");
+        }
+        if (!columnExists('notes', 'rate_override')) {
+          db.exec("ALTER TABLE notes ADD COLUMN rate_override REAL DEFAULT NULL");
+        }
+        if (!columnExists('notes', 'rate_override_reason')) {
+          db.exec("ALTER TABLE notes ADD COLUMN rate_override_reason TEXT DEFAULT ''");
+        }
+        if (!columnExists('notes', 'frequency_per_week')) {
+          db.exec("ALTER TABLE notes ADD COLUMN frequency_per_week INTEGER DEFAULT NULL");
+        }
+        if (!columnExists('notes', 'duration_weeks')) {
+          db.exec("ALTER TABLE notes ADD COLUMN duration_weeks INTEGER DEFAULT NULL");
+        }
+        if (!columnExists('notes', 'frequency_notes')) {
+          db.exec("ALTER TABLE notes ADD COLUMN frequency_notes TEXT DEFAULT ''");
+        }
+        if (!columnExists('notes', 'note_type')) {
+          db.exec("ALTER TABLE notes ADD COLUMN note_type TEXT DEFAULT 'soap'");
+        }
+
+        // Appointments: contractor fields
+        if (!columnExists('appointments', 'entity_id')) {
+          db.exec("ALTER TABLE appointments ADD COLUMN entity_id INTEGER DEFAULT NULL REFERENCES contracted_entities(id)");
+        }
+        if (!columnExists('appointments', 'entity_rate')) {
+          db.exec("ALTER TABLE appointments ADD COLUMN entity_rate REAL DEFAULT NULL");
+        }
+        if (!columnExists('appointments', 'rate_override_reason')) {
+          db.exec("ALTER TABLE appointments ADD COLUMN rate_override_reason TEXT DEFAULT ''");
+        }
+
+        // Invoices: entity link
+        if (!columnExists('invoices', 'entity_id')) {
+          db.exec("ALTER TABLE invoices ADD COLUMN entity_id INTEGER DEFAULT NULL REFERENCES contracted_entities(id)");
+        }
+
+        // Authorizations: entity link
+        if (!columnExists('authorizations', 'entity_id')) {
+          db.exec("ALTER TABLE authorizations ADD COLUMN entity_id INTEGER DEFAULT NULL REFERENCES contracted_entities(id)");
+        }
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
@@ -551,6 +738,29 @@ function createIndexes(): void {
     CREATE INDEX IF NOT EXISTS idx_audit_log_entity_id ON audit_log(entity_id);
     CREATE INDEX IF NOT EXISTS idx_audit_log_client_id ON audit_log(client_id);
     CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at);
+  `);
+
+  // V2 Pro table indexes (run after migration 15 creates tables)
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_contracted_entities_deleted_at ON contracted_entities(deleted_at);
+    CREATE INDEX IF NOT EXISTS idx_entity_fee_schedules_entity_id ON entity_fee_schedules(entity_id);
+    CREATE INDEX IF NOT EXISTS idx_entity_fee_schedules_deleted_at ON entity_fee_schedules(deleted_at);
+    CREATE INDEX IF NOT EXISTS idx_entity_documents_entity_id ON entity_documents(entity_id);
+    CREATE INDEX IF NOT EXISTS idx_entity_documents_deleted_at ON entity_documents(deleted_at);
+    CREATE INDEX IF NOT EXISTS idx_vault_documents_document_type ON vault_documents(document_type);
+    CREATE INDEX IF NOT EXISTS idx_vault_documents_expiration_date ON vault_documents(expiration_date);
+    CREATE INDEX IF NOT EXISTS idx_vault_documents_deleted_at ON vault_documents(deleted_at);
+    CREATE INDEX IF NOT EXISTS idx_compliance_tracking_client_id ON compliance_tracking(client_id);
+    CREATE INDEX IF NOT EXISTS idx_mileage_log_date ON mileage_log(date);
+    CREATE INDEX IF NOT EXISTS idx_mileage_log_entity_id ON mileage_log(entity_id);
+    CREATE INDEX IF NOT EXISTS idx_mileage_log_client_id ON mileage_log(client_id);
+    CREATE INDEX IF NOT EXISTS idx_mileage_log_deleted_at ON mileage_log(deleted_at);
+    CREATE INDEX IF NOT EXISTS idx_communication_log_client_id ON communication_log(client_id);
+    CREATE INDEX IF NOT EXISTS idx_communication_log_deleted_at ON communication_log(deleted_at);
+    CREATE INDEX IF NOT EXISTS idx_notes_entity_id ON notes(entity_id);
+    CREATE INDEX IF NOT EXISTS idx_notes_note_type ON notes(note_type);
+    CREATE INDEX IF NOT EXISTS idx_appointments_entity_id ON appointments(entity_id);
+    CREATE INDEX IF NOT EXISTS idx_invoices_entity_id ON invoices(entity_id);
   `);
 }
 

@@ -1,21 +1,100 @@
-import React, { useState } from 'react';
-import { ClipboardList, Lock, Shield, ArrowRight, ScrollText, CheckSquare } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ClipboardList, Lock, Shield, ArrowRight, ScrollText, Stethoscope } from 'lucide-react';
+import type { Discipline } from '@shared/types';
+
+const US_STATES = [
+  'AL','AK','AZ','AR','CA','CO','CT','DE','DC','FL','GA','HI','ID','IL','IN',
+  'IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH',
+  'NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT',
+  'VT','VA','WA','WV','WI','WY',
+];
+
+const TAXONOMY_CODES: Record<Discipline, { code: string; label: string }> = {
+  ST: { code: '235Z00000X', label: 'Speech-Language Pathologist' },
+  OT: { code: '225X00000X', label: 'Occupational Therapist' },
+  PT: { code: '225100000X', label: 'Physical Therapist' },
+};
 
 interface OnboardingScreenProps {
   onComplete: () => void;
 }
 
 export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) {
-  const [step, setStep] = useState<'terms' | 'welcome' | 'pin'>('terms');
+  const [step, setStep] = useState<'terms' | 'welcome' | 'practice' | 'pin'>('terms');
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [newPin, setNewPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [pinError, setPinError] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Practice setup fields
+  const [discipline, setDiscipline] = useState<Discipline | ''>('');
+  const [practiceState, setPracticeState] = useState('');
+  const [npi, setNpi] = useState('');
+  const [taxonomyCode, setTaxonomyCode] = useState('');
+  const [licenseNumber, setLicenseNumber] = useState('');
+  const [npiError, setNpiError] = useState('');
+
+  // Auto-populate taxonomy code when discipline changes
+  useEffect(() => {
+    if (discipline && discipline in TAXONOMY_CODES) {
+      setTaxonomyCode(TAXONOMY_CODES[discipline as Discipline].code);
+    } else {
+      setTaxonomyCode('');
+    }
+  }, [discipline]);
+
   const handleAcceptTerms = async () => {
     await window.api.settings.set('terms_accepted', new Date().toISOString());
     setStep('welcome');
+  };
+
+  const validateNpi = (value: string): boolean => {
+    if (!value) return true; // Optional during onboarding
+    if (!/^\d{10}$/.test(value)) return false;
+    // Luhn check for NPI (prefix with 80840)
+    const prefixed = '80840' + value;
+    let sum = 0;
+    for (let i = prefixed.length - 1; i >= 0; i--) {
+      let digit = parseInt(prefixed[i], 10);
+      if ((prefixed.length - i) % 2 === 0) {
+        digit *= 2;
+        if (digit > 9) digit -= 9;
+      }
+      sum += digit;
+    }
+    return sum % 10 === 0;
+  };
+
+  const handleSavePractice = async () => {
+    // Validate NPI if provided
+    if (npi && !validateNpi(npi)) {
+      setNpiError('Invalid NPI. Must be 10 digits with valid check digit.');
+      return;
+    }
+    setNpiError('');
+    setSaving(true);
+
+    try {
+      // Save practice info
+      await window.api.practice.save({
+        discipline: discipline || undefined,
+        state: practiceState || undefined,
+        npi: npi || undefined,
+        taxonomy_code: taxonomyCode || undefined,
+        license_number: licenseNumber || undefined,
+      } as any);
+
+      // Also store in settings for quick access
+      if (discipline) await window.api.settings.set('provider_discipline', discipline);
+      if (practiceState) await window.api.settings.set('provider_state', practiceState);
+
+      setStep('pin');
+    } catch (err) {
+      console.error('Failed to save practice info:', err);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleSetPin = async () => {
@@ -187,9 +266,9 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
 
           <button
             className="btn-primary w-full justify-center gap-2 py-3"
-            onClick={() => setStep('pin')}
+            onClick={() => setStep('practice')}
           >
-            Set Up PIN
+            Set Up Practice Info
             <ArrowRight className="w-4 h-4" />
           </button>
 
@@ -204,7 +283,133 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
     );
   }
 
-  // --- Step 3: PIN Setup ---
+  // --- Step 3: Practice Setup ---
+  if (step === 'practice') {
+    return (
+      <div className="fixed inset-0 z-[200] flex items-center justify-center bg-[var(--color-bg)] overflow-y-auto">
+        <div className="flex flex-col items-center gap-6 max-w-md text-center px-8 py-8">
+          <div className="w-16 h-16 rounded-2xl bg-[var(--color-primary)] flex items-center justify-center">
+            <Stethoscope className="w-8 h-8 text-white" />
+          </div>
+
+          <div>
+            <h2 className="text-2xl font-bold text-[var(--color-text)] mb-2">
+              Practice Information
+            </h2>
+            <p className="text-sm text-[var(--color-text-secondary)]">
+              This info auto-populates on every note and evaluation. You can update it later in Settings.
+            </p>
+          </div>
+
+          <div className="w-full space-y-4 text-left">
+            {/* Discipline */}
+            <div>
+              <label className="text-xs font-medium text-[var(--color-text-secondary)] mb-1 block">
+                Discipline *
+              </label>
+              <select
+                className="select w-full"
+                value={discipline}
+                onChange={(e) => setDiscipline(e.target.value as Discipline)}
+              >
+                <option value="">Select discipline...</option>
+                <option value="PT">Physical Therapy (PT)</option>
+                <option value="OT">Occupational Therapy (OT)</option>
+                <option value="ST">Speech-Language Pathology (ST)</option>
+              </select>
+            </div>
+
+            {/* Practice State */}
+            <div>
+              <label className="text-xs font-medium text-[var(--color-text-secondary)] mb-1 block">
+                Practice State *
+              </label>
+              <select
+                className="select w-full"
+                value={practiceState}
+                onChange={(e) => setPracticeState(e.target.value)}
+              >
+                <option value="">Select state...</option>
+                {US_STATES.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* NPI */}
+            <div>
+              <label className="text-xs font-medium text-[var(--color-text-secondary)] mb-1 block">
+                NPI Number *
+              </label>
+              <input
+                type="text"
+                className="input w-full"
+                placeholder="10-digit NPI"
+                maxLength={10}
+                value={npi}
+                onChange={(e) => {
+                  setNpi(e.target.value.replace(/\D/g, '').slice(0, 10));
+                  setNpiError('');
+                }}
+              />
+              {npiError && <p className="text-xs text-red-500 mt-1">{npiError}</p>}
+            </div>
+
+            {/* Taxonomy Code */}
+            <div>
+              <label className="text-xs font-medium text-[var(--color-text-secondary)] mb-1 block">
+                Taxonomy Code
+              </label>
+              <input
+                type="text"
+                className="input w-full"
+                placeholder="Auto-populated from discipline"
+                value={taxonomyCode}
+                onChange={(e) => setTaxonomyCode(e.target.value)}
+              />
+              {discipline && discipline in TAXONOMY_CODES && (
+                <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+                  {TAXONOMY_CODES[discipline as Discipline].label}
+                </p>
+              )}
+            </div>
+
+            {/* License Number */}
+            <div>
+              <label className="text-xs font-medium text-[var(--color-text-secondary)] mb-1 block">
+                State License Number
+              </label>
+              <input
+                type="text"
+                className="input w-full"
+                placeholder="e.g., SLP12345"
+                value={licenseNumber}
+                onChange={(e) => setLicenseNumber(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <button
+            className="btn-primary w-full justify-center gap-2 py-3"
+            onClick={handleSavePractice}
+            disabled={saving || !discipline || !practiceState || !npi}
+          >
+            {saving ? 'Saving...' : 'Continue to PIN Setup'}
+            <ArrowRight className="w-4 h-4" />
+          </button>
+
+          <button
+            className="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
+            onClick={() => setStep('pin')}
+          >
+            Skip for now
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- Step 4: PIN Setup ---
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-[var(--color-bg)]">
       <div className="flex flex-col items-center gap-8 max-w-sm text-center px-8">

@@ -47,6 +47,9 @@ import type {
 } from '../../shared/types';
 import ClientFormModal from '../components/ClientFormModal';
 import GoalFormModal from '../components/GoalFormModal';
+import ComplianceSection from '../components/ComplianceSection';
+import CommunicationLogSection from '../components/CommunicationLogSection';
+import ProFeatureGate from '../components/ProFeatureGate';
 
 // --- Badge helpers ---
 
@@ -75,7 +78,7 @@ const goalStatusConfig: Record<GoalStatus, { className: string; icon: React.Elem
   modified: { className: 'bg-amber-100 text-amber-700', icon: RefreshCw, label: 'Modified' },
 };
 
-type Tab = 'overview' | 'notes' | 'evaluations' | 'goals' | 'documents' | 'billing';
+type Tab = 'overview' | 'notes' | 'evaluations' | 'goals' | 'documents' | 'billing' | 'compliance';
 
 const STATUS_COLORS: Record<InvoiceStatus, { bg: string; text: string }> = {
   draft: { bg: 'bg-gray-100', text: 'text-gray-700' },
@@ -204,12 +207,26 @@ const ClientDetailPage: React.FC = () => {
         window.api.payments.list({ clientId }),
       ]);
       setClient(clientData);
-      setNotes(notesData);
-      setEvaluations(evalsData);
-      setGoals(goalsData);
-      setDocuments(docsData);
-      setInvoices(invoicesData);
-      setPayments(paymentsData);
+      setNotes(notesData || []);
+      setEvaluations(evalsData || []);
+      setGoals(goalsData || []);
+      setDocuments(docsData || []);
+      // Ensure invoices have all required fields with safe defaults
+      const safeInvoices = (invoicesData || []).map((inv: any) => ({
+        ...inv,
+        stripe_payment_link_id: inv.stripe_payment_link_id || '',
+        stripe_payment_link_url: inv.stripe_payment_link_url || '',
+        status: inv.status || 'draft',
+        total_amount: typeof inv.total_amount === 'number' ? inv.total_amount : 0,
+      }));
+      setInvoices(safeInvoices);
+      // Ensure payments have all required fields
+      const safePayments = (paymentsData || []).map((pay: any) => ({
+        ...pay,
+        payment_method: pay.payment_method || 'other',
+        amount: typeof pay.amount === 'number' ? pay.amount : 0,
+      }));
+      setPayments(safePayments);
     } catch (err) {
       console.error('Failed to load client data:', err);
     } finally {
@@ -220,6 +237,14 @@ const ClientDetailPage: React.FC = () => {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Clear billing toast after 4 seconds
+  useEffect(() => {
+    if (billingToast) {
+      const timer = setTimeout(() => setBillingToast(null), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [billingToast]);
 
   const handleArchiveToggle = async () => {
     if (!client) return;
@@ -909,14 +934,6 @@ const ClientDetailPage: React.FC = () => {
     }
   };
 
-  // Clear billing toast
-  useEffect(() => {
-    if (billingToast) {
-      const timer = setTimeout(() => setBillingToast(null), 4000);
-      return () => clearTimeout(timer);
-    }
-  }, [billingToast]);
-
   // --- Render Billing Tab ---
 
   const renderBilling = () => {
@@ -1027,10 +1044,10 @@ const ClientDetailPage: React.FC = () => {
                       </p>
                       <span
                         className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-                          STATUS_COLORS[invoice.status].bg
-                        } ${STATUS_COLORS[invoice.status].text}`}
+                          (STATUS_COLORS[invoice.status] || STATUS_COLORS.draft).bg
+                        } ${(STATUS_COLORS[invoice.status] || STATUS_COLORS.draft).text}`}
                       >
-                        {invoice.status}
+                        {invoice.status || 'draft'}
                       </span>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1101,7 +1118,7 @@ const ClientDetailPage: React.FC = () => {
                       {formatDate(payment.payment_date)}
                     </p>
                     <p className="text-sm text-[var(--color-text-secondary)]">
-                      {PAYMENT_METHOD_LABELS[payment.payment_method]}
+                      {PAYMENT_METHOD_LABELS[payment.payment_method] || payment.payment_method || 'Other'}
                       {payment.reference_number && ` · Ref: ${payment.reference_number}`}
                     </p>
                     {payment.notes && (
@@ -1127,6 +1144,7 @@ const ClientDetailPage: React.FC = () => {
     goals: 'bg-amber-400',
     documents: 'bg-slate-400',
     billing: 'bg-emerald-400',
+    compliance: 'bg-red-400',
   };
 
   // Calculate balance due for tab label
@@ -1141,7 +1159,17 @@ const ClientDetailPage: React.FC = () => {
     { key: 'goals', label: `Goals (${goals.length})` },
     { key: 'documents', label: `Documents (${documents.length})` },
     { key: 'billing', label: balanceDue > 0 ? `Billing (${formatCurrency(balanceDue)})` : 'Billing' },
+    { key: 'compliance', label: 'Compliance' },
   ];
+
+  const renderCompliance = (): React.ReactElement => (
+    <ProFeatureGate feature="compliance_engine">
+      <div className="space-y-6">
+        <ComplianceSection clientId={client!.id} />
+        <CommunicationLogSection clientId={client!.id} />
+      </div>
+    </ProFeatureGate>
+  );
 
   const tabContent: Record<Tab, () => React.ReactElement> = {
     overview: renderOverview,
@@ -1150,6 +1178,7 @@ const ClientDetailPage: React.FC = () => {
     goals: renderGoals,
     documents: renderDocuments,
     billing: renderBilling,
+    compliance: renderCompliance,
   };
 
   // --- Main Render ---

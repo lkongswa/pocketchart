@@ -243,6 +243,83 @@ const api = {
     checkPaymentStatus: (invoiceId: number) =>
       ipcRenderer.invoke('stripe:checkPaymentStatus', invoiceId),
   },
+
+  // ── Contracted Entities (Pro) ──
+  contractedEntities: {
+    list: () => ipcRenderer.invoke('contractedEntities:list'),
+    get: (id: number) => ipcRenderer.invoke('contractedEntities:get', id),
+    create: (data: any) => ipcRenderer.invoke('contractedEntities:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('contractedEntities:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('contractedEntities:delete', id),
+    listFeeSchedule: (entityId: number) => ipcRenderer.invoke('contractedEntities:listFeeSchedule', entityId),
+    createFeeScheduleEntry: (data: any) => ipcRenderer.invoke('contractedEntities:createFeeScheduleEntry', data),
+    updateFeeScheduleEntry: (id: number, data: any) => ipcRenderer.invoke('contractedEntities:updateFeeScheduleEntry', id, data),
+    deleteFeeScheduleEntry: (id: number) => ipcRenderer.invoke('contractedEntities:deleteFeeScheduleEntry', id),
+  },
+
+  // ── Entity Documents (Pro) ──
+  entityDocuments: {
+    list: (entityId: number) => ipcRenderer.invoke('entityDocuments:list', entityId),
+    upload: (data: { entityId: number; category?: string }) => ipcRenderer.invoke('entityDocuments:upload', data),
+    open: (documentId: number) => ipcRenderer.invoke('entityDocuments:open', documentId),
+    delete: (documentId: number) => ipcRenderer.invoke('entityDocuments:delete', documentId),
+  },
+
+  // ── Professional Vault (Pro) ──
+  vault: {
+    list: () => ipcRenderer.invoke('vault:list'),
+    upload: (data: any) => ipcRenderer.invoke('vault:upload', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('vault:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('vault:delete', id),
+    open: (id: number) => ipcRenderer.invoke('vault:open', id),
+    getExpiringDocuments: () => ipcRenderer.invoke('vault:getExpiringDocuments'),
+    exportCredentialingPacket: (documentIds: number[]) => ipcRenderer.invoke('vault:exportCredentialingPacket', documentIds),
+  },
+
+  // ── Compliance Tracking (Pro) ──
+  compliance: {
+    getByClient: (clientId: number) => ipcRenderer.invoke('compliance:getByClient', clientId),
+    updateSettings: (clientId: number, data: any) => ipcRenderer.invoke('compliance:updateSettings', clientId, data),
+    incrementVisit: (clientId: number) => ipcRenderer.invoke('compliance:incrementVisit', clientId),
+    resetProgressCounter: (clientId: number) => ipcRenderer.invoke('compliance:resetProgressCounter', clientId),
+    resetRecertCounter: (clientId: number) => ipcRenderer.invoke('compliance:resetRecertCounter', clientId),
+    getAlerts: () => ipcRenderer.invoke('compliance:getAlerts'),
+    getDueItems: (clientId: number) => ipcRenderer.invoke('compliance:getDueItems', clientId),
+  },
+
+  // ── Mileage Tracking (Pro) ──
+  mileage: {
+    list: (filters?: any) => ipcRenderer.invoke('mileage:list', filters),
+    create: (data: any) => ipcRenderer.invoke('mileage:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('mileage:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('mileage:delete', id),
+    getSummary: (startDate: string, endDate: string) => ipcRenderer.invoke('mileage:getSummary', startDate, endDate),
+    exportCsv: (startDate: string, endDate: string) => ipcRenderer.invoke('mileage:exportCsv', startDate, endDate),
+  },
+
+  // ── Communication Log (Pro) ──
+  communicationLog: {
+    list: (clientId: number) => ipcRenderer.invoke('communicationLog:list', clientId),
+    create: (data: any) => ipcRenderer.invoke('communicationLog:create', data),
+    delete: (id: number) => ipcRenderer.invoke('communicationLog:delete', id),
+  },
+
+  // ── Dashboard (Pro) ──
+  dashboard: {
+    getOverview: () => ipcRenderer.invoke('dashboard:getOverview'),
+  },
+
+  // ── Reports (Pro) ──
+  reports: {
+    yearEndSummary: (year: number) => ipcRenderer.invoke('reports:yearEndSummary', year),
+    exportYearEnd: (year: number, format: string) => ipcRenderer.invoke('reports:exportYearEnd', year, format),
+  },
+
+  // ── Direct Access Rules ──
+  directAccess: {
+    requiresReferral: (state: string, discipline: string) => ipcRenderer.invoke('directAccess:requiresReferral', state, discipline),
+    getRules: () => ipcRenderer.invoke('directAccess:getRules'),
+  },
 };
 
 contextBridge.exposeInMainWorld('api', api);

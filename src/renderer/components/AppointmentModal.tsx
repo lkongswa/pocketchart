@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { X, Calendar, Clock, User } from 'lucide-react';
-import type { Appointment, AppointmentStatus, Client } from '../../shared/types';
+import type { Appointment, AppointmentStatus, Client, ContractedEntity, EntityFeeSchedule } from '../../shared/types';
 
 interface AppointmentModalProps {
   isOpen: boolean;
@@ -39,6 +39,12 @@ export default function AppointmentModal({
   const [saving, setSaving] = useState(false);
   const [loadingClients, setLoadingClients] = useState(false);
 
+  // Contracted entity state
+  const [entities, setEntities] = useState<ContractedEntity[]>([]);
+  const [selectedEntityId, setSelectedEntityId] = useState<number | null>(null);
+  const [entityRate, setEntityRate] = useState<number | null>(null);
+  const [rateOverrideReason, setRateOverrideReason] = useState('');
+
   const [formData, setFormData] = useState({
     client_id: 0,
     scheduled_date: '',
@@ -54,6 +60,13 @@ export default function AppointmentModal({
 
     async function initModal() {
       loadClients();
+      // Load contracted entities
+      try {
+        const ents = await window.api.contractedEntities.list();
+        setEntities(ents);
+      } catch {
+        setEntities([]);
+      }
 
       if (appointment) {
         setFormData({
@@ -67,6 +80,10 @@ export default function AppointmentModal({
           setSelectedClientName(`${appointment.first_name} ${appointment.last_name}`);
           setClientSearch(`${appointment.first_name} ${appointment.last_name}`);
         }
+        // Restore entity fields
+        setSelectedEntityId(appointment.entity_id ?? null);
+        setEntityRate(appointment.entity_rate ?? null);
+        setRateOverrideReason(appointment.rate_override_reason || '');
       } else {
         // Load default session length from settings
         let duration = 45;
@@ -84,6 +101,9 @@ export default function AppointmentModal({
         });
         setSelectedClientName('');
         setClientSearch('');
+        setSelectedEntityId(null);
+        setEntityRate(null);
+        setRateOverrideReason('');
       }
     }
 
@@ -120,7 +140,12 @@ export default function AppointmentModal({
 
     try {
       setSaving(true);
-      await onSave(formData);
+      await onSave({
+        ...formData,
+        entity_id: selectedEntityId ?? undefined,
+        entity_rate: entityRate ?? undefined,
+        rate_override_reason: rateOverrideReason || undefined,
+      });
       onClose();
     } catch (err) {
       console.error('Failed to save appointment:', err);
@@ -281,6 +306,42 @@ export default function AppointmentModal({
               ))}
             </select>
           </div>
+
+          {/* Contracted Entity (optional) */}
+          {entities.length > 0 && (
+            <div>
+              <label className="label">Contracted Entity (optional)</label>
+              <select
+                className="select"
+                value={selectedEntityId ?? ''}
+                onChange={async (e) => {
+                  const eid = parseInt(e.target.value, 10) || null;
+                  setSelectedEntityId(eid);
+                  if (eid) {
+                    try {
+                      const fees = await window.api.contractedEntities.listFeeSchedule(eid);
+                      // Use the first treatment rate as default
+                      const treatmentFee = fees.find((f: EntityFeeSchedule) => f.service_type === 'treatment') || fees[0];
+                      if (treatmentFee) setEntityRate(treatmentFee.default_rate);
+                    } catch {}
+                  } else {
+                    setEntityRate(null);
+                    setRateOverrideReason('');
+                  }
+                }}
+              >
+                <option value="">None</option>
+                {entities.map((ent) => (
+                  <option key={ent.id} value={ent.id}>{ent.name}</option>
+                ))}
+              </select>
+              {selectedEntityId && entityRate !== null && (
+                <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+                  Rate: ${entityRate.toFixed(2)}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Actions */}
           <div className="flex items-center justify-end gap-3 pt-4 border-t border-[var(--color-border)]">

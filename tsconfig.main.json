@@ -10,10 +10,14 @@
     "resolveJsonModule": true,
     "sourceMap": true,
     "outDir": "./dist/main",
-    "rootDir": "./src/main",
+    "rootDir": "./src",
     "moduleResolution": "node",
-    "allowSyntheticDefaultImports": true
+    "allowSyntheticDefaultImports": true,
+    "paths": {
+      "@shared/*": ["./src/shared/*"]
+    },
+    "baseUrl": "."
   },
-  "include": ["src/main/**/*"],
+  "include": ["src/main/**/*", "src/shared/**/*"],
   "exclude": ["node_modules"]
 }

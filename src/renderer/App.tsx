@@ -8,6 +8,11 @@ import {
   ClipboardList,
   HelpCircle,
   DollarSign,
+  Building2,
+  Shield,
+  Car,
+  FileSpreadsheet,
+  Gauge,
 } from 'lucide-react';
 import DashboardPage from './pages/DashboardPage';
 import ClientsPage from './pages/ClientsPage';
@@ -19,6 +24,12 @@ import SettingsPage from './pages/SettingsPage';
 import SuperbillPage from './pages/SuperbillPage';
 import HelpPage from './pages/HelpPage';
 import BillingPage from './pages/BillingPage';
+import ContractedEntitiesPage from './pages/ContractedEntitiesPage';
+import EntityDetailPage from './pages/EntityDetailPage';
+import VaultPage from './pages/VaultPage';
+import MileagePage from './pages/MileagePage';
+import CaseloadDashboardPage from './pages/CaseloadDashboardPage';
+import YearEndSummaryPage from './pages/YearEndSummaryPage';
 import PinLockScreen from './components/PinLockScreen';
 import ErrorBoundary from './components/ErrorBoundary';
 import OnboardingScreen from './components/OnboardingScreen';
@@ -37,6 +48,11 @@ const navItems: NavItem[] = [
   { to: '/clients', label: 'Clients', icon: <Users size={20} />, matchPrefix: '/clients' },
   { to: '/calendar', label: 'Calendar', icon: <Calendar size={20} /> },
   { to: '/billing', label: 'Billing', icon: <DollarSign size={20} /> },
+  { to: '/entities', label: 'Contractors', icon: <Building2 size={20} />, matchPrefix: '/entities' },
+  { to: '/vault', label: 'Vault', icon: <Shield size={20} /> },
+  { to: '/mileage', label: 'Mileage', icon: <Car size={20} /> },
+  { to: '/caseload', label: 'Caseload', icon: <Gauge size={20} /> },
+  { to: '/reports', label: 'Reports', icon: <FileSpreadsheet size={20} /> },
   { to: '/help', label: 'Help', icon: <HelpCircle size={20} /> },
   { to: '/settings', label: 'Settings', icon: <Settings size={20} /> },
 ];
@@ -113,6 +129,12 @@ const AppLayout: React.FC = () => {
           <Route path="/clients/:id/superbill" element={<SuperbillPage />} />
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/billing" element={<BillingPage />} />
+          <Route path="/entities" element={<ContractedEntitiesPage />} />
+          <Route path="/entities/:id" element={<EntityDetailPage />} />
+          <Route path="/vault" element={<VaultPage />} />
+          <Route path="/mileage" element={<MileagePage />} />
+          <Route path="/caseload" element={<CaseloadDashboardPage />} />
+          <Route path="/reports" element={<YearEndSummaryPage />} />
           <Route path="/help" element={<HelpPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>

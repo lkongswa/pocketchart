@@ -19,7 +19,7 @@ import {
   PenLine,
   Trash2,
 } from 'lucide-react';
-import type { Client, Note, Goal, GoalStatus, Discipline, SOAPSection, CptLine, PlaceOfService } from '../../shared/types';
+import type { Client, Note, Goal, GoalStatus, Discipline, SOAPSection, CptLine, PlaceOfService, ContractedEntity, EntityFeeSchedule } from '../../shared/types';
 
 // Place of service options
 const PLACE_OF_SERVICE_OPTIONS = [
@@ -106,6 +106,15 @@ export default function NoteFormPage() {
   const [cptModifiers, setCptModifiers] = useState<string[]>([]);
   const [chargeAmount, setChargeAmount] = useState<number>(0);
 
+  // Contracted entity state
+  const [isContractedVisit, setIsContractedVisit] = useState(false);
+  const [entityId, setEntityId] = useState<number | null>(null);
+  const [entities, setEntities] = useState<ContractedEntity[]>([]);
+  const [entityFeeSchedule, setEntityFeeSchedule] = useState<EntityFeeSchedule[]>([]);
+  const [rateOverride, setRateOverride] = useState<number | null>(null);
+  const [rateOverrideReason, setRateOverrideReason] = useState('');
+  const [noteType, setNoteType] = useState('');
+
   // UI state
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [expandedNoteIds, setExpandedNoteIds] = useState<Set<number>>(new Set());
@@ -136,11 +145,14 @@ export default function NoteFormPage() {
       setLoading(true);
       const cid = parseInt(clientId, 10);
 
-      const [clientData, goalsData, notesData] = await Promise.all([
+      const [clientData, goalsData, notesData, entitiesData] = await Promise.all([
         window.api.clients.get(cid),
         window.api.goals.listByClient(cid),
         window.api.notes.listByClient(cid),
+        window.api.contractedEntities.list().catch(() => [] as ContractedEntity[]),
       ]);
+
+      setEntities(entitiesData);
 
       setClient(clientData);
       setGoals(goalsData);
@@ -202,6 +214,19 @@ export default function NoteFormPage() {
           setCptModifiers(Array.isArray(parsedModifiers) ? parsedModifiers : []);
         } catch {
           setCptModifiers([]);
+        }
+        // Entity fields
+        if (note.entity_id) {
+          setIsContractedVisit(true);
+          setEntityId(note.entity_id);
+          setRateOverride(note.rate_override ?? null);
+          setRateOverrideReason(note.rate_override_reason || '');
+          setNoteType(note.note_type || '');
+          // Load fee schedule for entity
+          try {
+            const fees = await window.api.contractedEntities.listFeeSchedule(note.entity_id);
+            setEntityFeeSchedule(fees);
+          } catch {}
         }
       }
     } catch (err) {
@@ -330,6 +355,11 @@ export default function NoteFormPage() {
         signature_image: sign ? signatureImage : '',
         signature_typed: sign ? signatureTyped : '',
         signed_at: sign ? new Date().toISOString() : '',
+        // Contracted entity fields
+        entity_id: isContractedVisit ? entityId ?? undefined : undefined,
+        rate_override: isContractedVisit ? rateOverride ?? undefined : undefined,
+        rate_override_reason: isContractedVisit ? rateOverrideReason : '',
+        note_type: isContractedVisit ? noteType as Note['note_type'] : undefined,
       };
 
       if (isEditing && noteId) {
@@ -614,6 +644,120 @@ export default function NoteFormPage() {
               <p className="text-xs text-[var(--color-text-tertiary)] mt-1">For billing purposes</p>
             </div>
           </div>
+
+          {/* Contracted Entity */}
+          {entities.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-[var(--color-border)]">
+              <label className="flex items-center gap-2 cursor-pointer mb-3">
+                <input
+                  type="checkbox"
+                  checked={isContractedVisit}
+                  onChange={(e) => {
+                    setIsContractedVisit(e.target.checked);
+                    if (!e.target.checked) {
+                      setEntityId(null);
+                      setEntityFeeSchedule([]);
+                      setRateOverride(null);
+                      setRateOverrideReason('');
+                      setNoteType('');
+                    }
+                  }}
+                  className="w-4 h-4 rounded border-gray-300 accent-[var(--color-primary)]"
+                />
+                <span className="text-sm font-medium text-[var(--color-text)]">
+                  Contracted visit
+                </span>
+              </label>
+
+              {isContractedVisit && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <label className="label">Entity</label>
+                    <select
+                      className="select w-full"
+                      value={entityId ?? ''}
+                      onChange={async (e) => {
+                        const eid = parseInt(e.target.value, 10) || null;
+                        setEntityId(eid);
+                        if (eid) {
+                          try {
+                            const fees = await window.api.contractedEntities.listFeeSchedule(eid);
+                            setEntityFeeSchedule(fees);
+                            // Auto-set note type from entity default
+                            const ent = entities.find((en) => en.id === eid);
+                            if (ent?.default_note_type) setNoteType(ent.default_note_type);
+                            // Auto-populate rate from fee schedule if note_type matches
+                            const matchingFee = fees.find((f: EntityFeeSchedule) => f.service_type === (ent?.default_note_type || noteType));
+                            if (matchingFee) {
+                              setChargeAmount(matchingFee.default_rate);
+                            }
+                          } catch {}
+                        } else {
+                          setEntityFeeSchedule([]);
+                        }
+                      }}
+                    >
+                      <option value="">Select entity...</option>
+                      {entities.map((ent) => (
+                        <option key={ent.id} value={ent.id}>{ent.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="label">Service Type</label>
+                    <select
+                      className="select w-full"
+                      value={noteType}
+                      onChange={(e) => {
+                        setNoteType(e.target.value);
+                        // Auto-populate rate
+                        const matchingFee = entityFeeSchedule.find((f) => f.service_type === e.target.value);
+                        if (matchingFee) {
+                          setChargeAmount(matchingFee.default_rate);
+                          setRateOverride(null);
+                        }
+                      }}
+                    >
+                      <option value="">Select...</option>
+                      <option value="soap">SOAP Note</option>
+                      <option value="progress_report">Progress Report</option>
+                      <option value="recertification">Recertification</option>
+                      <option value="discharge">Discharge</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="label">Rate Override</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)]">$</span>
+                      <input
+                        type="number"
+                        className="input pl-7 w-full"
+                        placeholder="Use default"
+                        step={0.01}
+                        value={rateOverride ?? ''}
+                        onChange={(e) => {
+                          const val = parseFloat(e.target.value);
+                          setRateOverride(isNaN(val) ? null : val);
+                          if (!isNaN(val)) setChargeAmount(val);
+                        }}
+                      />
+                    </div>
+                  </div>
+                  {rateOverride !== null && (
+                    <div className="md:col-span-3">
+                      <label className="label">Override Reason</label>
+                      <input
+                        className="input w-full"
+                        placeholder="Reason for rate override..."
+                        value={rateOverrideReason}
+                        onChange={(e) => setRateOverrideReason(e.target.value)}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Subjective */}

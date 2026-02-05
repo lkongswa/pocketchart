@@ -1,0 +1,62 @@
+import { useState, useEffect, useCallback } from 'react';
+import type { AppTier, LicenseStatus } from '@shared/types';
+
+const PRO_FEATURES = new Set([
+  'contractor_module',
+  'professional_vault',
+  'compliance_engine',
+  'stripe_billing',
+  'mileage_tracking',
+  'communication_log',
+  'caseload_dashboard',
+  'batch_invoicing',
+  'tax_summary',
+]);
+
+export function useTier() {
+  const [tier, setTier] = useState<AppTier>('free');
+  const [licenseStatus, setLicenseStatus] = useState<LicenseStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    try {
+      const status = await window.api.license.getStatus();
+      setTier(status.tier);
+      setLicenseStatus(status);
+    } catch (err) {
+      console.error('Failed to load license status:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  // Listen for tier changes (e.g., after activation/deactivation)
+  useEffect(() => {
+    const handler = () => refresh();
+    window.addEventListener('pocketchart:tier-changed', handler);
+    return () => window.removeEventListener('pocketchart:tier-changed', handler);
+  }, [refresh]);
+
+  const hasFeature = useCallback((feature: string): boolean => {
+    if (PRO_FEATURES.has(feature)) return tier === 'pro';
+    // Basic features are available to basic and pro
+    return tier === 'basic' || tier === 'pro';
+  }, [tier]);
+
+  const isBasicOrHigher = tier === 'basic' || tier === 'pro';
+  const isPro = tier === 'pro';
+
+  return {
+    tier,
+    licenseStatus,
+    loading,
+    hasFeature,
+    isBasicOrHigher,
+    isPro,
+    refresh,
+  };
+}

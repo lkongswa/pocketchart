@@ -2,12 +2,15 @@ import { app, BrowserWindow, ipcMain, dialog, shell, safeStorage } from 'electro
 import path from 'path';
 import crypto from 'crypto';
 import fs from 'fs';
+import os from 'os';
 import { initDatabase, getDatabase, getDataPath, setDataPath, resetDataPath, getDefaultDataPath } from './database';
 import { jsPDF } from 'jspdf';
 import { v4 as uuidv4 } from 'uuid';
 import archiver from 'archiver';
 import { autoUpdater } from 'electron-updater';
 import Stripe from 'stripe';
+import { requiresReferral as checkDirectAccess, getAllRules as getDirectAccessRules } from '../shared/directAccessRules';
+import type { AppTier } from '../shared/types';
 
 // ── Secure Storage Helpers ──
 // Uses Electron's safeStorage API which leverages OS credential storage:
@@ -492,25 +495,67 @@ function registerIpcHandlers() {
   });
 
   safeHandle('notes:create', (_event, data) => {
+    // Auto-stamp rendering provider NPI from practice settings if not provided
+    let renderingNpi = data.rendering_provider_npi || '';
+    if (!renderingNpi) {
+      const practice = db.prepare('SELECT npi FROM practice WHERE id = 1').get() as any;
+      if (practice?.npi) renderingNpi = practice.npi;
+    }
+
     const result = db.prepare(`
       INSERT INTO notes (client_id, date_of_service, time_in, time_out, units, cpt_code,
         subjective, objective, assessment, plan, goals_addressed, signed_at,
-        cpt_codes, signature_image, signature_typed)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        cpt_codes, signature_image, signature_typed, rendering_provider_npi,
+        cpt_modifiers, charge_amount, place_of_service, diagnosis_pointers,
+        entity_id, rate_override, rate_override_reason,
+        frequency_per_week, duration_weeks, frequency_notes, note_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.client_id, data.date_of_service, data.time_in, data.time_out, data.units,
       data.cpt_code, data.subjective, data.objective, data.assessment, data.plan,
       data.goals_addressed || '[]', data.signed_at,
-      data.cpt_codes || '[]', data.signature_image || '', data.signature_typed || ''
+      data.cpt_codes || '[]', data.signature_image || '', data.signature_typed || '',
+      renderingNpi,
+      data.cpt_modifiers || '[]', data.charge_amount || 0,
+      data.place_of_service || '11', data.diagnosis_pointers || '[1]',
+      data.entity_id || null, data.rate_override || null, data.rate_override_reason || '',
+      data.frequency_per_week || null, data.duration_weeks || null,
+      data.frequency_notes || '', data.note_type || 'soap'
     );
-    return db.prepare('SELECT * FROM notes WHERE id = ?').get(result.lastInsertRowid);
+
+    const note = db.prepare('SELECT * FROM notes WHERE id = ?').get(result.lastInsertRowid) as any;
+
+    // If note is signed, increment compliance visit counter
+    if (data.signed_at && data.client_id) {
+      try {
+        const compliance = db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(data.client_id) as any;
+        if (compliance?.tracking_enabled) {
+          db.prepare(`
+            UPDATE compliance_tracking
+            SET visits_since_last_progress = visits_since_last_progress + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE client_id = ?
+          `).run(data.client_id);
+        }
+      } catch { /* compliance tracking may not exist yet */ }
+    }
+
+    return note;
   });
 
   safeHandle('notes:update', (_event, id: number, data) => {
+    // Check if this update is adding a signature (going from unsigned to signed)
+    const existingNote = db.prepare('SELECT signed_at, client_id FROM notes WHERE id = ?').get(id) as any;
+    const isNewlySignedNote = !existingNote?.signed_at && data.signed_at;
+
     db.prepare(`
       UPDATE notes SET date_of_service=?, time_in=?, time_out=?, units=?, cpt_code=?,
         subjective=?, objective=?, assessment=?, plan=?, goals_addressed=?, signed_at=?,
         cpt_codes=?, signature_image=?, signature_typed=?,
+        cpt_modifiers=?, charge_amount=?, place_of_service=?, diagnosis_pointers=?,
+        rendering_provider_npi=?,
+        entity_id=?, rate_override=?, rate_override_reason=?,
+        frequency_per_week=?, duration_weeks=?, frequency_notes=?, note_type=?,
         updated_at=CURRENT_TIMESTAMP
       WHERE id=? AND deleted_at IS NULL
     `).run(
@@ -518,8 +563,30 @@ function registerIpcHandlers() {
       data.subjective, data.objective, data.assessment, data.plan,
       data.goals_addressed || '[]', data.signed_at,
       data.cpt_codes || '[]', data.signature_image || '', data.signature_typed || '',
+      data.cpt_modifiers || '[]', data.charge_amount || 0,
+      data.place_of_service || '11', data.diagnosis_pointers || '[1]',
+      data.rendering_provider_npi || '',
+      data.entity_id || null, data.rate_override || null, data.rate_override_reason || '',
+      data.frequency_per_week || null, data.duration_weeks || null,
+      data.frequency_notes || '', data.note_type || 'soap',
       id
     );
+
+    // If note was just signed, increment compliance visit counter
+    if (isNewlySignedNote && existingNote?.client_id) {
+      try {
+        const compliance = db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(existingNote.client_id) as any;
+        if (compliance?.tracking_enabled) {
+          db.prepare(`
+            UPDATE compliance_tracking
+            SET visits_since_last_progress = visits_since_last_progress + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE client_id = ?
+          `).run(existingNote.client_id);
+        }
+      } catch { /* compliance tracking may not exist yet */ }
+    }
+
     return db.prepare('SELECT * FROM notes WHERE id = ?').get(id);
   });
 
@@ -1107,29 +1174,202 @@ function registerIpcHandlers() {
     return { status: 'pending' };
   });
 
-  // ── License ──
+  // ── License (Lemon Squeezy Integration) ──
+
+  const getSetting = (key: string): string | null => {
+    const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined;
+    return row?.value || null;
+  };
+
+  const setSetting = (key: string, value: string) => {
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(key, value);
+  };
+
+  const deleteSetting = (key: string) => {
+    db.prepare("DELETE FROM settings WHERE key = ?").run(key);
+  };
+
+  /**
+   * Validate a license key against the Lemon Squeezy API.
+   * Returns the product variant name to determine tier (basic vs pro).
+   */
+  async function validateLemonSqueezyLicense(licenseKey: string): Promise<{
+    valid: boolean;
+    tier: AppTier;
+    subscriptionStatus: string | null;
+    subscriptionExpiresAt: string | null;
+    error?: string;
+  }> {
+    try {
+      const response = await fetch('https://api.lemonsqueezy.com/v1/licenses/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          license_key: licenseKey,
+          instance_name: os.hostname(),
+        }),
+      });
+
+      const data = await response.json() as any;
+
+      if (!data.valid && data.error) {
+        return { valid: false, tier: 'free', subscriptionStatus: null, subscriptionExpiresAt: null, error: data.error };
+      }
+
+      if (!data.valid) {
+        return { valid: false, tier: 'free', subscriptionStatus: null, subscriptionExpiresAt: null, error: 'Invalid license key' };
+      }
+
+      // Determine tier from the product/variant name
+      const productName = (data.meta?.product_name || '').toLowerCase();
+      const variantName = (data.meta?.variant_name || '').toLowerCase();
+      let tier: AppTier = 'basic';
+
+      if (productName.includes('pro') || variantName.includes('pro')) {
+        tier = 'pro';
+      }
+
+      // Check subscription status for Pro (annual subscription)
+      let subscriptionStatus: string | null = null;
+      let subscriptionExpiresAt: string | null = null;
+
+      if (data.license_key?.status === 'active') {
+        subscriptionStatus = 'active';
+      } else if (data.license_key?.status === 'expired') {
+        subscriptionStatus = 'expired';
+        // Pro subscription expired → downgrade to basic
+        if (tier === 'pro') tier = 'basic';
+      } else if (data.license_key?.status === 'disabled') {
+        subscriptionStatus = 'cancelled';
+        if (tier === 'pro') tier = 'basic';
+      }
+
+      if (data.license_key?.expires_at) {
+        subscriptionExpiresAt = data.license_key.expires_at;
+      }
+
+      return { valid: true, tier, subscriptionStatus, subscriptionExpiresAt };
+    } catch (err: any) {
+      console.warn('Lemon Squeezy validation failed (offline?):', err?.message);
+      // Return null to indicate network failure — caller should use cached state
+      return { valid: false, tier: 'free', subscriptionStatus: null, subscriptionExpiresAt: null, error: 'network_error' };
+    }
+  }
+
   safeHandle('license:getStatus', () => {
-    const tier = (db.prepare("SELECT value FROM settings WHERE key = 'app_tier'").get() as any)?.value || 'free';
-    const key = (db.prepare("SELECT value FROM settings WHERE key = 'license_key'").get() as any)?.value || null;
-    const activatedAt = (db.prepare("SELECT value FROM settings WHERE key = 'license_activated_at'").get() as any)?.value || null;
-    return { tier, licenseKey: key, activatedAt };
+    const tier = (getSetting('app_tier') || 'free') as AppTier;
+    const licenseKey = getSetting('license_key');
+    const activatedAt = getSetting('license_activated_at');
+    const subscriptionStatus = getSetting('subscription_status') as 'active' | 'expired' | 'cancelled' | null;
+    const subscriptionExpiresAt = getSetting('subscription_expires_at');
+    const lastValidatedAt = getSetting('last_license_validation');
+
+    return {
+      tier,
+      licenseKey,
+      activatedAt,
+      subscriptionStatus,
+      subscriptionExpiresAt,
+      lastValidatedAt,
+    };
   });
 
-  safeHandle('license:activate', (_event, licenseKey: string) => {
-    // TODO: Validate against LemonSqueezy API when ready
-    // For now, store the key and mark as pro
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run('license_key', licenseKey);
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run('app_tier', 'pro');
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run('license_activated_at', new Date().toISOString());
-    return { success: true, tier: 'pro' };
+  safeHandle('license:activate', async (_event, licenseKey: string) => {
+    // Validate against Lemon Squeezy API
+    const result = await validateLemonSqueezyLicense(licenseKey);
+
+    if (result.error === 'network_error') {
+      // Can't reach API — store key optimistically but don't set tier yet
+      // User can retry when online
+      return { success: false, tier: 'free' as AppTier, error: 'Unable to validate license. Please check your internet connection and try again.' };
+    }
+
+    if (!result.valid) {
+      return { success: false, tier: 'free' as AppTier, error: result.error || 'Invalid license key' };
+    }
+
+    // Store license info
+    setSetting('license_key', licenseKey);
+    setSetting('app_tier', result.tier);
+    setSetting('license_activated_at', new Date().toISOString());
+    setSetting('last_license_validation', new Date().toISOString());
+
+    if (result.subscriptionStatus) {
+      setSetting('subscription_status', result.subscriptionStatus);
+    }
+    if (result.subscriptionExpiresAt) {
+      setSetting('subscription_expires_at', result.subscriptionExpiresAt);
+    }
+
+    return { success: true, tier: result.tier };
   });
 
   safeHandle('license:deactivate', () => {
-    db.prepare("DELETE FROM settings WHERE key = 'license_key'");
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run('app_tier', 'free');
-    db.prepare("DELETE FROM settings WHERE key = 'license_activated_at'");
-    return { success: true, tier: 'free' };
+    deleteSetting('license_key');
+    setSetting('app_tier', 'free');
+    deleteSetting('license_activated_at');
+    deleteSetting('subscription_status');
+    deleteSetting('subscription_expires_at');
+    deleteSetting('last_license_validation');
+    return { success: true, tier: 'free' as AppTier };
   });
+
+  // Background re-validation: check license every 7-14 days
+  async function backgroundLicenseValidation() {
+    const licenseKey = getSetting('license_key');
+    if (!licenseKey) return;
+
+    const lastValidated = getSetting('last_license_validation');
+    if (lastValidated) {
+      const daysSinceValidation = (Date.now() - new Date(lastValidated).getTime()) / (1000 * 60 * 60 * 24);
+      if (daysSinceValidation < 7) return; // Re-validate every 7 days minimum
+    }
+
+    const result = await validateLemonSqueezyLicense(licenseKey);
+
+    if (result.error === 'network_error') {
+      // Offline — check grace period (30 days)
+      if (lastValidated) {
+        const daysSince = (Date.now() - new Date(lastValidated).getTime()) / (1000 * 60 * 60 * 24);
+        if (daysSince > 30) {
+          console.warn('License validation grace period expired (30 days offline)');
+          // Don't downgrade yet, but flag for user notification
+          setSetting('license_grace_expired', 'true');
+        }
+      }
+      return;
+    }
+
+    if (result.valid) {
+      setSetting('app_tier', result.tier);
+      setSetting('last_license_validation', new Date().toISOString());
+      deleteSetting('license_grace_expired');
+      if (result.subscriptionStatus) {
+        setSetting('subscription_status', result.subscriptionStatus);
+      }
+      if (result.subscriptionExpiresAt) {
+        setSetting('subscription_expires_at', result.subscriptionExpiresAt);
+      }
+    } else {
+      // License no longer valid — downgrade
+      setSetting('app_tier', 'free');
+      deleteSetting('subscription_status');
+      deleteSetting('subscription_expires_at');
+    }
+  }
+
+  // Run background validation after 30 seconds, then every 6 hours
+  setTimeout(() => backgroundLicenseValidation(), 30000);
+  setInterval(() => backgroundLicenseValidation(), 6 * 60 * 60 * 1000);
+
+  // ── Tier-Gated Helper ──
+  function requireTier(requiredTier: 'basic' | 'pro'): void {
+    const currentTier = (getSetting('app_tier') || 'free') as AppTier;
+    const tierRank = { free: 0, basic: 1, pro: 2 };
+    if (tierRank[currentTier] < tierRank[requiredTier]) {
+      throw new Error(`This feature requires PocketChart ${requiredTier === 'pro' ? 'Pro' : 'Basic'}. Please upgrade to access this feature.`);
+    }
+  }
 
   // ── Backup & Export ──
   const dbPath = path.join(getDataPath(), 'pocketchart.db');
@@ -2286,6 +2526,828 @@ function registerIpcHandlers() {
       data.description || null
     );
     return db.prepare('SELECT * FROM audit_log WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // ── Contracted Entities (Pro Only) ──
+  // ══════════════════════════════════════════════════════════════════════
+
+  safeHandle('contractedEntities:list', () => {
+    requireTier('pro');
+    return db.prepare('SELECT * FROM contracted_entities WHERE deleted_at IS NULL ORDER BY name').all();
+  });
+
+  safeHandle('contractedEntities:get', (_event, id: number) => {
+    requireTier('pro');
+    return db.prepare('SELECT * FROM contracted_entities WHERE id = ? AND deleted_at IS NULL').get(id);
+  });
+
+  safeHandle('contractedEntities:create', (_event, data: any) => {
+    requireTier('pro');
+    const result = db.prepare(`
+      INSERT INTO contracted_entities (name, contact_name, contact_email, contact_phone,
+        billing_address_street, billing_address_city, billing_address_state, billing_address_zip,
+        default_note_type, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      data.name, data.contact_name || '', data.contact_email || '', data.contact_phone || '',
+      data.billing_address_street || '', data.billing_address_city || '',
+      data.billing_address_state || '', data.billing_address_zip || '',
+      data.default_note_type || 'soap', data.notes || ''
+    );
+    return db.prepare('SELECT * FROM contracted_entities WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('contractedEntities:update', (_event, id: number, data: any) => {
+    requireTier('pro');
+    const fields: string[] = [];
+    const values: any[] = [];
+    const allowed = ['name', 'contact_name', 'contact_email', 'contact_phone',
+      'billing_address_street', 'billing_address_city', 'billing_address_state', 'billing_address_zip',
+      'default_note_type', 'notes'];
+    for (const key of allowed) {
+      if (data[key] !== undefined) {
+        fields.push(`${key} = ?`);
+        values.push(data[key]);
+      }
+    }
+    if (fields.length === 0) throw new Error('No fields to update');
+    fields.push('updated_at = CURRENT_TIMESTAMP');
+    values.push(id);
+    db.prepare(`UPDATE contracted_entities SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    return db.prepare('SELECT * FROM contracted_entities WHERE id = ?').get(id);
+  });
+
+  safeHandle('contractedEntities:delete', (_event, id: number) => {
+    requireTier('pro');
+    db.prepare("UPDATE contracted_entities SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+    return true;
+  });
+
+  // Entity Fee Schedules
+  safeHandle('contractedEntities:listFeeSchedule', (_event, entityId: number) => {
+    requireTier('pro');
+    return db.prepare('SELECT * FROM entity_fee_schedules WHERE entity_id = ? AND deleted_at IS NULL ORDER BY service_type').all(entityId);
+  });
+
+  safeHandle('contractedEntities:createFeeScheduleEntry', (_event, data: any) => {
+    requireTier('pro');
+    const result = db.prepare(`
+      INSERT INTO entity_fee_schedules (entity_id, service_type, description, default_rate, unit, effective_date, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(data.entity_id, data.service_type, data.description || '', data.default_rate,
+      data.unit || 'per_visit', data.effective_date || '', data.notes || '');
+    return db.prepare('SELECT * FROM entity_fee_schedules WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('contractedEntities:updateFeeScheduleEntry', (_event, id: number, data: any) => {
+    requireTier('pro');
+    const fields: string[] = [];
+    const values: any[] = [];
+    const allowed = ['service_type', 'description', 'default_rate', 'unit', 'effective_date', 'notes'];
+    for (const key of allowed) {
+      if (data[key] !== undefined) {
+        fields.push(`${key} = ?`);
+        values.push(data[key]);
+      }
+    }
+    if (fields.length === 0) throw new Error('No fields to update');
+    values.push(id);
+    db.prepare(`UPDATE entity_fee_schedules SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    return db.prepare('SELECT * FROM entity_fee_schedules WHERE id = ?').get(id);
+  });
+
+  safeHandle('contractedEntities:deleteFeeScheduleEntry', (_event, id: number) => {
+    requireTier('pro');
+    db.prepare("UPDATE entity_fee_schedules SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+    return true;
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // ── Entity Documents (Pro Only) ──
+  // ══════════════════════════════════════════════════════════════════════
+
+  safeHandle('entityDocuments:list', (_event, entityId: number) => {
+    requireTier('pro');
+    return db.prepare('SELECT * FROM entity_documents WHERE entity_id = ? AND deleted_at IS NULL ORDER BY uploaded_at DESC').all(entityId);
+  });
+
+  safeHandle('entityDocuments:upload', async (_event, data: { entityId: number; category?: string }) => {
+    requireTier('pro');
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: 'Upload Entity Document',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Documents', extensions: ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'txt'] },
+      ],
+    });
+    if (canceled || !filePaths?.length) return null;
+
+    const sourcePath = filePaths[0];
+    const originalName = path.basename(sourcePath);
+    const ext = path.extname(originalName);
+    const filename = `entity_${data.entityId}_${uuidv4()}${ext}`;
+    const docsDir = path.join(getDataPath(), 'entity_documents');
+    fs.mkdirSync(docsDir, { recursive: true });
+    const destPath = path.join(docsDir, filename);
+    fs.copyFileSync(sourcePath, destPath);
+
+    const result = db.prepare(`
+      INSERT INTO entity_documents (entity_id, filename, original_name, file_path, category, notes)
+      VALUES (?, ?, ?, ?, ?, '')
+    `).run(data.entityId, filename, originalName, destPath, data.category || 'other');
+    return db.prepare('SELECT * FROM entity_documents WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('entityDocuments:open', (_event, documentId: number) => {
+    requireTier('pro');
+    const doc = db.prepare('SELECT * FROM entity_documents WHERE id = ?').get(documentId) as any;
+    if (!doc) throw new Error('Document not found');
+    shell.openPath(doc.file_path);
+    return doc.file_path;
+  });
+
+  safeHandle('entityDocuments:delete', (_event, documentId: number) => {
+    requireTier('pro');
+    db.prepare("UPDATE entity_documents SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").run(documentId);
+    return true;
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // ── Professional Vault (Pro Only) ──
+  // ══════════════════════════════════════════════════════════════════════
+
+  safeHandle('vault:list', () => {
+    requireTier('pro');
+    return db.prepare('SELECT * FROM vault_documents WHERE deleted_at IS NULL ORDER BY document_type, uploaded_at DESC').all();
+  });
+
+  safeHandle('vault:upload', async (_event, data: {
+    documentType: string; customLabel?: string; expirationDate?: string;
+    issueDate?: string; reminderDaysBefore?: number;
+  }) => {
+    requireTier('pro');
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: 'Upload Credential Document',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Documents', extensions: ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'txt'] },
+      ],
+    });
+    if (canceled || !filePaths?.length) return null;
+
+    const sourcePath = filePaths[0];
+    const originalName = path.basename(sourcePath);
+    const ext = path.extname(originalName);
+    const filename = `vault_${uuidv4()}${ext}`;
+    const vaultDir = path.join(getDataPath(), 'vault_documents');
+    fs.mkdirSync(vaultDir, { recursive: true });
+    const destPath = path.join(vaultDir, filename);
+    fs.copyFileSync(sourcePath, destPath);
+
+    const result = db.prepare(`
+      INSERT INTO vault_documents (document_type, custom_label, filename, original_name, file_path,
+        issue_date, expiration_date, reminder_days_before, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, '')
+    `).run(
+      data.documentType, data.customLabel || null, filename, originalName, destPath,
+      data.issueDate || null, data.expirationDate || null, data.reminderDaysBefore ?? 60
+    );
+    return db.prepare('SELECT * FROM vault_documents WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('vault:update', (_event, id: number, data: any) => {
+    requireTier('pro');
+    const fields: string[] = [];
+    const values: any[] = [];
+    const allowed = ['document_type', 'custom_label', 'issue_date', 'expiration_date',
+      'reminder_days_before', 'notes'];
+    for (const key of allowed) {
+      if (data[key] !== undefined) {
+        fields.push(`${key} = ?`);
+        values.push(data[key]);
+      }
+    }
+    if (fields.length === 0) throw new Error('No fields to update');
+    fields.push('updated_at = CURRENT_TIMESTAMP');
+    values.push(id);
+    db.prepare(`UPDATE vault_documents SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    return db.prepare('SELECT * FROM vault_documents WHERE id = ?').get(id);
+  });
+
+  safeHandle('vault:delete', (_event, id: number) => {
+    requireTier('pro');
+    db.prepare("UPDATE vault_documents SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+    return true;
+  });
+
+  safeHandle('vault:open', (_event, id: number) => {
+    requireTier('pro');
+    const doc = db.prepare('SELECT * FROM vault_documents WHERE id = ?').get(id) as any;
+    if (!doc) throw new Error('Document not found');
+    shell.openPath(doc.file_path);
+    return doc.file_path;
+  });
+
+  safeHandle('vault:getExpiringDocuments', () => {
+    requireTier('pro');
+    // Return documents that are expired or expiring within their reminder window
+    return db.prepare(`
+      SELECT * FROM vault_documents
+      WHERE deleted_at IS NULL
+        AND expiration_date IS NOT NULL
+        AND date(expiration_date) <= date('now', '+' || reminder_days_before || ' days')
+      ORDER BY expiration_date ASC
+    `).all();
+  });
+
+  safeHandle('vault:exportCredentialingPacket', async (_event, documentIds: number[]) => {
+    requireTier('pro');
+    if (!documentIds?.length) throw new Error('No documents selected');
+
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      title: 'Export Credentialing Packet',
+      defaultPath: `credentialing_packet_${new Date().toISOString().slice(0, 10)}.zip`,
+      filters: [{ name: 'ZIP Archive', extensions: ['zip'] }],
+    });
+    if (canceled || !filePath) return null;
+
+    const output = fs.createWriteStream(filePath);
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    archive.pipe(output);
+
+    for (const docId of documentIds) {
+      const doc = db.prepare('SELECT * FROM vault_documents WHERE id = ? AND deleted_at IS NULL').get(docId) as any;
+      if (doc && fs.existsSync(doc.file_path)) {
+        archive.file(doc.file_path, { name: doc.original_name || doc.filename });
+      }
+    }
+
+    await archive.finalize();
+    return filePath;
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // ── Compliance Tracking (Pro Only) ──
+  // ══════════════════════════════════════════════════════════════════════
+
+  safeHandle('compliance:getByClient', (_event, clientId: number) => {
+    requireTier('pro');
+    let record = db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(clientId) as any;
+    if (!record) {
+      // Auto-create compliance tracking for the client with defaults
+      const result = db.prepare(`
+        INSERT INTO compliance_tracking (client_id) VALUES (?)
+      `).run(clientId);
+      record = db.prepare('SELECT * FROM compliance_tracking WHERE id = ?').get(result.lastInsertRowid);
+    }
+    return record;
+  });
+
+  safeHandle('compliance:updateSettings', (_event, clientId: number, data: any) => {
+    requireTier('pro');
+    // Ensure record exists
+    let record = db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(clientId) as any;
+    if (!record) {
+      db.prepare('INSERT INTO compliance_tracking (client_id) VALUES (?)').run(clientId);
+    }
+
+    const fields: string[] = [];
+    const values: any[] = [];
+    const allowed = ['tracking_enabled', 'compliance_preset', 'progress_visit_threshold',
+      'progress_day_threshold', 'recert_day_threshold', 'physician_order_required',
+      'physician_order_expiration', 'physician_order_document_id'];
+    for (const key of allowed) {
+      if (data[key] !== undefined) {
+        fields.push(`${key} = ?`);
+        values.push(data[key]);
+      }
+    }
+    if (fields.length > 0) {
+      fields.push('updated_at = CURRENT_TIMESTAMP');
+      values.push(clientId);
+      db.prepare(`UPDATE compliance_tracking SET ${fields.join(', ')} WHERE client_id = ?`).run(...values);
+    }
+    return db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(clientId);
+  });
+
+  safeHandle('compliance:incrementVisit', (_event, clientId: number) => {
+    requireTier('pro');
+    db.prepare(`
+      UPDATE compliance_tracking
+      SET visits_since_last_progress = visits_since_last_progress + 1,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE client_id = ?
+    `).run(clientId);
+    return db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(clientId);
+  });
+
+  safeHandle('compliance:resetProgressCounter', (_event, clientId: number) => {
+    requireTier('pro');
+    const now = new Date().toISOString().slice(0, 10);
+    db.prepare(`
+      UPDATE compliance_tracking
+      SET visits_since_last_progress = 0,
+          last_progress_date = ?,
+          next_progress_due = date(?, '+' || progress_day_threshold || ' days'),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE client_id = ?
+    `).run(now, now, clientId);
+    return db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(clientId);
+  });
+
+  safeHandle('compliance:resetRecertCounter', (_event, clientId: number) => {
+    requireTier('pro');
+    const now = new Date().toISOString().slice(0, 10);
+    db.prepare(`
+      UPDATE compliance_tracking
+      SET last_recert_date = ?,
+          next_recert_due = date(?, '+' || recert_day_threshold || ' days'),
+          recert_md_signature_received = 0,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE client_id = ?
+    `).run(now, now, clientId);
+    return db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(clientId);
+  });
+
+  safeHandle('compliance:getAlerts', () => {
+    requireTier('pro');
+    const alerts: any[] = [];
+    const records = db.prepare(`
+      SELECT ct.*, c.first_name, c.last_name
+      FROM compliance_tracking ct
+      JOIN clients c ON c.id = ct.client_id
+      WHERE ct.tracking_enabled = 1
+        AND c.deleted_at IS NULL
+        AND c.status = 'active'
+    `).all() as any[];
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    for (const r of records) {
+      const clientName = `${r.first_name} ${r.last_name}`;
+      const visitPct = r.progress_visit_threshold > 0
+        ? r.visits_since_last_progress / r.progress_visit_threshold
+        : 0;
+
+      // Progress report alerts
+      if (r.visits_since_last_progress >= r.progress_visit_threshold) {
+        alerts.push({
+          client_id: r.client_id, client_name: clientName,
+          alert_type: 'progress_overdue',
+          detail: `${r.visits_since_last_progress}/${r.progress_visit_threshold} visits — progress report overdue`,
+          visits_count: r.visits_since_last_progress, threshold: r.progress_visit_threshold,
+        });
+      } else if (visitPct >= 0.8) {
+        alerts.push({
+          client_id: r.client_id, client_name: clientName,
+          alert_type: 'progress_due',
+          detail: `${r.visits_since_last_progress}/${r.progress_visit_threshold} visits — progress report due soon`,
+          visits_count: r.visits_since_last_progress, threshold: r.progress_visit_threshold,
+        });
+      }
+
+      // Day-based progress check
+      if (r.next_progress_due && r.next_progress_due <= today) {
+        alerts.push({
+          client_id: r.client_id, client_name: clientName,
+          alert_type: 'progress_overdue',
+          detail: `Progress report overdue since ${r.next_progress_due}`,
+        });
+      }
+
+      // Recertification alerts
+      if (r.next_recert_due) {
+        if (r.next_recert_due <= today) {
+          alerts.push({
+            client_id: r.client_id, client_name: clientName,
+            alert_type: 'recert_overdue',
+            detail: `Recertification overdue since ${r.next_recert_due}`,
+          });
+        } else {
+          // Check if within 14 days
+          const recertDate = new Date(r.next_recert_due);
+          const daysUntil = (recertDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+          if (daysUntil <= 14) {
+            alerts.push({
+              client_id: r.client_id, client_name: clientName,
+              alert_type: 'recert_due',
+              detail: `Recertification due ${r.next_recert_due} (${Math.ceil(daysUntil)} days)`,
+            });
+          }
+        }
+      }
+    }
+
+    return alerts;
+  });
+
+  safeHandle('compliance:getDueItems', (_event, clientId: number) => {
+    requireTier('pro');
+    // Similar to getAlerts but for a single client
+    const r = db.prepare(`
+      SELECT ct.*, c.first_name, c.last_name
+      FROM compliance_tracking ct
+      JOIN clients c ON c.id = ct.client_id
+      WHERE ct.client_id = ?
+    `).get(clientId) as any;
+
+    if (!r) return [];
+
+    const alerts: any[] = [];
+    const today = new Date().toISOString().slice(0, 10);
+    const clientName = `${r.first_name} ${r.last_name}`;
+
+    if (r.visits_since_last_progress >= r.progress_visit_threshold) {
+      alerts.push({ client_id: clientId, client_name: clientName, alert_type: 'progress_overdue',
+        detail: `${r.visits_since_last_progress}/${r.progress_visit_threshold} visits`, visits_count: r.visits_since_last_progress, threshold: r.progress_visit_threshold });
+    } else if (r.progress_visit_threshold > 0 && r.visits_since_last_progress / r.progress_visit_threshold >= 0.8) {
+      alerts.push({ client_id: clientId, client_name: clientName, alert_type: 'progress_due',
+        detail: `${r.visits_since_last_progress}/${r.progress_visit_threshold} visits`, visits_count: r.visits_since_last_progress, threshold: r.progress_visit_threshold });
+    }
+
+    if (r.next_recert_due && r.next_recert_due <= today) {
+      alerts.push({ client_id: clientId, client_name: clientName, alert_type: 'recert_overdue', detail: `Overdue since ${r.next_recert_due}` });
+    }
+
+    return alerts;
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // ── Mileage Tracking (Pro Only) ──
+  // ══════════════════════════════════════════════════════════════════════
+
+  safeHandle('mileage:list', (_event, filters?: any) => {
+    requireTier('pro');
+    let query = `
+      SELECT m.*,
+        CASE WHEN m.client_id IS NOT NULL THEN (SELECT first_name || ' ' || last_name FROM clients WHERE id = m.client_id) END AS client_name,
+        CASE WHEN m.entity_id IS NOT NULL THEN (SELECT name FROM contracted_entities WHERE id = m.entity_id) END AS entity_name
+      FROM mileage_log m
+      WHERE m.deleted_at IS NULL
+    `;
+    const params: any[] = [];
+    if (filters?.startDate) { query += ' AND m.date >= ?'; params.push(filters.startDate); }
+    if (filters?.endDate) { query += ' AND m.date <= ?'; params.push(filters.endDate); }
+    if (filters?.entityId) { query += ' AND m.entity_id = ?'; params.push(filters.entityId); }
+    if (filters?.clientId) { query += ' AND m.client_id = ?'; params.push(filters.clientId); }
+    query += ' ORDER BY m.date DESC';
+    return db.prepare(query).all(...params);
+  });
+
+  safeHandle('mileage:create', (_event, data: any) => {
+    requireTier('pro');
+    const reimbAmount = data.reimbursement_rate && data.miles
+      ? data.miles * data.reimbursement_rate : null;
+    const result = db.prepare(`
+      INSERT INTO mileage_log (date, appointment_id, client_id, entity_id, origin_address,
+        destination_address, miles, reimbursement_rate, reimbursement_amount, is_reimbursable, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      data.date, data.appointment_id || null, data.client_id || null, data.entity_id || null,
+      data.origin_address || '', data.destination_address || '', data.miles,
+      data.reimbursement_rate || null, reimbAmount, data.is_reimbursable ?? 1, data.notes || ''
+    );
+    return db.prepare('SELECT * FROM mileage_log WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('mileage:update', (_event, id: number, data: any) => {
+    requireTier('pro');
+    const fields: string[] = [];
+    const values: any[] = [];
+    const allowed = ['date', 'appointment_id', 'client_id', 'entity_id', 'origin_address',
+      'destination_address', 'miles', 'reimbursement_rate', 'reimbursement_amount',
+      'is_reimbursable', 'notes'];
+    for (const key of allowed) {
+      if (data[key] !== undefined) {
+        fields.push(`${key} = ?`);
+        values.push(data[key]);
+      }
+    }
+    // Recalculate reimbursement if rate or miles changed
+    if (data.miles !== undefined || data.reimbursement_rate !== undefined) {
+      const existing = db.prepare('SELECT * FROM mileage_log WHERE id = ?').get(id) as any;
+      const miles = data.miles ?? existing?.miles ?? 0;
+      const rate = data.reimbursement_rate ?? existing?.reimbursement_rate;
+      if (rate) {
+        fields.push('reimbursement_amount = ?');
+        values.push(miles * rate);
+      }
+    }
+    if (fields.length === 0) throw new Error('No fields to update');
+    values.push(id);
+    db.prepare(`UPDATE mileage_log SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    return db.prepare('SELECT * FROM mileage_log WHERE id = ?').get(id);
+  });
+
+  safeHandle('mileage:delete', (_event, id: number) => {
+    requireTier('pro');
+    db.prepare("UPDATE mileage_log SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+    return true;
+  });
+
+  safeHandle('mileage:getSummary', (_event, startDate: string, endDate: string) => {
+    requireTier('pro');
+    const row = db.prepare(`
+      SELECT
+        COALESCE(SUM(miles), 0) AS totalMiles,
+        COALESCE(SUM(CASE WHEN is_reimbursable = 1 THEN reimbursement_amount ELSE 0 END), 0) AS reimbursable,
+        COALESCE(SUM(CASE WHEN is_reimbursable = 1 THEN miles ELSE 0 END), 0) AS reimbursableMiles,
+        COALESCE(SUM(CASE WHEN is_reimbursable = 0 THEN miles ELSE 0 END), 0) AS deductibleMiles
+      FROM mileage_log
+      WHERE deleted_at IS NULL AND date >= ? AND date <= ?
+    `).get(startDate, endDate) as any;
+    return {
+      totalMiles: row.totalMiles,
+      reimbursable: row.reimbursable,
+      deductible: row.deductibleMiles,
+    };
+  });
+
+  safeHandle('mileage:exportCsv', async (_event, startDate: string, endDate: string) => {
+    requireTier('pro');
+    const rows = db.prepare(`
+      SELECT m.*,
+        CASE WHEN m.client_id IS NOT NULL THEN (SELECT first_name || ' ' || last_name FROM clients WHERE id = m.client_id) END AS client_name,
+        CASE WHEN m.entity_id IS NOT NULL THEN (SELECT name FROM contracted_entities WHERE id = m.entity_id) END AS entity_name
+      FROM mileage_log m
+      WHERE m.deleted_at IS NULL AND m.date >= ? AND m.date <= ?
+      ORDER BY m.date
+    `).all(startDate, endDate) as any[];
+
+    const headers = ['Date', 'Client', 'Entity', 'Origin', 'Destination', 'Miles', 'Rate', 'Amount', 'Reimbursable', 'Notes'];
+    const csvRows = [headers.join(',')];
+    for (const r of rows) {
+      csvRows.push([
+        r.date, `"${r.client_name || ''}"`, `"${r.entity_name || ''}"`,
+        `"${r.origin_address || ''}"`, `"${r.destination_address || ''}"`,
+        r.miles, r.reimbursement_rate || '', r.reimbursement_amount || '',
+        r.is_reimbursable ? 'Yes' : 'No', `"${(r.notes || '').replace(/"/g, '""')}"`,
+      ].join(','));
+    }
+
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      title: 'Export Mileage',
+      defaultPath: `mileage_${startDate}_to_${endDate}.csv`,
+      filters: [{ name: 'CSV', extensions: ['csv'] }],
+    });
+    if (canceled || !filePath) return null;
+    fs.writeFileSync(filePath, csvRows.join('\n'), 'utf-8');
+    return filePath;
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // ── Communication Log (Pro Only) ──
+  // ══════════════════════════════════════════════════════════════════════
+
+  safeHandle('communicationLog:list', (_event, clientId: number) => {
+    requireTier('pro');
+    return db.prepare(`
+      SELECT * FROM communication_log
+      WHERE client_id = ? AND deleted_at IS NULL
+      ORDER BY communication_date DESC
+    `).all(clientId);
+  });
+
+  safeHandle('communicationLog:create', (_event, data: any) => {
+    requireTier('pro');
+    const result = db.prepare(`
+      INSERT INTO communication_log (client_id, entity_id, communication_date, type, direction, contact_name, summary)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      data.client_id, data.entity_id || null,
+      data.communication_date || new Date().toISOString(),
+      data.type, data.direction, data.contact_name || '', data.summary
+    );
+    return db.prepare('SELECT * FROM communication_log WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('communicationLog:delete', (_event, id: number) => {
+    requireTier('pro');
+    db.prepare("UPDATE communication_log SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+    return true;
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // ── Dashboard (Pro Only) ──
+  // ══════════════════════════════════════════════════════════════════════
+
+  safeHandle('dashboard:getOverview', () => {
+    requireTier('pro');
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Today's appointments
+    const todayAppointments = db.prepare(`
+      SELECT a.*, c.first_name, c.last_name, c.discipline AS client_discipline,
+        CASE WHEN a.entity_id IS NOT NULL THEN (SELECT name FROM contracted_entities WHERE id = a.entity_id) END AS entity_name
+      FROM appointments a
+      JOIN clients c ON c.id = a.client_id
+      WHERE a.scheduled_date = ? AND a.deleted_at IS NULL AND a.status != 'cancelled'
+      ORDER BY a.scheduled_time
+    `).all(today);
+
+    // Unsigned notes (notes without signed_at)
+    const unsignedNotes = db.prepare(`
+      SELECT n.id, n.client_id, n.date_of_service, n.created_at,
+        c.first_name || ' ' || c.last_name AS client_name
+      FROM notes n
+      JOIN clients c ON c.id = n.client_id
+      WHERE n.signed_at IS NULL AND n.deleted_at IS NULL AND c.deleted_at IS NULL
+      ORDER BY n.date_of_service DESC
+    `).all();
+
+    // Expiring credentials (vault)
+    const expiringCredentials = db.prepare(`
+      SELECT * FROM vault_documents
+      WHERE deleted_at IS NULL
+        AND expiration_date IS NOT NULL
+        AND date(expiration_date) <= date('now', '+' || reminder_days_before || ' days')
+      ORDER BY expiration_date ASC
+    `).all();
+
+    // Outstanding invoices
+    const outstandingInvoices = db.prepare(`
+      SELECT i.*,
+        CASE WHEN i.entity_id IS NOT NULL THEN (SELECT name FROM contracted_entities WHERE id = i.entity_id) END AS entity_name
+      FROM invoices i
+      WHERE i.deleted_at IS NULL AND i.status IN ('sent', 'overdue', 'partial')
+      ORDER BY i.invoice_date DESC
+    `).all();
+
+    // Compliance alerts (reuse logic)
+    // We'll call the alert logic inline
+    const complianceAlerts: any[] = [];
+    const complianceRecords = db.prepare(`
+      SELECT ct.*, c.first_name, c.last_name
+      FROM compliance_tracking ct
+      JOIN clients c ON c.id = ct.client_id
+      WHERE ct.tracking_enabled = 1 AND c.deleted_at IS NULL AND c.status = 'active'
+    `).all() as any[];
+
+    for (const r of complianceRecords) {
+      const clientName = `${r.first_name} ${r.last_name}`;
+      if (r.visits_since_last_progress >= r.progress_visit_threshold) {
+        complianceAlerts.push({ client_id: r.client_id, client_name: clientName, alert_type: 'progress_overdue',
+          detail: `${r.visits_since_last_progress}/${r.progress_visit_threshold} visits`, visits_count: r.visits_since_last_progress, threshold: r.progress_visit_threshold });
+      }
+      if (r.next_recert_due && r.next_recert_due <= today) {
+        complianceAlerts.push({ client_id: r.client_id, client_name: clientName, alert_type: 'recert_overdue', detail: `Overdue since ${r.next_recert_due}` });
+      }
+    }
+
+    // Expiring physician orders
+    const expiringOrders = db.prepare(`
+      SELECT ct.*, c.first_name, c.last_name
+      FROM compliance_tracking ct
+      JOIN clients c ON c.id = ct.client_id
+      WHERE ct.physician_order_required = 1
+        AND ct.physician_order_expiration IS NOT NULL
+        AND date(ct.physician_order_expiration) <= date('now', '+30 days')
+        AND c.deleted_at IS NULL AND c.status = 'active'
+      ORDER BY ct.physician_order_expiration
+    `).all();
+
+    // Authorization alerts (>80% used or <30 days remaining)
+    const authorizationAlerts = db.prepare(`
+      SELECT * FROM authorizations
+      WHERE deleted_at IS NULL AND status = 'active'
+        AND (
+          (units_approved > 0 AND CAST(units_used AS REAL) / units_approved >= 0.8)
+          OR (end_date IS NOT NULL AND date(end_date) <= date('now', '+30 days'))
+        )
+      ORDER BY end_date
+    `).all();
+
+    return {
+      todayAppointments,
+      complianceAlerts,
+      unsignedNotes,
+      expiringCredentials,
+      expiringOrders,
+      authorizationAlerts,
+      outstandingInvoices,
+    };
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // ── Year-End Reports (Pro Only) ──
+  // ══════════════════════════════════════════════════════════════════════
+
+  safeHandle('reports:yearEndSummary', (_event, year: number) => {
+    requireTier('pro');
+    const startDate = `${year}-01-01`;
+    const endDate = `${year}-12-31`;
+
+    // Revenue by entity (from invoices)
+    const revenueByEntity = db.prepare(`
+      SELECT i.entity_id, ce.name AS entity_name, SUM(i.total_amount) AS total
+      FROM invoices i
+      LEFT JOIN contracted_entities ce ON ce.id = i.entity_id
+      WHERE i.deleted_at IS NULL AND i.status = 'paid'
+        AND i.invoice_date >= ? AND i.invoice_date <= ?
+        AND i.entity_id IS NOT NULL
+      GROUP BY i.entity_id
+      ORDER BY total DESC
+    `).all(startDate, endDate);
+
+    // Private pay revenue
+    const ppRow = db.prepare(`
+      SELECT COALESCE(SUM(total_amount), 0) AS total
+      FROM invoices
+      WHERE deleted_at IS NULL AND status = 'paid'
+        AND invoice_date >= ? AND invoice_date <= ?
+        AND entity_id IS NULL
+    `).get(startDate, endDate) as any;
+
+    // Mileage summary
+    const mileageRow = db.prepare(`
+      SELECT
+        COALESCE(SUM(miles), 0) AS totalMileage,
+        COALESCE(SUM(CASE WHEN is_reimbursable = 1 THEN reimbursement_amount ELSE 0 END), 0) AS reimbursedMileage,
+        COALESCE(SUM(CASE WHEN is_reimbursable = 0 THEN miles ELSE 0 END), 0) AS deductibleMileage
+      FROM mileage_log
+      WHERE deleted_at IS NULL AND date >= ? AND date <= ?
+    `).get(startDate, endDate) as any;
+
+    // Visits by entity
+    const visitsByEntity = db.prepare(`
+      SELECT n.entity_id, ce.name AS entity_name, COUNT(*) AS count
+      FROM notes n
+      LEFT JOIN contracted_entities ce ON ce.id = n.entity_id
+      WHERE n.deleted_at IS NULL AND n.signed_at IS NOT NULL
+        AND n.date_of_service >= ? AND n.date_of_service <= ?
+        AND n.entity_id IS NOT NULL
+      GROUP BY n.entity_id
+      ORDER BY count DESC
+    `).all(startDate, endDate);
+
+    return {
+      revenueByEntity,
+      revenuePrivatePay: ppRow.total,
+      totalMileage: mileageRow.totalMileage,
+      reimbursedMileage: mileageRow.reimbursedMileage,
+      deductibleMileage: mileageRow.deductibleMileage,
+      visitsByEntity,
+    };
+  });
+
+  safeHandle('reports:exportYearEnd', async (_event, year: number, format: 'pdf' | 'csv') => {
+    requireTier('pro');
+    // For now, export as CSV (PDF can be added later with jsPDF)
+    const summary = db.prepare("SELECT 1").get(); // Trigger to ensure DB is ready
+    // Re-run the summary query
+    const startDate = `${year}-01-01`;
+    const endDate = `${year}-12-31`;
+
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      title: `Export ${year} Year-End Summary`,
+      defaultPath: `year_end_summary_${year}.csv`,
+      filters: [{ name: format === 'csv' ? 'CSV' : 'PDF', extensions: [format] }],
+    });
+    if (canceled || !filePath) return null;
+
+    if (format === 'csv') {
+      const lines: string[] = [`PocketChart Year-End Summary - ${year}`, ''];
+
+      // Revenue by entity
+      lines.push('Revenue by Contracted Entity');
+      lines.push('Entity,Total Revenue');
+      const revenueByEntity = db.prepare(`
+        SELECT ce.name, SUM(i.total_amount) AS total
+        FROM invoices i LEFT JOIN contracted_entities ce ON ce.id = i.entity_id
+        WHERE i.deleted_at IS NULL AND i.status = 'paid' AND i.invoice_date >= ? AND i.invoice_date <= ? AND i.entity_id IS NOT NULL
+        GROUP BY i.entity_id ORDER BY total DESC
+      `).all(startDate, endDate) as any[];
+      for (const r of revenueByEntity) {
+        lines.push(`"${r.name}",${r.total.toFixed(2)}`);
+      }
+
+      // Private pay
+      const pp = db.prepare(`SELECT COALESCE(SUM(total_amount), 0) AS total FROM invoices WHERE deleted_at IS NULL AND status = 'paid' AND invoice_date >= ? AND invoice_date <= ? AND entity_id IS NULL`).get(startDate, endDate) as any;
+      lines.push('', `Private Pay Revenue,${pp.total.toFixed(2)}`);
+
+      // Mileage
+      const m = db.prepare(`SELECT COALESCE(SUM(miles), 0) AS total, COALESCE(SUM(CASE WHEN is_reimbursable = 1 THEN reimbursement_amount ELSE 0 END), 0) AS reimb FROM mileage_log WHERE deleted_at IS NULL AND date >= ? AND date <= ?`).get(startDate, endDate) as any;
+      lines.push('', 'Mileage Summary');
+      lines.push(`Total Miles,${m.total.toFixed(1)}`);
+      lines.push(`Total Reimbursed,$${m.reimb.toFixed(2)}`);
+
+      fs.writeFileSync(filePath, lines.join('\n'), 'utf-8');
+    }
+
+    return filePath;
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // ── Direct Access Rules ──
+  // ══════════════════════════════════════════════════════════════════════
+
+  safeHandle('directAccess:requiresReferral', (_event, state: string, discipline: string) => {
+    return checkDirectAccess(state, discipline as any);
+  });
+
+  safeHandle('directAccess:getRules', () => {
+    return getDirectAccessRules();
   });
 }
 
