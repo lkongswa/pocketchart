@@ -54,6 +54,7 @@ import type {
 } from '../../shared/types';
 import ClientFormModal from '../components/ClientFormModal';
 import GoalFormModal from '../components/GoalFormModal';
+import GoalBuilderModal from '../components/GoalBuilderModal';
 import ComplianceSection from '../components/ComplianceSection';
 import CommunicationLogSection from '../components/CommunicationLogSection';
 import ProFeatureGate from '../components/ProFeatureGate';
@@ -250,6 +251,7 @@ const ClientDetailPage: React.FC = () => {
   // Modals
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [goalModalOpen, setGoalModalOpen] = useState(false);
+  const [goalBuilderOpen, setGoalBuilderOpen] = useState(false);
   const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
 
@@ -331,6 +333,12 @@ const ClientDetailPage: React.FC = () => {
   };
 
   const openAddGoal = () => {
+    // Use the new Goal Builder for adding multiple goals
+    setGoalBuilderOpen(true);
+  };
+
+  const openAddSingleGoal = () => {
+    // Fallback to old modal for single goal
     setEditingGoal(null);
     setGoalModalOpen(true);
   };
@@ -1254,7 +1262,7 @@ const ClientDetailPage: React.FC = () => {
         onSave={handleClientSaved}
       />
 
-      {/* Goal Modal */}
+      {/* Goal Modal (for editing single goals) */}
       <GoalFormModal
         isOpen={goalModalOpen}
         onClose={() => {
@@ -1265,6 +1273,17 @@ const ClientDetailPage: React.FC = () => {
         goal={editingGoal}
         onSave={handleGoalSaved}
         discipline={client.discipline}
+      />
+
+      {/* Goal Builder Modal (for adding multiple goals with CLOF/target) */}
+      <GoalBuilderModal
+        isOpen={goalBuilderOpen}
+        onClose={() => setGoalBuilderOpen(false)}
+        clientId={clientId}
+        discipline={client.discipline}
+        onGoalsSaved={() => {
+          window.api.goals.listByClient(clientId).then(setGoals).catch(console.error);
+        }}
       />
     </div>
   );
