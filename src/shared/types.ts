@@ -372,7 +372,25 @@ export type VaultDocumentType =
   | 'dei_training'
   | 'hipaa_training'
   | 'background_check'
+  | 'cloud_baa'        // Cloud Storage Business Associate Agreement
   | 'other';
+
+// ── Cloud Detection Types ──
+
+export type CloudProvider = 'google_drive' | 'dropbox' | 'onedrive' | 'icloud';
+
+export interface CloudDetectionResult {
+  isCloudSynced: boolean;
+  provider: CloudProvider | null;
+  providerDisplayName: string | null;
+  baaUrl: string | null;
+  baaAvailable: boolean;
+}
+
+export interface SetDataPathResult {
+  newPath: string;
+  cloud: CloudDetectionResult;
+}
 
 export interface VaultDocument {
   id: number;
@@ -727,9 +745,10 @@ export interface PocketChartAPI {
   };
   storage: {
     getDataPath: () => Promise<string>;
-    setDataPath: () => Promise<string | null>;
+    setDataPath: () => Promise<SetDataPathResult | null>;
     getDefaultPath: () => Promise<string>;
     resetDataPath: () => Promise<string>;
+    detectCloud: (folderPath: string) => Promise<CloudDetectionResult>;
   };
   logo: {
     upload: () => Promise<string | null>;

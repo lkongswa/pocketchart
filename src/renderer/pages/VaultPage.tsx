@@ -22,6 +22,7 @@ const DOCUMENT_TYPE_LABELS: Record<VaultDocumentType, string> = {
   dei_training: 'DEI Training',
   hipaa_training: 'HIPAA Training',
   background_check: 'Background Check',
+  cloud_baa: 'Cloud Storage BAA',
   other: 'Other',
 };
 

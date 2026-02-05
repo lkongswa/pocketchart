@@ -101,6 +101,7 @@ const api = {
     setDataPath: () => ipcRenderer.invoke('storage:setDataPath'),
     getDefaultPath: () => ipcRenderer.invoke('storage:getDefaultPath'),
     resetDataPath: () => ipcRenderer.invoke('storage:resetDataPath'),
+    detectCloud: (folderPath: string) => ipcRenderer.invoke('storage:detectCloud', folderPath),
   },
 
   // Practice Logo

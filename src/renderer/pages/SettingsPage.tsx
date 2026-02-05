@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Settings, Building2, User, Stethoscope, Info, Save, CheckCircle, Database, Download, FileSpreadsheet, HardDrive, FolderOpen, RotateCcw, Upload, Trash2, Image, Clock, AlertTriangle, Shield, Lock, PenLine, BookOpen, ChevronDown } from 'lucide-react';
-import type { Practice, Discipline } from '../../shared/types';
+import { Settings, Building2, User, Stethoscope, Info, Save, CheckCircle, Database, Download, FileSpreadsheet, HardDrive, FolderOpen, RotateCcw, Upload, Trash2, Image, Clock, AlertTriangle, Shield, Lock, PenLine, BookOpen, ChevronDown, ShieldCheck } from 'lucide-react';
+import type { Practice, Discipline, CloudDetectionResult } from '../../shared/types';
 import SignaturePad from '../components/SignaturePad';
 import GoalsBankPage from './GoalsBankPage';
 import NoteBankPage from './NoteBankPage';
+import BAAComplianceModal from '../components/BAAComplianceModal';
 
 // ── Collapsible Section Component ──
 interface CollapsibleSectionProps {
@@ -129,6 +130,18 @@ export default function SettingsPage() {
 
   // App version
   const [appVersion, setAppVersion] = useState('');
+
+  // BAA Compliance Modal state
+  const [baaModalOpen, setBaaModalOpen] = useState(false);
+  const [pendingDataPath, setPendingDataPath] = useState<string | null>(null);
+  const [baaModalProps, setBaaModalProps] = useState<{
+    providerDisplayName: string;
+    baaUrl: string | null;
+    baaAvailable: boolean;
+  } | null>(null);
+
+  // Cloud backup warning for export
+  const [cloudExportWarning, setCloudExportWarning] = useState<string | null>(null);
 
   const loadLogoPreview = useCallback(async () => {
     try {
@@ -318,8 +331,16 @@ export default function SettingsPage() {
   const handleExportDb = async () => {
     try {
       setExporting(true);
+      setCloudExportWarning(null);
       const savedPath = await window.api.backup.exportManual();
       if (savedPath) {
+        // Check if the saved path is in a cloud-synced folder
+        const cloudCheck = await window.api.storage.detectCloud(savedPath);
+        if (cloudCheck.isCloudSynced) {
+          setCloudExportWarning(
+            `Your backup was saved to a ${cloudCheck.providerDisplayName}-synced folder. Make sure you have a BAA in place with ${cloudCheck.providerDisplayName} for HIPAA compliance.`
+          );
+        }
         setToast(`Database exported to: ${savedPath}`);
       }
     } catch (err) {
@@ -362,15 +383,47 @@ export default function SettingsPage() {
 
   const handleChangeDataPath = async () => {
     try {
-      const newPath = await window.api.storage.setDataPath();
-      if (newPath) {
-        setDataPath(newPath);
+      const result = await window.api.storage.setDataPath();
+      if (!result) return;
+
+      if (result.cloud.isCloudSynced) {
+        // Cloud storage detected - show BAA compliance modal
+        setPendingDataPath(result.newPath);
+        setBaaModalProps({
+          providerDisplayName: result.cloud.providerDisplayName!,
+          baaUrl: result.cloud.baaUrl,
+          baaAvailable: result.cloud.baaAvailable,
+        });
+        setBaaModalOpen(true);
+      } else {
+        // Regular local folder - proceed normally
+        setDataPath(result.newPath);
         setToast('Data location changed. Please restart the app for changes to take effect.');
       }
     } catch (err) {
       console.error('Failed to change data path:', err);
       setToast('Failed to change data location. Please try again.');
     }
+  };
+
+  const handleBaaAccept = () => {
+    // User acknowledged BAA requirements - complete the path change
+    if (pendingDataPath) {
+      setDataPath(pendingDataPath);
+      setToast('Data location changed. Please restart the app for changes to take effect.');
+    }
+    setBaaModalOpen(false);
+    setPendingDataPath(null);
+    setBaaModalProps(null);
+  };
+
+  const handleBaaChooseDifferent = () => {
+    // User wants to choose a different folder - close modal and re-trigger folder picker
+    setBaaModalOpen(false);
+    setPendingDataPath(null);
+    setBaaModalProps(null);
+    // Re-open folder picker
+    handleChangeDataPath();
   };
 
   const handleResetDataPath = async () => {
@@ -796,10 +849,15 @@ export default function SettingsPage() {
           </div>
 
           <div className="p-3 bg-blue-50 rounded-lg">
-            <p className="text-xs text-blue-700 font-medium mb-1">Cloud Sync Tip</p>
+            <div className="flex items-start gap-2 mb-1">
+              <ShieldCheck className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-blue-700 font-medium">Cloud Backup</p>
+            </div>
             <p className="text-xs text-blue-600">
-              Choose a folder synced with Google Drive, OneDrive, or Dropbox to automatically
-              back up your data to the cloud.
+              You can choose a cloud-synced folder for automatic off-site backup. If you do,
+              you are responsible for ensuring a Business Associate Agreement (BAA) is in place
+              with that cloud provider. PocketChart will detect cloud folders and guide you
+              through compliance requirements.
             </p>
           </div>
 
@@ -894,6 +952,22 @@ export default function SettingsPage() {
             </button>
           </div>
 
+          {/* Cloud Export Warning */}
+          {cloudExportWarning && (
+            <div className="flex items-start gap-2 p-3 bg-amber-50 rounded-lg border border-amber-200">
+              <ShieldCheck className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs text-amber-700">{cloudExportWarning}</p>
+                <button
+                  className="text-xs text-amber-800 underline mt-1 hover:text-amber-900"
+                  onClick={() => setCloudExportWarning(null)}
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="flex items-start gap-2 p-3 bg-gray-50 rounded-lg">
             <HardDrive className="w-4 h-4 text-[var(--color-text-secondary)] mt-0.5 shrink-0" />
             <div>
@@ -936,6 +1010,23 @@ export default function SettingsPage() {
           </div>
         </div>
       </CollapsibleSection>
+
+      {/* BAA Compliance Modal */}
+      {baaModalProps && (
+        <BAAComplianceModal
+          isOpen={baaModalOpen}
+          onClose={() => {
+            setBaaModalOpen(false);
+            setPendingDataPath(null);
+            setBaaModalProps(null);
+          }}
+          onAccept={handleBaaAccept}
+          onChooseDifferent={handleBaaChooseDifferent}
+          providerDisplayName={baaModalProps.providerDisplayName}
+          baaUrl={baaModalProps.baaUrl}
+          baaAvailable={baaModalProps.baaAvailable}
+        />
+      )}
     </div>
   );
 }

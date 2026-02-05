@@ -10,6 +10,7 @@ import archiver from 'archiver';
 import { autoUpdater } from 'electron-updater';
 import Stripe from 'stripe';
 import { requiresReferral as checkDirectAccess, getAllRules as getDirectAccessRules } from '../shared/directAccessRules';
+import { detectCloudStorage } from './cloudDetection';
 import type { AppTier } from '../shared/types';
 
 // ── Secure Storage Helpers ──
@@ -1820,6 +1821,7 @@ function registerIpcHandlers() {
     if (canceled || filePaths.length === 0) return null;
 
     const newDir = filePaths[0];
+    const cloud = detectCloudStorage(newDir);
     const currentDir = getDataPath();
     const currentDbPath = path.join(currentDir, 'pocketchart.db');
 
@@ -1839,7 +1841,12 @@ function registerIpcHandlers() {
     }
 
     setDataPath(newDir);
-    return newDir;
+    return { newPath: newDir, cloud };
+  });
+
+  // Cloud detection for any path (read-only check)
+  safeHandle('storage:detectCloud', (_event: any, folderPath: string) => {
+    return detectCloudStorage(folderPath);
   });
 
   safeHandle('storage:getDefaultPath', () => {
