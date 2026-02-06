@@ -169,7 +169,6 @@ interface MonthlyData {
 }
 
 function BillingChart({ invoices, payments }: { invoices: Invoice[]; payments: Payment[] }) {
-  // Build last 6 months of data
   const monthlyData = useMemo(() => {
     const months: MonthlyData[] = [];
     const now = new Date();
@@ -195,13 +194,11 @@ function BillingChart({ invoices, payments }: { invoices: Invoice[]; payments: P
       {monthlyData.map((m, i) => (
         <div key={i} className="flex-1 flex flex-col items-center gap-1">
           <div className="flex items-end gap-0.5 w-full h-28">
-            {/* Invoiced bar */}
             <div
               className="flex-1 bg-blue-200 rounded-t-sm transition-all"
               style={{ height: `${Math.max((m.invoiced / maxVal) * 100, m.invoiced > 0 ? 4 : 0)}%` }}
               title={`Invoiced: ${formatCurrency(m.invoiced)}`}
             />
-            {/* Paid bar */}
             <div
               className="flex-1 bg-emerald-400 rounded-t-sm transition-all"
               style={{ height: `${Math.max((m.paid / maxVal) * 100, m.paid > 0 ? 4 : 0)}%` }}
@@ -215,9 +212,51 @@ function BillingChart({ invoices, payments }: { invoices: Invoice[]; payments: P
   );
 }
 
-// --- Main Component ---
+// --- Collapsible Info Section ---
 
-type BottomTab = 'documents' | 'compliance';
+interface CollapsibleInfoProps {
+  icon: React.ReactNode;
+  title: string;
+  isComplete: boolean;
+  children: React.ReactNode;
+  onEdit?: () => void;
+}
+
+function CollapsibleInfo({ icon, title, isComplete, children, onEdit }: CollapsibleInfoProps) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <div className={`rounded-lg border transition-all ${isComplete ? 'border-emerald-200 bg-emerald-50/30' : 'border-amber-200 bg-amber-50/30'}`}>
+      <button
+        type="button"
+        className="w-full flex items-center gap-2 px-3 py-2 text-left"
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <span className={`${isComplete ? 'text-emerald-500' : 'text-amber-500'}`}>{icon}</span>
+        <span className="text-xs font-medium text-[var(--color-text)] flex-1">{title}</span>
+        <span className={`w-2 h-2 rounded-full ${isComplete ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+        <ChevronDown className={`w-3.5 h-3.5 text-[var(--color-text-secondary)] transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+      {isOpen && (
+        <div className="px-3 pb-3 border-t border-[var(--color-border)]/30">
+          <div className="pt-2 text-sm space-y-1.5">
+            {children}
+          </div>
+          {onEdit && (
+            <button
+              className="mt-2 text-xs text-[var(--color-primary)] hover:underline flex items-center gap-1"
+              onClick={(e) => { e.stopPropagation(); onEdit(); }}
+            >
+              <Edit size={10} /> Edit
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Main Component ---
 
 const ClientDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -241,7 +280,8 @@ const ClientDetailPage: React.FC = () => {
   // Collapsible sections
   const [showAllNotes, setShowAllNotes] = useState(false);
   const [showAllGoals, setShowAllGoals] = useState(false);
-  const [bottomTab, setBottomTab] = useState<BottomTab>('documents');
+  const [showDocuments, setShowDocuments] = useState(false);
+  const [showCompliance, setShowCompliance] = useState(false);
 
   // Billing state
   const [generatingPaymentLink, setGeneratingPaymentLink] = useState<number | null>(null);
@@ -255,7 +295,6 @@ const ClientDetailPage: React.FC = () => {
   const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
 
-  // Route state (e.g., navigate from invoice creation)
   const routeState = (location.state as { tab?: string; invoiceId?: number }) || {};
 
   const loadData = useCallback(async () => {
@@ -333,14 +372,7 @@ const ClientDetailPage: React.FC = () => {
   };
 
   const openAddGoal = () => {
-    // Use the new Goal Builder for adding multiple goals
     setGoalBuilderOpen(true);
-  };
-
-  const openAddSingleGoal = () => {
-    // Fallback to old modal for single goal
-    setEditingGoal(null);
-    setGoalModalOpen(true);
   };
 
   const handleExportPdf = async () => {
@@ -512,10 +544,15 @@ const ClientDetailPage: React.FC = () => {
   const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
   const totalInvoiced = invoices.filter((i) => i.status !== 'void').reduce((sum, i) => sum + i.total_amount, 0);
   const activeGoals = goals.filter((g) => g.status === 'active');
-  const signedNotes = notes.filter((n) => n.signed_at);
   const unsignedNotes = notes.filter((n) => !n.signed_at);
   const displayNotes = showAllNotes ? notes : notes.slice(0, 5);
   const displayGoals = showAllGoals ? goals : goals.slice(0, 4);
+
+  // Completeness checks
+  const demographicsComplete = Boolean(client.dob && client.phone);
+  const insuranceComplete = Boolean(client.insurance_payer && client.insurance_member_id);
+  const diagnosisComplete = Boolean(client.primary_dx_code);
+  const referringComplete = Boolean(client.referring_physician);
 
   // --- Render ---
 
@@ -535,11 +572,11 @@ const ClientDetailPage: React.FC = () => {
         Back to Clients
       </button>
 
-      {/* ══════════ HEADER ══════════ */}
+      {/* ══════════ HEADER CARD WITH COLLAPSIBLE SECTIONS ══════════ */}
       <div className="card p-5">
-        <div className="flex items-start justify-between">
+        {/* Main Header Row */}
+        <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-4">
-            {/* Avatar circle */}
             <div className="w-14 h-14 rounded-full bg-gradient-to-br from-teal-400 to-teal-600 flex items-center justify-center text-white text-xl font-bold shrink-0">
               {client.first_name[0]}{client.last_name[0]}
             </div>
@@ -565,259 +602,102 @@ const ClientDetailPage: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button className="btn-primary btn-sm gap-1.5" onClick={() => navigate(`/clients/${clientId}/note/new`)}>
-              <FileText size={14} /> New Note
-            </button>
             <button className="btn-secondary btn-sm gap-1.5" onClick={() => setEditModalOpen(true)}>
               <Edit size={14} /> Edit
             </button>
             <button className="btn-ghost btn-sm gap-1.5" onClick={handleExportPdf} disabled={exportingPdf}>
-              <Download size={14} /> {exportingPdf ? 'Exporting...' : 'Export PDF'}
+              <Download size={14} /> {exportingPdf ? 'Exporting...' : 'Export Chart'}
             </button>
             <button className="btn-ghost btn-sm gap-1.5" onClick={handleArchiveToggle}>
               <Archive size={14} /> {client.status === 'active' ? 'Discharge' : 'Reactivate'}
             </button>
           </div>
         </div>
+
+        {/* Collapsible Info Sections Row */}
+        <div className="grid grid-cols-6 gap-3">
+          <CollapsibleInfo
+            icon={<User size={14} />}
+            title="Demographics"
+            isComplete={demographicsComplete}
+            onEdit={() => setEditModalOpen(true)}
+          >
+            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">DOB</span><span>{formatDate(client.dob)}</span></div>
+            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Phone</span><span>{client.phone || '--'}</span></div>
+            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Email</span><span className="truncate ml-2">{client.email || '--'}</span></div>
+            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Address</span><span className="truncate ml-2">{client.address || '--'}</span></div>
+          </CollapsibleInfo>
+
+          <CollapsibleInfo
+            icon={<Shield size={14} />}
+            title="Insurance"
+            isComplete={insuranceComplete}
+            onEdit={() => setEditModalOpen(true)}
+          >
+            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Payer</span><span>{client.insurance_payer || '--'}</span></div>
+            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Member ID</span><span>{client.insurance_member_id || '--'}</span></div>
+            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Group</span><span>{client.insurance_group || '--'}</span></div>
+          </CollapsibleInfo>
+
+          <CollapsibleInfo
+            icon={<Stethoscope size={14} />}
+            title="Diagnosis"
+            isComplete={diagnosisComplete}
+            onEdit={() => setEditModalOpen(true)}
+          >
+            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Primary Dx</span><span>{client.primary_dx_code || '--'}</span></div>
+            {client.primary_dx_description && <p className="text-xs text-[var(--color-text-secondary)] italic">{client.primary_dx_description}</p>}
+            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Default CPT</span><span>{client.default_cpt_code || '--'}</span></div>
+          </CollapsibleInfo>
+
+          <CollapsibleInfo
+            icon={<Activity size={14} />}
+            title="Referring"
+            isComplete={referringComplete}
+            onEdit={() => setEditModalOpen(true)}
+          >
+            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Physician</span><span>{client.referring_physician || '--'}</span></div>
+            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">NPI</span><span>{client.referring_npi || '--'}</span></div>
+          </CollapsibleInfo>
+
+          <CollapsibleInfo
+            icon={<FolderOpen size={14} />}
+            title={`Documents (${documents.length})`}
+            isComplete={documents.length > 0}
+          >
+            <div className="space-y-1.5">
+              {documents.slice(0, 3).map((doc) => (
+                <div key={doc.id} className="flex items-center justify-between text-xs">
+                  <span className="truncate">{doc.original_name}</span>
+                  <button className="text-[var(--color-primary)] hover:underline" onClick={() => handleOpenDocument(doc.id)}>View</button>
+                </div>
+              ))}
+              {documents.length > 3 && <p className="text-xs text-[var(--color-text-secondary)]">+{documents.length - 3} more</p>}
+              {documents.length === 0 && <p className="text-xs text-[var(--color-text-secondary)]">No documents</p>}
+            </div>
+            <button className="mt-2 text-xs text-[var(--color-primary)] hover:underline flex items-center gap-1" onClick={() => setShowDocuments(true)}>
+              <Upload size={10} /> Upload
+            </button>
+          </CollapsibleInfo>
+
+          <CollapsibleInfo
+            icon={<Shield size={14} />}
+            title="Compliance"
+            isComplete={true}
+          >
+            <p className="text-xs text-[var(--color-text-secondary)]">Medicare tracking and progress report alerts</p>
+            <button className="mt-2 text-xs text-[var(--color-primary)] hover:underline" onClick={() => setShowCompliance(true)}>
+              View Details
+            </button>
+          </CollapsibleInfo>
+        </div>
       </div>
 
-      {/* ══════════ TWO COLUMN: CLIENT INFO + CLINICAL ══════════ */}
+      {/* ══════════ TWO COLUMN: CLINICAL DATA ══════════ */}
       <div className="grid grid-cols-12 gap-6">
-        {/* LEFT COLUMN: Client Information (4 cols) */}
-        <div className="col-span-4 space-y-4">
-          {/* Demographics */}
-          <div
-            className="card p-4 cursor-pointer hover:shadow-md hover:border-[var(--color-primary)]/30 transition-all group"
-            onClick={() => setEditModalOpen(true)}
-          >
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-1.5">
-                <User size={14} className="text-[var(--color-primary)]" /> Demographics
-              </h3>
-              <Edit size={12} className="text-gray-300 group-hover:text-[var(--color-primary)] transition-colors" />
-            </div>
-            <dl className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <dt className="text-[var(--color-text-secondary)]">DOB</dt>
-                <dd className="font-medium">{formatDate(client.dob)}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-[var(--color-text-secondary)]">Phone</dt>
-                <dd className="font-medium">{client.phone || '--'}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-[var(--color-text-secondary)]">Email</dt>
-                <dd className="font-medium truncate ml-4">{client.email || '--'}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-[var(--color-text-secondary)]">Address</dt>
-                <dd className="font-medium text-right ml-4">{client.address || '--'}</dd>
-              </div>
-            </dl>
-          </div>
-
-          {/* Insurance */}
-          <div
-            className="card p-4 cursor-pointer hover:shadow-md hover:border-[var(--color-primary)]/30 transition-all group"
-            onClick={() => setEditModalOpen(true)}
-          >
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-1.5">
-                <Shield size={14} className="text-purple-500" /> Insurance
-              </h3>
-              <Edit size={12} className="text-gray-300 group-hover:text-[var(--color-primary)] transition-colors" />
-            </div>
-            <dl className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <dt className="text-[var(--color-text-secondary)]">Payer</dt>
-                <dd className="font-medium">{client.insurance_payer || '--'}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-[var(--color-text-secondary)]">Member ID</dt>
-                <dd className="font-medium">{client.insurance_member_id || '--'}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-[var(--color-text-secondary)]">Group</dt>
-                <dd className="font-medium">{client.insurance_group || '--'}</dd>
-              </div>
-            </dl>
-          </div>
-
-          {/* Diagnosis */}
-          <div
-            className="card p-4 cursor-pointer hover:shadow-md hover:border-[var(--color-primary)]/30 transition-all group"
-            onClick={() => setEditModalOpen(true)}
-          >
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-1.5">
-                <Stethoscope size={14} className="text-rose-500" /> Diagnosis
-              </h3>
-              <Edit size={12} className="text-gray-300 group-hover:text-[var(--color-primary)] transition-colors" />
-            </div>
-            <dl className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <dt className="text-[var(--color-text-secondary)]">Primary Dx</dt>
-                <dd className="font-medium">{client.primary_dx_code || '--'}</dd>
-              </div>
-              {client.primary_dx_description && (
-                <p className="text-xs text-[var(--color-text-secondary)] italic">{client.primary_dx_description}</p>
-              )}
-              <div className="flex justify-between">
-                <dt className="text-[var(--color-text-secondary)]">Default CPT</dt>
-                <dd className="font-medium">{client.default_cpt_code || '--'}</dd>
-              </div>
-              {(() => {
-                try {
-                  const secDx = JSON.parse(client.secondary_dx || '[]');
-                  if (Array.isArray(secDx) && secDx.length > 0 && secDx[0].code) {
-                    return (
-                      <div className="flex justify-between">
-                        <dt className="text-[var(--color-text-secondary)]">Secondary Dx</dt>
-                        <dd className="font-medium">{secDx[0].code}</dd>
-                      </div>
-                    );
-                  }
-                } catch {}
-                return null;
-              })()}
-            </dl>
-          </div>
-
-          {/* Referring Provider */}
-          <div
-            className="card p-4 cursor-pointer hover:shadow-md hover:border-[var(--color-primary)]/30 transition-all group"
-            onClick={() => setEditModalOpen(true)}
-          >
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-1.5">
-                <Activity size={14} className="text-blue-500" /> Referring Provider
-              </h3>
-              <Edit size={12} className="text-gray-300 group-hover:text-[var(--color-primary)] transition-colors" />
-            </div>
-            <dl className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <dt className="text-[var(--color-text-secondary)]">Physician</dt>
-                <dd className="font-medium">{client.referring_physician || '--'}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-[var(--color-text-secondary)]">NPI</dt>
-                <dd className="font-medium">{client.referring_npi || '--'}</dd>
-              </div>
-            </dl>
-          </div>
-        </div>
-
-        {/* RIGHT COLUMN: Clinical (8 cols) */}
-        <div className="col-span-8 space-y-6">
-          {/* Quick Stats Row */}
-          <div className="grid grid-cols-4 gap-3">
-            <div className="card p-3 text-center">
-              <p className="text-xl font-bold text-blue-600">{notes.length}</p>
-              <p className="text-xs text-[var(--color-text-secondary)]">Notes</p>
-            </div>
-            <div className="card p-3 text-center">
-              <p className="text-xl font-bold text-violet-600">{evaluations.length}</p>
-              <p className="text-xs text-[var(--color-text-secondary)]">Evaluations</p>
-            </div>
-            <div className="card p-3 text-center">
-              <p className="text-xl font-bold text-amber-600">{activeGoals.length}</p>
-              <p className="text-xs text-[var(--color-text-secondary)]">Active Goals</p>
-            </div>
-            <div className="card p-3 text-center">
-              <p className="text-xl font-bold text-red-500">{unsignedNotes.length}</p>
-              <p className="text-xs text-[var(--color-text-secondary)]">Unsigned</p>
-            </div>
-          </div>
-
-          {/* Notes Section */}
-          <div className="card">
-            <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
-              <h3 className="font-semibold text-[var(--color-text)] flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-blue-400" />
-                SOAP Notes
-                <span className="text-xs font-normal text-[var(--color-text-secondary)]">({notes.length})</span>
-              </h3>
-              <div className="flex items-center gap-2">
-                <button
-                  className="btn-primary btn-sm gap-1.5"
-                  onClick={() => navigate(`/clients/${clientId}/note/new`)}
-                >
-                  <Plus size={14} /> New Note
-                </button>
-              </div>
-            </div>
-            {notes.length === 0 ? (
-              <div className="p-6 text-center text-sm text-[var(--color-text-secondary)]">
-                No SOAP notes yet. Create one to get started.
-              </div>
-            ) : (
-              <div className="divide-y divide-[var(--color-border)]">
-                {displayNotes.map((note) => {
-                  let cptBadges: Array<{ code: string; units: number }> = [];
-                  try {
-                    const parsed = JSON.parse(note.cpt_codes || '[]');
-                    if (Array.isArray(parsed) && parsed.length > 0) cptBadges = parsed;
-                  } catch {}
-                  if (cptBadges.length === 0 && note.cpt_code) {
-                    cptBadges = [{ code: note.cpt_code, units: note.units || 1 }];
-                  }
-                  return (
-                    <div
-                      key={note.id}
-                      className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
-                      onClick={() => navigate(`/clients/${clientId}/note/${note.id}`)}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className="text-sm font-medium text-[var(--color-text)] w-28 shrink-0">
-                          {formatDate(note.date_of_service)}
-                        </span>
-                        {cptBadges.slice(0, 2).map((line, i) => (
-                          <span key={i} className="badge bg-gray-100 text-gray-600 text-xs">
-                            {line.code} ({line.units}u)
-                          </span>
-                        ))}
-                        <span className="text-xs text-[var(--color-text-secondary)] truncate">
-                          {truncate(note.subjective || '', 50)}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        {note.signed_at ? (
-                          <span className="flex items-center gap-1 text-xs text-emerald-600">
-                            <CheckCircle size={12} /> Signed
-                          </span>
-                        ) : (
-                          <span className="flex items-center gap-1 text-xs text-amber-600">
-                            <Clock size={12} /> Draft
-                          </span>
-                        )}
-                        {!note.signed_at && (
-                          <button
-                            className={`btn-sm text-xs px-1.5 py-0.5 ${
-                              deletingNoteId === note.id ? 'bg-red-600 text-white' : 'btn-ghost text-red-500'
-                            }`}
-                            onClick={(e) => { e.stopPropagation(); handleDeleteNote(note.id); }}
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {notes.length > 5 && (
-              <button
-                className="w-full py-2 text-xs text-[var(--color-primary)] font-medium hover:bg-gray-50 flex items-center justify-center gap-1"
-                onClick={() => setShowAllNotes(!showAllNotes)}
-              >
-                {showAllNotes ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                {showAllNotes ? 'Show less' : `Show all ${notes.length} notes`}
-              </button>
-            )}
-          </div>
-
-          {/* Evaluations Row */}
+        {/* LEFT COLUMN: Evaluations + Goals (5 cols) */}
+        <div className="col-span-5 space-y-6">
+          {/* Evaluations */}
           <div className="card">
             <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
               <h3 className="font-semibold text-[var(--color-text)] flex items-center gap-2">
@@ -829,7 +709,7 @@ const ClientDetailPage: React.FC = () => {
                 className="btn-accent btn-sm gap-1.5"
                 onClick={() => navigate(`/clients/${clientId}/eval/new`)}
               >
-                <Plus size={14} /> New Evaluation
+                <Plus size={14} /> New Eval
               </button>
             </div>
             {evaluations.length === 0 ? (
@@ -845,7 +725,7 @@ const ClientDetailPage: React.FC = () => {
                     onClick={() => navigate(`/clients/${clientId}/eval/${evalItem.id}`)}
                   >
                     <div className="flex items-center gap-3">
-                      <span className="text-sm font-medium text-[var(--color-text)] w-28 shrink-0">
+                      <span className="text-sm font-medium text-[var(--color-text)]">
                         {formatDate(evalItem.eval_date)}
                       </span>
                       <span className={disciplineBadgeClass[evalItem.discipline]}>{evalItem.discipline}</span>
@@ -877,7 +757,7 @@ const ClientDetailPage: React.FC = () => {
             )}
           </div>
 
-          {/* Goals Section */}
+          {/* Goals */}
           <div className="card">
             <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
               <h3 className="font-semibold text-[var(--color-text)] flex items-center gap-2">
@@ -967,6 +847,97 @@ const ClientDetailPage: React.FC = () => {
             )}
           </div>
         </div>
+
+        {/* RIGHT COLUMN: SOAP Notes (7 cols) */}
+        <div className="col-span-7">
+          <div className="card">
+            <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
+              <h3 className="font-semibold text-[var(--color-text)] flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-blue-400" />
+                SOAP Notes
+                <span className="text-xs font-normal text-[var(--color-text-secondary)]">({notes.length})</span>
+                {unsignedNotes.length > 0 && (
+                  <span className="badge bg-red-100 text-red-600 text-xs">{unsignedNotes.length} unsigned</span>
+                )}
+              </h3>
+              <button
+                className="btn-primary btn-sm gap-1.5"
+                onClick={() => navigate(`/clients/${clientId}/note/new`)}
+              >
+                <Plus size={14} /> New Note
+              </button>
+            </div>
+            {notes.length === 0 ? (
+              <div className="p-8 text-center text-sm text-[var(--color-text-secondary)]">
+                No SOAP notes yet. Create one to get started.
+              </div>
+            ) : (
+              <div className="divide-y divide-[var(--color-border)]">
+                {displayNotes.map((note) => {
+                  let cptBadges: Array<{ code: string; units: number }> = [];
+                  try {
+                    const parsed = JSON.parse(note.cpt_codes || '[]');
+                    if (Array.isArray(parsed) && parsed.length > 0) cptBadges = parsed;
+                  } catch {}
+                  if (cptBadges.length === 0 && note.cpt_code) {
+                    cptBadges = [{ code: note.cpt_code, units: note.units || 1 }];
+                  }
+                  return (
+                    <div
+                      key={note.id}
+                      className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
+                      onClick={() => navigate(`/clients/${clientId}/note/${note.id}`)}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="text-sm font-medium text-[var(--color-text)] w-24 shrink-0">
+                          {formatDate(note.date_of_service)}
+                        </span>
+                        {cptBadges.slice(0, 2).map((line, i) => (
+                          <span key={i} className="badge bg-gray-100 text-gray-600 text-xs">
+                            {line.code} ({line.units}u)
+                          </span>
+                        ))}
+                        <span className="text-xs text-[var(--color-text-secondary)] truncate">
+                          {truncate(note.subjective || '', 40)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {note.signed_at ? (
+                          <span className="flex items-center gap-1 text-xs text-emerald-600">
+                            <CheckCircle size={12} /> Signed
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1 text-xs text-amber-600">
+                            <Clock size={12} /> Draft
+                          </span>
+                        )}
+                        {!note.signed_at && (
+                          <button
+                            className={`btn-sm text-xs px-1.5 py-0.5 ${
+                              deletingNoteId === note.id ? 'bg-red-600 text-white' : 'btn-ghost text-red-500'
+                            }`}
+                            onClick={(e) => { e.stopPropagation(); handleDeleteNote(note.id); }}
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {notes.length > 5 && (
+              <button
+                className="w-full py-2 text-xs text-[var(--color-primary)] font-medium hover:bg-gray-50 flex items-center justify-center gap-1"
+                onClick={() => setShowAllNotes(!showAllNotes)}
+              >
+                {showAllNotes ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                {showAllNotes ? 'Show less' : `Show all ${notes.length} notes`}
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* ══════════ FULL-WIDTH: BILLING SECTION ══════════ */}
@@ -1001,9 +972,12 @@ const ClientDetailPage: React.FC = () => {
         <div className="p-5">
           {/* Summary Cards + Chart Row */}
           <div className="grid grid-cols-12 gap-5 mb-6">
-            {/* Summary Cards */}
+            {/* Summary Cards - Now Clickable */}
             <div className="col-span-5 grid grid-cols-1 gap-3">
-              <div className="flex items-center justify-between p-3 rounded-lg bg-amber-50 border border-amber-200">
+              <div
+                className="flex items-center justify-between p-3 rounded-lg bg-amber-50 border border-amber-200 cursor-pointer hover:shadow-md transition-all"
+                onClick={() => navigate('/billing?tab=invoices')}
+              >
                 <div>
                   <p className="text-xs text-amber-600 font-medium">Balance Due</p>
                   <p className={`text-lg font-bold ${balanceDue > 0 ? 'text-amber-700' : 'text-gray-500'}`}>
@@ -1012,14 +986,20 @@ const ClientDetailPage: React.FC = () => {
                 </div>
                 <AlertCircle className={`w-5 h-5 ${balanceDue > 0 ? 'text-amber-500' : 'text-gray-300'}`} />
               </div>
-              <div className="flex items-center justify-between p-3 rounded-lg bg-emerald-50 border border-emerald-200">
+              <div
+                className="flex items-center justify-between p-3 rounded-lg bg-emerald-50 border border-emerald-200 cursor-pointer hover:shadow-md transition-all"
+                onClick={() => navigate('/billing?tab=payments')}
+              >
                 <div>
                   <p className="text-xs text-emerald-600 font-medium">Total Collected</p>
                   <p className="text-lg font-bold text-emerald-700">{formatCurrency(totalPaid)}</p>
                 </div>
                 <DollarSign className="w-5 h-5 text-emerald-500" />
               </div>
-              <div className="flex items-center justify-between p-3 rounded-lg bg-blue-50 border border-blue-200">
+              <div
+                className="flex items-center justify-between p-3 rounded-lg bg-blue-50 border border-blue-200 cursor-pointer hover:shadow-md transition-all"
+                onClick={() => navigate('/billing?tab=invoices')}
+              >
                 <div>
                   <p className="text-xs text-blue-600 font-medium">Total Invoiced</p>
                   <p className="text-lg font-bold text-blue-700">{formatCurrency(totalInvoiced)}</p>
@@ -1044,23 +1024,32 @@ const ClientDetailPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Invoices Table */}
+          {/* Recent Invoices - Clickable */}
           <div className="mb-6">
-            <h4 className="text-sm font-semibold text-[var(--color-text)] mb-3">Invoices</h4>
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-sm font-semibold text-[var(--color-text)]">Recent Invoices</h4>
+              <button className="text-xs text-[var(--color-primary)] hover:underline" onClick={() => navigate('/billing?tab=invoices')}>
+                View All
+              </button>
+            </div>
             {invoices.length === 0 ? (
               <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center text-sm text-[var(--color-text-secondary)]">
                 No invoices yet. Create one to start billing.
               </div>
             ) : (
               <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
-                {invoices.map((invoice) => (
-                  <div key={invoice.id} className="flex items-center justify-between px-4 py-3 hover:bg-gray-50">
+                {invoices.slice(0, 5).map((invoice) => (
+                  <div
+                    key={invoice.id}
+                    className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
+                    onClick={() => navigate(`/billing?tab=invoices&invoiceId=${invoice.id}`)}
+                  >
                     <div className="flex items-center gap-4">
                       <div>
                         <p className="text-sm font-medium text-[var(--color-text)]">{invoice.invoice_number}</p>
                         <p className="text-xs text-[var(--color-text-secondary)]">
                           {formatDate(invoice.invoice_date)}
-                          {invoice.due_date && ` · Due ${formatDate(invoice.due_date)}`}
+                          {invoice.due_date && ` - Due ${formatDate(invoice.due_date)}`}
                         </p>
                       </div>
                     </div>
@@ -1075,7 +1064,7 @@ const ClientDetailPage: React.FC = () => {
                           {invoice.status || 'draft'}
                         </span>
                       </div>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                         {invoice.status !== 'paid' && invoice.status !== 'void' && (
                           <>
                             <button
@@ -1091,27 +1080,18 @@ const ClientDetailPage: React.FC = () => {
                               Pay
                             </button>
                             {invoice.stripe_payment_link_url && (
-                              <>
-                                <button
-                                  className="btn-secondary btn-sm gap-1"
-                                  onClick={() => handleCheckPaymentStatus(invoice.id)}
-                                  disabled={checkingPaymentStatus === invoice.id}
-                                  title="Check payment status"
-                                >
-                                  {checkingPaymentStatus === invoice.id ? (
-                                    <Loader2 size={12} className="animate-spin" />
-                                  ) : (
-                                    <RefreshCw size={12} />
-                                  )}
-                                </button>
-                                <button
-                                  className="btn-ghost btn-sm text-xs"
-                                  onClick={() => handleCopyPaymentLink(invoice.stripe_payment_link_url)}
-                                  title="Copy payment link"
-                                >
-                                  Copy
-                                </button>
-                              </>
+                              <button
+                                className="btn-secondary btn-sm gap-1"
+                                onClick={() => handleCheckPaymentStatus(invoice.id)}
+                                disabled={checkingPaymentStatus === invoice.id}
+                                title="Check payment status"
+                              >
+                                {checkingPaymentStatus === invoice.id ? (
+                                  <Loader2 size={12} className="animate-spin" />
+                                ) : (
+                                  <RefreshCw size={12} />
+                                )}
+                              </button>
                             )}
                           </>
                         )}
@@ -1123,26 +1103,32 @@ const ClientDetailPage: React.FC = () => {
             )}
           </div>
 
-          {/* Payments History */}
+          {/* Recent Payments - Clickable */}
           <div>
-            <h4 className="text-sm font-semibold text-[var(--color-text)] mb-3">Payment History</h4>
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-sm font-semibold text-[var(--color-text)]">Recent Payments</h4>
+              <button className="text-xs text-[var(--color-primary)] hover:underline" onClick={() => navigate('/billing?tab=payments')}>
+                View All
+              </button>
+            </div>
             {payments.length === 0 ? (
               <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center text-sm text-[var(--color-text-secondary)]">
                 No payments recorded yet.
               </div>
             ) : (
               <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
-                {payments.map((payment) => (
-                  <div key={payment.id} className="flex items-center justify-between px-4 py-3 hover:bg-gray-50">
+                {payments.slice(0, 5).map((payment) => (
+                  <div
+                    key={payment.id}
+                    className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
+                    onClick={() => navigate(`/billing?tab=payments&paymentId=${payment.id}`)}
+                  >
                     <div>
                       <p className="text-sm font-medium text-[var(--color-text)]">{formatDate(payment.payment_date)}</p>
                       <p className="text-xs text-[var(--color-text-secondary)]">
                         {PAYMENT_METHOD_LABELS[payment.payment_method] || payment.payment_method || 'Other'}
-                        {payment.reference_number && ` · Ref: ${payment.reference_number}`}
+                        {payment.reference_number && ` - Ref: ${payment.reference_number}`}
                       </p>
-                      {payment.notes && (
-                        <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">{payment.notes}</p>
-                      )}
                     </div>
                     <p className="font-medium text-emerald-600">+{formatCurrency(payment.amount)}</p>
                   </div>
@@ -1153,32 +1139,22 @@ const ClientDetailPage: React.FC = () => {
         </div>
       </div>
 
-      {/* ══════════ DOCUMENTS & COMPLIANCE ══════════ */}
-      <div className="card">
-        <div className="flex items-center border-b border-[var(--color-border)]">
-          {(['documents', 'compliance'] as BottomTab[]).map((tab) => (
-            <button
-              key={tab}
-              className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
-                bottomTab === tab
-                  ? 'border-[var(--color-primary)] text-[var(--color-primary)]'
-                  : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
-              }`}
-              onClick={() => setBottomTab(tab)}
-            >
-              {tab === 'documents' ? (
-                <span className="flex items-center gap-1.5"><FolderOpen size={14} /> Documents ({documents.length})</span>
-              ) : (
-                <span className="flex items-center gap-1.5"><Shield size={14} /> Compliance</span>
-              )}
-            </button>
-          ))}
-        </div>
-
-        <div className="p-5">
-          {bottomTab === 'documents' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
+      {/* ══════════ DOCUMENTS MODAL ══════════ */}
+      {showDocuments && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setShowDocuments(false)} />
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[80vh] overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
+              <h3 className="text-lg font-semibold text-[var(--color-text)] flex items-center gap-2">
+                <FolderOpen size={20} className="text-[var(--color-primary)]" />
+                Documents
+              </h3>
+              <button onClick={() => setShowDocuments(false)} className="btn-ghost p-1">
+                <XCircle size={20} />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto max-h-[60vh]">
+              <div className="flex items-center justify-between mb-4">
                 <select
                   className="input py-1.5 text-sm w-44"
                   value={docCategoryFilter}
@@ -1192,7 +1168,6 @@ const ClientDetailPage: React.FC = () => {
                   <Upload size={14} /> Upload Document
                 </button>
               </div>
-
               {(() => {
                 const filteredDocs = docCategoryFilter === 'all'
                   ? documents
@@ -1241,18 +1216,35 @@ const ClientDetailPage: React.FC = () => {
                 );
               })()}
             </div>
-          )}
-
-          {bottomTab === 'compliance' && (
-            <ProFeatureGate feature="compliance_engine">
-              <div className="space-y-6">
-                <ComplianceSection clientId={client.id} />
-                <CommunicationLogSection clientId={client.id} />
-              </div>
-            </ProFeatureGate>
-          )}
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* ══════════ COMPLIANCE MODAL ══════════ */}
+      {showCompliance && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setShowCompliance(false)} />
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-3xl mx-4 max-h-[80vh] overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
+              <h3 className="text-lg font-semibold text-[var(--color-text)] flex items-center gap-2">
+                <Shield size={20} className="text-[var(--color-primary)]" />
+                Compliance Tracking
+              </h3>
+              <button onClick={() => setShowCompliance(false)} className="btn-ghost p-1">
+                <XCircle size={20} />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto max-h-[60vh]">
+              <ProFeatureGate feature="compliance_engine">
+                <div className="space-y-6">
+                  <ComplianceSection clientId={client.id} />
+                  <CommunicationLogSection clientId={client.id} />
+                </div>
+              </ProFeatureGate>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Edit Client Modal */}
       <ClientFormModal

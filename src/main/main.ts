@@ -1258,6 +1258,18 @@ function registerIpcHandlers() {
   }
 
   safeHandle('license:getStatus', () => {
+    // In development mode, always grant Pro tier access for testing
+    if (isDev) {
+      return {
+        tier: 'pro' as AppTier,
+        licenseKey: 'DEV_MODE',
+        activatedAt: new Date().toISOString(),
+        subscriptionStatus: 'active' as const,
+        subscriptionExpiresAt: null,
+        lastValidatedAt: new Date().toISOString(),
+      };
+    }
+
     const tier = (getSetting('app_tier') || 'free') as AppTier;
     const licenseKey = getSetting('license_key');
     const activatedAt = getSetting('license_activated_at');
