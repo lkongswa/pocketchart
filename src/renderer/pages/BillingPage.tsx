@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useSectionColor } from '../hooks/useSectionColor';
 import {
   DollarSign,
   CreditCard,
@@ -58,6 +59,7 @@ const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
 };
 
 export default function BillingPage() {
+  const sectionColor = useSectionColor();
   const [activeTab, setActiveTab] = useState<BillingTab>('dashboard');
   const [toast, setToast] = useState<string | null>(null);
 
@@ -87,6 +89,7 @@ export default function BillingPage() {
   // Filters
   const [invoiceFilter, setInvoiceFilter] = useState<InvoiceStatus | 'all'>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [clientFilter, setClientFilter] = useState<number | 'all'>('all');
 
   // Modals
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
@@ -307,6 +310,7 @@ export default function BillingPage() {
   };
 
   const filteredInvoices = invoices.filter((inv) => {
+    if (clientFilter !== 'all' && inv.client_id !== clientFilter) return false;
     if (invoiceFilter !== 'all' && inv.status !== invoiceFilter) return false;
     if (searchTerm) {
       const clientName = getClientName(inv.client_id).toLowerCase();
@@ -315,6 +319,11 @@ export default function BillingPage() {
         inv.invoice_number.toLowerCase().includes(searchTerm.toLowerCase())
       );
     }
+    return true;
+  });
+
+  const filteredPayments = payments.filter((p) => {
+    if (clientFilter !== 'all' && p.client_id !== clientFilter) return false;
     return true;
   });
 
@@ -348,13 +357,40 @@ export default function BillingPage() {
       {/* Page Header */}
       <div className="page-header mb-6">
         <div className="flex items-center gap-3">
-          <DollarSign className="w-7 h-7 text-[var(--color-primary)]" />
+          <DollarSign className="w-7 h-7" style={{ color: sectionColor.color }} />
           <div>
             <h1 className="page-title">Billing</h1>
             <p className="text-sm text-[var(--color-text-secondary)]">
               Manage invoices, payments, and fee schedules
             </p>
           </div>
+        </div>
+      </div>
+
+      {/* Client Filter & Search */}
+      <div className="flex items-center gap-3 mb-4">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-secondary)]" />
+          <input
+            type="text"
+            placeholder="Search by client or invoice number..."
+            className="input pl-10 w-full"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+        <div className="relative">
+          <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-secondary)]" />
+          <select
+            className="select pl-9"
+            value={clientFilter}
+            onChange={(e) => setClientFilter(e.target.value === 'all' ? 'all' : parseInt(e.target.value, 10))}
+          >
+            <option value="all">All Clients</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>{c.first_name} {c.last_name}</option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -463,7 +499,7 @@ export default function BillingPage() {
                 </button>
               </div>
               <div className="divide-y divide-[var(--color-border)]">
-                {invoices.slice(0, 5).map((invoice) => (
+                {invoices.filter(i => clientFilter === 'all' || i.client_id === clientFilter).slice(0, 5).map((invoice) => (
                   <div
                     key={invoice.id}
                     className="flex items-center justify-between p-4 hover:bg-gray-50 cursor-pointer transition-colors"
@@ -514,7 +550,7 @@ export default function BillingPage() {
                 </button>
               </div>
               <div className="divide-y divide-[var(--color-border)]">
-                {payments.slice(0, 5).map((payment) => (
+                {payments.filter(p => clientFilter === 'all' || p.client_id === clientFilter).slice(0, 5).map((payment) => (
                   <div
                     key={payment.id}
                     className="flex items-center justify-between p-4 hover:bg-gray-50 cursor-pointer transition-colors"
@@ -554,16 +590,6 @@ export default function BillingPage() {
           {/* Toolbar */}
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 flex-1">
-              <div className="relative flex-1 max-w-md">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-secondary)]" />
-                <input
-                  type="text"
-                  placeholder="Search invoices..."
-                  className="input pl-10"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-              </div>
               <select
                 className="select"
                 value={invoiceFilter}
@@ -694,15 +720,7 @@ export default function BillingPage() {
       {activeTab === 'payments' && (
         <div className="space-y-4">
           {/* Toolbar */}
-          <div className="flex items-center justify-between gap-4">
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-secondary)]" />
-              <input
-                type="text"
-                placeholder="Search payments..."
-                className="input pl-10"
-              />
-            </div>
+          <div className="flex items-center justify-end gap-4">
             <button className="btn-primary gap-2" onClick={() => setShowPaymentModal(true)}>
               <Plus className="w-4 h-4" />
               Record Payment
@@ -735,7 +753,7 @@ export default function BillingPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
-                {payments.map((payment) => {
+                {filteredPayments.map((payment) => {
                   const linkedInvoice = payment.invoice_id ? invoices.find(i => i.id === payment.invoice_id) : null;
                   const isRefund = payment.amount < 0;
                   return (
@@ -794,10 +812,10 @@ export default function BillingPage() {
                     </tr>
                   );
                 })}
-                {payments.length === 0 && (
+                {filteredPayments.length === 0 && (
                   <tr>
                     <td colSpan={6} className="px-4 py-12 text-center text-[var(--color-text-secondary)]">
-                      No payments recorded yet
+                      {clientFilter !== 'all' ? 'No payments for this client' : 'No payments recorded yet'}
                     </td>
                   </tr>
                 )}
@@ -889,7 +907,7 @@ export default function BillingPage() {
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
                 {feeSchedule.map((fee) => (
-                  <tr key={fee.id} className="hover:bg-gray-50">
+                  <tr key={fee.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => handleEditFee(fee)}>
                     <td className="px-4 py-3">
                       <span className="font-mono font-medium text-[var(--color-text)]">
                         {fee.cpt_code}
@@ -902,15 +920,8 @@ export default function BillingPage() {
                     <td className="px-4 py-3 text-right font-medium text-[var(--color-text)]">
                       {formatCurrency(fee.amount)}
                     </td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-2">
-                        <button
-                          className="p-1.5 rounded hover:bg-gray-100 text-[var(--color-text-secondary)]"
-                          title="Edit"
-                          onClick={() => handleEditFee(fee)}
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
                         <button
                           className="p-1.5 rounded hover:bg-red-50 text-red-500"
                           title="Delete"

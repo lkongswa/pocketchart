@@ -2,11 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { FileSpreadsheet, Download, DollarSign, Car, Briefcase } from 'lucide-react';
 import type { YearEndSummary } from '@shared/types';
 import ProFeatureGate from '../components/ProFeatureGate';
+import { useSectionColor } from '../hooks/useSectionColor';
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
 
 export default function YearEndSummaryPage() {
+  const sectionColor = useSectionColor();
   const currentYear = new Date().getFullYear();
   const [year, setYear] = useState(currentYear);
   const [data, setData] = useState<YearEndSummary | null>(null);
@@ -44,7 +46,7 @@ export default function YearEndSummaryPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="page-title flex items-center gap-2">
-            <FileSpreadsheet className="w-6 h-6 text-[var(--color-primary)]" />
+            <FileSpreadsheet className="w-6 h-6" style={{ color: sectionColor.color }} />
             Year-End Summary
           </h1>
           <p className="text-sm text-[var(--color-text-secondary)]">

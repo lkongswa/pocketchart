@@ -5,6 +5,7 @@ import SignaturePad from '../components/SignaturePad';
 import GoalsBankPage from './GoalsBankPage';
 import NoteBankPage from './NoteBankPage';
 import BAAComplianceModal from '../components/BAAComplianceModal';
+import { useSectionColor } from '../hooks/useSectionColor';
 
 // ── Collapsible Section Component ──
 interface CollapsibleSectionProps {
@@ -98,6 +99,7 @@ const emptyPractice: Omit<Practice, 'id'> = {
 };
 
 export default function SettingsPage() {
+  const sectionColor = useSectionColor();
   const [formData, setFormData] = useState<Omit<Practice, 'id'>>(emptyPractice);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -482,7 +484,7 @@ export default function SettingsPage() {
       {/* Page Header */}
       <div className="page-header">
         <div className="flex items-center gap-3">
-          <Settings className="w-7 h-7 text-[var(--color-primary)]" />
+          <Settings className="w-7 h-7" style={{ color: sectionColor.color }} />
           <h1 className="page-title">Practice Settings</h1>
         </div>
         <button className="btn-primary" onClick={handleSave} disabled={saving}>

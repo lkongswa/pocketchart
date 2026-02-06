@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useSectionColor } from '../hooks/useSectionColor';
 import {
   HelpCircle,
   Compass,
@@ -575,6 +576,7 @@ const allSections: HelpSectionData[] = [
 /* ------------------------------------------------------------------ */
 
 export default function HelpPage() {
+  const sectionColor = useSectionColor();
   const [searchQuery, setSearchQuery] = useState('');
 
   /* ---- Filter sections based on search query ---- */
@@ -598,7 +600,7 @@ export default function HelpPage() {
       {/* Page Header */}
       <div className="page-header">
         <div className="flex items-center gap-3">
-          <HelpCircle className="w-7 h-7 text-[var(--color-primary)]" />
+          <HelpCircle className="w-7 h-7" style={{ color: sectionColor.color }} />
           <h1 className="page-title">Help & Instructions</h1>
         </div>
       </div>

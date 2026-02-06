@@ -169,6 +169,7 @@ const api = {
     generateFromNotes: (clientId: number, noteIds: number[]) => ipcRenderer.invoke('invoices:generateFromNotes', clientId, noteIds),
     generatePdf: (invoiceId: number) => ipcRenderer.invoke('invoices:generatePdf', invoiceId),
     savePdf: (data: { base64Pdf: string; filename: string }) => ipcRenderer.invoke('invoices:savePdf', data),
+    noteStatuses: () => ipcRenderer.invoke('invoices:noteStatuses'),
   },
 
   // V2 Billing - Payments

@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import type { ContractedEntity, EntityFeeSchedule, EntityDocument, EntityDocumentCategory } from '@shared/types';
 import EntityFormModal from '../components/EntityFormModal';
+import { useSectionColor } from '../hooks/useSectionColor';
 
 type Tab = 'overview' | 'fee_schedule' | 'documents';
 
@@ -15,6 +16,7 @@ const formatCurrency = (amount: number) =>
 const EntityDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const sectionColor = useSectionColor();
   const entityId = Number(id);
 
   const [entity, setEntity] = useState<ContractedEntity | null>(null);
@@ -176,7 +178,7 @@ const EntityDetailPage: React.FC = () => {
       <div className="flex items-start justify-between mb-6">
         <div className="flex items-center gap-4">
           <div className="w-14 h-14 rounded-xl bg-[var(--color-primary)]/10 flex items-center justify-center">
-            <Building2 size={28} className="text-[var(--color-primary)]" />
+            <Building2 size={28} style={{ color: sectionColor.color }} />
           </div>
           <div>
             <h1 className="text-2xl font-bold text-[var(--color-text)]">{entity.name}</h1>

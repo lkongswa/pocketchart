@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Building2, Search, Eye, Phone, Mail } from 'lucide-react';
+import { Plus, Building2, Search, Eye, Phone, Mail, Edit2 } from 'lucide-react';
 import type { ContractedEntity } from '@shared/types';
 import EntityFormModal from '../components/EntityFormModal';
 import ProFeatureGate from '../components/ProFeatureGate';
@@ -103,7 +103,7 @@ const ContractedEntitiesPage: React.FC = () => {
               <div
                 key={entity.id}
                 className="card p-5 hover:border-[var(--color-primary)]/30 cursor-pointer transition-colors"
-                onClick={() => navigate(`/entities/${entity.id}`)}
+                onClick={() => handleEdit(entity)}
               >
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-3">
@@ -121,10 +121,11 @@ const ContractedEntitiesPage: React.FC = () => {
                     className="btn-ghost btn-sm"
                     onClick={(e) => {
                       e.stopPropagation();
-                      handleEdit(entity);
+                      navigate(`/entities/${entity.id}`);
                     }}
                   >
-                    Edit
+                    <Eye size={14} className="mr-1" />
+                    View
                   </button>
                 </div>
 

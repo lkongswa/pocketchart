@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useSectionColor } from '../hooks/useSectionColor';
 import {
   FileText,
   ArrowLeft,
@@ -9,6 +10,8 @@ import {
   Filter,
   AlertTriangle,
   CalendarCheck,
+  Receipt,
+  DollarSign,
 } from 'lucide-react';
 import type { Client, Note, Appointment } from '../../shared/types';
 
@@ -50,11 +53,13 @@ function daysSince(dateStr: string): number {
 
 export default function NotesOverviewPage() {
   const navigate = useNavigate();
+  const sectionColor = useSectionColor();
   const [allNotes, setAllNotes] = useState<NoteWithClient[]>([]);
   const [missingNotes, setMissingNotes] = useState<MissingNote[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<TabFilter>('due');
   const [searchQuery, setSearchQuery] = useState('');
+  const [noteInvoiceMap, setNoteInvoiceMap] = useState<Record<number, { invoice_id: number; invoice_number: string; status: string }>>({});
 
   useEffect(() => {
     loadData();
@@ -112,6 +117,14 @@ export default function NotesOverviewPage() {
         setMissingNotes(missing);
       } catch {
         setMissingNotes([]);
+      }
+
+      // Load invoice statuses for notes
+      try {
+        const invoiceStatuses = await window.api.invoices.noteStatuses();
+        setNoteInvoiceMap(invoiceStatuses);
+      } catch {
+        setNoteInvoiceMap({});
       }
 
       notes.sort((a, b) =>
@@ -183,7 +196,7 @@ export default function NotesOverviewPage() {
           </button>
           <div>
             <h1 className="page-title flex items-center gap-2">
-              <FileText className="w-6 h-6 text-[var(--color-primary)]" />
+              <FileText className="w-6 h-6" style={{ color: sectionColor.color }} />
               Documentation Queue
             </h1>
             <p className="text-[var(--color-text-secondary)] mt-1">
@@ -316,12 +329,14 @@ export default function NotesOverviewPage() {
       {/* Notes List */}
       <div className="card overflow-hidden">
         {/* Table Header */}
-        <div className="grid grid-cols-[1fr_140px_100px_100px_80px] gap-4 px-5 py-3 bg-gray-50 border-b border-[var(--color-border)] text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">
+        <div className="grid grid-cols-[1fr_140px_100px_100px_80px_80px_80px] gap-4 px-5 py-3 bg-gray-50 border-b border-[var(--color-border)] text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">
           <span>Client</span>
           <span>Date of Service</span>
           <span>Time</span>
           <span>CPT</span>
           <span>Status</span>
+          <span>Invoiced</span>
+          <span>Paid</span>
         </div>
 
         {/* Notes Rows */}
@@ -338,10 +353,13 @@ export default function NotesOverviewPage() {
             displayItems.map((item) => {
               const daysOld = daysSince(item.note.date_of_service);
               const isOverdue = !item.note.signed_at && daysOld > 2;
+              const invoiceInfo = noteInvoiceMap[item.note.id];
+              const isInvoiced = Boolean(invoiceInfo);
+              const isPaid = invoiceInfo?.status === 'paid';
               return (
                 <div
                   key={item.note.id}
-                  className={`grid grid-cols-[1fr_140px_100px_100px_80px] gap-4 px-5 py-3 hover:bg-gray-50 cursor-pointer transition-colors items-center ${isOverdue ? 'bg-red-50/30' : ''}`}
+                  className={`grid grid-cols-[1fr_140px_100px_100px_80px_80px_80px] gap-4 px-5 py-3 hover:bg-gray-50 cursor-pointer transition-colors items-center ${isOverdue ? 'bg-red-50/30' : ''}`}
                   onClick={() =>
                     navigate(`/clients/${item.clientId}/note/${item.note.id}`)
                   }
@@ -387,6 +405,30 @@ export default function NotesOverviewPage() {
                         <PenLine size={12} />
                         {isOverdue ? 'Late' : 'Draft'}
                       </span>
+                    )}
+                  </div>
+                  <div>
+                    {isInvoiced ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs font-medium">
+                        <Receipt size={12} />
+                        Yes
+                      </span>
+                    ) : (
+                      <span className="text-xs text-[var(--color-text-secondary)]">--</span>
+                    )}
+                  </div>
+                  <div>
+                    {isPaid ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-medium">
+                        <DollarSign size={12} />
+                        Paid
+                      </span>
+                    ) : isInvoiced ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-medium">
+                        Unpaid
+                      </span>
+                    ) : (
+                      <span className="text-xs text-[var(--color-text-secondary)]">--</span>
                     )}
                   </div>
                 </div>

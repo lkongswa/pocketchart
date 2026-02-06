@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import type { MileageEntry, Client, ContractedEntity } from '@shared/types';
 import ProFeatureGate from '../components/ProFeatureGate';
+import { useSectionColor } from '../hooks/useSectionColor';
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
@@ -34,6 +35,7 @@ function endOfMonth(year: number, month: number): string {
 }
 
 export default function MileagePage() {
+  const sectionColor = useSectionColor();
   const now = new Date();
   const [viewYear, setViewYear] = useState(now.getFullYear());
   const [viewMonth, setViewMonth] = useState(now.getMonth());
@@ -98,6 +100,7 @@ export default function MileagePage() {
     setFormClientId('');
     setFormEntityId('');
     setFormReimbursable(true);
+    setShowMoreFields(false);
     setShowForm(true);
   };
 
@@ -157,7 +160,7 @@ export default function MileagePage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="page-title flex items-center gap-2">
-            <Car className="w-6 h-6 text-[var(--color-primary)]" />
+            <Car className="w-6 h-6" style={{ color: sectionColor.color }} />
             Mileage Tracking
           </h1>
           <p className="text-sm text-[var(--color-text-secondary)]">
@@ -230,7 +233,7 @@ export default function MileagePage() {
             className="text-xs text-[var(--color-primary)] hover:underline"
             onClick={() => setShowMoreFields(!showMoreFields)}
           >
-            {showMoreFields ? '− Less fields' : '+ More fields (purpose, client, contract, reimbursable)'}
+            {showMoreFields ? '− See less' : '+ See more'}
           </button>
           {showMoreFields && (
             <div className="space-y-3 pt-1">

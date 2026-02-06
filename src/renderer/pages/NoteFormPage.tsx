@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useSectionColor } from '../hooks/useSectionColor';
 import {
   ArrowLeft,
   FileText,
@@ -91,6 +92,7 @@ export default function NoteFormPage() {
   const { id: clientId, noteId } = useParams<{ id: string; noteId?: string }>();
   const navigate = useNavigate();
   const location = useLocation();
+  const sectionColor = useSectionColor();
   const isEditing = Boolean(noteId);
 
   // Appointment context passed from calendar
@@ -153,6 +155,7 @@ export default function NoteFormPage() {
   const [justSigned, setJustSigned] = useState(false);
   const [savedNoteId, setSavedNoteId] = useState<number | null>(null);
   const [creatingInvoice, setCreatingInvoice] = useState(false);
+  const [existingInvoice, setExistingInvoice] = useState<{ invoice_id: number; invoice_number: string; status: string } | null>(null);
 
   // Refs for textareas (for cursor insertion)
   const subjectiveRef = useRef<HTMLTextAreaElement>(null);
@@ -208,6 +211,15 @@ export default function NoteFormPage() {
 
       // If editing, load the note
       if (noteId) {
+        setSavedNoteId(parseInt(noteId, 10));
+        // Check if this note already has an invoice
+        try {
+          const invoiceStatuses = await window.api.invoices.noteStatuses();
+          const noteIdNum = parseInt(noteId, 10);
+          if (invoiceStatuses[noteIdNum]) {
+            setExistingInvoice(invoiceStatuses[noteIdNum]);
+          }
+        } catch {}
         const note = await window.api.notes.get(parseInt(noteId, 10));
         setDateOfService(note.date_of_service || todayISO());
         setTimeIn(note.time_in || '');
@@ -486,6 +498,7 @@ export default function NoteFormPage() {
         parseInt(clientId, 10),
         [savedNoteId]
       );
+      setExistingInvoice({ invoice_id: invoice.id, invoice_number: invoice.invoice_number, status: invoice.status });
       setToast('Invoice created');
       // Navigate to billing tab on the client page
       setTimeout(() => navigate(`/clients/${clientId}`, { state: { tab: 'billing', invoiceId: invoice.id } }), 500);
@@ -569,7 +582,7 @@ export default function NoteFormPage() {
                 {client.first_name} {client.last_name}
               </p>
               <h1 className="page-title flex items-center gap-2">
-                <FileText className="w-6 h-6 text-[var(--color-primary)]" />
+                <FileText className="w-6 h-6" style={{ color: sectionColor.color }} />
                 {isEditing ? 'Edit SOAP Note' : 'New SOAP Note'}
               </h1>
             </div>
@@ -1253,14 +1266,24 @@ export default function NoteFormPage() {
             {/* Quick Invoice Action */}
             {existingSignedAt && clientId && (
               <div className="mt-5 pt-4 border-t border-[var(--color-border)]">
-                <button
-                  className="w-full btn-primary btn-sm flex items-center justify-center gap-1.5"
-                  onClick={handleCreateInvoice}
-                  disabled={creatingInvoice || !savedNoteId}
-                >
-                  <Receipt className="w-3.5 h-3.5" />
-                  {creatingInvoice ? 'Creating...' : 'Create Invoice'}
-                </button>
+                {existingInvoice ? (
+                  <button
+                    className="w-full btn-secondary btn-sm flex items-center justify-center gap-1.5"
+                    onClick={() => navigate(`/clients/${clientId}`, { state: { tab: 'billing', invoiceId: existingInvoice.invoice_id } })}
+                  >
+                    <Receipt className="w-3.5 h-3.5" />
+                    Show Invoice ({existingInvoice.invoice_number})
+                  </button>
+                ) : (
+                  <button
+                    className="w-full btn-primary btn-sm flex items-center justify-center gap-1.5"
+                    onClick={handleCreateInvoice}
+                    disabled={creatingInvoice || !savedNoteId}
+                  >
+                    <Receipt className="w-3.5 h-3.5" />
+                    {creatingInvoice ? 'Creating...' : 'Create Invoice'}
+                  </button>
+                )}
                 <button
                   className="w-full btn-ghost btn-sm flex items-center justify-center gap-1.5 mt-1"
                   onClick={() => navigate(`/clients/${clientId}`, { state: { tab: 'billing' } })}

@@ -815,6 +815,7 @@ export interface PocketChartAPI {
     generateFromNotes: (clientId: number, noteIds: number[]) => Promise<Invoice>;
     generatePdf: (invoiceId: number) => Promise<{ base64Pdf: string; filename: string }>;
     savePdf: (data: { base64Pdf: string; filename: string }) => Promise<string | null>;
+    noteStatuses: () => Promise<Record<number, { invoice_id: number; invoice_number: string; status: string }>>;
   };
   payments: {
     list: (filters?: { clientId?: number; startDate?: string; endDate?: string }) => Promise<Payment[]>;

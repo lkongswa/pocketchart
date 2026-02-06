@@ -2192,6 +2192,21 @@ function registerIpcHandlers() {
     return filePath;
   });
 
+  // Get invoice status for notes (which notes are invoiced and paid)
+  safeHandle('invoices:noteStatuses', (_event) => {
+    const rows = db.prepare(`
+      SELECT ii.note_id, i.id as invoice_id, i.invoice_number, i.status
+      FROM invoice_items ii
+      JOIN invoices i ON i.id = ii.invoice_id AND i.deleted_at IS NULL
+      WHERE ii.note_id IS NOT NULL
+    `).all() as Array<{ note_id: number; invoice_id: number; invoice_number: string; status: string }>;
+    const map: Record<number, { invoice_id: number; invoice_number: string; status: string }> = {};
+    for (const row of rows) {
+      map[row.note_id] = { invoice_id: row.invoice_id, invoice_number: row.invoice_number, status: row.status };
+    }
+    return map;
+  });
+
   safeHandle('invoices:generateFromNotes', (_event, clientId: number, noteIds: number[]) => {
     const feeSchedule = db.prepare('SELECT * FROM fee_schedule WHERE deleted_at IS NULL').all() as any[];
     const feeMap = new Map(feeSchedule.map(f => [f.cpt_code, f]));

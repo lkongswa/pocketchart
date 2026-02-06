@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { HashRouter, Routes, Route, NavLink, useLocation } from 'react-router-dom';
+import { getSectionForPath } from './hooks/useSectionColor';
 import {
   LayoutDashboard,
   Users,
@@ -88,6 +89,22 @@ const navGroups: NavGroup[] = [
   },
 ];
 
+/** Convert hex to rgba with alpha */
+function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+/** Darken a hex color by a percentage (0-1) */
+function darkenHex(hex: string, amount: number): string {
+  const r = Math.max(0, Math.round(parseInt(hex.slice(1, 3), 16) * (1 - amount)));
+  const g = Math.max(0, Math.round(parseInt(hex.slice(3, 5), 16) * (1 - amount)));
+  const b = Math.max(0, Math.round(parseInt(hex.slice(5, 7), 16) * (1 - amount)));
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
 const Sidebar: React.FC = () => {
   const location = useLocation();
   const [appVersion, setAppVersion] = useState('');
@@ -102,6 +119,9 @@ const Sidebar: React.FC = () => {
     }
     return location.pathname === item.to;
   };
+
+  // Determine which group the current route belongs to
+  const activeSection = useMemo(() => getSectionForPath(location.pathname), [location.pathname]);
 
   return (
     <aside className="fixed top-0 left-0 h-full w-[240px] bg-[var(--color-surface)] border-r border-[var(--color-border)] flex flex-col z-10">
@@ -122,40 +142,52 @@ const Sidebar: React.FC = () => {
 
       {/* Grouped Navigation */}
       <nav className="flex-1 px-3 py-3 overflow-y-auto space-y-1">
-        {navGroups.map((group) => (
-          <div key={group.title} className="mb-1">
-            <div className="px-3 py-1.5 flex items-center gap-1.5">
-              {group.color && (
+        {navGroups.map((group) => {
+          const groupColor = group.color || '#6b7280';
+          const isActiveGroup = activeSection.section === group.title;
+          return (
+            <div key={group.title} className="mb-1">
+              <div className="px-3 py-1.5 flex items-center gap-1.5">
                 <span
                   className="w-2 h-2 rounded-full flex-shrink-0"
-                  style={{ backgroundColor: group.color }}
+                  style={{ backgroundColor: groupColor }}
                 />
-              )}
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-secondary)] opacity-60">
-                {group.title}
-              </p>
-            </div>
-            <div
-              className="rounded-lg bg-[var(--color-bg)] border overflow-hidden"
-              style={{ borderColor: group.color ? `${group.color}30` : 'var(--color-border)' }}
-            >
-              {group.items.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  className={`flex items-center gap-2.5 px-3 py-2 text-sm transition-colors ${
-                    isActive(item)
-                      ? 'bg-[var(--color-primary)] text-white font-medium'
-                      : 'text-[var(--color-text)] hover:bg-[var(--color-surface)]'
-                  }`}
+                <p
+                  className="text-[10px] font-semibold uppercase tracking-wider"
+                  style={{ color: isActiveGroup ? darkenHex(groupColor, 0.15) : undefined, opacity: isActiveGroup ? 1 : 0.6 }}
                 >
-                  {item.icon}
-                  <span>{item.label}</span>
-                </NavLink>
-              ))}
+                  {group.title}
+                </p>
+              </div>
+              <div
+                className="rounded-lg border overflow-hidden"
+                style={{
+                  backgroundColor: hexToRgba(groupColor, 0.06),
+                  borderColor: hexToRgba(groupColor, 0.25),
+                }}
+              >
+                {group.items.map((item) => {
+                  const active = isActive(item);
+                  return (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      className={`flex items-center gap-2.5 px-3 py-2 text-sm transition-colors ${
+                        active
+                          ? 'text-white font-medium'
+                          : 'text-[var(--color-text)] hover:bg-white/50'
+                      }`}
+                      style={active ? { backgroundColor: groupColor } : undefined}
+                    >
+                      {item.icon}
+                      <span>{item.label}</span>
+                    </NavLink>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </nav>
 
       {/* Footer */}
@@ -168,11 +200,25 @@ const Sidebar: React.FC = () => {
   );
 };
 
+/** Thin colored accent strip at the top of the main content area */
+const SectionAccent: React.FC = () => {
+  const location = useLocation();
+  const section = useMemo(() => getSectionForPath(location.pathname), [location.pathname]);
+  return (
+    <div
+      className="h-1 w-full flex-shrink-0"
+      style={{ backgroundColor: section.color }}
+    />
+  );
+};
+
 const AppLayout: React.FC = () => {
   return (
     <div className="flex min-h-screen">
       <Sidebar />
-      <main className="ml-[240px] flex-1 overflow-y-auto min-h-screen">
+      <main className="ml-[240px] flex-1 overflow-y-auto min-h-screen flex flex-col">
+        <SectionAccent />
+        <div className="flex-1">
         <Routes>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/clients" element={<ClientsPage />} />
@@ -193,6 +239,7 @@ const AppLayout: React.FC = () => {
           <Route path="/help" element={<HelpPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
+        </div>
       </main>
     </div>
   );

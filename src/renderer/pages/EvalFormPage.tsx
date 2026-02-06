@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useSectionColor } from '../hooks/useSectionColor';
 import {
   ArrowLeft,
   ClipboardList,
@@ -183,6 +184,7 @@ const DISCIPLINE_LABELS: Record<Discipline, string> = {
 export default function EvalFormPage() {
   const { id: clientId, evalId } = useParams<{ id: string; evalId?: string }>();
   const navigate = useNavigate();
+  const sectionColor = useSectionColor();
   const isEditing = Boolean(evalId);
 
   const [client, setClient] = useState<Client | null>(null);
@@ -412,7 +414,7 @@ export default function EvalFormPage() {
                 {client.first_name} {client.last_name}
               </p>
               <h1 className="page-title flex items-center gap-2">
-                <ClipboardList className="w-6 h-6 text-violet-500" />
+                <ClipboardList className="w-6 h-6" style={{ color: sectionColor.color }} />
                 {isEditing ? 'Edit Evaluation' : 'New Evaluation'}
               </h1>
             </div>
