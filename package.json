@@ -14,7 +14,8 @@
     "start": "electron .",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "dist": "npm run build && electron-builder --win",
-    "dist:dir": "npm run build && electron-builder --win --dir"
+    "dist:dir": "npm run build && electron-builder --win --dir",
+    "deploy": "npm run dist:dir && xcopy /E /Y /I release\\win-unpacked\\* C:\\PocketChart\\"
   },
   "keywords": [
     "clinical",
