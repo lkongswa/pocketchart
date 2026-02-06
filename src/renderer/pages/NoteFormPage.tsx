@@ -276,6 +276,48 @@ export default function NoteFormPage() {
     }
   }, [toast]);
 
+  // ── Auto-populate charge amount from fee schedule ──
+  useEffect(() => {
+    if (isEditing) return; // Don't override charge when editing existing notes
+    const primaryCode = cptLines[0]?.code?.trim();
+    if (!primaryCode || primaryCode.length < 4) return;
+
+    (async () => {
+      try {
+        const fees = await window.api.feeSchedule.list();
+        const match = fees.find((f: any) => f.cpt_code === primaryCode);
+        if (match && match.amount) {
+          // Calculate total: sum of (each CPT line's units * matched amount)
+          // For simplicity, use the primary code's amount * total units
+          const totalUnits = cptLines.reduce((sum, l) => sum + (l.units || 1), 0);
+          setChargeAmount(match.amount * totalUnits);
+        }
+      } catch (err) {
+        // Silently fail - fee schedule lookup is optional
+      }
+    })();
+  }, [cptLines, isEditing]);
+
+  // ── Unsaved changes detection ──
+  const hasFormContent = Boolean(
+    subjective.trim() || objective.trim() || assessment.trim() || plan.trim()
+  );
+
+  // Track if form has been saved
+  const [formSaved, setFormSaved] = useState(false);
+  const hasUnsavedChanges = hasFormContent && !formSaved;
+
+  // Browser/Electron beforeunload
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [hasUnsavedChanges]);
+
   // ── Actions ──
 
   const handleStartFromLastNote = () => {
@@ -400,6 +442,7 @@ export default function NoteFormPage() {
         resultNoteId = created?.id ?? null;
       }
 
+      setFormSaved(true);
       if (sign && resultNoteId) {
         setToast('Note signed and saved');
         setSavedNoteId(resultNoteId);
@@ -513,7 +556,10 @@ export default function NoteFormPage() {
           <div className="flex items-center gap-3">
             <button
               className="btn-ghost p-2"
-              onClick={() => navigate(`/clients/${clientId}`)}
+              onClick={() => {
+                if (hasUnsavedChanges && !window.confirm('You have unsaved changes. Are you sure you want to leave?')) return;
+                navigate(`/clients/${clientId}`);
+              }}
               title="Back to client"
             >
               <ArrowLeft className="w-5 h-5" />

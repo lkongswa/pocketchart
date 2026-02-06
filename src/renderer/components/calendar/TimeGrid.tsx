@@ -18,6 +18,7 @@ interface TimeGridProps {
   onSlotClick: (date: string, time: string) => void;
   onAppointmentClick: (appt: Appointment) => void;
   onAppointmentDrop: (apptId: number, newDate: string, newTime: string) => void;
+  onAppointmentContextMenu?: (appt: Appointment, x: number, y: number) => void;
   paymentStatusMap?: Record<number, PaymentIndicator>;
 }
 
@@ -122,6 +123,7 @@ export default function TimeGrid({
   onSlotClick,
   onAppointmentClick,
   onAppointmentDrop,
+  onAppointmentContextMenu,
   paymentStatusMap = {},
 }: TimeGridProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -323,6 +325,7 @@ export default function TimeGrid({
                         slotHeight={SLOT_HEIGHT}
                         startHour={startHour}
                         onClick={onAppointmentClick}
+                        onContextMenu={onAppointmentContextMenu}
                         paymentStatus={paymentStatusMap[appt.id] || 'none'}
                       />
                     </div>

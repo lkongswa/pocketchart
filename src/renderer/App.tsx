@@ -12,7 +12,7 @@ import {
   Shield,
   Car,
   FileSpreadsheet,
-  Gauge,
+  FileText,
 } from 'lucide-react';
 import DashboardPage from './pages/DashboardPage';
 import ClientsPage from './pages/ClientsPage';
@@ -28,7 +28,6 @@ import ContractedEntitiesPage from './pages/ContractedEntitiesPage';
 import EntityDetailPage from './pages/EntityDetailPage';
 import VaultPage from './pages/VaultPage';
 import MileagePage from './pages/MileagePage';
-import CaseloadDashboardPage from './pages/CaseloadDashboardPage';
 import YearEndSummaryPage from './pages/YearEndSummaryPage';
 import NotesOverviewPage from './pages/NotesOverviewPage';
 import PinLockScreen from './components/PinLockScreen';
@@ -44,18 +43,49 @@ interface NavItem {
   matchPrefix?: string;
 }
 
-const navItems: NavItem[] = [
-  { to: '/', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
-  { to: '/clients', label: 'Clients', icon: <Users size={20} />, matchPrefix: '/clients' },
-  { to: '/calendar', label: 'Calendar', icon: <Calendar size={20} /> },
-  { to: '/billing', label: 'Billing', icon: <DollarSign size={20} /> },
-  { to: '/entities', label: 'Contractors', icon: <Building2 size={20} />, matchPrefix: '/entities' },
-  { to: '/vault', label: 'Vault', icon: <Shield size={20} /> },
-  { to: '/mileage', label: 'Mileage', icon: <Car size={20} /> },
-  { to: '/caseload', label: 'Caseload', icon: <Gauge size={20} /> },
-  { to: '/reports', label: 'Reports', icon: <FileSpreadsheet size={20} /> },
-  { to: '/help', label: 'Help', icon: <HelpCircle size={20} /> },
-  { to: '/settings', label: 'Settings', icon: <Settings size={20} /> },
+interface NavGroup {
+  title: string;
+  items: NavItem[];
+  /** Color accent for the group title and border */
+  color?: string;
+}
+
+const navGroups: NavGroup[] = [
+  {
+    title: 'Clinical',
+    color: '#0ea5e9', // sky blue
+    items: [
+      { to: '/', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
+      { to: '/clients', label: 'Clients', icon: <Users size={18} />, matchPrefix: '/clients' },
+      { to: '/calendar', label: 'Calendar', icon: <Calendar size={18} /> },
+      { to: '/notes', label: 'Notes', icon: <FileText size={18} /> },
+    ],
+  },
+  {
+    title: 'Business',
+    color: '#f59e0b', // amber
+    items: [
+      { to: '/billing', label: 'Billing', icon: <DollarSign size={18} /> },
+      { to: '/entities', label: 'Contracts', icon: <Building2 size={18} />, matchPrefix: '/entities' },
+      { to: '/mileage', label: 'Mileage', icon: <Car size={18} /> },
+      { to: '/reports', label: 'Year-End Summary', icon: <FileSpreadsheet size={18} /> },
+    ],
+  },
+  {
+    title: 'Professional',
+    color: '#8b5cf6', // violet
+    items: [
+      { to: '/vault', label: 'My Vault', icon: <Shield size={18} /> },
+    ],
+  },
+  {
+    title: 'Settings',
+    color: '#6b7280', // gray
+    items: [
+      { to: '/help', label: 'Help', icon: <HelpCircle size={18} /> },
+      { to: '/settings', label: 'Settings', icon: <Settings size={18} /> },
+    ],
+  },
 ];
 
 const Sidebar: React.FC = () => {
@@ -90,17 +120,41 @@ const Sidebar: React.FC = () => {
         </div>
       </div>
 
-      {/* Navigation Links */}
-      <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-        {navItems.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            className={isActive(item) ? 'sidebar-link-active' : 'sidebar-link'}
-          >
-            {item.icon}
-            <span>{item.label}</span>
-          </NavLink>
+      {/* Grouped Navigation */}
+      <nav className="flex-1 px-3 py-3 overflow-y-auto space-y-1">
+        {navGroups.map((group) => (
+          <div key={group.title} className="mb-1">
+            <div className="px-3 py-1.5 flex items-center gap-1.5">
+              {group.color && (
+                <span
+                  className="w-2 h-2 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: group.color }}
+                />
+              )}
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-secondary)] opacity-60">
+                {group.title}
+              </p>
+            </div>
+            <div
+              className="rounded-lg bg-[var(--color-bg)] border overflow-hidden"
+              style={{ borderColor: group.color ? `${group.color}30` : 'var(--color-border)' }}
+            >
+              {group.items.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  className={`flex items-center gap-2.5 px-3 py-2 text-sm transition-colors ${
+                    isActive(item)
+                      ? 'bg-[var(--color-primary)] text-white font-medium'
+                      : 'text-[var(--color-text)] hover:bg-[var(--color-surface)]'
+                  }`}
+                >
+                  {item.icon}
+                  <span>{item.label}</span>
+                </NavLink>
+              ))}
+            </div>
+          </div>
         ))}
       </nav>
 
@@ -135,7 +189,6 @@ const AppLayout: React.FC = () => {
           <Route path="/entities/:id" element={<EntityDetailPage />} />
           <Route path="/vault" element={<VaultPage />} />
           <Route path="/mileage" element={<MileagePage />} />
-          <Route path="/caseload" element={<CaseloadDashboardPage />} />
           <Route path="/reports" element={<YearEndSummaryPage />} />
           <Route path="/help" element={<HelpPage />} />
           <Route path="/settings" element={<SettingsPage />} />

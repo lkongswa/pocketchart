@@ -22,6 +22,8 @@ import {
   ExternalLink,
   Zap,
   Send,
+  Undo2,
+  Link,
 } from 'lucide-react';
 import type {
   Invoice,
@@ -242,6 +244,43 @@ export default function BillingPage() {
     }
   };
 
+  const handleRefundPayment = async (paymentId: number) => {
+    if (!confirm('Are you sure you want to refund this payment? A negative refund entry will be created.')) return;
+    try {
+      await window.api.payments.refund(paymentId);
+      loadData();
+      setToast('Payment refunded successfully');
+    } catch (err) {
+      console.error('Failed to refund payment:', err);
+      setToast('Failed to refund payment');
+    }
+  };
+
+  const handleMatchPaymentToInvoice = async (paymentId: number, invoiceId: number) => {
+    try {
+      const payment = payments.find(p => p.id === paymentId);
+      if (!payment) return;
+      await window.api.payments.update(paymentId, { invoice_id: invoiceId, notes: payment.notes });
+      // Also update invoice status based on total payments
+      const invoicePayments = payments.filter(p => p.invoice_id === invoiceId).reduce((sum, p) => sum + p.amount, 0) + payment.amount;
+      const invoice = invoices.find(i => i.id === invoiceId);
+      if (invoice) {
+        const newStatus = invoicePayments >= invoice.total_amount ? 'paid' : invoicePayments > 0 ? 'partial' : invoice.status;
+        if (newStatus !== invoice.status) {
+          await window.api.invoices.update(invoiceId, { status: newStatus });
+        }
+      }
+      loadData();
+      setToast('Payment matched to invoice');
+    } catch (err) {
+      console.error('Failed to match payment:', err);
+      setToast('Failed to match payment to invoice');
+    }
+  };
+
+  // Drag-and-drop state for payment matching
+  const [draggedPaymentId, setDraggedPaymentId] = useState<number | null>(null);
+
   const handleDownloadInvoicePdf = async (id: number) => {
     try {
       const { base64Pdf, filename } = await window.api.invoices.generatePdf(id);
@@ -342,7 +381,10 @@ export default function BillingPage() {
         <div className="space-y-6">
           {/* Stats Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="card p-5">
+            <div
+              className="card p-5 cursor-pointer hover:shadow-md hover:border-amber-300 transition-all"
+              onClick={() => { setActiveTab('invoices'); setInvoiceFilter('sent'); }}
+            >
               <div className="flex items-center justify-between mb-3">
                 <span className="text-sm text-[var(--color-text-secondary)]">Outstanding</span>
                 <AlertCircle className="w-5 h-5 text-amber-500" />
@@ -351,11 +393,14 @@ export default function BillingPage() {
                 {formatCurrency(stats.totalOutstanding)}
               </p>
               <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                Unpaid invoices
+                Unpaid invoices &middot; Click to view
               </p>
             </div>
 
-            <div className="card p-5">
+            <div
+              className="card p-5 cursor-pointer hover:shadow-md hover:border-emerald-300 transition-all"
+              onClick={() => setActiveTab('payments')}
+            >
               <div className="flex items-center justify-between mb-3">
                 <span className="text-sm text-[var(--color-text-secondary)]">Paid This Month</span>
                 <TrendingUp className="w-5 h-5 text-emerald-500" />
@@ -371,29 +416,35 @@ export default function BillingPage() {
                     .slice(0, 10);
                   return p.payment_date >= startOfMonth;
                 }).length}{' '}
-                payments
+                payments &middot; Click to view
               </p>
             </div>
 
-            <div className="card p-5">
+            <div
+              className="card p-5 cursor-pointer hover:shadow-md hover:border-gray-300 transition-all"
+              onClick={() => { setActiveTab('invoices'); setInvoiceFilter('draft'); }}
+            >
               <div className="flex items-center justify-between mb-3">
                 <span className="text-sm text-[var(--color-text-secondary)]">Draft Invoices</span>
                 <FileText className="w-5 h-5 text-gray-400" />
               </div>
               <p className="text-2xl font-bold text-[var(--color-text)]">{stats.invoicesDraft}</p>
               <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                Ready to send
+                Ready to send &middot; Click to view
               </p>
             </div>
 
-            <div className="card p-5">
+            <div
+              className="card p-5 cursor-pointer hover:shadow-md hover:border-red-300 transition-all"
+              onClick={() => { setActiveTab('invoices'); setInvoiceFilter('overdue'); }}
+            >
               <div className="flex items-center justify-between mb-3">
                 <span className="text-sm text-[var(--color-text-secondary)]">Overdue</span>
                 <Clock className="w-5 h-5 text-red-500" />
               </div>
               <p className="text-2xl font-bold text-red-600">{stats.invoicesOverdue}</p>
               <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                Need attention
+                Need attention &middot; Click to view
               </p>
             </div>
           </div>
@@ -415,7 +466,8 @@ export default function BillingPage() {
                 {invoices.slice(0, 5).map((invoice) => (
                   <div
                     key={invoice.id}
-                    className="flex items-center justify-between p-4 hover:bg-gray-50"
+                    className="flex items-center justify-between p-4 hover:bg-gray-50 cursor-pointer transition-colors"
+                    onClick={() => handleViewInvoice(invoice.id)}
                   >
                     <div>
                       <p className="font-medium text-[var(--color-text)]">
@@ -425,17 +477,20 @@ export default function BillingPage() {
                         {getClientName(invoice.client_id)}
                       </p>
                     </div>
-                    <div className="text-right">
-                      <p className="font-medium text-[var(--color-text)]">
-                        {formatCurrency(invoice.total_amount)}
-                      </p>
-                      <span
-                        className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-                          STATUS_COLORS[invoice.status].bg
-                        } ${STATUS_COLORS[invoice.status].text}`}
-                      >
-                        {invoice.status}
-                      </span>
+                    <div className="flex items-center gap-3">
+                      <div className="text-right">
+                        <p className="font-medium text-[var(--color-text)]">
+                          {formatCurrency(invoice.total_amount)}
+                        </p>
+                        <span
+                          className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
+                            STATUS_COLORS[invoice.status].bg
+                          } ${STATUS_COLORS[invoice.status].text}`}
+                        >
+                          {invoice.status}
+                        </span>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-[var(--color-text-secondary)]" />
                     </div>
                   </div>
                 ))}
@@ -462,7 +517,8 @@ export default function BillingPage() {
                 {payments.slice(0, 5).map((payment) => (
                   <div
                     key={payment.id}
-                    className="flex items-center justify-between p-4 hover:bg-gray-50"
+                    className="flex items-center justify-between p-4 hover:bg-gray-50 cursor-pointer transition-colors"
+                    onClick={() => setActiveTab('payments')}
                   >
                     <div>
                       <p className="font-medium text-[var(--color-text)]">
@@ -473,9 +529,12 @@ export default function BillingPage() {
                         {PAYMENT_METHOD_LABELS[payment.payment_method]}
                       </p>
                     </div>
-                    <p className="font-medium text-emerald-600">
-                      +{formatCurrency(payment.amount)}
-                    </p>
+                    <div className="flex items-center gap-3">
+                      <p className="font-medium text-emerald-600">
+                        +{formatCurrency(payment.amount)}
+                      </p>
+                      <ChevronRight className="w-4 h-4 text-[var(--color-text-secondary)]" />
+                    </div>
                   </div>
                 ))}
                 {payments.length === 0 && (
@@ -558,7 +617,7 @@ export default function BillingPage() {
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
                 {filteredInvoices.map((invoice) => (
-                  <tr key={invoice.id} className="hover:bg-gray-50">
+                  <tr key={invoice.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => handleViewInvoice(invoice.id)}>
                     <td className="px-4 py-3">
                       <span className="font-medium text-[var(--color-text)]">
                         {invoice.invoice_number}
@@ -582,7 +641,7 @@ export default function BillingPage() {
                         {invoice.status}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-2">
                         <button
                           className="p-1.5 rounded hover:bg-gray-100 text-[var(--color-text-secondary)]"
@@ -665,37 +724,79 @@ export default function BillingPage() {
                     Method
                   </th>
                   <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
-                    Reference
+                    Invoice
                   </th>
                   <th className="text-right text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
                     Amount
                   </th>
+                  <th className="text-right text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
-                {payments.map((payment) => (
-                  <tr key={payment.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 text-[var(--color-text)]">{payment.payment_date}</td>
-                    <td className="px-4 py-3 text-[var(--color-text)]">
-                      {getClientName(payment.client_id)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="inline-flex items-center gap-1.5 text-[var(--color-text-secondary)]">
-                        {payment.payment_method === 'card' && <CreditCard className="w-4 h-4" />}
-                        {PAYMENT_METHOD_LABELS[payment.payment_method]}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-[var(--color-text-secondary)]">
-                      {payment.reference_number || '-'}
-                    </td>
-                    <td className="px-4 py-3 text-right font-medium text-emerald-600">
-                      {formatCurrency(payment.amount)}
-                    </td>
-                  </tr>
-                ))}
+                {payments.map((payment) => {
+                  const linkedInvoice = payment.invoice_id ? invoices.find(i => i.id === payment.invoice_id) : null;
+                  const isRefund = payment.amount < 0;
+                  return (
+                    <tr
+                      key={payment.id}
+                      className={`hover:bg-gray-50 ${!payment.invoice_id && payment.amount > 0 ? 'cursor-grab' : ''}`}
+                      draggable={!payment.invoice_id && payment.amount > 0}
+                      onDragStart={(e) => {
+                        if (!payment.invoice_id && payment.amount > 0) {
+                          e.dataTransfer.setData('text/plain', payment.id.toString());
+                          setDraggedPaymentId(payment.id);
+                        }
+                      }}
+                      onDragEnd={() => setDraggedPaymentId(null)}
+                    >
+                      <td className="px-4 py-3 text-[var(--color-text)]">{payment.payment_date}</td>
+                      <td className="px-4 py-3 text-[var(--color-text)]">
+                        {getClientName(payment.client_id)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="inline-flex items-center gap-1.5 text-[var(--color-text-secondary)]">
+                          {payment.payment_method === 'card' && <CreditCard className="w-4 h-4" />}
+                          {PAYMENT_METHOD_LABELS[payment.payment_method]}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {linkedInvoice ? (
+                          <span
+                            className="text-[var(--color-primary)] hover:underline cursor-pointer text-sm"
+                            onClick={() => handleViewInvoice(linkedInvoice.id)}
+                          >
+                            {linkedInvoice.invoice_number}
+                          </span>
+                        ) : isRefund ? (
+                          <span className="text-xs text-red-500 italic">Refund</span>
+                        ) : (
+                          <span className="text-xs text-[var(--color-text-secondary)] italic">Unmatched — drag to invoice below</span>
+                        )}
+                      </td>
+                      <td className={`px-4 py-3 text-right font-medium ${isRefund ? 'text-red-600' : 'text-emerald-600'}`}>
+                        {isRefund ? '' : '+'}{formatCurrency(payment.amount)}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          {payment.amount > 0 && !isRefund && (
+                            <button
+                              className="p-1.5 rounded hover:bg-red-50 text-[var(--color-text-secondary)] hover:text-red-500"
+                              title="Refund payment"
+                              onClick={(e) => { e.stopPropagation(); handleRefundPayment(payment.id); }}
+                            >
+                              <Undo2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
                 {payments.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-4 py-12 text-center text-[var(--color-text-secondary)]">
+                    <td colSpan={6} className="px-4 py-12 text-center text-[var(--color-text-secondary)]">
                       No payments recorded yet
                     </td>
                   </tr>
@@ -703,6 +804,44 @@ export default function BillingPage() {
               </tbody>
             </table>
           </div>
+
+          {/* Drop Targets - Outstanding Invoices for Payment Matching */}
+          {draggedPaymentId && (
+            <div className="mt-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Link className="w-4 h-4 text-[var(--color-primary)]" />
+                <h4 className="text-sm font-semibold text-[var(--color-text)]">
+                  Drop payment onto an invoice to match
+                </h4>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {invoices
+                  .filter(inv => inv.status !== 'paid' && inv.status !== 'void')
+                  .map(invoice => (
+                    <div
+                      key={invoice.id}
+                      className="card p-4 border-2 border-dashed border-[var(--color-primary)]/30 hover:border-[var(--color-primary)] hover:bg-[var(--color-primary)]/5 transition-all cursor-pointer"
+                      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'link'; }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const paymentId = parseInt(e.dataTransfer.getData('text/plain'), 10);
+                        if (!isNaN(paymentId)) {
+                          handleMatchPaymentToInvoice(paymentId, invoice.id);
+                        }
+                        setDraggedPaymentId(null);
+                      }}
+                    >
+                      <p className="text-sm font-medium text-[var(--color-text)]">{invoice.invoice_number}</p>
+                      <p className="text-xs text-[var(--color-text-secondary)]">{getClientName(invoice.client_id)}</p>
+                      <p className="text-sm font-bold text-[var(--color-text)] mt-1">{formatCurrency(invoice.total_amount)}</p>
+                      <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium mt-1 ${STATUS_COLORS[invoice.status].bg} ${STATUS_COLORS[invoice.status].text}`}>
+                        {invoice.status}
+                      </span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

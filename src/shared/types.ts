@@ -710,6 +710,7 @@ export interface PocketChartAPI {
   appointments: {
     list: (filters?: { startDate?: string; endDate?: string; clientId?: number }) => Promise<Appointment[]>;
     create: (data: Partial<Appointment>) => Promise<Appointment>;
+    createBatch: (items: Partial<Appointment>[]) => Promise<Appointment[]>;
     update: (id: number, data: Partial<Appointment>) => Promise<Appointment>;
     delete: (id: number) => Promise<boolean>;
   };
@@ -818,6 +819,8 @@ export interface PocketChartAPI {
   payments: {
     list: (filters?: { clientId?: number; startDate?: string; endDate?: string }) => Promise<Payment[]>;
     create: (data: Partial<Payment>) => Promise<Payment>;
+    update: (id: number, data: Partial<Payment>) => Promise<Payment>;
+    refund: (id: number) => Promise<Payment>;
     delete: (id: number) => Promise<boolean>;
   };
   // V3 Insurance Billing APIs

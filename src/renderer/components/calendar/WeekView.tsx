@@ -11,6 +11,7 @@ interface WeekViewProps {
   onSlotClick: (date: string, time: string) => void;
   onAppointmentClick: (appt: Appointment) => void;
   onAppointmentDrop: (apptId: number, newDate: string, newTime: string) => void;
+  onAppointmentContextMenu?: (appt: Appointment, x: number, y: number) => void;
   paymentStatusMap?: Record<number, PaymentIndicator>;
 }
 
@@ -20,6 +21,7 @@ export default function WeekView({
   onSlotClick,
   onAppointmentClick,
   onAppointmentDrop,
+  onAppointmentContextMenu,
   paymentStatusMap = {},
 }: WeekViewProps) {
   const today = new Date();
@@ -78,6 +80,7 @@ export default function WeekView({
         onSlotClick={onSlotClick}
         onAppointmentClick={onAppointmentClick}
         onAppointmentDrop={onAppointmentDrop}
+        onAppointmentContextMenu={onAppointmentContextMenu}
         paymentStatusMap={paymentStatusMap}
       />
     </div>

@@ -184,7 +184,7 @@ export default function MonthView({
                   return (
                     <div
                       key={appt.id}
-                      className={`flex items-center gap-1 px-1 py-0.5 rounded text-xs truncate cursor-grab active:cursor-grabbing ${STATUS_BORDER[appt.status]}`}
+                      className={`flex items-center gap-1 px-1 py-0.5 rounded text-xs truncate cursor-pointer ${STATUS_BORDER[appt.status]}`}
                       draggable={true}
                       onDragStart={handleApptDragStart(appt.id)}
                       onClick={(e) => {

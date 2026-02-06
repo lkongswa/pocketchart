@@ -45,7 +45,7 @@ export default function YearEndSummaryPage() {
         <div>
           <h1 className="page-title flex items-center gap-2">
             <FileSpreadsheet className="w-6 h-6 text-[var(--color-primary)]" />
-            Year-End Tax Summary
+            Year-End Summary
           </h1>
           <p className="text-sm text-[var(--color-text-secondary)]">
             Revenue and mileage summary for tax preparation.

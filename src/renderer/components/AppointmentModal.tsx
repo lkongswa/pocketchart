@@ -1,11 +1,20 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, Calendar, Clock, User } from 'lucide-react';
+import { X, Calendar, Clock, User, Building2, Repeat, ChevronDown } from 'lucide-react';
+import { addDays, addWeeks, addMonths, format } from 'date-fns';
 import type { Appointment, AppointmentStatus, Client, ContractedEntity, EntityFeeSchedule } from '../../shared/types';
+
+// Unified search result item
+type SearchItem =
+  | { type: 'client'; id: number; name: string; discipline?: string; data: Client }
+  | { type: 'contract'; id: number; name: string; data: ContractedEntity };
+
+type RepeatFrequency = 'none' | 'weekly' | 'biweekly' | 'monthly';
 
 interface AppointmentModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (data: Partial<Appointment>) => Promise<void>;
+  onSaveBatch?: (items: Partial<Appointment>[]) => Promise<void>;
   appointment?: Appointment | null;
   defaultDate?: string;
   defaultTime?: string;
@@ -29,21 +38,28 @@ export default function AppointmentModal({
   isOpen,
   onClose,
   onSave,
+  onSaveBatch,
   appointment,
   defaultDate,
   defaultTime,
 }: AppointmentModalProps) {
   const [clients, setClients] = useState<Client[]>([]);
-  const [clientSearch, setClientSearch] = useState('');
-  const [showClientDropdown, setShowClientDropdown] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [loadingClients, setLoadingClients] = useState(false);
-
-  // Contracted entity state
   const [entities, setEntities] = useState<ContractedEntity[]>([]);
-  const [selectedEntityId, setSelectedEntityId] = useState<number | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  // Selected item
+  const [selectedItem, setSelectedItem] = useState<SearchItem | null>(null);
+
+  // Entity rate (for contract appointments)
   const [entityRate, setEntityRate] = useState<number | null>(null);
-  const [rateOverrideReason, setRateOverrideReason] = useState('');
+
+  // Repeat visit settings
+  const [repeatFrequency, setRepeatFrequency] = useState<RepeatFrequency>('none');
+  const [repeatEndDate, setRepeatEndDate] = useState('');
+  const [showRepeat, setShowRepeat] = useState(false);
 
   const [formData, setFormData] = useState({
     client_id: 0,
@@ -53,20 +69,22 @@ export default function AppointmentModal({
     status: 'scheduled' as AppointmentStatus,
   });
 
-  const [selectedClientName, setSelectedClientName] = useState('');
-
   useEffect(() => {
     if (!isOpen) return;
 
     async function initModal() {
-      loadClients();
-      // Load contracted entities
+      setLoading(true);
       try {
-        const ents = await window.api.contractedEntities.list();
-        setEntities(ents);
-      } catch {
-        setEntities([]);
+        const [clientsData, entitiesData] = await Promise.all([
+          window.api.clients.list({ status: 'active' }),
+          window.api.contractedEntities.list().catch(() => [] as ContractedEntity[]),
+        ]);
+        setClients(clientsData);
+        setEntities(entitiesData);
+      } catch (err) {
+        console.error('Failed to load data:', err);
       }
+      setLoading(false);
 
       if (appointment) {
         setFormData({
@@ -76,16 +94,15 @@ export default function AppointmentModal({
           duration_minutes: appointment.duration_minutes,
           status: appointment.status,
         });
-        if (appointment.first_name && appointment.last_name) {
-          setSelectedClientName(`${appointment.first_name} ${appointment.last_name}`);
-          setClientSearch(`${appointment.first_name} ${appointment.last_name}`);
+        // Restore selection
+        if (appointment.entity_id && appointment.entity_name) {
+          setSearchQuery(appointment.entity_name);
+          // We'll set selectedItem once entities load
+        } else if (appointment.first_name && appointment.last_name) {
+          setSearchQuery(`${appointment.first_name} ${appointment.last_name}`);
         }
-        // Restore entity fields
-        setSelectedEntityId(appointment.entity_id ?? null);
         setEntityRate(appointment.entity_rate ?? null);
-        setRateOverrideReason(appointment.rate_override_reason || '');
       } else {
-        // Load default session length from settings
         let duration = 45;
         try {
           const saved = await window.api.settings.get('default_session_length');
@@ -99,53 +116,111 @@ export default function AppointmentModal({
           duration_minutes: duration,
           status: 'scheduled',
         });
-        setSelectedClientName('');
-        setClientSearch('');
-        setSelectedEntityId(null);
+        setSearchQuery('');
+        setSelectedItem(null);
         setEntityRate(null);
-        setRateOverrideReason('');
+        setRepeatFrequency('none');
+        setRepeatEndDate('');
+        setShowRepeat(false);
       }
     }
 
     initModal();
   }, [isOpen, appointment, defaultDate, defaultTime]);
 
-  const loadClients = useCallback(async () => {
-    try {
-      setLoadingClients(true);
-      const result = await window.api.clients.list({ status: 'active' });
-      setClients(result);
-    } catch (err) {
-      console.error('Failed to load clients:', err);
-    } finally {
-      setLoadingClients(false);
+  // Set selectedItem once data loads for editing
+  useEffect(() => {
+    if (!appointment || !isOpen) return;
+    if (appointment.entity_id && entities.length > 0) {
+      const ent = entities.find(e => e.id === appointment.entity_id);
+      if (ent) {
+        setSelectedItem({ type: 'contract', id: ent.id, name: ent.name, data: ent });
+      }
+    } else if (appointment.client_id && clients.length > 0) {
+      const client = clients.find(c => c.id === appointment.client_id);
+      if (client) {
+        setSelectedItem({ type: 'client', id: client.id, name: `${client.first_name} ${client.last_name}`, discipline: client.discipline, data: client });
+      }
     }
-  }, []);
+  }, [appointment, clients, entities, isOpen]);
 
-  const filteredClients = clients.filter((c) => {
-    const fullName = `${c.first_name} ${c.last_name}`.toLowerCase();
-    return fullName.includes(clientSearch.toLowerCase());
-  });
+  // Build unified search results
+  const searchResults: SearchItem[] = (() => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return [];
+    const clientResults: SearchItem[] = clients
+      .filter(c => `${c.first_name} ${c.last_name}`.toLowerCase().includes(q))
+      .map(c => ({ type: 'client' as const, id: c.id, name: `${c.first_name} ${c.last_name}`, discipline: c.discipline, data: c }));
+    const entityResults: SearchItem[] = entities
+      .filter(e => e.name.toLowerCase().includes(q))
+      .map(e => ({ type: 'contract' as const, id: e.id, name: e.name, data: e }));
+    return [...clientResults, ...entityResults];
+  })();
 
-  const handleSelectClient = (client: Client) => {
-    setFormData((prev) => ({ ...prev, client_id: client.id }));
-    setSelectedClientName(`${client.first_name} ${client.last_name}`);
-    setClientSearch(`${client.first_name} ${client.last_name}`);
-    setShowClientDropdown(false);
+  const handleSelectItem = async (item: SearchItem) => {
+    setSelectedItem(item);
+    setSearchQuery(item.name);
+    setShowDropdown(false);
+
+    if (item.type === 'client') {
+      setFormData(prev => ({ ...prev, client_id: item.id }));
+      setEntityRate(null);
+    } else {
+      setFormData(prev => ({ ...prev, client_id: 0 }));
+      // Load entity rate
+      try {
+        const fees = await window.api.contractedEntities.listFeeSchedule(item.id);
+        const treatmentFee = fees.find((f: EntityFeeSchedule) => f.service_type === 'treatment') || fees[0];
+        if (treatmentFee) setEntityRate(treatmentFee.default_rate);
+      } catch {}
+    }
   };
+
+  // Generate recurring appointment dates
+  const generateRecurringDates = (startDate: string, freq: RepeatFrequency, endDate: string): string[] => {
+    if (freq === 'none' || !endDate) return [];
+    const dates: string[] = [];
+    let current = new Date(startDate + 'T00:00:00');
+    const end = new Date(endDate + 'T00:00:00');
+    // Skip the first date (the original appointment)
+    while (true) {
+      if (freq === 'weekly') current = addWeeks(current, 1);
+      else if (freq === 'biweekly') current = addWeeks(current, 2);
+      else if (freq === 'monthly') current = addMonths(current, 1);
+      if (current > end) break;
+      dates.push(format(current, 'yyyy-MM-dd'));
+    }
+    return dates;
+  };
+
+  const repeatCount = repeatFrequency !== 'none' && repeatEndDate
+    ? generateRecurringDates(formData.scheduled_date, repeatFrequency, repeatEndDate).length
+    : 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (formData.client_id === 0) return;
+    if (!selectedItem) return;
 
     try {
       setSaving(true);
-      await onSave({
+      const baseData: Partial<Appointment> = {
         ...formData,
-        entity_id: selectedEntityId ?? undefined,
-        entity_rate: entityRate ?? undefined,
-        rate_override_reason: rateOverrideReason || undefined,
-      });
+        client_id: selectedItem.type === 'client' ? selectedItem.id : 0,
+        entity_id: selectedItem.type === 'contract' ? selectedItem.id : undefined,
+        entity_rate: selectedItem.type === 'contract' ? entityRate ?? undefined : undefined,
+      };
+
+      if (repeatFrequency !== 'none' && repeatEndDate && !appointment && onSaveBatch) {
+        // Create batch of recurring appointments
+        const recurringDates = generateRecurringDates(formData.scheduled_date, repeatFrequency, repeatEndDate);
+        const allItems: Partial<Appointment>[] = [
+          baseData,
+          ...recurringDates.map(d => ({ ...baseData, scheduled_date: d })),
+        ];
+        await onSaveBatch(allItems);
+      } else {
+        await onSave(baseData);
+      }
       onClose();
     } catch (err) {
       console.error('Failed to save appointment:', err);
@@ -178,56 +253,103 @@ export default function AppointmentModal({
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {/* Client Selection */}
+          {/* Unified Search - Clients + Contracts */}
           <div className="relative">
             <label className="label">
               <User className="w-3.5 h-3.5 inline mr-1" />
-              Client
+              Client or Contract
             </label>
             <input
               type="text"
               className="input"
-              placeholder={loadingClients ? 'Loading clients...' : 'Search for a client...'}
-              value={clientSearch}
+              placeholder={loading ? 'Loading...' : 'Search clients & contracts...'}
+              value={searchQuery}
               onChange={(e) => {
-                setClientSearch(e.target.value);
-                setShowClientDropdown(true);
-                if (e.target.value !== selectedClientName) {
-                  setFormData((prev) => ({ ...prev, client_id: 0 }));
-                  setSelectedClientName('');
+                setSearchQuery(e.target.value);
+                setShowDropdown(true);
+                if (selectedItem && e.target.value !== selectedItem.name) {
+                  setSelectedItem(null);
+                  setFormData(prev => ({ ...prev, client_id: 0 }));
                 }
               }}
-              onFocus={() => setShowClientDropdown(true)}
+              onFocus={() => setShowDropdown(true)}
             />
-            {showClientDropdown && clientSearch.length > 0 && (
-              <div className="absolute z-10 w-full mt-1 bg-white border border-[var(--color-border)] rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                {filteredClients.length === 0 ? (
-                  <div className="px-4 py-3 text-sm text-[var(--color-text-secondary)]">
-                    No clients found
-                  </div>
+            {/* Selected badge */}
+            {selectedItem && (
+              <div className="mt-1.5 flex items-center gap-2">
+                {selectedItem.type === 'client' ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                    <User className="w-3 h-3" /> Client
+                    {selectedItem.discipline && ` · ${selectedItem.discipline}`}
+                  </span>
                 ) : (
-                  filteredClients.map((client) => (
-                    <button
-                      key={client.id}
-                      type="button"
-                      className="w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 transition-colors flex items-center justify-between"
-                      onClick={() => handleSelectClient(client)}
-                    >
-                      <span className="font-medium">
-                        {client.first_name} {client.last_name}
-                      </span>
-                      <span
-                        className={`badge-${client.discipline.toLowerCase()}`}
-                      >
-                        {client.discipline}
-                      </span>
-                    </button>
-                  ))
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
+                    <Building2 className="w-3 h-3" /> Contract
+                  </span>
+                )}
+                {entityRate !== null && selectedItem.type === 'contract' && (
+                  <span className="text-xs text-[var(--color-text-secondary)]">
+                    Rate: ${entityRate.toFixed(2)}
+                  </span>
                 )}
               </div>
             )}
-            {formData.client_id === 0 && clientSearch.length > 0 && !showClientDropdown && (
-              <p className="text-xs text-[var(--color-danger)] mt-1">Please select a client from the list</p>
+            {/* Dropdown results */}
+            {showDropdown && searchQuery.length > 0 && !selectedItem && (
+              <div className="absolute z-10 w-full mt-1 bg-white border border-[var(--color-border)] rounded-lg shadow-lg max-h-56 overflow-y-auto">
+                {searchResults.length === 0 ? (
+                  <div className="px-4 py-3 text-sm text-[var(--color-text-secondary)]">
+                    No clients or contracts found
+                  </div>
+                ) : (
+                  <>
+                    {/* Client results */}
+                    {searchResults.filter(r => r.type === 'client').length > 0 && (
+                      <div>
+                        <div className="px-3 py-1.5 text-[10px] font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider bg-gray-50">
+                          Clients
+                        </div>
+                        {searchResults.filter(r => r.type === 'client').map((item) => (
+                          <button
+                            key={`client-${item.id}`}
+                            type="button"
+                            className="w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 transition-colors flex items-center justify-between"
+                            onClick={() => handleSelectItem(item)}
+                          >
+                            <span className="font-medium">{item.name}</span>
+                            {item.type === 'client' && item.discipline && (
+                              <span className={`badge-${item.discipline.toLowerCase()}`}>
+                                {item.discipline}
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {/* Contract results */}
+                    {searchResults.filter(r => r.type === 'contract').length > 0 && (
+                      <div>
+                        <div className="px-3 py-1.5 text-[10px] font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider bg-gray-50">
+                          Contracts
+                        </div>
+                        {searchResults.filter(r => r.type === 'contract').map((item) => (
+                          <button
+                            key={`contract-${item.id}`}
+                            type="button"
+                            className="w-full text-left px-4 py-2.5 text-sm hover:bg-purple-50 transition-colors flex items-center justify-between"
+                            onClick={() => handleSelectItem(item)}
+                          >
+                            <span className="font-medium">{item.name}</span>
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-600">
+                              <Building2 className="w-3 h-3" /> Contract
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
             )}
           </div>
 
@@ -307,38 +429,54 @@ export default function AppointmentModal({
             </select>
           </div>
 
-          {/* Contracted Entity (optional) */}
-          {entities.length > 0 && (
+          {/* Repeat Visit (only for new appointments) */}
+          {!appointment && (
             <div>
-              <label className="label">Contracted Entity (optional)</label>
-              <select
-                className="select"
-                value={selectedEntityId ?? ''}
-                onChange={async (e) => {
-                  const eid = parseInt(e.target.value, 10) || null;
-                  setSelectedEntityId(eid);
-                  if (eid) {
-                    try {
-                      const fees = await window.api.contractedEntities.listFeeSchedule(eid);
-                      // Use the first treatment rate as default
-                      const treatmentFee = fees.find((f: EntityFeeSchedule) => f.service_type === 'treatment') || fees[0];
-                      if (treatmentFee) setEntityRate(treatmentFee.default_rate);
-                    } catch {}
-                  } else {
-                    setEntityRate(null);
-                    setRateOverrideReason('');
-                  }
-                }}
+              <button
+                type="button"
+                className="flex items-center gap-1.5 text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors"
+                onClick={() => setShowRepeat(!showRepeat)}
               >
-                <option value="">None</option>
-                {entities.map((ent) => (
-                  <option key={ent.id} value={ent.id}>{ent.name}</option>
-                ))}
-              </select>
-              {selectedEntityId && entityRate !== null && (
-                <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                  Rate: ${entityRate.toFixed(2)}
-                </p>
+                <Repeat className="w-3.5 h-3.5" />
+                Repeat Visit
+                <ChevronDown className={`w-3 h-3 transition-transform ${showRepeat ? 'rotate-180' : ''}`} />
+              </button>
+              {showRepeat && (
+                <div className="mt-2 p-3 rounded-lg bg-gray-50 border border-[var(--color-border)] space-y-3">
+                  <div>
+                    <label className="label">Frequency</label>
+                    <select
+                      className="select"
+                      value={repeatFrequency}
+                      onChange={(e) => setRepeatFrequency(e.target.value as RepeatFrequency)}
+                    >
+                      <option value="none">No repeat</option>
+                      <option value="weekly">Weekly</option>
+                      <option value="biweekly">Every 2 weeks</option>
+                      <option value="monthly">Monthly</option>
+                    </select>
+                  </div>
+                  {repeatFrequency !== 'none' && (
+                    <div>
+                      <label className="label">
+                        <Calendar className="w-3.5 h-3.5 inline mr-1" />
+                        Repeat Until
+                      </label>
+                      <input
+                        type="date"
+                        className="input"
+                        value={repeatEndDate}
+                        min={formData.scheduled_date}
+                        onChange={(e) => setRepeatEndDate(e.target.value)}
+                      />
+                      {repeatCount > 0 && (
+                        <p className="text-xs text-[var(--color-primary)] mt-1 font-medium">
+                          Will create {repeatCount + 1} total appointments ({repeatCount} additional)
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )}
@@ -351,9 +489,15 @@ export default function AppointmentModal({
             <button
               type="submit"
               className="btn-primary"
-              disabled={saving || formData.client_id === 0}
+              disabled={saving || !selectedItem}
             >
-              {saving ? 'Saving...' : appointment ? 'Update Appointment' : 'Create Appointment'}
+              {saving
+                ? 'Saving...'
+                : appointment
+                ? 'Update Appointment'
+                : repeatCount > 0
+                ? `Create ${repeatCount + 1} Appointments`
+                : 'Create Appointment'}
             </button>
           </div>
         </form>

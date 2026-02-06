@@ -8,6 +8,7 @@ interface AppointmentBlockProps {
   slotHeight: number;
   startHour: number;
   onClick: (appt: Appointment) => void;
+  onContextMenu?: (appt: Appointment, x: number, y: number) => void;
   compact?: boolean;
   paymentStatus?: PaymentIndicator;
 }
@@ -15,6 +16,14 @@ interface AppointmentBlockProps {
 const STATUS_CLASSES: Record<AppointmentStatus, string> = {
   scheduled: 'border-l-4 border-l-blue-500 bg-blue-50',
   completed: 'border-l-4 border-l-emerald-500 bg-emerald-50',
+  cancelled: 'border-l-4 border-l-gray-400 bg-gray-50 opacity-60',
+  'no-show': 'border-l-4 border-l-red-500 bg-red-50',
+};
+
+// Override colors for contractor appointments
+const CONTRACTOR_STATUS_CLASSES: Record<AppointmentStatus, string> = {
+  scheduled: 'border-l-4 border-l-purple-500 bg-purple-50',
+  completed: 'border-l-4 border-l-purple-600 bg-purple-50',
   cancelled: 'border-l-4 border-l-gray-400 bg-gray-50 opacity-60',
   'no-show': 'border-l-4 border-l-red-500 bg-red-50',
 };
@@ -38,6 +47,7 @@ export default function AppointmentBlock({
   slotHeight,
   startHour,
   onClick,
+  onContextMenu,
   compact = false,
   paymentStatus = 'none',
 }: AppointmentBlockProps) {
@@ -48,13 +58,22 @@ export default function AppointmentBlock({
   const topPx = ((hour - startHour) * 2 + minutes / 30) * slotHeight;
   const heightPx = Math.max((appointment.duration_minutes / 30) * slotHeight, 24);
 
-  const clientName = `${appointment.first_name || 'Unknown'} ${
-    appointment.last_name ? appointment.last_name.charAt(0) + '.' : ''
-  }`;
+  const isContractorAppt = Boolean(appointment.entity_id);
+  const clientName = isContractorAppt && appointment.entity_name
+    ? appointment.entity_name
+    : `${appointment.first_name || 'Unknown'} ${appointment.last_name ? appointment.last_name.charAt(0) + '.' : ''}`;
 
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>) => {
     e.dataTransfer.setData('text/plain', appointment.id.toString());
     e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (onContextMenu) {
+      onContextMenu(appointment, e.clientX, e.clientY);
+    }
   };
 
   const dollarBadge = paymentStatus === 'paid'
@@ -67,7 +86,7 @@ export default function AppointmentBlock({
   if (compact) {
     return (
       <div
-        className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-xs truncate cursor-grab active:cursor-grabbing ${STATUS_CLASSES[appointment.status]}`}
+        className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-xs truncate cursor-pointer ${isContractorAppt ? CONTRACTOR_STATUS_CLASSES[appointment.status] : STATUS_CLASSES[appointment.status]}`}
         draggable={true}
         onDragStart={handleDragStart}
         onClick={(e) => {
@@ -88,7 +107,7 @@ export default function AppointmentBlock({
   // Full mode: absolutely positioned for day/week time grid
   return (
     <div
-      className={`absolute left-0.5 right-0.5 rounded-md px-2 py-1 overflow-hidden cursor-grab active:cursor-grabbing transition-shadow hover:shadow-md z-10 ${STATUS_CLASSES[appointment.status]}`}
+      className={`absolute left-0.5 right-0.5 rounded-md px-2 py-1 overflow-hidden cursor-pointer transition-shadow hover:shadow-md z-10 ${isContractorAppt ? CONTRACTOR_STATUS_CLASSES[appointment.status] : STATUS_CLASSES[appointment.status]}`}
       style={{ top: topPx, height: heightPx }}
       draggable={true}
       onDragStart={handleDragStart}
@@ -96,7 +115,8 @@ export default function AppointmentBlock({
         e.stopPropagation();
         onClick(appointment);
       }}
-      title={`${clientName} - ${formatTime12(appointment.scheduled_time)} (${appointment.duration_minutes}m)`}
+      onContextMenu={handleContextMenu}
+      title={`${clientName} - ${formatTime12(appointment.scheduled_time)} (${appointment.duration_minutes}m)\nRight-click for options`}
     >
       <div className="flex items-center justify-between">
         <div className="text-xs text-[var(--color-text-secondary)] leading-tight">

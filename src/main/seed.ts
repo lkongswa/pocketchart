@@ -212,6 +212,29 @@ export function seedDefaultData(db: Database.Database): void {
   seedTransaction();
 }
 
+// Seed universal quick chips (ALL disciplines, favorited by default)
+export function seedDefaultQuickChips(db: Database.Database): void {
+  const defaultChips = [
+    { discipline: 'ALL', section: 'S', category: 'general', phrase: 'Pt was ready for therapy.' },
+    { discipline: 'ALL', section: 'A', category: 'response', phrase: 'Pt responded well to tx.' },
+    { discipline: 'ALL', section: 'P', category: 'next_session', phrase: 'Continue current POC.' },
+  ];
+
+  const insertChip = db.prepare(
+    'INSERT INTO note_bank (discipline, category, section, phrase, is_default, is_favorite) VALUES (?, ?, ?, ?, 1, 1)'
+  );
+
+  for (const chip of defaultChips) {
+    // Only insert if this exact phrase doesn't already exist
+    const exists = db.prepare(
+      'SELECT id FROM note_bank WHERE discipline = ? AND section = ? AND phrase = ?'
+    ).get(chip.discipline, chip.section, chip.phrase);
+    if (!exists) {
+      insertChip.run(chip.discipline, chip.category, chip.section, chip.phrase);
+    }
+  }
+}
+
 // Seed common payers for V3 insurance billing
 export function seedPayers(db: Database.Database): void {
   // Check if payers table exists and has data

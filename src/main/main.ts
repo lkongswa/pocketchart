@@ -62,6 +62,7 @@ let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
 
 const isDev = process.env.NODE_ENV === 'development';
+const FORCE_PRO = true; // Toggle to false when done workshopping Pro features
 
 // ── Auto-Updater Configuration ──
 autoUpdater.autoDownload = false;       // Don't download until user says yes
@@ -636,13 +637,18 @@ function registerIpcHandlers() {
   });
 
   // ── Appointments ──
+  const apptSelectQuery = `
+    SELECT a.*,
+      c.first_name, c.last_name, c.discipline as client_discipline,
+      e.name as entity_name
+    FROM appointments a
+    LEFT JOIN clients c ON a.client_id = c.id AND c.deleted_at IS NULL
+    LEFT JOIN contracted_entities e ON a.entity_id = e.id
+    WHERE a.deleted_at IS NULL
+  `;
+
   safeHandle('appointments:list', (_event, filters?: { startDate?: string; endDate?: string; clientId?: number }) => {
-    let query = `
-      SELECT a.*, c.first_name, c.last_name, c.discipline as client_discipline
-      FROM appointments a
-      JOIN clients c ON a.client_id = c.id
-      WHERE a.deleted_at IS NULL AND c.deleted_at IS NULL
-    `;
+    let query = apptSelectQuery;
     const params: any[] = [];
 
     if (filters?.startDate) {
@@ -664,27 +670,45 @@ function registerIpcHandlers() {
 
   safeHandle('appointments:create', (_event, data) => {
     const result = db.prepare(`
-      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(data.client_id, data.scheduled_date, data.scheduled_time,
-      data.duration_minutes || 60, data.status || 'scheduled');
-    return db.prepare(`
-      SELECT a.*, c.first_name, c.last_name, c.discipline as client_discipline
-      FROM appointments a JOIN clients c ON a.client_id = c.id WHERE a.id = ?
-    `).get(result.lastInsertRowid);
+      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(data.client_id || 0, data.scheduled_date, data.scheduled_time,
+      data.duration_minutes || 60, data.status || 'scheduled',
+      data.entity_id || null, data.entity_rate || null);
+    return db.prepare(apptSelectQuery + ' AND a.id = ?').get(result.lastInsertRowid);
+  });
+
+  // Batch create for recurring appointments
+  safeHandle('appointments:createBatch', (_event, items: any[]) => {
+    const insert = db.prepare(`
+      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    const created: any[] = [];
+    const txn = db.transaction(() => {
+      for (const data of items) {
+        const result = insert.run(
+          data.client_id || 0, data.scheduled_date, data.scheduled_time,
+          data.duration_minutes || 60, data.status || 'scheduled',
+          data.entity_id || null, data.entity_rate || null
+        );
+        const row = db.prepare(apptSelectQuery + ' AND a.id = ?').get(result.lastInsertRowid);
+        if (row) created.push(row);
+      }
+    });
+    txn();
+    return created;
   });
 
   safeHandle('appointments:update', (_event, id: number, data) => {
     db.prepare(`
       UPDATE appointments SET client_id=?, scheduled_date=?, scheduled_time=?,
-        duration_minutes=?, status=?, note_id=?
+        duration_minutes=?, status=?, note_id=?, entity_id=?, entity_rate=?
       WHERE id=? AND deleted_at IS NULL
     `).run(data.client_id, data.scheduled_date, data.scheduled_time,
-      data.duration_minutes, data.status, data.note_id, id);
-    return db.prepare(`
-      SELECT a.*, c.first_name, c.last_name, c.discipline as client_discipline
-      FROM appointments a JOIN clients c ON a.client_id = c.id WHERE a.id = ?
-    `).get(id);
+      data.duration_minutes, data.status, data.note_id,
+      data.entity_id || null, data.entity_rate || null, id);
+    return db.prepare(apptSelectQuery + ' AND a.id = ?').get(id);
   });
 
   // Soft delete
@@ -1258,8 +1282,8 @@ function registerIpcHandlers() {
   }
 
   safeHandle('license:getStatus', () => {
-    // In development mode, always grant Pro tier access for testing
-    if (isDev) {
+    // In development mode or when FORCE_PRO is enabled, grant Pro tier access for testing
+    if (isDev || FORCE_PRO) {
       return {
         tier: 'pro' as AppTier,
         licenseKey: 'DEV_MODE',
@@ -1377,6 +1401,7 @@ function registerIpcHandlers() {
 
   // ── Tier-Gated Helper ──
   function requireTier(requiredTier: 'basic' | 'pro'): void {
+    if (FORCE_PRO) return; // Bypass tier check when workshopping Pro features
     const currentTier = (getSetting('app_tier') || 'free') as AppTier;
     const tierRank = { free: 0, basic: 1, pro: 2 };
     if (tierRank[currentTier] < tierRank[requiredTier]) {
@@ -2265,6 +2290,53 @@ function registerIpcHandlers() {
     );
 
     return payment;
+  });
+
+  safeHandle('payments:update', (_event, id: number, data: any) => {
+    db.prepare(`
+      UPDATE payments SET invoice_id = ?, notes = ? WHERE id = ? AND deleted_at IS NULL
+    `).run(data.invoice_id ?? null, data.notes ?? '', id);
+    return db.prepare('SELECT * FROM payments WHERE id = ?').get(id);
+  });
+
+  safeHandle('payments:refund', (_event, id: number) => {
+    const payment = db.prepare('SELECT * FROM payments WHERE id = ? AND deleted_at IS NULL').get(id) as any;
+    if (!payment) throw new Error('Payment not found');
+
+    // Create a negative refund entry
+    const result = db.prepare(`
+      INSERT INTO payments (client_id, invoice_id, payment_date, amount, payment_method, reference_number, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      payment.client_id,
+      payment.invoice_id,
+      new Date().toISOString().slice(0, 10),
+      -payment.amount,
+      payment.payment_method,
+      `REFUND-${payment.reference_number || payment.id}`,
+      `Refund of payment #${payment.id}`
+    );
+    const refund = db.prepare('SELECT * FROM payments WHERE id = ?').get(result.lastInsertRowid) as any;
+
+    // If linked to an invoice, revert its status
+    if (payment.invoice_id) {
+      const remainingPaid = db.prepare(
+        'SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE invoice_id = ? AND deleted_at IS NULL'
+      ).get(payment.invoice_id) as any;
+      const invoice = db.prepare('SELECT * FROM invoices WHERE id = ?').get(payment.invoice_id) as any;
+      if (invoice) {
+        const newStatus = remainingPaid.total <= 0 ? 'sent' : remainingPaid.total < invoice.total_amount ? 'partial' : 'paid';
+        db.prepare('UPDATE invoices SET status = ? WHERE id = ?').run(newStatus, payment.invoice_id);
+      }
+    }
+
+    // Audit log
+    db.prepare(`
+      INSERT INTO audit_log (entity_type, entity_id, action, new_values, client_id, amount, description)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run('payment', refund.id, 'refund', JSON.stringify({ original_payment_id: id }), payment.client_id, -payment.amount, `Refund of $${payment.amount}`);
+
+    return refund;
   });
 
   safeHandle('payments:delete', (_event, id: number) => {

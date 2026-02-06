@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   format,
   startOfWeek,
@@ -10,6 +10,7 @@ import {
   endOfMonth,
 } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
+import { Copy, Clipboard, Edit3, Trash2, X } from 'lucide-react';
 import type { Appointment, Invoice, InvoiceItem } from '../../shared/types';
 import type { PaymentIndicator } from '../components/calendar/AppointmentBlock';
 import AppointmentModal from '../components/AppointmentModal';
@@ -19,6 +20,23 @@ import WeekView from '../components/calendar/WeekView';
 import MonthView from '../components/calendar/MonthView';
 
 type CalendarView = 'day' | 'week' | 'month';
+
+// Clipboard data for copy/paste
+interface ClipboardAppointment {
+  client_id: number;
+  entity_id?: number | null;
+  entity_rate?: number | null;
+  duration_minutes: number;
+  status: string;
+  clientName: string;
+}
+
+// Context menu state
+interface ContextMenu {
+  x: number;
+  y: number;
+  appointment: Appointment;
+}
 
 export default function CalendarPage() {
   const navigate = useNavigate();
@@ -32,6 +50,13 @@ export default function CalendarPage() {
   const [selectedTime, setSelectedTime] = useState<string | undefined>(undefined);
   const [searchQuery, setSearchQuery] = useState('');
   const [paymentStatusMap, setPaymentStatusMap] = useState<Record<number, PaymentIndicator>>({});
+
+  // Copy/paste state
+  const [clipboardAppt, setClipboardAppt] = useState<ClipboardAppointment | null>(null);
+
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
 
   // Compute date range based on current view
   const getDateRange = useCallback((): { startDate: string; endDate: string } => {
@@ -207,6 +232,80 @@ export default function CalendarPage() {
     await loadAppointments();
   };
 
+  // Batch save for recurring appointments
+  const handleSaveBatch = async (items: Partial<Appointment>[]) => {
+    await window.api.appointments.createBatch(items);
+    await loadAppointments();
+  };
+
+  // Context menu for appointments
+  const handleAppointmentContextMenu = useCallback((appt: Appointment, x: number, y: number) => {
+    setContextMenu({ x, y, appointment: appt });
+  }, []);
+
+  // Close context menu on click outside
+  useEffect(() => {
+    const handleClick = () => setContextMenu(null);
+    if (contextMenu) {
+      document.addEventListener('click', handleClick);
+      return () => document.removeEventListener('click', handleClick);
+    }
+  }, [contextMenu]);
+
+  // Copy appointment to clipboard
+  const handleCopyAppointment = (appt: Appointment) => {
+    const clientName = appt.entity_name
+      ? appt.entity_name
+      : `${appt.first_name || 'Unknown'} ${appt.last_name || ''}`.trim();
+    setClipboardAppt({
+      client_id: appt.client_id,
+      entity_id: appt.entity_id,
+      entity_rate: appt.entity_rate,
+      duration_minutes: appt.duration_minutes,
+      status: 'scheduled',
+      clientName,
+    });
+    setContextMenu(null);
+  };
+
+  // Edit appointment from context menu
+  const handleEditAppointment = (appt: Appointment) => {
+    setEditingAppointment(appt);
+    setSelectedDate(undefined);
+    setSelectedTime(undefined);
+    setModalOpen(true);
+    setContextMenu(null);
+  };
+
+  // Delete appointment from context menu
+  const handleDeleteAppointment = async (appt: Appointment) => {
+    setContextMenu(null);
+    if (window.confirm(`Delete appointment for ${appt.first_name || appt.entity_name || 'this client'}?`)) {
+      await window.api.appointments.delete(appt.id);
+      await loadAppointments();
+    }
+  };
+
+  // Paste appointment on slot click (override normal slot click when clipboard has data)
+  const handleSlotClickWithPaste = (date: string, time: string) => {
+    if (clipboardAppt) {
+      // Paste the copied appointment at this slot
+      const pasteData: Partial<Appointment> = {
+        client_id: clipboardAppt.client_id,
+        entity_id: clipboardAppt.entity_id,
+        entity_rate: clipboardAppt.entity_rate,
+        duration_minutes: clipboardAppt.duration_minutes,
+        scheduled_date: date,
+        scheduled_time: time,
+        status: 'scheduled',
+      };
+      window.api.appointments.create(pasteData).then(() => loadAppointments());
+      return;
+    }
+    // Normal slot click behavior
+    handleSlotClick(date, time);
+  };
+
   // Day click in month view
   const handleDayClick = (day: Date) => {
     setCurrentDate(day);
@@ -228,6 +327,22 @@ export default function CalendarPage() {
         onAddAppointment={handleAddAppointment}
       />
 
+      {/* Clipboard indicator */}
+      {clipboardAppt && (
+        <div className="flex items-center gap-2 mt-2 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700">
+          <Clipboard size={12} />
+          <span className="font-medium">Copied:</span> {clipboardAppt.clientName} ({clipboardAppt.duration_minutes}min)
+          <span className="text-blue-500">— Click any time slot to paste</span>
+          <button
+            className="ml-auto p-0.5 rounded hover:bg-blue-100 transition-colors"
+            onClick={() => setClipboardAppt(null)}
+            title="Clear clipboard"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
+
       <div className="flex-1 overflow-hidden mt-4">
         {loading ? (
           <div className="flex items-center justify-center h-64">
@@ -237,18 +352,20 @@ export default function CalendarPage() {
           <DayView
             date={currentDate}
             appointments={filteredAppointments}
-            onSlotClick={handleSlotClick}
+            onSlotClick={handleSlotClickWithPaste}
             onAppointmentClick={handleAppointmentClick}
             onAppointmentDrop={handleAppointmentDrop}
+            onAppointmentContextMenu={handleAppointmentContextMenu}
             paymentStatusMap={paymentStatusMap}
           />
         ) : currentView === 'week' ? (
           <WeekView
             weekStart={weekStart}
             appointments={filteredAppointments}
-            onSlotClick={handleSlotClick}
+            onSlotClick={handleSlotClickWithPaste}
             onAppointmentClick={handleAppointmentClick}
             onAppointmentDrop={handleAppointmentDrop}
+            onAppointmentContextMenu={handleAppointmentContextMenu}
             paymentStatusMap={paymentStatusMap}
           />
         ) : (
@@ -263,6 +380,35 @@ export default function CalendarPage() {
         )}
       </div>
 
+      {/* Context Menu */}
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          className="fixed z-50 bg-white rounded-lg shadow-xl border border-[var(--color-border)] py-1 min-w-[160px]"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+        >
+          <button
+            className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 transition-colors"
+            onClick={() => handleCopyAppointment(contextMenu.appointment)}
+          >
+            <Copy size={14} /> Copy Appointment
+          </button>
+          <button
+            className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 transition-colors"
+            onClick={() => handleEditAppointment(contextMenu.appointment)}
+          >
+            <Edit3 size={14} /> Edit
+          </button>
+          <div className="border-t border-[var(--color-border)] my-1" />
+          <button
+            className="w-full text-left px-3 py-2 text-sm hover:bg-red-50 text-red-600 flex items-center gap-2 transition-colors"
+            onClick={() => handleDeleteAppointment(contextMenu.appointment)}
+          >
+            <Trash2 size={14} /> Delete
+          </button>
+        </div>
+      )}
+
       <AppointmentModal
         isOpen={modalOpen}
         onClose={() => {
@@ -270,6 +416,7 @@ export default function CalendarPage() {
           setEditingAppointment(null);
         }}
         onSave={handleSaveAppointment}
+        onSaveBatch={handleSaveBatch}
         appointment={editingAppointment}
         defaultDate={selectedDate}
         defaultTime={selectedTime}

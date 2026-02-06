@@ -30,6 +30,7 @@ export default function NoteBankPopover({
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+  const [initialCollapseApplied, setInitialCollapseApplied] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [newPhrase, setNewPhrase] = useState('');
   const [newCategory, setNewCategory] = useState('');
@@ -72,6 +73,7 @@ export default function NoteBankPopover({
       setShowAddForm(false);
       setNewPhrase('');
       setNewCategory('');
+      setInitialCollapseApplied(false);
       setTimeout(() => searchRef.current?.focus(), 100);
     }
   }, [isOpen, loadPhrases]);
@@ -171,6 +173,12 @@ export default function NoteBankPopover({
   }
 
   const categoryKeys = Object.keys(grouped).sort();
+
+  // Default collapse all categories on first load
+  if (!initialCollapseApplied && categoryKeys.length > 0 && !loading) {
+    setCollapsedCategories(new Set(categoryKeys));
+    setInitialCollapseApplied(true);
+  }
 
   return (
     <div

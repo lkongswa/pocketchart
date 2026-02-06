@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import { app } from 'electron';
 import Store from 'electron-store';
-import { seedDefaultData, seedPayers, seedFeeSchedule } from './seed';
+import { seedDefaultData, seedDefaultQuickChips, seedPayers, seedFeeSchedule } from './seed';
 
 let db: Database.Database;
 
@@ -72,6 +72,7 @@ export function initDatabase(): void {
   runMigrations();
   createIndexes();
   seedDefaultData(db);
+  seedDefaultQuickChips(db);
   // V2/V3 billing seed data (run after migrations create tables)
   seedPayers(db);
   seedFeeSchedule(db);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Settings, Star, X } from 'lucide-react';
 import type { Discipline, SOAPSection, NoteBankEntry } from '../../shared/types';
 
@@ -25,6 +25,10 @@ export default function QuickChips({
   const [loading, setLoading] = useState(true);
   const [showManage, setShowManage] = useState(false);
   const [allPhrases, setAllPhrases] = useState<NoteBankEntry[]>([]);
+  const [showAddInput, setShowAddInput] = useState(false);
+  const [newPhraseText, setNewPhraseText] = useState('');
+  const [adding, setAdding] = useState(false);
+  const addInputRef = useRef<HTMLInputElement>(null);
 
   const loadChips = useCallback(async () => {
     try {
@@ -83,6 +87,32 @@ export default function QuickChips({
     onInsert(phrase);
   };
 
+  const handleAddNewPhrase = async () => {
+    const text = newPhraseText.trim();
+    if (!text || adding) return;
+    try {
+      setAdding(true);
+      const created = await window.api.noteBank.create({
+        discipline,
+        section,
+        category: 'custom',
+        phrase: text,
+        is_default: false,
+        is_favorite: true, // auto-favorite so it shows as a chip
+      });
+      setNewPhraseText('');
+      setShowAddInput(false);
+      // Refresh chips
+      loadChips();
+      // Also insert into the note immediately
+      onInsert(text);
+    } catch (err) {
+      console.error('Failed to add phrase:', err);
+    } finally {
+      setAdding(false);
+    }
+  };
+
   // Truncate phrase for chip display
   const truncatePhrase = (phrase: string, maxLen: number = 50): string => {
     if (phrase.length <= maxLen) return phrase;
@@ -135,6 +165,51 @@ export default function QuickChips({
           <Settings className="w-3 h-3" />
         </button>
 
+        {/* Quick Add Inline */}
+        {showAddInput ? (
+          <div className="inline-flex items-center gap-1">
+            <input
+              ref={addInputRef}
+              type="text"
+              className="px-2 py-0.5 text-xs rounded-full border border-[var(--color-primary)]/30 bg-white focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)] w-48"
+              placeholder="Type phrase & press Enter"
+              value={newPhraseText}
+              onChange={(e) => setNewPhraseText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleAddNewPhrase();
+                } else if (e.key === 'Escape') {
+                  setShowAddInput(false);
+                  setNewPhraseText('');
+                }
+              }}
+              disabled={adding}
+            />
+            <button
+              type="button"
+              className="p-0.5 rounded hover:bg-gray-200"
+              onClick={() => { setShowAddInput(false); setNewPhraseText(''); }}
+            >
+              <X className="w-3 h-3 text-[var(--color-text-secondary)]" />
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium
+              text-[var(--color-text-secondary)] hover:text-[var(--color-text)]
+              hover:bg-gray-100 transition-colors"
+            onClick={() => {
+              setShowAddInput(true);
+              setTimeout(() => addInputRef.current?.focus(), 50);
+            }}
+            title="Add a new quick phrase"
+          >
+            <Plus className="w-3 h-3" />
+          </button>
+        )}
+
         {/* Open Full Bank */}
         {onOpenFullBank && (
           <button
@@ -145,7 +220,6 @@ export default function QuickChips({
             onClick={onOpenFullBank}
             title="Browse all phrases"
           >
-            <Plus className="w-3 h-3" />
             More
           </button>
         )}

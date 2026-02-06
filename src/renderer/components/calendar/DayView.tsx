@@ -11,6 +11,7 @@ interface DayViewProps {
   onSlotClick: (date: string, time: string) => void;
   onAppointmentClick: (appt: Appointment) => void;
   onAppointmentDrop: (apptId: number, newDate: string, newTime: string) => void;
+  onAppointmentContextMenu?: (appt: Appointment, x: number, y: number) => void;
   paymentStatusMap?: Record<number, PaymentIndicator>;
 }
 
@@ -20,6 +21,7 @@ export default function DayView({
   onSlotClick,
   onAppointmentClick,
   onAppointmentDrop,
+  onAppointmentContextMenu,
   paymentStatusMap = {},
 }: DayViewProps) {
   const isToday = isSameDay(date, new Date());
@@ -61,6 +63,7 @@ export default function DayView({
         onSlotClick={onSlotClick}
         onAppointmentClick={onAppointmentClick}
         onAppointmentDrop={onAppointmentDrop}
+        onAppointmentContextMenu={onAppointmentContextMenu}
         paymentStatusMap={paymentStatusMap}
       />
     </div>

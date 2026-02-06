@@ -226,28 +226,27 @@ function CollapsibleInfo({ icon, title, isComplete, children, onEdit }: Collapsi
   const [isOpen, setIsOpen] = useState(false);
 
   return (
-    <div className={`rounded-lg border transition-all ${isComplete ? 'border-emerald-200 bg-emerald-50/30' : 'border-amber-200 bg-amber-50/30'}`}>
-      <button
-        type="button"
-        className="w-full flex items-center gap-2 px-3 py-2 text-left"
-        onClick={() => setIsOpen(!isOpen)}
-      >
+    <div
+      className={`rounded-lg border transition-all cursor-pointer select-none ${isComplete ? 'border-emerald-200 bg-emerald-50/30' : 'border-amber-200 bg-amber-50/30'}`}
+      onClick={() => setIsOpen(!isOpen)}
+    >
+      <div className="w-full flex items-center gap-2 px-3 py-2">
         <span className={`${isComplete ? 'text-emerald-500' : 'text-amber-500'}`}>{icon}</span>
         <span className="text-xs font-medium text-[var(--color-text)] flex-1">{title}</span>
         <span className={`w-2 h-2 rounded-full ${isComplete ? 'bg-emerald-400' : 'bg-amber-400'}`} />
         <ChevronDown className={`w-3.5 h-3.5 text-[var(--color-text-secondary)] transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-      </button>
+      </div>
       {isOpen && (
-        <div className="px-3 pb-3 border-t border-[var(--color-border)]/30">
+        <div className="px-3 pb-3 border-t border-[var(--color-border)]/30" onClick={(e) => e.stopPropagation()}>
           <div className="pt-2 text-sm space-y-1.5">
             {children}
           </div>
           {onEdit && (
             <button
-              className="mt-2 text-xs text-[var(--color-primary)] hover:underline flex items-center gap-1"
-              onClick={(e) => { e.stopPropagation(); onEdit(); }}
+              className="mt-3 w-full py-1.5 text-xs font-medium text-[var(--color-primary)] bg-[var(--color-primary)]/5 hover:bg-[var(--color-primary)]/10 rounded-md flex items-center justify-center gap-1.5 transition-colors"
+              onClick={() => onEdit()}
             >
-              <Edit size={10} /> Edit
+              <Edit size={12} /> Edit
             </button>
           )}
         </div>

@@ -51,6 +51,7 @@ const api = {
   appointments: {
     list: (filters?: any) => ipcRenderer.invoke('appointments:list', filters),
     create: (data: any) => ipcRenderer.invoke('appointments:create', data),
+    createBatch: (items: any[]) => ipcRenderer.invoke('appointments:createBatch', items),
     update: (id: number, data: any) => ipcRenderer.invoke('appointments:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('appointments:delete', id),
   },
@@ -174,6 +175,8 @@ const api = {
   payments: {
     list: (filters?: any) => ipcRenderer.invoke('payments:list', filters),
     create: (data: any) => ipcRenderer.invoke('payments:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('payments:update', id, data),
+    refund: (id: number) => ipcRenderer.invoke('payments:refund', id),
     delete: (id: number) => ipcRenderer.invoke('payments:delete', id),
   },
 

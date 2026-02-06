@@ -195,6 +195,12 @@
   -webkit-app-region: no-drag;
 }
 
+/* Calendar appointment block cursor fix */
+.sidebar-link-active a,
+[class*="bg-[var(--color-primary)]"] {
+  cursor: default;
+}
+
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
   10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }

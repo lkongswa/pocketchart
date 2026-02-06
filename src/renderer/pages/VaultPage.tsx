@@ -151,7 +151,7 @@ export default function VaultPage() {
         <div>
           <h1 className="page-title flex items-center gap-2">
             <Shield className="w-6 h-6 text-[var(--color-primary)]" />
-            Professional Vault
+            My Vault
           </h1>
           <p className="text-sm text-[var(--color-text-secondary)]">
             Store and track your professional documents, licenses, and certifications.
