@@ -64,6 +64,7 @@ const navGroups: NavGroup[] = [
       { to: '/clients', label: 'Clients', icon: <Users size={18} />, matchPrefix: '/clients' },
       { to: '/calendar', label: 'Calendar', icon: <Calendar size={18} /> },
       { to: '/notes', label: 'Notes', icon: <FileText size={18} /> },
+      { to: '/evals', label: 'Evaluations', icon: <ClipboardList size={18} /> },
     ],
   },
   {

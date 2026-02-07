@@ -34,6 +34,8 @@ const VALID_TABLES = new Set([
   // V2 Pro tables
   'contracted_entities', 'entity_fee_schedules', 'entity_documents',
   'vault_documents', 'compliance_tracking', 'mileage_log', 'communication_log',
+  // V5 Progress Report tables
+  'staged_goals', 'progress_report_goals',
 ]);
 
 export function getDataPath(): string {
@@ -804,6 +806,61 @@ function runMigrations(): void {
         }
       },
     },
+    {
+      version: 20,
+      description: 'Add staged_goals, progress_report_goals tables, visit_type and progress_report_data columns',
+      up: () => {
+        // 1. staged_goals table
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS staged_goals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            client_id INTEGER NOT NULL REFERENCES clients(id),
+            goal_text TEXT NOT NULL DEFAULT '',
+            goal_type TEXT NOT NULL DEFAULT 'STG',
+            category TEXT NOT NULL DEFAULT '',
+            rationale TEXT NOT NULL DEFAULT '',
+            flagged_at TEXT NOT NULL DEFAULT (datetime('now')),
+            flagged_from_note_id INTEGER REFERENCES notes(id),
+            status TEXT NOT NULL DEFAULT 'staged',
+            promoted_at TEXT,
+            promoted_in_note_id INTEGER REFERENCES notes(id),
+            promoted_to_goal_id INTEGER REFERENCES goals(id),
+            dismissed_at TEXT,
+            dismiss_reason TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            deleted_at TEXT
+          )
+        `);
+
+        // 2. progress_report_goals table
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS progress_report_goals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            note_id INTEGER NOT NULL REFERENCES notes(id),
+            goal_id INTEGER NOT NULL REFERENCES goals(id),
+            status_at_report TEXT NOT NULL DEFAULT 'progressing',
+            performance_data TEXT NOT NULL DEFAULT '',
+            clinical_notes TEXT NOT NULL DEFAULT '',
+            goal_text_snapshot TEXT NOT NULL DEFAULT '',
+            is_new_goal INTEGER NOT NULL DEFAULT 0,
+            is_staged_promotion INTEGER NOT NULL DEFAULT 0,
+            staged_goal_id INTEGER REFERENCES staged_goals(id),
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            deleted_at TEXT
+          )
+        `);
+
+        // 3. notes.progress_report_data column
+        if (!columnExists('notes', 'progress_report_data')) {
+          db.exec("ALTER TABLE notes ADD COLUMN progress_report_data TEXT DEFAULT ''");
+        }
+
+        // 4. appointments.visit_type column
+        if (!columnExists('appointments', 'visit_type')) {
+          db.exec("ALTER TABLE appointments ADD COLUMN visit_type TEXT DEFAULT 'O'");
+        }
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
@@ -887,6 +944,17 @@ function createIndexes(): void {
     CREATE INDEX IF NOT EXISTS idx_notes_note_type ON notes(note_type);
     CREATE INDEX IF NOT EXISTS idx_appointments_entity_id ON appointments(entity_id);
     CREATE INDEX IF NOT EXISTS idx_invoices_entity_id ON invoices(entity_id);
+  `);
+
+  // V5 Progress Report & Staged Goals indexes
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_staged_goals_client_id ON staged_goals(client_id);
+    CREATE INDEX IF NOT EXISTS idx_staged_goals_status ON staged_goals(status);
+    CREATE INDEX IF NOT EXISTS idx_staged_goals_deleted_at ON staged_goals(deleted_at);
+    CREATE INDEX IF NOT EXISTS idx_progress_report_goals_note_id ON progress_report_goals(note_id);
+    CREATE INDEX IF NOT EXISTS idx_progress_report_goals_goal_id ON progress_report_goals(goal_id);
+    CREATE INDEX IF NOT EXISTS idx_progress_report_goals_deleted_at ON progress_report_goals(deleted_at);
+    CREATE INDEX IF NOT EXISTS idx_appointments_visit_type ON appointments(visit_type);
   `);
 }
 

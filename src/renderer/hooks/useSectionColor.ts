@@ -14,6 +14,7 @@ const ROUTE_SECTIONS: { prefix: string; section: string; color: string }[] = [
   { prefix: '/clients', section: 'Clinical', color: '#14b8a6' },
   { prefix: '/calendar', section: 'Clinical', color: '#14b8a6' },
   { prefix: '/notes', section: 'Clinical', color: '#14b8a6' },
+  { prefix: '/evals', section: 'Clinical', color: '#14b8a6' },
   // Business (deep blue)
   { prefix: '/billing', section: 'Business', color: '#2563eb' },
   { prefix: '/entities', section: 'Business', color: '#2563eb' },

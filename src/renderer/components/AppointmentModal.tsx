@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { X, Calendar, Clock, User, Building2, Repeat, ChevronDown } from 'lucide-react';
 import { addDays, addWeeks, addMonths, format } from 'date-fns';
-import type { Appointment, AppointmentStatus, Client, ContractedEntity, EntityFeeSchedule } from '../../shared/types';
+import type { Appointment, AppointmentStatus, Client, ContractedEntity, EntityFeeSchedule, VisitType } from '../../shared/types';
+import { VISIT_TYPE_LABELS } from '../../shared/types';
 
 // Unified search result item
 type SearchItem =
@@ -67,6 +68,7 @@ export default function AppointmentModal({
     scheduled_time: '09:00',
     duration_minutes: 45,
     status: 'scheduled' as AppointmentStatus,
+    visit_type: 'O' as VisitType,
   });
   const [patientName, setPatientName] = useState('');
 
@@ -94,6 +96,7 @@ export default function AppointmentModal({
           scheduled_time: appointment.scheduled_time,
           duration_minutes: appointment.duration_minutes,
           status: appointment.status,
+          visit_type: (appointment as any).visit_type || 'O',
         });
         // Restore selection
         if (appointment.entity_id && appointment.entity_name) {
@@ -117,6 +120,7 @@ export default function AppointmentModal({
           scheduled_time: defaultTime || '09:00',
           duration_minutes: duration,
           status: 'scheduled',
+          visit_type: 'O' as VisitType,
         });
         setSearchQuery('');
         setSelectedItem(null);
@@ -448,6 +452,27 @@ export default function AppointmentModal({
                 </option>
               ))}
             </select>
+          </div>
+
+          {/* Visit Type */}
+          <div>
+            <label className="label">Visit Type</label>
+            <div className="flex gap-1">
+              {(['O', 'T', 'H', 'C'] as VisitType[]).map((vt) => (
+                <button
+                  key={vt}
+                  type="button"
+                  onClick={() => setFormData((prev) => ({ ...prev, visit_type: vt }))}
+                  className={`px-2.5 py-1.5 rounded text-xs font-medium transition-colors ${
+                    formData.visit_type === vt
+                      ? 'bg-[var(--color-primary)] text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {VISIT_TYPE_LABELS[vt]}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Repeat Visit (only for new appointments) */}

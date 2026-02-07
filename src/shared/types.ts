@@ -3,6 +3,25 @@ export type ClientStatus = 'active' | 'discharged' | 'hold';
 export type GoalType = 'STG' | 'LTG';
 export type GoalStatus = 'active' | 'met' | 'discontinued' | 'modified';
 export type AppointmentStatus = 'scheduled' | 'completed' | 'cancelled' | 'no-show';
+export type VisitType = 'T' | 'H' | 'O' | 'C';
+export type StagedGoalStatus = 'staged' | 'promoted' | 'dismissed';
+export type ProgressReportGoalStatus = 'progressing' | 'met' | 'regressed' | 'plateau' | 'discontinued' | 'modified';
+
+export const VISIT_TYPE_LABELS: Record<VisitType, string> = {
+  T: 'Telehealth',
+  H: 'Home Visit',
+  O: 'Office',
+  C: 'Community',
+};
+
+export const PROGRESS_REPORT_GOAL_STATUS_LABELS: Record<ProgressReportGoalStatus, string> = {
+  progressing: 'Progressing',
+  met: 'Met',
+  regressed: 'Regressed',
+  plateau: 'Plateau',
+  discontinued: 'Discontinued',
+  modified: 'Modified',
+};
 export type SOAPSection = 'S' | 'O' | 'A' | 'P';
 
 // Note Format Types
@@ -237,6 +256,7 @@ export interface Note {
   // Note type for compliance engine
   note_type: 'soap' | 'progress_report' | 'recertification' | 'discharge';
   patient_name: string;
+  progress_report_data: string;          // JSON ProgressReportData
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -261,6 +281,7 @@ export interface Appointment {
   entity_rate: number | null;
   rate_override_reason: string;
   patient_name: string;
+  visit_type: VisitType;
   created_at: string;
   deleted_at: string | null;
   // Joined fields
@@ -505,6 +526,53 @@ export interface ComplianceTracking {
   physician_order_document_id: number | null;
   created_at: string;
   updated_at: string;
+}
+
+// ── Staged Goals & Progress Report Types ──
+
+export interface StagedGoal {
+  id: number;
+  client_id: number;
+  goal_text: string;
+  goal_type: GoalType;
+  category: string;
+  rationale: string;
+  flagged_at: string;
+  flagged_from_note_id: number | null;
+  status: StagedGoalStatus;
+  promoted_at: string | null;
+  promoted_in_note_id: number | null;
+  promoted_to_goal_id: number | null;
+  dismissed_at: string | null;
+  dismiss_reason: string;
+  created_at: string;
+  deleted_at: string | null;
+}
+
+export interface ProgressReportGoal {
+  id: number;
+  note_id: number;
+  goal_id: number;
+  status_at_report: ProgressReportGoalStatus;
+  performance_data: string;
+  clinical_notes: string;
+  goal_text_snapshot: string;
+  is_new_goal: boolean;
+  is_staged_promotion: boolean;
+  staged_goal_id: number | null;
+  created_at: string;
+  deleted_at: string | null;
+}
+
+export interface ProgressReportData {
+  clinical_summary: string;
+  continued_treatment_justification: string;
+  frequency_per_week: number | null;
+  duration_weeks: number | null;
+  plan_of_care_update: string;
+  report_period_start: string;
+  report_period_end: string;
+  visits_in_period: number;
 }
 
 // ── Mileage Types ──
@@ -767,6 +835,18 @@ export interface PocketChartAPI {
     create: (data: Partial<Goal>) => Promise<Goal>;
     update: (id: number, data: Partial<Goal>) => Promise<Goal>;
     delete: (id: number) => Promise<boolean>;
+  };
+  stagedGoals: {
+    listByClient: (clientId: number) => Promise<StagedGoal[]>;
+    listAllByClient: (clientId: number) => Promise<StagedGoal[]>;
+    create: (data: Partial<StagedGoal>) => Promise<StagedGoal>;
+    update: (id: number, data: Partial<StagedGoal>) => Promise<StagedGoal>;
+    promote: (id: number, noteId: number) => Promise<{ stagedGoal: StagedGoal; goal: Goal }>;
+    dismiss: (id: number, reason: string) => Promise<StagedGoal>;
+  };
+  progressReportGoals: {
+    listByNote: (noteId: number) => Promise<ProgressReportGoal[]>;
+    upsert: (noteId: number, goals: Partial<ProgressReportGoal>[]) => Promise<ProgressReportGoal[]>;
   };
   notes: {
     list: (filters?: { clientId?: number; entityId?: number; signed?: boolean }) => Promise<Note[]>;

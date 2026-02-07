@@ -412,6 +412,7 @@ export default function EvalFormPage() {
   const [existingSignedAt, setExistingSignedAt] = useState('');
   const [goalEntries, setGoalEntries] = useState<EvalGoalEntry[]>([]);
   const [goalsAlreadyCreated, setGoalsAlreadyCreated] = useState(false);
+  const [completedGoals, setCompletedGoals] = useState<{ id: number; goal_text: string; goal_type: string; status: string; met_date: string; category: string }[]>([]);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   // Goal bank state
@@ -485,6 +486,8 @@ export default function EvalFormPage() {
             try {
               const clientGoals = await window.api.goals.listByClient(cid);
               const activeClientGoals = clientGoals.filter((g: any) => g.status === 'active');
+              const metOrDcGoals = clientGoals.filter((g: any) => g.status === 'met' || g.status === 'discontinued');
+              setCompletedGoals(metOrDcGoals.map((g: any) => ({ id: g.id, goal_text: g.goal_text, goal_type: g.goal_type, status: g.status, met_date: g.met_date || '', category: g.category || '' })));
               for (const cg of activeClientGoals) {
                 // Skip goals already tracked by this eval
                 if (alreadyCreatedIds.includes(cg.id)) continue;
@@ -570,6 +573,13 @@ export default function EvalFormPage() {
               if (durMatch) setDurValue(parseInt(durMatch[1], 10));
             }
 
+            // Load met/completed goals for display
+            try {
+              const allClientGoals = await window.api.goals.listByClient(cid);
+              const metOrDcGoals = allClientGoals.filter((g: any) => g.status === 'met' || g.status === 'discontinued');
+              setCompletedGoals(metOrDcGoals.map((g: any) => ({ id: g.id, goal_text: g.goal_text, goal_type: g.goal_type, status: g.status, met_date: g.met_date || '', category: g.category || '' })));
+            } catch { /* not critical */ }
+
             // Load active goals if present — link them to existing Goal records
             if (prior.activeGoals && Array.isArray(prior.activeGoals) && prior.activeGoals.length > 0) {
               const entries = prior.activeGoals.map((g: any) => ({
@@ -613,6 +623,8 @@ export default function EvalFormPage() {
         try {
           const clientGoals = await window.api.goals.listByClient(cid);
           const activeClientGoals = clientGoals.filter((g: any) => g.status === 'active');
+          const metOrDcGoals = clientGoals.filter((g: any) => g.status === 'met' || g.status === 'discontinued');
+          setCompletedGoals(metOrDcGoals.map((g: any) => ({ id: g.id, goal_text: g.goal_text, goal_type: g.goal_type, status: g.status, met_date: g.met_date || '', category: g.category || '' })));
           if (activeClientGoals.length > 0) {
             const entries: EvalGoalEntry[] = activeClientGoals.map((cg: any) => ({
               goal_text: cg.goal_text || '',
@@ -1029,9 +1041,6 @@ export default function EvalFormPage() {
               <ArrowLeft className="w-5 h-5" />
             </button>
             <div>
-              <p className="text-sm text-[var(--color-text-secondary)]">
-                {client.first_name} {client.last_name}
-              </p>
               <h1 className="page-title flex items-center gap-2">
                 <ClipboardList className="w-6 h-6" style={{ color: sectionColor.color }} />
                 {isEditing ? 'Edit Evaluation' : evalType === 'reassessment' ? 'Reassessment / Updated Plan of Care' : 'New Evaluation'}
@@ -1041,6 +1050,27 @@ export default function EvalFormPage() {
                   </span>
                 )}
               </h1>
+              <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                <span className="text-sm font-medium text-[var(--color-text)]">
+                  {client.first_name} {client.last_name}
+                </span>
+                {client.discipline && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-teal-50 text-teal-600 font-semibold">{client.discipline}</span>
+                )}
+                {(client.primary_dx_code || client.primary_dx_description) && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-50 text-violet-600 font-medium">
+                    {[client.primary_dx_code, client.primary_dx_description].filter(Boolean).join(' — ')}
+                  </span>
+                )}
+                {content?.frequency_duration?.trim() && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium">{content.frequency_duration}</span>
+                )}
+                {content?.treatment_plan?.trim() && (
+                  <span className="text-[10px] text-[var(--color-text-tertiary)] truncate max-w-xs" title={content.treatment_plan}>
+                    Tx: {content.treatment_plan.length > 50 ? content.treatment_plan.slice(0, 50) + '…' : content.treatment_plan}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -1420,6 +1450,33 @@ export default function EvalFormPage() {
             );
           })()}
         </div>
+
+        {/* Goals Met / Completed */}
+        {completedGoals.length > 0 && (
+          <div className="card p-5 mb-6 bg-green-50/30 border-l-4 border-l-green-400">
+            <h2 className="text-base font-semibold text-[var(--color-text)] mb-3 flex items-center gap-2">
+              <CheckCircle className="w-5 h-5 text-green-500" />
+              Goals Met / Completed
+              <span className="text-xs font-normal text-[var(--color-text-secondary)]">({completedGoals.length})</span>
+            </h2>
+            <div className="space-y-1.5">
+              {completedGoals.map((goal) => (
+                <div key={goal.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/60 border border-green-100">
+                  <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                    goal.status === 'met' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
+                  }`}>
+                    {goal.status === 'met' ? '✓ Met' : "DC'd"}
+                  </span>
+                  <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${goal.goal_type === 'STG' ? 'bg-blue-50 text-blue-600' : 'bg-purple-50 text-purple-600'}`}>
+                    {goal.goal_type}
+                  </span>
+                  <span className="text-xs text-[var(--color-text-secondary)] flex-1">{goal.goal_text}</span>
+                  {goal.met_date && <span className="text-[10px] text-green-600 font-medium">{goal.met_date}</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Treatment Plan */}
         <div className="card p-6 mb-6">

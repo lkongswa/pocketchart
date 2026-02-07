@@ -22,9 +22,12 @@ import {
   Receipt,
   DollarSign,
   CreditCard,
+  Flag,
+  TrendingUp,
+  ClipboardCheck,
 } from 'lucide-react';
-import type { Client, Note, Goal, GoalStatus, Discipline, SOAPSection, NoteFormat, CptLine, PlaceOfService, ContractedEntity, EntityFeeSchedule } from '../../shared/types';
-import { NOTE_FORMAT_SECTIONS } from '../../shared/types';
+import type { Client, Note, Goal, GoalStatus, Discipline, SOAPSection, NoteFormat, CptLine, PlaceOfService, ContractedEntity, EntityFeeSchedule, StagedGoal, ProgressReportGoalStatus, ProgressReportData, ComplianceTracking, VisitType, GoalsBankEntry, Evaluation } from '../../shared/types';
+import { NOTE_FORMAT_SECTIONS, PROGRESS_REPORT_GOAL_STATUS_LABELS } from '../../shared/types';
 
 // Place of service options
 const PLACE_OF_SERVICE_OPTIONS = [
@@ -178,6 +181,37 @@ export default function NoteFormPage() {
   const assessmentBtnRef = useRef<HTMLButtonElement>(null);
   const planBtnRef = useRef<HTMLButtonElement>(null);
 
+  // Staged goals state
+  const [stagedGoals, setStagedGoals] = useState<StagedGoal[]>([]);
+  const [showStagedForm, setShowStagedForm] = useState(false);
+  const [stagedGoalText, setStagedGoalText] = useState('');
+  const [stagedGoalType, setStagedGoalType] = useState<'STG' | 'LTG'>('STG');
+  const [stagedGoalCategory, setStagedGoalCategory] = useState('');
+  const [stagedGoalRationale, setStagedGoalRationale] = useState('');
+  const [goalsBankEntries, setGoalsBankEntries] = useState<GoalsBankEntry[]>([]);
+  const [goalsBankCategories, setGoalsBankCategories] = useState<string[]>([]);
+  const [treatmentPlanSummary, setTreatmentPlanSummary] = useState<{ treatmentPlan: string; frequencyDuration: string } | null>(null);
+
+  // Progress report state
+  const [isProgressReport, setIsProgressReport] = useState(false);
+  const [complianceData, setComplianceData] = useState<ComplianceTracking | null>(null);
+  const [progressReportGoals, setProgressReportGoals] = useState<{
+    goal_id: number;
+    goal_text_snapshot: string;
+    goal_type: string;
+    status_at_report: ProgressReportGoalStatus;
+    performance_data: string;
+    clinical_notes: string;
+    is_new_goal: boolean;
+    is_staged_promotion: boolean;
+    staged_goal_id: number | null;
+  }[]>([]);
+  const [clinicalSummary, setClinicalSummary] = useState('');
+  const [continuedTreatmentJustification, setContinuedTreatmentJustification] = useState('');
+  const [planOfCareUpdate, setPlanOfCareUpdate] = useState('');
+  const [prFrequencyPerWeek, setPrFrequencyPerWeek] = useState<number | null>(null);
+  const [prDurationWeeks, setPrDurationWeeks] = useState<number | null>(null);
+
   // ── Data Loading ──
 
   const loadData = useCallback(async () => {
@@ -186,20 +220,53 @@ export default function NoteFormPage() {
       setLoading(true);
       const cid = parseInt(clientId, 10);
 
-      const [clientData, goalsData, notesData, entitiesData, noteFormatVal] = await Promise.all([
+      const [clientData, goalsData, notesData, entitiesData, noteFormatVal, stagedGoalsData, complianceResult] = await Promise.all([
         window.api.clients.get(cid),
         window.api.goals.listByClient(cid),
         window.api.notes.listByClient(cid),
         window.api.contractedEntities.list().catch(() => [] as ContractedEntity[]),
         window.api.settings.get('note_format').catch(() => null),
+        window.api.stagedGoals.listByClient(cid),
+        window.api.compliance.getByClient(cid).catch(() => null),
       ]);
 
       if (noteFormatVal) setNoteFormat(noteFormatVal as NoteFormat);
+      setStagedGoals(stagedGoalsData);
+      setComplianceData(complianceResult);
 
       setEntities(entitiesData);
 
       setClient(clientData);
       setGoals(goalsData);
+
+      // Load goals bank for this client's discipline
+      try {
+        const bankEntries = await window.api.goalsBank.list({ discipline: clientData.discipline });
+        setGoalsBankEntries(bankEntries);
+        const cats = [...new Set(bankEntries.map((e: GoalsBankEntry) => e.category).filter(Boolean))];
+        setGoalsBankCategories(cats.sort());
+      } catch { /* goals bank not critical */ }
+
+      // Load latest eval's treatment plan for header context
+      try {
+        const evals = await window.api.evaluations.listByClient(cid) as Evaluation[];
+        const signedEvals = evals.filter(e => e.signed_at).sort((a, b) =>
+          new Date(b.eval_date).getTime() - new Date(a.eval_date).getTime()
+        );
+        const latestEval = signedEvals[0] || evals.sort((a, b) =>
+          new Date(b.eval_date).getTime() - new Date(a.eval_date).getTime()
+        )[0];
+        if (latestEval?.content) {
+          const parsed = JSON.parse(latestEval.content);
+          if (parsed.treatment_plan || parsed.frequency_duration) {
+            setTreatmentPlanSummary({
+              treatmentPlan: parsed.treatment_plan || '',
+              frequencyDuration: parsed.frequency_duration || '',
+            });
+          }
+        }
+      } catch { /* eval lookup not critical */ }
+
       // Sort notes by date descending, take last 3
       const sortedNotes = notesData.sort(
         (a: Note, b: Note) =>
@@ -282,6 +349,33 @@ export default function NoteFormPage() {
             setEntityFeeSchedule(fees);
           } catch {}
         }
+
+        // Progress report fields
+        if (note.note_type === 'progress_report') {
+          setIsProgressReport(true);
+          try {
+            const prData: ProgressReportData = JSON.parse(note.progress_report_data || '{}');
+            setClinicalSummary(prData.clinical_summary || '');
+            setContinuedTreatmentJustification(prData.continued_treatment_justification || '');
+            setPlanOfCareUpdate(prData.plan_of_care_update || '');
+            setPrFrequencyPerWeek(prData.frequency_per_week ?? null);
+            setPrDurationWeeks(prData.duration_weeks ?? null);
+          } catch {}
+          try {
+            const prGoals = await window.api.progressReportGoals.listByNote(parseInt(noteId, 10));
+            setProgressReportGoals(prGoals.map((g: any) => ({
+              goal_id: g.goal_id,
+              goal_text_snapshot: g.goal_text_snapshot,
+              goal_type: g.goal_type || 'STG',
+              status_at_report: g.status_at_report,
+              performance_data: g.performance_data || '',
+              clinical_notes: g.clinical_notes || '',
+              is_new_goal: g.is_new_goal || false,
+              is_staged_promotion: g.is_staged_promotion || false,
+              staged_goal_id: g.staged_goal_id || null,
+            })));
+          } catch {}
+        }
       }
     } catch (err) {
       console.error('Failed to load data:', err);
@@ -303,25 +397,31 @@ export default function NoteFormPage() {
 
   // ── Auto-populate charge amount from fee schedule ──
   useEffect(() => {
-    if (isEditing) return; // Don't override charge when editing existing notes
-    const primaryCode = cptLines[0]?.code?.trim();
-    if (!primaryCode || primaryCode.length < 4) return;
+    const validLines = cptLines.filter(l => l.code?.trim() && l.code.trim().length >= 4);
+    if (validLines.length === 0) return;
 
     (async () => {
       try {
         const fees = await window.api.feeSchedule.list();
-        const match = fees.find((f: any) => f.cpt_code === primaryCode);
-        if (match && match.amount) {
-          // Calculate total: sum of (each CPT line's units * matched amount)
-          // For simplicity, use the primary code's amount * total units
-          const totalUnits = cptLines.reduce((sum, l) => sum + (l.units || 1), 0);
-          setChargeAmount(match.amount * totalUnits);
+        let total = 0;
+        let anyMatch = false;
+        for (const line of cptLines) {
+          const code = line.code?.trim();
+          if (!code || code.length < 4) continue;
+          const match = fees.find((f: any) => f.cpt_code === code);
+          if (match && match.amount) {
+            total += match.amount * (line.units || 1);
+            anyMatch = true;
+          }
         }
-      } catch (err) {
+        if (anyMatch) {
+          setChargeAmount(Math.round(total * 100) / 100);
+        }
+      } catch {
         // Silently fail - fee schedule lookup is optional
       }
     })();
-  }, [cptLines, isEditing]);
+  }, [cptLines]);
 
   // ── Unsaved changes detection ──
   const hasFormContent = Boolean(
@@ -391,7 +491,17 @@ export default function NoteFormPage() {
         entity_id: isContractedVisit ? entityId ?? undefined : undefined,
         rate_override: isContractedVisit ? rateOverride ?? undefined : undefined,
         rate_override_reason: isContractedVisit ? rateOverrideReason : '',
-        note_type: isContractedVisit ? noteType as Note['note_type'] : undefined,
+        note_type: isProgressReport ? 'progress_report' as Note['note_type'] : (isContractedVisit ? noteType as Note['note_type'] : 'soap' as Note['note_type']),
+        progress_report_data: isProgressReport ? JSON.stringify({
+          clinical_summary: clinicalSummary,
+          continued_treatment_justification: continuedTreatmentJustification,
+          frequency_per_week: prFrequencyPerWeek,
+          duration_weeks: prDurationWeeks,
+          plan_of_care_update: planOfCareUpdate,
+          report_period_start: complianceData?.last_progress_date || '',
+          report_period_end: dateOfService,
+          visits_in_period: complianceData?.visits_since_last_progress || 0,
+        } as ProgressReportData) : '',
         patient_name: isContractedVisit ? patientName : '',
       };
 
@@ -405,7 +515,7 @@ export default function NoteFormPage() {
     } catch (err) {
       console.error('Auto-save failed:', err);
     }
-  }, [clientId, client, existingSignedAt, subjective, objective, assessment, plan, dateOfService, timeIn, timeOut, cptLines, cptModifiers, placeOfService, chargeAmount, goalsAddressed, savedNoteId, isContractedVisit, entityId, rateOverride, rateOverrideReason, noteType, patientName]);
+  }, [clientId, client, existingSignedAt, subjective, objective, assessment, plan, dateOfService, timeIn, timeOut, cptLines, cptModifiers, placeOfService, chargeAmount, goalsAddressed, savedNoteId, isContractedVisit, entityId, rateOverride, rateOverrideReason, noteType, patientName, isProgressReport, clinicalSummary, continuedTreatmentJustification, planOfCareUpdate, prFrequencyPerWeek, prDurationWeeks, complianceData]);
 
   // Keep ref current for the navigation blocker
   performAutoSaveRef.current = performAutoSave;
@@ -421,7 +531,7 @@ export default function NoteFormPage() {
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
-  }, [subjective, objective, assessment, plan, dateOfService, timeIn, timeOut, cptLines, performAutoSave, loading, existingSignedAt]);
+  }, [subjective, objective, assessment, plan, dateOfService, timeIn, timeOut, cptLines, performAutoSave, loading, existingSignedAt, isProgressReport, clinicalSummary, continuedTreatmentJustification, planOfCareUpdate, prFrequencyPerWeek, prDurationWeeks]);
 
   // ── Actions ──
 
@@ -547,7 +657,17 @@ export default function NoteFormPage() {
         entity_id: isContractedVisit ? entityId ?? undefined : undefined,
         rate_override: isContractedVisit ? rateOverride ?? undefined : undefined,
         rate_override_reason: isContractedVisit ? rateOverrideReason : '',
-        note_type: isContractedVisit ? noteType as Note['note_type'] : undefined,
+        note_type: isProgressReport ? 'progress_report' as Note['note_type'] : (isContractedVisit ? noteType as Note['note_type'] : 'soap' as Note['note_type']),
+        progress_report_data: isProgressReport ? JSON.stringify({
+          clinical_summary: clinicalSummary,
+          continued_treatment_justification: continuedTreatmentJustification,
+          frequency_per_week: prFrequencyPerWeek,
+          duration_weeks: prDurationWeeks,
+          plan_of_care_update: planOfCareUpdate,
+          report_period_start: complianceData?.last_progress_date || '',
+          report_period_end: dateOfService,
+          visits_in_period: complianceData?.visits_since_last_progress || 0,
+        } as ProgressReportData) : '',
         patient_name: isContractedVisit ? patientName : '',
       };
 
@@ -558,6 +678,23 @@ export default function NoteFormPage() {
       } else {
         const created = await window.api.notes.create(noteData);
         resultNoteId = created?.id ?? null;
+      }
+
+      // Save progress report goals and update goal statuses
+      if (sign && isProgressReport) {
+        const noteIdForPR = resultNoteId;
+        if (noteIdForPR) {
+          await window.api.progressReportGoals.upsert(noteIdForPR, progressReportGoals);
+          for (const prg of progressReportGoals) {
+            if (prg.status_at_report === 'met') {
+              await window.api.goals.update(prg.goal_id, { status: 'met', met_date: dateOfService } as any);
+            } else if (prg.status_at_report === 'discontinued') {
+              await window.api.goals.update(prg.goal_id, { status: 'discontinued' } as any);
+            } else if (prg.status_at_report === 'modified') {
+              await window.api.goals.update(prg.goal_id, { status: 'modified' } as any);
+            }
+          }
+        }
       }
 
       setFormSaved(true);
@@ -687,13 +824,31 @@ export default function NoteFormPage() {
               <ArrowLeft className="w-5 h-5" />
             </button>
             <div>
-              <p className="text-sm text-[var(--color-text-secondary)]">
-                {client.first_name} {client.last_name}
-              </p>
               <h1 className="page-title flex items-center gap-2">
                 <FileText className="w-6 h-6" style={{ color: sectionColor.color }} />
                 {isEditing ? 'Edit SOAP Note' : 'New SOAP Note'}
               </h1>
+              <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                <span className="text-sm font-medium text-[var(--color-text)]">
+                  {client.first_name} {client.last_name}
+                </span>
+                {client.discipline && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-teal-50 text-teal-600 font-semibold">{client.discipline}</span>
+                )}
+                {(client.primary_dx_code || client.primary_dx_description) && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-50 text-violet-600 font-medium">
+                    {[client.primary_dx_code, client.primary_dx_description].filter(Boolean).join(' — ')}
+                  </span>
+                )}
+                {treatmentPlanSummary?.frequencyDuration && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium">{treatmentPlanSummary.frequencyDuration}</span>
+                )}
+                {treatmentPlanSummary?.treatmentPlan && (
+                  <span className="text-[10px] text-[var(--color-text-tertiary)] truncate max-w-xs" title={treatmentPlanSummary.treatmentPlan}>
+                    Tx: {treatmentPlanSummary.treatmentPlan.length > 50 ? treatmentPlanSummary.treatmentPlan.slice(0, 50) + '…' : treatmentPlanSummary.treatmentPlan}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -1004,6 +1159,96 @@ export default function NoteFormPage() {
           )}
         </div>
 
+        {/* ── Compliance Status & Progress Report Toggle ── */}
+        {complianceData && (() => {
+          const isOverdue = complianceData.next_progress_due && new Date(complianceData.next_progress_due) < new Date();
+          const isApproaching = complianceData.visits_since_last_progress >= (complianceData.progress_visit_threshold - 2);
+          const isDue = isOverdue || isApproaching;
+          return (
+            <div className={`card p-4 mb-4 ${isProgressReport ? 'border-l-4 border-l-teal-500 bg-teal-50/30' : isDue ? 'border-l-4 border-l-red-400' : ''}`}>
+              {/* Compliance Info — always visible */}
+              <div className={`flex items-center gap-3 text-xs ${isDue ? '' : 'text-teal-700'}`}>
+                <div className="flex items-center gap-1.5">
+                  <ClipboardCheck className={`w-4 h-4 ${isDue ? 'text-red-500' : 'text-teal-600'}`} />
+                  <span className={`font-semibold ${isDue ? 'text-red-600' : ''}`}>
+                    Visits: {complianceData.visits_since_last_progress} / {complianceData.progress_visit_threshold}
+                  </span>
+                </div>
+                {complianceData.next_progress_due && (
+                  <span className={isDue ? 'font-bold text-red-600 animate-pulse' : 'text-teal-600'}>
+                    {isOverdue ? '⚠ PR OVERDUE' : `Due: ${complianceData.next_progress_due}`}
+                  </span>
+                )}
+                {complianceData.last_progress_date && (
+                  <span className="text-[var(--color-text-tertiary)]">
+                    Last: {complianceData.last_progress_date}
+                  </span>
+                )}
+              </div>
+
+              {/* Toggle checkbox */}
+              {!existingSignedAt && (
+                <label className="flex items-center gap-2 cursor-pointer mt-3 pt-3 border-t border-[var(--color-border)]">
+                  <input
+                    type="checkbox"
+                    checked={isProgressReport}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setIsProgressReport(checked);
+                      if (checked && activeGoals.length > 0) {
+                        setProgressReportGoals(activeGoals.map(g => ({
+                          goal_id: g.id, goal_text_snapshot: g.goal_text, goal_type: g.goal_type || 'STG',
+                          status_at_report: 'progressing' as ProgressReportGoalStatus,
+                          performance_data: '', clinical_notes: '',
+                          is_new_goal: false, is_staged_promotion: false, staged_goal_id: null,
+                        })));
+                      }
+                    }}
+                    disabled={!!existingSignedAt}
+                    className="w-4 h-4 rounded border-gray-300 accent-teal-600"
+                  />
+                  <span className="text-sm font-semibold text-[var(--color-text)]">Include Progress Report</span>
+                </label>
+              )}
+            </div>
+          );
+        })()}
+        {!complianceData && !existingSignedAt && (
+          <div className={`card p-4 mb-4 ${isProgressReport ? 'border-l-4 border-l-teal-500 bg-teal-50/30' : ''}`}>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isProgressReport}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setIsProgressReport(checked);
+                  if (checked && activeGoals.length > 0) {
+                    setProgressReportGoals(activeGoals.map(g => ({
+                      goal_id: g.id, goal_text_snapshot: g.goal_text, goal_type: g.goal_type || 'STG',
+                      status_at_report: 'progressing' as ProgressReportGoalStatus,
+                      performance_data: '', clinical_notes: '',
+                      is_new_goal: false, is_staged_promotion: false, staged_goal_id: null,
+                    })));
+                  }
+                }}
+                disabled={!!existingSignedAt}
+                className="w-4 h-4 rounded border-gray-300 accent-teal-600"
+              />
+              <ClipboardCheck className="w-4 h-4 text-teal-600" />
+              <span className="text-sm font-semibold text-[var(--color-text)]">Include Progress Report</span>
+            </label>
+          </div>
+        )}
+
+        {existingSignedAt && isProgressReport && (
+          <div className="card p-4 mb-4 border-l-4 border-l-teal-500 bg-teal-50/30">
+            <div className="flex items-center gap-2">
+              <ClipboardCheck className="w-4 h-4 text-teal-600" />
+              <span className="text-sm font-semibold text-teal-700">Progress Report</span>
+            </div>
+          </div>
+        )}
+
         {/* Section 1 (Subjective / Data / Behavior) */}
         <SOAPSectionCard
           title={NOTE_FORMAT_SECTIONS[noteFormat][0].label}
@@ -1035,6 +1280,136 @@ export default function NoteFormPage() {
           anchorRef={getNoteBankButtonRef('O')}
           placeholder={NOTE_FORMAT_SECTIONS[noteFormat][1].placeholder}
         />
+
+        {/* ── Goal Progress (Progress Report only) ── */}
+        {isProgressReport && (
+          <div className="card p-5 mb-4 bg-teal-50/30 border-l-4 border-l-teal-400">
+            <h2 className="text-base font-semibold text-[var(--color-text)] mb-4 flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-teal-600" />
+              Goal Progress
+            </h2>
+            <div className="space-y-4">
+              {progressReportGoals.map((prg, idx) => (
+                <div key={prg.goal_id} className="p-4 rounded-lg bg-white border border-[var(--color-border)]">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${prg.goal_type === 'LTG' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                      {prg.goal_type}
+                    </span>
+                    <p className="text-sm font-medium text-[var(--color-text)] flex-1">{prg.goal_text_snapshot}</p>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <label className="label text-xs">Status</label>
+                      <select className="select text-sm w-full" value={prg.status_at_report}
+                        disabled={!!existingSignedAt}
+                        onChange={(e) => {
+                          const updated = [...progressReportGoals];
+                          updated[idx] = { ...updated[idx], status_at_report: e.target.value as ProgressReportGoalStatus };
+                          setProgressReportGoals(updated);
+                        }}>
+                        {Object.entries(PROGRESS_REPORT_GOAL_STATUS_LABELS).map(([val, label]) => (
+                          <option key={val} value={val}>{label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="label text-xs">Current Performance</label>
+                      <input className="input text-sm w-full" placeholder="e.g., 75% accuracy, moderate cueing"
+                        disabled={!!existingSignedAt}
+                        value={prg.performance_data}
+                        onChange={(e) => {
+                          const updated = [...progressReportGoals];
+                          updated[idx] = { ...updated[idx], performance_data: e.target.value };
+                          setProgressReportGoals(updated);
+                        }} />
+                    </div>
+                  </div>
+                  <div className="mt-2">
+                    <label className="label text-xs">Clinical Notes</label>
+                    <textarea className="textarea text-sm" rows={2}
+                      disabled={!!existingSignedAt}
+                      placeholder="Goal-specific observations..."
+                      value={prg.clinical_notes}
+                      onChange={(e) => {
+                        const updated = [...progressReportGoals];
+                        updated[idx] = { ...updated[idx], clinical_notes: e.target.value };
+                        setProgressReportGoals(updated);
+                      }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Goals Met / Completed */}
+            {goals.filter(g => g.status === 'met' || g.status === 'discontinued').length > 0 && (
+              <div className="mt-5 pt-4 border-t border-teal-200">
+                <h3 className="text-sm font-semibold text-[var(--color-text)] mb-2 flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-green-500" />
+                  Goals Met / Completed
+                </h3>
+                <div className="space-y-1.5">
+                  {goals.filter(g => g.status === 'met' || g.status === 'discontinued').map((goal) => (
+                    <div key={goal.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/60 border border-green-100">
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                        goal.status === 'met' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
+                      }`}>
+                        {goal.status === 'met' ? '✓ Met' : "DC'd"}
+                      </span>
+                      <span className="text-xs text-[var(--color-text-secondary)] flex-1">{goal.goal_text}</span>
+                      {goal.met_date && <span className="text-[10px] text-green-600">{goal.met_date}</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Staged goals promotion area */}
+            {stagedGoals.length > 0 && !existingSignedAt && (
+              <div className="mt-5 pt-4 border-t border-teal-200">
+                <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3 flex items-center gap-2">
+                  <Flag className="w-4 h-4 text-amber-500" />
+                  Staged Goals for Review
+                </h3>
+                <div className="space-y-2">
+                  {stagedGoals.map((sg) => (
+                    <div key={sg.id} className="flex items-start gap-3 p-3 rounded-lg bg-amber-50 border border-amber-200">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-[var(--color-text)]">{sg.goal_text}</p>
+                        {sg.rationale && <p className="text-xs text-[var(--color-text-secondary)] italic mt-0.5">{sg.rationale}</p>}
+                      </div>
+                      <button className="btn-primary text-xs px-2 py-1 whitespace-nowrap" onClick={async () => {
+                        const noteIdForPromote = savedNoteId;
+                        if (!noteIdForPromote || !clientId) return;
+                        try {
+                          const result = await window.api.stagedGoals.promote(sg.id, noteIdForPromote);
+                          setProgressReportGoals(prev => [...prev, {
+                            goal_id: result.goal.id, goal_text_snapshot: result.goal.goal_text,
+                            goal_type: result.goal.goal_type || 'STG',
+                            status_at_report: 'progressing' as ProgressReportGoalStatus,
+                            performance_data: '', clinical_notes: '',
+                            is_new_goal: true, is_staged_promotion: true, staged_goal_id: sg.id,
+                          }]);
+                          const [updatedStaged, updatedGoals] = await Promise.all([
+                            window.api.stagedGoals.listByClient(parseInt(clientId, 10)),
+                            window.api.goals.listByClient(parseInt(clientId, 10)),
+                          ]);
+                          setStagedGoals(updatedStaged);
+                          setGoals(updatedGoals);
+                        } catch (err) { console.error('Failed to promote staged goal:', err); }
+                      }}>+ Add to POC</button>
+                      <button className="btn-ghost text-xs px-2 py-1 whitespace-nowrap" onClick={async () => {
+                        if (!clientId) return;
+                        await window.api.stagedGoals.dismiss(sg.id, 'Dismissed during progress report');
+                        const updatedStaged = await window.api.stagedGoals.listByClient(parseInt(clientId, 10));
+                        setStagedGoals(updatedStaged);
+                      }}>Dismiss</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Section 3 (Assessment / Plan / Response) */}
         <div className="card p-6 mb-6 bg-violet-50/50">
@@ -1125,6 +1500,21 @@ export default function NoteFormPage() {
           )}
         </div>
 
+        {/* ── Clinical Summary (Progress Report only) ── */}
+        {isProgressReport && (
+          <div className="card p-5 mb-4 bg-teal-50/30 border-l-4 border-l-teal-400">
+            <h2 className="text-base font-semibold text-[var(--color-text)] mb-3">Clinical Summary</h2>
+            <textarea
+              className="textarea"
+              rows={4}
+              disabled={!!existingSignedAt}
+              placeholder="Summarize overall progress, changes in functional status, response to treatment, and rationale for continued skilled services..."
+              value={clinicalSummary}
+              onChange={(e) => setClinicalSummary(e.target.value)}
+            />
+          </div>
+        )}
+
         {/* Section 4 (Plan) — hidden for DAP format */}
         {NOTE_FORMAT_SECTIONS[noteFormat][3].label !== '(unused)' && (
           <SOAPSectionCard
@@ -1141,6 +1531,45 @@ export default function NoteFormPage() {
             anchorRef={getNoteBankButtonRef('P')}
             placeholder={NOTE_FORMAT_SECTIONS[noteFormat][3].placeholder}
           />
+        )}
+
+        {/* ── Plan of Care Update (Progress Report only) ── */}
+        {isProgressReport && (
+          <div className="card p-5 mb-4 bg-teal-50/30 border-l-4 border-l-teal-400">
+            <h2 className="text-base font-semibold text-[var(--color-text)] mb-3">Plan of Care Update</h2>
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="label text-xs">Frequency (sessions/week)</label>
+                <input type="number" className="input" min={1} max={7}
+                  disabled={!!existingSignedAt}
+                  value={prFrequencyPerWeek ?? ''}
+                  onChange={(e) => setPrFrequencyPerWeek(parseInt(e.target.value) || null)} />
+              </div>
+              <div>
+                <label className="label text-xs">Duration (weeks)</label>
+                <input type="number" className="input" min={1}
+                  disabled={!!existingSignedAt}
+                  value={prDurationWeeks ?? ''}
+                  onChange={(e) => setPrDurationWeeks(parseInt(e.target.value) || null)} />
+              </div>
+            </div>
+            <div className="mb-4">
+              <label className="label text-xs">Continued Treatment Justification</label>
+              <textarea className="textarea" rows={3}
+                disabled={!!existingSignedAt}
+                placeholder="Justify continued skilled therapy services: patient demonstrates ongoing potential for functional improvement as evidenced by..."
+                value={continuedTreatmentJustification}
+                onChange={(e) => setContinuedTreatmentJustification(e.target.value)} />
+            </div>
+            <div>
+              <label className="label text-xs">Additional Plan of Care Notes</label>
+              <textarea className="textarea" rows={2}
+                disabled={!!existingSignedAt}
+                placeholder="Updates to treatment approach, goals, or discharge planning..."
+                value={planOfCareUpdate}
+                onChange={(e) => setPlanOfCareUpdate(e.target.value)} />
+            </div>
+          </div>
         )}
 
         {/* Signature */}
@@ -1281,10 +1710,11 @@ export default function NoteFormPage() {
                 </p>
               ) : (
                 <div className="space-y-2">
-                  {goals.map((goal) => (
+                  {/* Active goals */}
+                  {activeGoals.map((goal) => (
                     <div
                       key={goal.id}
-                      className={`card p-2.5 text-xs bg-amber-50/60 border-l-4 border-l-amber-400 ${goal.status !== 'active' ? 'opacity-60' : ''}`}
+                      className="card p-2.5 text-xs bg-amber-50/60 border-l-4 border-l-amber-400"
                     >
                       <p className="text-[var(--color-text)] leading-snug mb-1.5">
                         {goal.goal_text}
@@ -1294,12 +1724,7 @@ export default function NoteFormPage() {
                           {goal.goal_type}
                         </span>
                         <select
-                          className={`text-[10px] border rounded px-1.5 py-0.5 cursor-pointer ${
-                            goal.status === 'met' ? 'bg-green-50 text-green-700 border-green-200' :
-                            goal.status === 'discontinued' ? 'bg-gray-50 text-gray-600 border-gray-200' :
-                            goal.status === 'modified' ? 'bg-amber-50 text-amber-700 border-amber-200' :
-                            'bg-emerald-50 text-emerald-700 border-emerald-200'
-                          }`}
+                          className="text-[10px] border rounded px-1.5 py-0.5 cursor-pointer bg-emerald-50 text-emerald-700 border-emerald-200"
                           value={goal.status}
                           onChange={(e) => handleGoalStatusChange(goal.id, e.target.value as GoalStatus)}
                         >
@@ -1316,9 +1741,176 @@ export default function NoteFormPage() {
                       </div>
                     </div>
                   ))}
+                  {/* Met / Inactive goals — collapsed */}
+                  {goals.filter(g => g.status !== 'active').length > 0 && (
+                    <details className="group">
+                      <summary className="flex items-center gap-1.5 text-[10px] font-medium text-[var(--color-text-secondary)] cursor-pointer hover:text-[var(--color-text)] py-1">
+                        <CheckCircle size={11} className="text-green-500" />
+                        Goals Met / Completed ({goals.filter(g => g.status === 'met').length} met, {goals.filter(g => g.status !== 'active' && g.status !== 'met').length} other)
+                      </summary>
+                      <div className="space-y-1.5 mt-1.5">
+                        {goals.filter(g => g.status !== 'active').map((goal) => (
+                          <div
+                            key={goal.id}
+                            className="card p-2 text-xs bg-gray-50/80 border-l-4 border-l-gray-300 opacity-70"
+                          >
+                            <p className="text-[var(--color-text-secondary)] leading-snug mb-1">
+                              {goal.goal_text}
+                            </p>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className={`badge text-[10px] ${goal.goal_type === 'STG' ? 'bg-blue-50 text-blue-600' : 'bg-purple-50 text-purple-600'}`}>
+                                {goal.goal_type}
+                              </span>
+                              <span className={`text-[10px] font-medium ${
+                                goal.status === 'met' ? 'text-green-600' :
+                                goal.status === 'discontinued' ? 'text-gray-500' :
+                                'text-amber-600'
+                              }`}>
+                                {goal.status === 'met' ? '✓ Met' : goal.status === 'discontinued' ? "DC'd" : 'Modified'}
+                              </span>
+                              {goal.met_date && (
+                                <span className="text-[10px] text-green-600">{formatDate(goal.met_date)}</span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
                 </div>
               )}
             </div>
+
+            {/* Staged Goals in Sidebar */}
+            {stagedGoals.length > 0 && (
+              <div className="mb-4">
+                <h3 className="text-xs font-semibold text-amber-600 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <Flag className="w-3.5 h-3.5" />
+                  Flagged for Checkpoint ({stagedGoals.length})
+                </h3>
+                <div className="space-y-2">
+                  {stagedGoals.map((sg) => (
+                    <div key={sg.id} className="p-2 rounded-lg text-xs bg-amber-50/80 border-l-3 border-l-amber-400 group relative">
+                      <button
+                        type="button"
+                        className="absolute top-1 right-1 p-0.5 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Remove flagged goal"
+                        onClick={async () => {
+                          if (!clientId) return;
+                          await window.api.stagedGoals.dismiss(sg.id, 'Removed by user');
+                          const updated = await window.api.stagedGoals.listByClient(parseInt(clientId, 10));
+                          setStagedGoals(updated);
+                        }}
+                      >
+                        <X size={12} />
+                      </button>
+                      <p className="text-[var(--color-text)] leading-snug pr-5">{sg.goal_text}</p>
+                      <div className="flex items-center gap-1 mt-1">
+                        <span className="text-[10px] font-medium px-1 py-0.5 rounded bg-amber-100 text-amber-700">{sg.goal_type}</span>
+                        {sg.category && <span className="text-[10px] text-[var(--color-text-secondary)]">{sg.category}</span>}
+                      </div>
+                      {sg.rationale && <p className="text-[10px] text-[var(--color-text-secondary)] mt-1 italic">{sg.rationale}</p>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Flag Goal for Checkpoint */}
+            {!existingSignedAt && (
+              <div className="mb-4">
+                <button
+                  type="button"
+                  className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-amber-600 hover:bg-amber-50 border border-amber-200 transition-colors"
+                  onClick={() => setShowStagedForm(!showStagedForm)}
+                >
+                  <Flag className="w-3.5 h-3.5" />
+                  Flag Goal for Checkpoint
+                </button>
+                {showStagedForm && (
+                  <div className="mt-2 p-3 rounded-lg bg-amber-50/50 border border-amber-200 space-y-2">
+                    {/* Category dropdown from goals bank */}
+                    <select
+                      className="w-full px-2 py-1 text-xs border border-amber-200 rounded-md bg-white"
+                      value={stagedGoalCategory}
+                      onChange={(e) => setStagedGoalCategory(e.target.value)}
+                    >
+                      <option value="">Select category...</option>
+                      {goalsBankCategories.map((cat) => (
+                        <option key={cat} value={cat}>{cat}</option>
+                      ))}
+                    </select>
+                    {/* Goal template dropdown filtered by category, or free text */}
+                    {stagedGoalCategory && goalsBankEntries.filter(e => e.category === stagedGoalCategory).length > 0 ? (
+                      <div className="space-y-1.5">
+                        <select
+                          className="w-full px-2 py-1 text-xs border border-amber-200 rounded-md bg-white"
+                          value=""
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              setStagedGoalText(e.target.value);
+                            }
+                          }}
+                        >
+                          <option value="">Pick from bank...</option>
+                          {goalsBankEntries
+                            .filter(e => e.category === stagedGoalCategory)
+                            .map(e => (
+                              <option key={e.id} value={e.goal_template}>{e.goal_template.length > 80 ? e.goal_template.slice(0, 80) + '…' : e.goal_template}</option>
+                            ))}
+                        </select>
+                        <textarea
+                          className="w-full px-2 py-1.5 text-xs border border-amber-200 rounded-md bg-white"
+                          rows={2}
+                          placeholder="Goal text (select from bank above or type custom)..."
+                          value={stagedGoalText}
+                          onChange={(e) => setStagedGoalText(e.target.value)}
+                        />
+                      </div>
+                    ) : (
+                      <textarea
+                        className="w-full px-2 py-1.5 text-xs border border-amber-200 rounded-md bg-white"
+                        rows={2}
+                        placeholder="Goal idea..."
+                        value={stagedGoalText}
+                        onChange={(e) => setStagedGoalText(e.target.value)}
+                      />
+                    )}
+                    <div className="flex gap-2">
+                      <select className="flex-1 px-2 py-1 text-xs border border-amber-200 rounded-md bg-white" value={stagedGoalType}
+                        onChange={(e) => setStagedGoalType(e.target.value as 'STG' | 'LTG')}>
+                        <option value="STG">STG</option>
+                        <option value="LTG">LTG</option>
+                      </select>
+                    </div>
+                    <textarea
+                      className="w-full px-2 py-1.5 text-xs border border-amber-200 rounded-md bg-white"
+                      rows={1}
+                      placeholder="Rationale — what prompted this? (optional)"
+                      value={stagedGoalRationale}
+                      onChange={(e) => setStagedGoalRationale(e.target.value)}
+                    />
+                    <div className="flex gap-2">
+                      <button type="button" className="flex-1 px-2 py-1 text-xs rounded-md text-gray-600 hover:bg-gray-100" onClick={() => { setShowStagedForm(false); setStagedGoalText(''); setStagedGoalCategory(''); setStagedGoalRationale(''); }}>Cancel</button>
+                      <button type="button" className="flex-1 px-2 py-1 text-xs rounded-md bg-amber-500 text-white hover:bg-amber-600 font-medium" onClick={async () => {
+                        if (!stagedGoalText.trim() || !clientId) return;
+                        await window.api.stagedGoals.create({
+                          client_id: parseInt(clientId, 10),
+                          goal_text: stagedGoalText.trim(),
+                          goal_type: stagedGoalType,
+                          category: stagedGoalCategory.trim(),
+                          rationale: stagedGoalRationale.trim(),
+                          flagged_from_note_id: savedNoteId,
+                        });
+                        setStagedGoalText(''); setStagedGoalCategory(''); setStagedGoalRationale(''); setShowStagedForm(false);
+                        const updated = await window.api.stagedGoals.listByClient(parseInt(clientId, 10));
+                        setStagedGoals(updated);
+                      }}>Flag Goal</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Recent Notes */}
             <div>

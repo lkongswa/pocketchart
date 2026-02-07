@@ -37,6 +37,7 @@ import {
   Stethoscope,
   User,
   Activity,
+  Flag,
 } from 'lucide-react';
 import type {
   Client,
@@ -292,6 +293,7 @@ const ClientDetailPage: React.FC = () => {
   // Collapsible sections
   const [showAllNotes, setShowAllNotes] = useState(false);
   const [showAllGoals, setShowAllGoals] = useState(false);
+  const [showInactiveGoals, setShowInactiveGoals] = useState(false);
   const [showDocuments, setShowDocuments] = useState(false);
   const [showCompliance, setShowCompliance] = useState(false);
 
@@ -581,7 +583,9 @@ const ClientDetailPage: React.FC = () => {
   const activeGoals = goals.filter((g) => g.status === 'active');
   const unsignedNotes = notes.filter((n) => !n.signed_at);
   const displayNotes = showAllNotes ? notes : notes.slice(0, 5);
-  const displayGoals = showAllGoals ? goals : goals.slice(0, 4);
+  const sortedActiveGoals = goals.filter((g) => g.status === 'active');
+  const inactiveGoals = goals.filter((g) => g.status !== 'active');
+  const displayActiveGoals = showAllGoals ? sortedActiveGoals : sortedActiveGoals.slice(0, 4);
 
   // Completeness checks
   const demographicsComplete = Boolean(client.dob && client.phone);
@@ -832,74 +836,176 @@ const ClientDetailPage: React.FC = () => {
                 No goals set yet. Add one to track progress.
               </div>
             ) : (
-              <div className="divide-y divide-[var(--color-border)]">
-                {displayGoals.map((goal) => {
-                  const config = goalStatusConfig[goal.status];
-                  const StatusIcon = config.icon;
-                  return (
-                    <div key={goal.id} className="px-4 py-3 hover:bg-gray-50 transition-colors">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5 mb-1">
-                            <span className="badge bg-gray-100 text-gray-700 text-xs font-semibold">{goal.goal_type}</span>
-                            {goal.category && (
-                              <span className="badge bg-blue-50 text-blue-600 text-xs">{formatCategory(goal.category)}</span>
+              <>
+                {/* Active Goals */}
+                <div className="divide-y divide-[var(--color-border)]">
+                  {displayActiveGoals.map((goal) => {
+                    const config = goalStatusConfig[goal.status];
+                    const StatusIcon = config.icon;
+                    return (
+                      <div key={goal.id} className="px-4 py-3 hover:bg-gray-50 transition-colors">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <span className="badge bg-gray-100 text-gray-700 text-xs font-semibold">{goal.goal_type}</span>
+                              {goal.category && (
+                                <span className="badge bg-blue-50 text-blue-600 text-xs">{formatCategory(goal.category)}</span>
+                              )}
+                              <span className={`badge text-xs ${config.className}`}>
+                                <StatusIcon size={10} className="mr-0.5" /> {config.label}
+                              </span>
+                            </div>
+                            <p className="text-sm text-[var(--color-text)]">{goal.goal_text}</p>
+                            {goal.target_date && (
+                              <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+                                Target: {formatDate(goal.target_date)}
+                              </p>
                             )}
-                            <span className={`badge text-xs ${config.className}`}>
-                              <StatusIcon size={10} className="mr-0.5" /> {config.label}
-                            </span>
                           </div>
-                          <p className="text-sm text-[var(--color-text)]">{goal.goal_text}</p>
-                          {goal.target_date && (
-                            <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                              Target: {formatDate(goal.target_date)}
-                              {goal.met_date && <span className="ml-2">Met: {formatDate(goal.met_date)}</span>}
-                            </p>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <select
-                            className="text-xs border border-[var(--color-border)] rounded px-1.5 py-0.5 bg-white cursor-pointer"
-                            value={goal.status}
-                            onClick={(e) => e.stopPropagation()}
-                            onChange={async (e) => {
-                              const newStatus = e.target.value as GoalStatus;
-                              try {
-                                await window.api.goals.update(goal.id, {
-                                  ...goal,
-                                  status: newStatus,
-                                  met_date: newStatus === 'met' ? new Date().toISOString().slice(0, 10) : goal.met_date,
-                                });
-                                const updatedGoals = await window.api.goals.listByClient(clientId);
-                                setGoals(updatedGoals);
-                              } catch (err) {
-                                console.error('Failed to update goal status:', err);
-                              }
-                            }}
-                          >
-                            <option value="active">Active</option>
-                            <option value="met">Met</option>
-                            <option value="discontinued">Discontinued</option>
-                            <option value="modified">Modified</option>
-                          </select>
-                          <button className="btn-ghost p-1" onClick={() => openEditGoal(goal)}>
-                            <Edit size={12} />
-                          </button>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <select
+                              className="text-xs border border-[var(--color-border)] rounded px-1.5 py-0.5 bg-white cursor-pointer"
+                              value={goal.status}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={async (e) => {
+                                const newStatus = e.target.value as GoalStatus;
+                                try {
+                                  await window.api.goals.update(goal.id, {
+                                    ...goal,
+                                    status: newStatus,
+                                    met_date: newStatus === 'met' ? new Date().toISOString().slice(0, 10) : goal.met_date,
+                                  });
+                                  const updatedGoals = await window.api.goals.listByClient(clientId);
+                                  setGoals(updatedGoals);
+                                } catch (err) {
+                                  console.error('Failed to update goal status:', err);
+                                }
+                              }}
+                            >
+                              <option value="active">Active</option>
+                              <option value="met">Met</option>
+                              <option value="discontinued">Discontinued</option>
+                              <option value="modified">Modified</option>
+                            </select>
+                            <button className="btn-ghost p-1" onClick={() => openEditGoal(goal)}>
+                              <Edit size={12} />
+                            </button>
+                            <button
+                              className="btn-ghost p-1 text-amber-500 hover:text-amber-600 hover:bg-amber-50"
+                              title="Flag for Checkpoint"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                try {
+                                  await window.api.stagedGoals.create({
+                                    client_id: clientId,
+                                    goal_text: goal.goal_text,
+                                    goal_type: goal.goal_type,
+                                    category: goal.category || '',
+                                    rationale: '',
+                                    flagged_from_note_id: undefined,
+                                  });
+                                  (e.target as HTMLElement).closest('button')!.classList.add('text-emerald-500');
+                                  setTimeout(() => {
+                                    (e.target as HTMLElement).closest('button')?.classList.remove('text-emerald-500');
+                                  }, 1500);
+                                } catch (err) {
+                                  console.error('Failed to flag goal for checkpoint:', err);
+                                }
+                              }}
+                            >
+                              <Flag size={12} />
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {goals.length > 4 && (
-              <button
-                className="w-full py-2 text-xs text-[var(--color-primary)] font-medium hover:bg-gray-50 flex items-center justify-center gap-1"
-                onClick={() => setShowAllGoals(!showAllGoals)}
-              >
-                {showAllGoals ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                {showAllGoals ? 'Show less' : `Show all ${goals.length} goals`}
-              </button>
+                    );
+                  })}
+                </div>
+                {sortedActiveGoals.length > 4 && (
+                  <button
+                    className="w-full py-2 text-xs text-[var(--color-primary)] font-medium hover:bg-gray-50 flex items-center justify-center gap-1 border-b border-[var(--color-border)]"
+                    onClick={() => setShowAllGoals(!showAllGoals)}
+                  >
+                    {showAllGoals ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    {showAllGoals ? 'Show less' : `Show all ${sortedActiveGoals.length} active goals`}
+                  </button>
+                )}
+
+                {/* Inactive Goals — collapsed section */}
+                {inactiveGoals.length > 0 && (
+                  <div>
+                    <button
+                      className="w-full flex items-center gap-2 px-4 py-2.5 text-xs font-medium text-[var(--color-text-secondary)] hover:bg-gray-50 transition-colors"
+                      onClick={() => setShowInactiveGoals(!showInactiveGoals)}
+                    >
+                      {showInactiveGoals ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                      <CheckCircle size={12} className="text-green-500" />
+                      Goals Met / Completed ({inactiveGoals.filter(g => g.status === 'met').length} met, {inactiveGoals.filter(g => g.status !== 'met').length} other)
+                    </button>
+                    {showInactiveGoals && (
+                      <div className="divide-y divide-[var(--color-border)] bg-gray-50/50">
+                        {inactiveGoals.map((goal) => {
+                          const config = goalStatusConfig[goal.status];
+                          const StatusIcon = config.icon;
+                          return (
+                            <div key={goal.id} className="px-4 py-2.5 opacity-75">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-1.5 mb-0.5">
+                                    <span className="badge bg-gray-100 text-gray-600 text-[10px] font-semibold">{goal.goal_type}</span>
+                                    {goal.category && (
+                                      <span className="badge bg-blue-50/60 text-blue-500 text-[10px]">{formatCategory(goal.category)}</span>
+                                    )}
+                                    <span className={`badge text-[10px] ${config.className}`}>
+                                      <StatusIcon size={9} className="mr-0.5" /> {config.label}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-[var(--color-text-secondary)]">{goal.goal_text}</p>
+                                  {(goal.target_date || goal.met_date) && (
+                                    <p className="text-[10px] text-[var(--color-text-tertiary)] mt-0.5">
+                                      {goal.target_date && `Target: ${formatDate(goal.target_date)}`}
+                                      {goal.met_date && <span className="ml-2 text-green-600 font-medium">Met: {formatDate(goal.met_date)}</span>}
+                                    </p>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <select
+                                    className="text-[10px] border border-[var(--color-border)] rounded px-1 py-0.5 bg-white cursor-pointer"
+                                    value={goal.status}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onChange={async (e) => {
+                                      const newStatus = e.target.value as GoalStatus;
+                                      try {
+                                        await window.api.goals.update(goal.id, {
+                                          ...goal,
+                                          status: newStatus,
+                                          met_date: newStatus === 'met' ? new Date().toISOString().slice(0, 10) : goal.met_date,
+                                        });
+                                        const updatedGoals = await window.api.goals.listByClient(clientId);
+                                        setGoals(updatedGoals);
+                                      } catch (err) {
+                                        console.error('Failed to update goal status:', err);
+                                      }
+                                    }}
+                                  >
+                                    <option value="active">Active</option>
+                                    <option value="met">Met</option>
+                                    <option value="discontinued">Discontinued</option>
+                                    <option value="modified">Modified</option>
+                                  </select>
+                                  <button className="btn-ghost p-1" onClick={() => openEditGoal(goal)}>
+                                    <Edit size={11} />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>

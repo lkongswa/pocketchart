@@ -1,5 +1,6 @@
 import React from 'react';
-import type { Appointment, AppointmentStatus } from '../../../shared/types';
+import type { Appointment, AppointmentStatus, VisitType } from '../../../shared/types';
+import { VISIT_TYPE_LABELS } from '../../../shared/types';
 
 export type PaymentIndicator = 'paid' | 'unpaid' | 'none';
 
@@ -85,6 +86,16 @@ export default function AppointmentBlock({
     ? <span className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-gray-400 text-gray-400 bg-white text-[9px] font-bold flex-shrink-0" title="Unpaid">$</span>
     : null;
 
+  const vt = (appointment as any).visit_type as VisitType | undefined;
+  const visitBadge = vt && vt !== 'O' ? (
+    <span
+      className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 text-gray-600 text-[9px] font-bold flex-shrink-0"
+      title={VISIT_TYPE_LABELS[vt] || vt}
+    >
+      {vt}
+    </span>
+  ) : null;
+
   // Compact mode: inline rendering for month view
   if (compact) {
     return (
@@ -102,6 +113,7 @@ export default function AppointmentBlock({
           {formatTime12(appointment.scheduled_time)}
         </span>
         <span className="truncate">{clientName}</span>
+        {visitBadge}
         {dollarBadge}
       </div>
     );
@@ -125,6 +137,7 @@ export default function AppointmentBlock({
         <div className="text-xs text-[var(--color-text-secondary)] leading-tight">
           {formatTime12(appointment.scheduled_time)}
         </div>
+        {visitBadge}
         {dollarBadge}
       </div>
       <div

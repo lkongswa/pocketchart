@@ -486,6 +486,99 @@ function registerIpcHandlers() {
     return true;
   });
 
+  // ── Staged Goals ──
+
+  safeHandle('stagedGoals:listByClient', (_event, clientId: number) => {
+    return db.prepare(
+      "SELECT * FROM staged_goals WHERE client_id = ? AND status = 'staged' AND deleted_at IS NULL ORDER BY flagged_at DESC"
+    ).all(clientId);
+  });
+
+  safeHandle('stagedGoals:listAllByClient', (_event, clientId: number) => {
+    return db.prepare(
+      'SELECT * FROM staged_goals WHERE client_id = ? AND deleted_at IS NULL ORDER BY flagged_at DESC'
+    ).all(clientId);
+  });
+
+  safeHandle('stagedGoals:create', (_event, data: any) => {
+    const result = db.prepare(`
+      INSERT INTO staged_goals (client_id, goal_text, goal_type, category, rationale, flagged_from_note_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(data.client_id, data.goal_text, data.goal_type || 'STG',
+      data.category || '', data.rationale || '', data.flagged_from_note_id || null);
+    return db.prepare('SELECT * FROM staged_goals WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('stagedGoals:update', (_event, id: number, data: any) => {
+    db.prepare(`
+      UPDATE staged_goals SET goal_text=?, goal_type=?, category=?, rationale=?
+      WHERE id=? AND deleted_at IS NULL
+    `).run(data.goal_text, data.goal_type, data.category, data.rationale, id);
+    return db.prepare('SELECT * FROM staged_goals WHERE id = ?').get(id);
+  });
+
+  safeHandle('stagedGoals:promote', (_event, id: number, noteId: number) => {
+    const staged = db.prepare('SELECT * FROM staged_goals WHERE id = ? AND deleted_at IS NULL').get(id) as any;
+    if (!staged) throw new Error('Staged goal not found');
+
+    const goalResult = db.prepare(`
+      INSERT INTO goals (client_id, goal_text, goal_type, category, status, target_date)
+      VALUES (?, ?, ?, ?, 'active', '')
+    `).run(staged.client_id, staged.goal_text, staged.goal_type, staged.category);
+
+    const goalId = goalResult.lastInsertRowid;
+
+    db.prepare(`
+      UPDATE staged_goals
+      SET status = 'promoted', promoted_at = datetime('now'),
+          promoted_in_note_id = ?, promoted_to_goal_id = ?
+      WHERE id = ?
+    `).run(noteId, goalId, id);
+
+    return {
+      stagedGoal: db.prepare('SELECT * FROM staged_goals WHERE id = ?').get(id),
+      goal: db.prepare('SELECT * FROM goals WHERE id = ?').get(goalId),
+    };
+  });
+
+  safeHandle('stagedGoals:dismiss', (_event, id: number, reason?: string) => {
+    db.prepare(`
+      UPDATE staged_goals
+      SET status = 'dismissed', dismissed_at = datetime('now'), dismiss_reason = ?
+      WHERE id = ? AND deleted_at IS NULL
+    `).run(reason || '', id);
+    return db.prepare('SELECT * FROM staged_goals WHERE id = ?').get(id);
+  });
+
+  // ── Progress Report Goals ──
+
+  safeHandle('progressReportGoals:listByNote', (_event, noteId: number) => {
+    return db.prepare(
+      'SELECT * FROM progress_report_goals WHERE note_id = ? AND deleted_at IS NULL ORDER BY id'
+    ).all(noteId);
+  });
+
+  safeHandle('progressReportGoals:upsert', (_event, noteId: number, goals: any[]) => {
+    db.prepare("UPDATE progress_report_goals SET deleted_at = datetime('now') WHERE note_id = ?").run(noteId);
+
+    const insert = db.prepare(`
+      INSERT INTO progress_report_goals (note_id, goal_id, status_at_report, performance_data,
+        clinical_notes, goal_text_snapshot, is_new_goal, is_staged_promotion, staged_goal_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const txn = db.transaction(() => {
+      for (const g of goals) {
+        insert.run(noteId, g.goal_id, g.status_at_report || 'progressing',
+          g.performance_data || '', g.clinical_notes || '', g.goal_text_snapshot || '',
+          g.is_new_goal ? 1 : 0, g.is_staged_promotion ? 1 : 0, g.staged_goal_id || null);
+      }
+    });
+    txn();
+
+    return db.prepare('SELECT * FROM progress_report_goals WHERE note_id = ? AND deleted_at IS NULL ORDER BY id').all(noteId);
+  });
+
   // ── Notes ──
   safeHandle('notes:list', (_event, filters?: { clientId?: number; entityId?: number }) => {
     let query = 'SELECT * FROM notes WHERE deleted_at IS NULL';
@@ -526,8 +619,9 @@ function registerIpcHandlers() {
         cpt_codes, signature_image, signature_typed, rendering_provider_npi,
         cpt_modifiers, charge_amount, place_of_service, diagnosis_pointers,
         entity_id, rate_override, rate_override_reason,
-        frequency_per_week, duration_weeks, frequency_notes, note_type, patient_name)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        frequency_per_week, duration_weeks, frequency_notes, note_type, patient_name,
+        progress_report_data)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.client_id, data.date_of_service, data.time_in, data.time_out, data.units,
       data.cpt_code, data.subjective, data.objective, data.assessment, data.plan,
@@ -538,22 +632,36 @@ function registerIpcHandlers() {
       data.place_of_service || '11', data.diagnosis_pointers || '[1]',
       data.entity_id || null, data.rate_override || null, data.rate_override_reason || '',
       data.frequency_per_week || null, data.duration_weeks || null,
-      data.frequency_notes || '', data.note_type || 'soap', data.patient_name || ''
+      data.frequency_notes || '', data.note_type || 'soap', data.patient_name || '',
+      data.progress_report_data || ''
     );
 
     const note = db.prepare('SELECT * FROM notes WHERE id = ?').get(result.lastInsertRowid) as any;
 
-    // If note is signed, increment compliance visit counter
+    // If note is signed, update compliance tracking
     if (data.signed_at && data.client_id) {
       try {
         const compliance = db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(data.client_id) as any;
         if (compliance?.tracking_enabled) {
-          db.prepare(`
-            UPDATE compliance_tracking
-            SET visits_since_last_progress = visits_since_last_progress + 1,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE client_id = ?
-          `).run(data.client_id);
+          if (data.note_type === 'progress_report') {
+            // Progress report: reset counter and update dates
+            const now = new Date().toISOString().slice(0, 10);
+            db.prepare(`
+              UPDATE compliance_tracking
+              SET visits_since_last_progress = 0,
+                  last_progress_date = ?,
+                  next_progress_due = date(?, '+' || progress_day_threshold || ' days'),
+                  updated_at = CURRENT_TIMESTAMP
+              WHERE client_id = ?
+            `).run(now, now, data.client_id);
+          } else {
+            db.prepare(`
+              UPDATE compliance_tracking
+              SET visits_since_last_progress = visits_since_last_progress + 1,
+                  updated_at = CURRENT_TIMESTAMP
+              WHERE client_id = ?
+            `).run(data.client_id);
+          }
         }
       } catch { /* compliance tracking may not exist yet */ }
     }
@@ -574,7 +682,7 @@ function registerIpcHandlers() {
         rendering_provider_npi=?,
         entity_id=?, rate_override=?, rate_override_reason=?,
         frequency_per_week=?, duration_weeks=?, frequency_notes=?, note_type=?,
-        patient_name=?,
+        patient_name=?, progress_report_data=?,
         updated_at=CURRENT_TIMESTAMP
       WHERE id=? AND deleted_at IS NULL
     `).run(
@@ -588,21 +696,34 @@ function registerIpcHandlers() {
       data.entity_id || null, data.rate_override || null, data.rate_override_reason || '',
       data.frequency_per_week || null, data.duration_weeks || null,
       data.frequency_notes || '', data.note_type || 'soap',
-      data.patient_name || '',
+      data.patient_name || '', data.progress_report_data || '',
       id
     );
 
-    // If note was just signed, increment compliance visit counter
+    // If note was just signed, update compliance tracking
     if (isNewlySignedNote && existingNote?.client_id) {
       try {
         const compliance = db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(existingNote.client_id) as any;
         if (compliance?.tracking_enabled) {
-          db.prepare(`
-            UPDATE compliance_tracking
-            SET visits_since_last_progress = visits_since_last_progress + 1,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE client_id = ?
-          `).run(existingNote.client_id);
+          if (data.note_type === 'progress_report') {
+            // Progress report: reset counter and update dates
+            const now = new Date().toISOString().slice(0, 10);
+            db.prepare(`
+              UPDATE compliance_tracking
+              SET visits_since_last_progress = 0,
+                  last_progress_date = ?,
+                  next_progress_due = date(?, '+' || progress_day_threshold || ' days'),
+                  updated_at = CURRENT_TIMESTAMP
+              WHERE client_id = ?
+            `).run(now, now, existingNote.client_id);
+          } else {
+            db.prepare(`
+              UPDATE compliance_tracking
+              SET visits_since_last_progress = visits_since_last_progress + 1,
+                  updated_at = CURRENT_TIMESTAMP
+              WHERE client_id = ?
+            `).run(existingNote.client_id);
+          }
         }
       } catch { /* compliance tracking may not exist yet */ }
     }
@@ -731,19 +852,20 @@ function registerIpcHandlers() {
 
   safeHandle('appointments:create', (_event, data) => {
     const result = db.prepare(`
-      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate, patient_name)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate, patient_name, visit_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(data.client_id || 0, data.scheduled_date, data.scheduled_time,
       data.duration_minutes || 60, data.status || 'scheduled',
-      data.entity_id || null, data.entity_rate || null, data.patient_name || '');
+      data.entity_id || null, data.entity_rate || null, data.patient_name || '',
+      data.visit_type || 'O');
     return db.prepare(apptSelectQuery + ' AND a.id = ?').get(result.lastInsertRowid);
   });
 
   // Batch create for recurring appointments
   safeHandle('appointments:createBatch', (_event, items: any[]) => {
     const insert = db.prepare(`
-      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate, patient_name)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate, patient_name, visit_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const created: any[] = [];
     const txn = db.transaction(() => {
@@ -751,7 +873,8 @@ function registerIpcHandlers() {
         const result = insert.run(
           data.client_id || 0, data.scheduled_date, data.scheduled_time,
           data.duration_minutes || 60, data.status || 'scheduled',
-          data.entity_id || null, data.entity_rate || null, data.patient_name || ''
+          data.entity_id || null, data.entity_rate || null, data.patient_name || '',
+          data.visit_type || 'O'
         );
         const row = db.prepare(apptSelectQuery + ' AND a.id = ?').get(result.lastInsertRowid);
         if (row) created.push(row);
@@ -764,11 +887,13 @@ function registerIpcHandlers() {
   safeHandle('appointments:update', (_event, id: number, data) => {
     db.prepare(`
       UPDATE appointments SET client_id=?, scheduled_date=?, scheduled_time=?,
-        duration_minutes=?, status=?, note_id=?, entity_id=?, entity_rate=?, patient_name=?
+        duration_minutes=?, status=?, note_id=?, entity_id=?, entity_rate=?, patient_name=?,
+        visit_type=?
       WHERE id=? AND deleted_at IS NULL
     `).run(data.client_id, data.scheduled_date, data.scheduled_time,
       data.duration_minutes, data.status, data.note_id,
-      data.entity_id || null, data.entity_rate || null, data.patient_name || '', id);
+      data.entity_id || null, data.entity_rate || null, data.patient_name || '',
+      data.visit_type || 'O', id);
     return db.prepare(apptSelectQuery + ' AND a.id = ?').get(id);
   });
 
@@ -4070,12 +4195,22 @@ function buildClientChartPdf(clientId: number): Buffer {
         }
       } catch { /* use legacy fields */ }
 
+      const isProgressReport = note.note_type === 'progress_report';
       const noteHeader = `${note.date_of_service} | CPT: ${cptDisplay} | Units: ${unitsDisplay}`;
       doc.text(noteHeader, marginLeft, y);
+      let headerOffset = doc.getTextWidth(noteHeader);
+      if (isProgressReport) {
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(0, 128, 128);
+        doc.text('  [PROGRESS REPORT]', marginLeft + headerOffset, y);
+        headerOffset += doc.getTextWidth('  [PROGRESS REPORT]');
+        doc.setTextColor(0, 0, 0);
+      }
       if (note.signed_at) {
         doc.setFontSize(8);
         doc.setFont('helvetica', 'normal');
-        doc.text('  (Signed)', marginLeft + doc.getTextWidth(noteHeader), y);
+        doc.text('  (Signed)', marginLeft + headerOffset, y);
       }
       y += 14;
 
@@ -4097,6 +4232,89 @@ function buildClientChartPdf(clientId: number): Buffer {
           addWrappedText(value, 20);
         }
       }
+
+      // Progress Report additional sections
+      if (isProgressReport) {
+        // Goal Progress
+        const prGoals = db.prepare('SELECT * FROM progress_report_goals WHERE note_id = ? AND deleted_at IS NULL').all(note.id) as any[];
+        if (prGoals.length > 0) {
+          checkPageBreak(30);
+          doc.setFontSize(10);
+          doc.setFont('helvetica', 'bold');
+          doc.text('  Goal Progress:', marginLeft, y);
+          y += 14;
+          for (const prGoal of prGoals) {
+            checkPageBreak(40);
+            const statusLabel = prGoal.status_at_report ? prGoal.status_at_report.charAt(0).toUpperCase() + prGoal.status_at_report.slice(1) : 'N/A';
+            doc.setFontSize(9);
+            doc.setFont('helvetica', 'bold');
+            doc.text(`    [${statusLabel}]`, marginLeft, y);
+            const statusWidth = doc.getTextWidth(`    [${statusLabel}] `);
+            doc.setFont('helvetica', 'normal');
+            if (prGoal.goal_text_snapshot) {
+              const goalLines = doc.splitTextToSize(prGoal.goal_text_snapshot, maxWidth - statusWidth - 20);
+              doc.text(goalLines, marginLeft + statusWidth, y);
+              y += goalLines.length * 13;
+            } else {
+              y += 13;
+            }
+            if (prGoal.performance_data) {
+              addField('      Performance', prGoal.performance_data);
+            }
+            if (prGoal.clinical_notes) {
+              addField('      Clinical Notes', prGoal.clinical_notes);
+            }
+            y += 4;
+          }
+        }
+
+        // Progress Report Data (clinical summary, POC update, etc.)
+        if (note.progress_report_data) {
+          try {
+            const prData = JSON.parse(note.progress_report_data);
+            if (prData.clinical_summary) {
+              checkPageBreak(30);
+              doc.setFontSize(10);
+              doc.setFont('helvetica', 'bold');
+              doc.text('  Clinical Summary:', marginLeft, y);
+              y += 14;
+              addWrappedText(prData.clinical_summary, 20);
+            }
+            if (prData.continued_treatment_justification) {
+              checkPageBreak(30);
+              doc.setFontSize(10);
+              doc.setFont('helvetica', 'bold');
+              doc.text('  Continued Treatment Justification:', marginLeft, y);
+              y += 14;
+              addWrappedText(prData.continued_treatment_justification, 20);
+            }
+            if (prData.plan_of_care_update) {
+              checkPageBreak(30);
+              doc.setFontSize(10);
+              doc.setFont('helvetica', 'bold');
+              doc.text('  Plan of Care Update:', marginLeft, y);
+              y += 14;
+              addWrappedText(prData.plan_of_care_update, 20);
+            }
+            const freqParts: string[] = [];
+            if (prData.frequency_per_week) freqParts.push(`${prData.frequency_per_week}x/week`);
+            if (prData.duration_weeks) freqParts.push(`for ${prData.duration_weeks} weeks`);
+            if (freqParts.length > 0) {
+              addField('  Frequency/Duration', freqParts.join(' '));
+            }
+            if (prData.report_period_start || prData.report_period_end) {
+              const period = [prData.report_period_start, prData.report_period_end].filter(Boolean).join(' to ');
+              addField('  Report Period', period);
+            }
+            if (prData.visits_in_period) {
+              addField('  Visits in Period', String(prData.visits_in_period));
+            }
+          } catch {
+            // Invalid JSON, skip progress report data
+          }
+        }
+      }
+
       if (note.signature_typed) {
         addField('  Signed by', note.signature_typed);
       }

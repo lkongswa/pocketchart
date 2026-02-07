@@ -29,6 +29,22 @@ const api = {
     delete: (id: number) => ipcRenderer.invoke('goals:delete', id),
   },
 
+  // Staged Goals
+  stagedGoals: {
+    listByClient: (clientId: number) => ipcRenderer.invoke('stagedGoals:listByClient', clientId),
+    listAllByClient: (clientId: number) => ipcRenderer.invoke('stagedGoals:listAllByClient', clientId),
+    create: (data: any) => ipcRenderer.invoke('stagedGoals:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('stagedGoals:update', id, data),
+    promote: (id: number, noteId: number) => ipcRenderer.invoke('stagedGoals:promote', id, noteId),
+    dismiss: (id: number, reason: string) => ipcRenderer.invoke('stagedGoals:dismiss', id, reason),
+  },
+
+  // Progress Report Goals
+  progressReportGoals: {
+    listByNote: (noteId: number) => ipcRenderer.invoke('progressReportGoals:listByNote', noteId),
+    upsert: (noteId: number, goals: any[]) => ipcRenderer.invoke('progressReportGoals:upsert', noteId, goals),
+  },
+
   // Notes
   notes: {
     list: (filters?: any) => ipcRenderer.invoke('notes:list', filters),
