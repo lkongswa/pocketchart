@@ -273,6 +273,155 @@ export function seedPayers(db: Database.Database): void {
   seedTransaction();
 }
 
+// Seed MFT discipline data (note bank, goals bank, CPT codes)
+// Runs separately from seedDefaultData so existing users get MFT phrases on update
+export function seedMFTData(db: Database.Database): void {
+  const hasData = db.prepare(
+    "SELECT COUNT(*) as count FROM note_bank WHERE discipline = 'MFT'"
+  ).get() as any;
+  if (hasData.count > 0) return;
+
+  const insertNoteBank = db.prepare(
+    'INSERT INTO note_bank (discipline, category, section, phrase, is_default) VALUES (?, ?, ?, ?, 1)'
+  );
+
+  const insertGoalsBank = db.prepare(
+    'INSERT INTO goals_bank (discipline, category, goal_template, is_default) VALUES (?, ?, ?, 1)'
+  );
+
+  const seedTransaction = db.transaction(() => {
+    // ── MFT Note Bank ──
+    // Subjective / Data / Behavior (mapped to 'S' field)
+    insertNoteBank.run('MFT', 'presenting_problem', 'S', 'Client reports increased conflict with ___ (spouse/partner/family member) regarding ___.');
+    insertNoteBank.run('MFT', 'presenting_problem', 'S', 'Client reports feelings of ___ (anxiety/depression/hopelessness) related to relationship difficulties.');
+    insertNoteBank.run('MFT', 'presenting_problem', 'S', 'Client describes pattern of ___ (avoidance/withdrawal/escalation) during disagreements.');
+    insertNoteBank.run('MFT', 'presenting_problem', 'S', 'Client reports difficulty communicating needs to ___.');
+    insertNoteBank.run('MFT', 'presenting_problem', 'S', 'Client reports trauma history impacting current relationship functioning.');
+    insertNoteBank.run('MFT', 'mood', 'S', 'Client presents with ___ mood and ___ affect.');
+    insertNoteBank.run('MFT', 'mood', 'S', 'Client reports mood has been ___ since last session.');
+    insertNoteBank.run('MFT', 'mood', 'S', 'Client denies suicidal/homicidal ideation.');
+    insertNoteBank.run('MFT', 'family', 'S', 'Client reports family dynamics have ___ (improved/worsened/remained the same) since last session.');
+    insertNoteBank.run('MFT', 'family', 'S', 'Client reports stressor related to ___ (parenting/finances/extended family/transitions).');
+    insertNoteBank.run('MFT', 'family', 'S', 'Client reports using coping strategies discussed in previous session with ___ effectiveness.');
+    insertNoteBank.run('MFT', 'general', 'S', 'Client was on time and engaged in session.');
+    insertNoteBank.run('MFT', 'general', 'S', 'Client reports no new complaints or concerns since last session.');
+    insertNoteBank.run('MFT', 'general', 'S', 'Client reports medication changes: ___.');
+    insertNoteBank.run('MFT', 'general', 'S', 'Client reports sleep has been ___ (adequate/poor/disrupted).');
+
+    // Objective / Intervention (mapped to 'O' field)
+    insertNoteBank.run('MFT', 'intervention', 'O', 'Therapist utilized ___ (CBT/DBT/EFT/Gottman/structural/narrative) techniques to address ___.');
+    insertNoteBank.run('MFT', 'intervention', 'O', 'Therapist facilitated communication exercise between ___ and ___.');
+    insertNoteBank.run('MFT', 'intervention', 'O', 'Therapist provided psychoeducation on ___ (attachment styles/communication patterns/trauma responses/family systems).');
+    insertNoteBank.run('MFT', 'intervention', 'O', 'Therapist used reflective listening and reframing to address cognitive distortions.');
+    insertNoteBank.run('MFT', 'intervention', 'O', 'Therapist guided client through ___ (grounding/relaxation/mindfulness) exercise.');
+    insertNoteBank.run('MFT', 'intervention', 'O', 'Therapist explored family-of-origin patterns contributing to current relational dynamics.');
+    insertNoteBank.run('MFT', 'intervention', 'O', 'Therapist conducted risk assessment; client denies SI/HI, no plan or intent.');
+    insertNoteBank.run('MFT', 'mental_status', 'O', 'Mental status: Client was alert and oriented x4. Appearance: ___. Thought process: ___.');
+    insertNoteBank.run('MFT', 'mental_status', 'O', 'Affect was ___ (congruent/incongruent) with reported mood.');
+    insertNoteBank.run('MFT', 'mental_status', 'O', 'Judgment and insight: ___.');
+    insertNoteBank.run('MFT', 'observation', 'O', 'Client demonstrated ___ (improved/limited) ability to identify emotional triggers during session.');
+    insertNoteBank.run('MFT', 'observation', 'O', 'Client and ___ demonstrated ___ (improved/limited) use of active listening skills during joint session.');
+    insertNoteBank.run('MFT', 'observation', 'O', 'Client became visibly ___ (tearful/agitated/withdrawn) when discussing ___.');
+
+    // Assessment / Response (mapped to 'A' field)
+    insertNoteBank.run('MFT', 'progress', 'A', 'Client is making ___ (good/moderate/limited) progress toward treatment goals.');
+    insertNoteBank.run('MFT', 'progress', 'A', 'Client demonstrates improved insight into relational patterns.');
+    insertNoteBank.run('MFT', 'progress', 'A', 'Client continues to require therapeutic support for ___.');
+    insertNoteBank.run('MFT', 'progress', 'A', 'Clinical presentation is consistent with diagnosis of ___.');
+    insertNoteBank.run('MFT', 'progress', 'A', 'Client has met ___ of ___ treatment objectives to date.');
+    insertNoteBank.run('MFT', 'response', 'A', 'Client was receptive to therapeutic interventions and engaged in session.');
+    insertNoteBank.run('MFT', 'response', 'A', 'Client demonstrated resistance to exploring ___; continued gentle exploration recommended.');
+    insertNoteBank.run('MFT', 'response', 'A', 'Prognosis is ___ (good/fair/guarded) given current engagement and progress.');
+    insertNoteBank.run('MFT', 'risk', 'A', 'Risk level assessed as ___ (low/moderate/high). Safety plan ___ (in place/reviewed/updated).');
+
+    // Plan (mapped to 'P' field) — used for SOAP/BIRP; hidden for DAP
+    insertNoteBank.run('MFT', 'next_session', 'P', 'Continue individual/couples/family therapy ___ x/week.');
+    insertNoteBank.run('MFT', 'next_session', 'P', 'Next session will focus on ___.');
+    insertNoteBank.run('MFT', 'next_session', 'P', 'Continue current treatment plan. Review progress toward goals next session.');
+    insertNoteBank.run('MFT', 'homework', 'P', 'Client assigned homework: ___.');
+    insertNoteBank.run('MFT', 'homework', 'P', 'Client to practice ___ (communication technique/coping skill) between sessions.');
+    insertNoteBank.run('MFT', 'referral', 'P', 'Referral placed for ___ (psychiatric evaluation/group therapy/substance abuse assessment).');
+    insertNoteBank.run('MFT', 'discharge', 'P', 'Client approaching treatment goals. Discuss discharge planning in upcoming sessions.');
+    insertNoteBank.run('MFT', 'discharge', 'P', 'Recommend step-down to ___ frequency as goals are met.');
+
+    // ── MFT Goals Bank ──
+    insertGoalsBank.run('MFT', 'depression', 'Client will report reduction in depressive symptoms to a PHQ-9 score of ___ or below within ___ weeks.');
+    insertGoalsBank.run('MFT', 'depression', 'Client will identify ___ positive coping strategies for managing depressive episodes within ___ weeks.');
+    insertGoalsBank.run('MFT', 'depression', 'Client will engage in ___ pleasurable activities per week as reported in session within ___ weeks.');
+
+    insertGoalsBank.run('MFT', 'anxiety', 'Client will report reduction in anxiety symptoms to a GAD-7 score of ___ or below within ___ weeks.');
+    insertGoalsBank.run('MFT', 'anxiety', 'Client will demonstrate use of ___ anxiety management techniques in daily life within ___ weeks.');
+    insertGoalsBank.run('MFT', 'anxiety', 'Client will reduce avoidance behaviors related to ___ as evidenced by ___ within ___ weeks.');
+
+    insertGoalsBank.run('MFT', 'trauma', 'Client will demonstrate reduction in trauma-related symptoms as measured by ___ within ___ weeks.');
+    insertGoalsBank.run('MFT', 'trauma', 'Client will develop and utilize a safety plan for managing trauma triggers within ___ weeks.');
+    insertGoalsBank.run('MFT', 'trauma', 'Client will process traumatic experiences as evidenced by decreased avoidance and intrusive symptoms within ___ weeks.');
+
+    insertGoalsBank.run('MFT', 'relationship', 'Client/couple will demonstrate improved communication skills as evidenced by ___ within ___ weeks.');
+    insertGoalsBank.run('MFT', 'relationship', 'Client/couple will reduce frequency of escalated conflicts from ___ to ___ per week within ___ weeks.');
+    insertGoalsBank.run('MFT', 'relationship', 'Client/couple will identify and modify ___ negative interaction patterns within ___ weeks.');
+    insertGoalsBank.run('MFT', 'relationship', 'Client/couple will report improved relationship satisfaction as measured by ___ within ___ weeks.');
+
+    insertGoalsBank.run('MFT', 'family_systems', 'Family will establish and maintain ___ healthy boundaries as evidenced by ___ within ___ weeks.');
+    insertGoalsBank.run('MFT', 'family_systems', 'Family members will demonstrate improved conflict resolution skills within ___ weeks.');
+    insertGoalsBank.run('MFT', 'family_systems', 'Family will increase frequency of positive interactions to ___ per week within ___ weeks.');
+    insertGoalsBank.run('MFT', 'family_systems', 'Parent(s) will implement ___ consistent parenting strategies as discussed in session within ___ weeks.');
+
+    insertGoalsBank.run('MFT', 'coping_skills', 'Client will identify and practice ___ healthy coping mechanisms for managing ___ within ___ weeks.');
+    insertGoalsBank.run('MFT', 'coping_skills', 'Client will demonstrate ability to use grounding techniques when experiencing ___ within ___ weeks.');
+    insertGoalsBank.run('MFT', 'coping_skills', 'Client will develop a personalized wellness plan including ___ self-care activities within ___ weeks.');
+
+    insertGoalsBank.run('MFT', 'self_esteem', 'Client will identify ___ personal strengths and report improved self-perception within ___ weeks.');
+    insertGoalsBank.run('MFT', 'self_esteem', 'Client will challenge ___ negative self-beliefs per session as evidenced by cognitive restructuring within ___ weeks.');
+
+    insertGoalsBank.run('MFT', 'grief', 'Client will process grief related to ___ as evidenced by decreased emotional distress within ___ weeks.');
+    insertGoalsBank.run('MFT', 'grief', 'Client will identify ___ healthy ways to honor/memorialize their loss within ___ weeks.');
+
+    insertGoalsBank.run('MFT', 'behavioral', 'Client will reduce frequency of ___ (target behavior) from ___ to ___ per week within ___ weeks.');
+    insertGoalsBank.run('MFT', 'behavioral', 'Client will increase frequency of ___ (replacement behavior) to ___ per week within ___ weeks.');
+    insertGoalsBank.run('MFT', 'behavioral', 'Client will identify ___ triggers for maladaptive behaviors and develop alternative responses within ___ weeks.');
+  });
+
+  seedTransaction();
+
+  // ── MFT CPT Codes in Fee Schedule ──
+  try {
+    const hasFeeData = db.prepare(
+      "SELECT COUNT(*) as count FROM fee_schedule WHERE cpt_code = '90834'"
+    ).get() as any;
+    if (hasFeeData.count === 0) {
+      const insertFee = db.prepare(
+        'INSERT INTO fee_schedule (cpt_code, description, default_units, amount, effective_date) VALUES (?, ?, ?, ?, ?)'
+      );
+      const today = new Date().toISOString().slice(0, 10);
+
+      const mftCPTCodes = [
+        { cpt_code: '90791', description: 'Psychiatric diagnostic evaluation', default_units: 1, amount: 200.00 },
+        { cpt_code: '90834', description: 'Psychotherapy, 45 minutes', default_units: 1, amount: 130.00 },
+        { cpt_code: '90837', description: 'Psychotherapy, 60 minutes', default_units: 1, amount: 170.00 },
+        { cpt_code: '90832', description: 'Psychotherapy, 30 minutes', default_units: 1, amount: 85.00 },
+        { cpt_code: '90847', description: 'Family psychotherapy, with patient', default_units: 1, amount: 160.00 },
+        { cpt_code: '90846', description: 'Family psychotherapy, without patient', default_units: 1, amount: 150.00 },
+        { cpt_code: '90839', description: 'Psychotherapy for crisis, first 60 min', default_units: 1, amount: 200.00 },
+        { cpt_code: '90840', description: 'Psychotherapy for crisis, add-on 30 min', default_units: 1, amount: 100.00 },
+        { cpt_code: '90853', description: 'Group psychotherapy', default_units: 1, amount: 55.00 },
+        { cpt_code: '96156', description: 'Health behavior assessment/reassessment', default_units: 1, amount: 150.00 },
+        { cpt_code: '96158', description: 'Health behavior intervention, first 30 min', default_units: 1, amount: 75.00 },
+        { cpt_code: '96159', description: 'Health behavior intervention, add-on 15 min', default_units: 1, amount: 38.00 },
+      ];
+
+      const feeTransaction = db.transaction(() => {
+        for (const fee of mftCPTCodes) {
+          insertFee.run(fee.cpt_code, fee.description, fee.default_units, fee.amount, today);
+        }
+      });
+      feeTransaction();
+    }
+  } catch {
+    // Fee schedule table may not exist yet
+  }
+}
+
 // Seed common fee schedule entries for V2 billing
 export function seedFeeSchedule(db: Database.Database): void {
   // Check if fee_schedule table exists and has data

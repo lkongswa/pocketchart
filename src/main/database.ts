@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import { app } from 'electron';
 import Store from 'electron-store';
-import { seedDefaultData, seedDefaultQuickChips, seedPayers, seedFeeSchedule } from './seed';
+import { seedDefaultData, seedDefaultQuickChips, seedPayers, seedFeeSchedule, seedMFTData } from './seed';
 
 let db: Database.Database;
 
@@ -73,6 +73,7 @@ export function initDatabase(): void {
   createIndexes();
   seedDefaultData(db);
   seedDefaultQuickChips(db);
+  seedMFTData(db);
   // V2/V3 billing seed data (run after migrations create tables)
   seedPayers(db);
   seedFeeSchedule(db);
@@ -698,6 +699,64 @@ function runMigrations(): void {
         if (!columnExists('notes', 'patient_name')) {
           db.exec("ALTER TABLE notes ADD COLUMN patient_name TEXT DEFAULT ''");
         }
+      },
+    },
+    {
+      version: 17,
+      description: 'Expand client_documents with structured categories and certification metadata',
+      up: () => {
+        // Add certification period tracking
+        if (!columnExists('client_documents', 'certification_period_start')) {
+          db.exec("ALTER TABLE client_documents ADD COLUMN certification_period_start TEXT DEFAULT ''");
+        }
+        if (!columnExists('client_documents', 'certification_period_end')) {
+          db.exec("ALTER TABLE client_documents ADD COLUMN certification_period_end TEXT DEFAULT ''");
+        }
+        // When the document was received back (e.g., signed POC returned)
+        if (!columnExists('client_documents', 'received_date')) {
+          db.exec("ALTER TABLE client_documents ADD COLUMN received_date TEXT DEFAULT ''");
+        }
+        // When the document was originally sent out
+        if (!columnExists('client_documents', 'sent_date')) {
+          db.exec("ALTER TABLE client_documents ADD COLUMN sent_date TEXT DEFAULT ''");
+        }
+        // Who signed it (for physician orders/POCs)
+        if (!columnExists('client_documents', 'physician_name')) {
+          db.exec("ALTER TABLE client_documents ADD COLUMN physician_name TEXT DEFAULT ''");
+        }
+        // Future fax integration link
+        if (!columnExists('client_documents', 'fax_confirmation_id')) {
+          db.exec("ALTER TABLE client_documents ADD COLUMN fax_confirmation_id TEXT DEFAULT ''");
+        }
+
+        // Migrate existing categories to new structured values
+        db.exec(`
+          UPDATE client_documents SET category = 'physician_order'
+          WHERE category IN ('referral', 'prescription', 'Referral', 'Prescription')
+          AND deleted_at IS NULL
+        `);
+        db.exec(`
+          UPDATE client_documents SET category = 'intake_form'
+          WHERE category IN ('intake', 'Intake Form', 'intake_form')
+          AND deleted_at IS NULL
+        `);
+        // Leave 'general' and 'other' as 'other'
+        db.exec(`
+          UPDATE client_documents SET category = 'other'
+          WHERE category IN ('general', 'General', '')
+          AND deleted_at IS NULL
+        `);
+        // Map insurance and medical_records to appropriate new categories
+        db.exec(`
+          UPDATE client_documents SET category = 'prior_authorization'
+          WHERE category IN ('insurance', 'Insurance')
+          AND deleted_at IS NULL
+        `);
+        db.exec(`
+          UPDATE client_documents SET category = 'correspondence'
+          WHERE category IN ('medical_records', 'Medical Records')
+          AND deleted_at IS NULL
+        `);
       },
     },
   ];

@@ -13,6 +13,7 @@ const TAXONOMY_CODES: Record<Discipline, { code: string; label: string }> = {
   ST: { code: '235Z00000X', label: 'Speech-Language Pathologist' },
   OT: { code: '225X00000X', label: 'Occupational Therapist' },
   PT: { code: '225100000X', label: 'Physical Therapist' },
+  MFT: { code: '101YM0800X', label: 'Marriage & Family Therapist' },
 };
 
 interface OnboardingScreenProps {
@@ -88,6 +89,10 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
       // Also store in settings for quick access
       if (discipline) await window.api.settings.set('provider_discipline', discipline);
       if (practiceState) await window.api.settings.set('provider_state', practiceState);
+
+      // Auto-set note format based on discipline (DAP for MFT, SOAP for others)
+      const defaultFormat = discipline === 'MFT' ? 'DAP' : 'SOAP';
+      await window.api.settings.set('note_format', defaultFormat);
 
       setStep('pin');
     } catch (err) {
@@ -316,6 +321,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
                 <option value="PT">Physical Therapy (PT)</option>
                 <option value="OT">Occupational Therapy (OT)</option>
                 <option value="ST">Speech-Language Pathology (ST)</option>
+                <option value="MFT">Marriage & Family Therapy (MFT)</option>
               </select>
             </div>
 
@@ -382,7 +388,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
               <input
                 type="text"
                 className="input w-full"
-                placeholder="e.g., SLP12345"
+                placeholder={discipline === 'MFT' ? 'e.g., LMFT12345' : 'e.g., SLP12345'}
                 value={licenseNumber}
                 onChange={(e) => setLicenseNumber(e.target.value)}
               />

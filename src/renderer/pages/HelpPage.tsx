@@ -83,9 +83,9 @@ const allSections: HelpSectionData[] = [
     content: (
       <>
         <p>
-          <B>PocketChart</B> is an offline-first clinical documentation app built for PT, OT, and
-          ST therapists. All your data is stored locally on your computer — nothing is ever sent to
-          an external server.
+          <B>PocketChart</B> is an offline-first clinical documentation app built for PT, OT, ST,
+          and MFT therapists. All your data is stored locally on your computer — nothing is ever
+          sent to an external server.
         </p>
         <ul className="list-disc list-inside space-y-1.5 ml-1">
           <li>
@@ -386,18 +386,24 @@ const allSections: HelpSectionData[] = [
   {
     id: 'soap-notes',
     icon: <FileText className="w-5 h-5 text-[var(--color-primary)]" />,
-    title: 'Writing SOAP Notes',
-    keywords: ['note', 'soap', 'subjective', 'objective', 'assessment', 'plan', 'cpt', 'sign', 'draft', 'phrase', 'note bank'],
+    title: 'Writing Clinical Notes',
+    keywords: ['note', 'soap', 'dap', 'birp', 'subjective', 'objective', 'assessment', 'plan', 'data', 'intervention', 'response', 'behavior', 'cpt', 'sign', 'draft', 'phrase', 'note bank', 'format'],
     content: (
       <ul className="list-disc list-inside space-y-1.5 ml-1">
         <li>
-          To create a new note, go to a client's detail page and click <B>New SOAP Note</B>. You
+          To create a new note, go to a client's detail page and click <B>New Note</B>. You
           can also start a note directly from a completed appointment.
         </li>
         <li>
-          Each note has four sections: <B>Subjective</B> (patient's reported symptoms and
-          concerns), <B>Objective</B> (measurable findings and observations), <B>Assessment</B>{' '}
-          (clinical interpretation of progress), and <B>Plan</B> (next steps and treatment plan).
+          PocketChart supports three <B>note formats</B>: <B>SOAP</B> (Subjective, Objective,
+          Assessment, Plan), <B>DAP</B> (Data, Assessment, Plan — common for MFT), and{' '}
+          <B>BIRP</B> (Behavior, Intervention, Response, Plan). Choose your preferred format in{' '}
+          <B>Settings &gt; Note Format</B>.
+        </li>
+        <li>
+          The default format is based on your discipline (SOAP for PT/OT/ST, DAP for MFT), but you
+          can change it at any time. All formats map to the same underlying data so switching
+          formats does not affect existing notes.
         </li>
         <li>
           Add one or more <B>CPT codes</B> to each note for billing accuracy.
@@ -434,7 +440,7 @@ const allSections: HelpSectionData[] = [
         <li>
           The evaluation form includes discipline-specific objective assessment fields (e.g., ROM,
           MMT, balance for PT; ADLs, fine motor for OT; speech fluency, language comprehension
-          for ST).
+          for ST; presenting problem, mental status, risk assessment, relationship dynamics for MFT).
         </li>
         <li>
           Fill in the relevant sections including history, prior level of function, objective
@@ -502,8 +508,8 @@ const allSections: HelpSectionData[] = [
           Templates can be applied directly when adding goals to a client.
         </li>
         <li>
-          Both banks come pre-loaded with common phrases and goals for PT, OT, and ST. You can add,
-          edit, or delete entries to customize them for your practice.
+          Both banks come pre-loaded with common phrases and goals for PT, OT, ST, and MFT. You can
+          add, edit, or delete entries to customize them for your practice.
         </li>
         <li>
           You can also manage the Note Bank and Goals Bank from <B>Settings &gt; Documentation
@@ -536,7 +542,7 @@ const allSections: HelpSectionData[] = [
             license state. These appear on superbills.
           </li>
           <li>
-            <B>Discipline</B> — Select your discipline (PT, OT, ST, or Multi-Discipline). This
+            <B>Discipline</B> — Select your discipline (PT, OT, ST, MFT, or Multi-Discipline). This
             filters the Note Bank, Goals Bank, and evaluation fields to show only relevant content.
           </li>
           <li>

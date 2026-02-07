@@ -23,7 +23,8 @@ import {
   DollarSign,
   CreditCard,
 } from 'lucide-react';
-import type { Client, Note, Goal, GoalStatus, Discipline, SOAPSection, CptLine, PlaceOfService, ContractedEntity, EntityFeeSchedule } from '../../shared/types';
+import type { Client, Note, Goal, GoalStatus, Discipline, SOAPSection, NoteFormat, CptLine, PlaceOfService, ContractedEntity, EntityFeeSchedule } from '../../shared/types';
+import { NOTE_FORMAT_SECTIONS } from '../../shared/types';
 
 // Place of service options
 const PLACE_OF_SERVICE_OPTIONS = [
@@ -146,6 +147,9 @@ export default function NoteFormPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [expandedNoteIds, setExpandedNoteIds] = useState<Set<number>>(new Set());
 
+  // Note format
+  const [noteFormat, setNoteFormat] = useState<NoteFormat>('SOAP');
+
   // Note bank popover state
   const [noteBankOpen, setNoteBankOpen] = useState<SOAPSection | null>(null);
 
@@ -178,12 +182,15 @@ export default function NoteFormPage() {
       setLoading(true);
       const cid = parseInt(clientId, 10);
 
-      const [clientData, goalsData, notesData, entitiesData] = await Promise.all([
+      const [clientData, goalsData, notesData, entitiesData, noteFormatVal] = await Promise.all([
         window.api.clients.get(cid),
         window.api.goals.listByClient(cid),
         window.api.notes.listByClient(cid),
         window.api.contractedEntities.list().catch(() => [] as ContractedEntity[]),
+        window.api.settings.get('note_format').catch(() => null),
       ]);
+
+      if (noteFormatVal) setNoteFormat(noteFormatVal as NoteFormat);
 
       setEntities(entitiesData);
 
@@ -423,7 +430,7 @@ export default function NoteFormPage() {
       const hasContent = subjective.trim() || objective.trim() || assessment.trim() || plan.trim();
       if (!hasContent) {
         const proceed = window.confirm(
-          'All SOAP sections (Subjective, Objective, Assessment, Plan) are empty.\n\nSign anyway?'
+          `All ${noteFormat} sections (${NOTE_FORMAT_SECTIONS[noteFormat].filter(s => s.label !== '(unused)').map(s => s.label).join(', ')}) are empty.\n\nSign anyway?`
         );
         if (!proceed) return;
       }
@@ -905,9 +912,9 @@ export default function NoteFormPage() {
           )}
         </div>
 
-        {/* Subjective */}
+        {/* Section 1 (Subjective / Data / Behavior) */}
         <SOAPSectionCard
-          title="Subjective"
+          title={NOTE_FORMAT_SECTIONS[noteFormat][0].label}
           sectionCode="S"
           discipline={discipline}
           value={subjective}
@@ -918,11 +925,12 @@ export default function NoteFormPage() {
           setNoteBankOpen={setNoteBankOpen}
           onInsert={getNoteBankInsertHandler('S')}
           anchorRef={getNoteBankButtonRef('S')}
+          placeholder={NOTE_FORMAT_SECTIONS[noteFormat][0].placeholder}
         />
 
-        {/* Objective */}
+        {/* Section 2 (Objective / Assessment / Intervention) */}
         <SOAPSectionCard
-          title="Objective"
+          title={NOTE_FORMAT_SECTIONS[noteFormat][1].label}
           sectionCode="O"
           discipline={discipline}
           value={objective}
@@ -933,12 +941,13 @@ export default function NoteFormPage() {
           setNoteBankOpen={setNoteBankOpen}
           onInsert={getNoteBankInsertHandler('O')}
           anchorRef={getNoteBankButtonRef('O')}
+          placeholder={NOTE_FORMAT_SECTIONS[noteFormat][1].placeholder}
         />
 
-        {/* Assessment */}
+        {/* Section 3 (Assessment / Plan / Response) */}
         <div className="card p-6 mb-6 bg-violet-50/50">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="section-title mb-0">Assessment</h2>
+            <h2 className="section-title mb-0">{NOTE_FORMAT_SECTIONS[noteFormat][2].label}</h2>
             <div className="relative">
               <button
                 ref={assessmentBtnRef}
@@ -976,7 +985,7 @@ export default function NoteFormPage() {
             ref={assessmentRef}
             className="textarea"
             rows={4}
-            placeholder="Clinical assessment and progress toward goals..."
+            placeholder={NOTE_FORMAT_SECTIONS[noteFormat][2].placeholder || 'Clinical assessment and progress toward goals...'}
             value={assessment}
             onChange={setAssessment}
             discipline={discipline}
@@ -1024,20 +1033,23 @@ export default function NoteFormPage() {
           )}
         </div>
 
-        {/* Plan */}
-        <SOAPSectionCard
-          title="Plan"
-          sectionCode="P"
-          discipline={discipline}
-          value={plan}
-          onChange={setPlan}
-          textareaRef={planRef}
-          noteBankBtnRef={planBtnRef}
-          noteBankOpen={noteBankOpen}
-          setNoteBankOpen={setNoteBankOpen}
-          onInsert={getNoteBankInsertHandler('P')}
-          anchorRef={getNoteBankButtonRef('P')}
-        />
+        {/* Section 4 (Plan) — hidden for DAP format */}
+        {NOTE_FORMAT_SECTIONS[noteFormat][3].label !== '(unused)' && (
+          <SOAPSectionCard
+            title={NOTE_FORMAT_SECTIONS[noteFormat][3].label}
+            sectionCode="P"
+            discipline={discipline}
+            value={plan}
+            onChange={setPlan}
+            textareaRef={planRef}
+            noteBankBtnRef={planBtnRef}
+            noteBankOpen={noteBankOpen}
+            setNoteBankOpen={setNoteBankOpen}
+            onInsert={getNoteBankInsertHandler('P')}
+            anchorRef={getNoteBankButtonRef('P')}
+            placeholder={NOTE_FORMAT_SECTIONS[noteFormat][3].placeholder}
+          />
+        )}
 
         {/* Signature */}
         <div className="card p-6 mb-6">
@@ -1341,6 +1353,7 @@ interface SOAPSectionCardProps {
   setNoteBankOpen: (section: SOAPSection | null) => void;
   onInsert: (phrase: string) => void;
   anchorRef: React.RefObject<HTMLButtonElement | null>;
+  placeholder?: string;
 }
 
 const soapSectionTint: Record<SOAPSection, string> = {
@@ -1362,6 +1375,7 @@ function SOAPSectionCard({
   setNoteBankOpen,
   onInsert,
   anchorRef,
+  placeholder: customPlaceholder,
 }: SOAPSectionCardProps) {
   return (
     <div className={`card p-6 mb-6 ${soapSectionTint[sectionCode]}`}>
@@ -1404,7 +1418,7 @@ function SOAPSectionCard({
         ref={textareaRef}
         className="textarea"
         rows={4}
-        placeholder={`Enter ${title.toLowerCase()} findings...`}
+        placeholder={customPlaceholder || `Enter ${title.toLowerCase()} findings...`}
         value={value}
         onChange={onChange}
         discipline={discipline}

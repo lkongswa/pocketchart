@@ -135,6 +135,10 @@
     @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-teal-100 text-teal-700;
   }
 
+  .badge-mft {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-rose-100 text-rose-700;
+  }
+
   .sidebar-link {
     @apply flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-[var(--color-text-secondary)] transition-colors cursor-pointer;
   }
@@ -165,6 +169,45 @@
   .table-cell {
     @apply px-4 py-3 text-sm text-[var(--color-text)];
   }
+}
+
+/* ── Status Colors (NEVER used for section/navigation) ── */
+:root {
+  --status-good: #22c55e;        /* green — no action needed */
+  --status-attention: #f97316;   /* orange — coming soon, heads up */
+  --status-urgent: #ef4444;      /* red — act today */
+  --status-info: #64748b;        /* slate — FYI, informational */
+}
+
+/* ── Pulse Animation for Urgent Items ── */
+@keyframes pulse-urgent {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.15); }
+}
+
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot--good {
+  background-color: var(--status-good);
+}
+
+.status-dot--attention {
+  background-color: var(--status-attention);
+}
+
+.status-dot--urgent {
+  background-color: var(--status-urgent);
+  animation: pulse-urgent 2s ease-in-out infinite;
+}
+
+.status-dot--info {
+  background-color: var(--status-info);
 }
 
 /* Scrollbar styling */

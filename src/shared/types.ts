@@ -1,9 +1,50 @@
-export type Discipline = 'PT' | 'OT' | 'ST';
+export type Discipline = 'PT' | 'OT' | 'ST' | 'MFT';
 export type ClientStatus = 'active' | 'discharged' | 'hold';
 export type GoalType = 'STG' | 'LTG';
 export type GoalStatus = 'active' | 'met' | 'discontinued' | 'modified';
 export type AppointmentStatus = 'scheduled' | 'completed' | 'cancelled' | 'no-show';
 export type SOAPSection = 'S' | 'O' | 'A' | 'P';
+
+// Note Format Types
+export type NoteFormat = 'SOAP' | 'DAP' | 'BIRP';
+
+export const NOTE_FORMAT_LABELS: Record<NoteFormat, string> = {
+  SOAP: 'SOAP (Subjective, Objective, Assessment, Plan)',
+  DAP: 'DAP (Data, Assessment, Plan)',
+  BIRP: 'BIRP (Behavior, Intervention, Response, Plan)',
+};
+
+/**
+ * Maps note format sections to the underlying database fields.
+ * All formats store to the same 4 fields — only the labels change.
+ */
+export const NOTE_FORMAT_SECTIONS: Record<NoteFormat, { field: string; label: string; placeholder: string }[]> = {
+  SOAP: [
+    { field: 'subjective', label: 'Subjective', placeholder: "Patient's reported symptoms, concerns, and relevant history..." },
+    { field: 'objective', label: 'Objective', placeholder: 'Measurable findings, observations, clinical data...' },
+    { field: 'assessment', label: 'Assessment', placeholder: 'Clinical interpretation of progress and response to treatment...' },
+    { field: 'plan', label: 'Plan', placeholder: 'Next steps, treatment plan, follow-up...' },
+  ],
+  DAP: [
+    { field: 'subjective', label: 'Data', placeholder: 'Objective and subjective data from session — what was observed, discussed, reported...' },
+    { field: 'objective', label: 'Assessment', placeholder: 'Clinical assessment of progress, therapeutic interpretation, treatment response...' },
+    { field: 'assessment', label: 'Plan', placeholder: 'Treatment plan, interventions to continue, homework, next session focus...' },
+    { field: 'plan', label: '(unused)', placeholder: '' },
+  ],
+  BIRP: [
+    { field: 'subjective', label: 'Behavior', placeholder: "Client's presenting behavior, mood, affect, and reported symptoms..." },
+    { field: 'objective', label: 'Intervention', placeholder: 'Therapeutic interventions used — techniques, modalities, approaches...' },
+    { field: 'assessment', label: 'Response', placeholder: "Client's response to interventions, engagement, progress indicators..." },
+    { field: 'plan', label: 'Plan', placeholder: 'Treatment plan, next session goals, homework, referrals...' },
+  ],
+};
+
+export const DISCIPLINE_DEFAULT_FORMAT: Record<Discipline, NoteFormat> = {
+  PT: 'SOAP',
+  OT: 'SOAP',
+  ST: 'SOAP',
+  MFT: 'DAP',
+};
 
 // V2/V3 Billing Types
 
@@ -250,6 +291,27 @@ export interface GoalsBankEntry {
 }
 
 // Client Document types
+export type ClientDocumentCategory =
+  | 'signed_poc'           // Signed Plan of Care
+  | 'recertification'      // Signed Recertification
+  | 'physician_order'      // Orders, Rx, Referrals — all "MD says go"
+  | 'prior_authorization'  // Auth letters from insurance
+  | 'intake_form'          // Intake / consent forms
+  | 'correspondence'       // Letters, fax confirmations, misc
+  | 'discharge_summary'    // Discharge documentation
+  | 'other';               // Catch-all
+
+export const CLIENT_DOCUMENT_CATEGORY_LABELS: Record<ClientDocumentCategory, string> = {
+  signed_poc: 'Signed Plan of Care',
+  recertification: 'Recertification',
+  physician_order: 'Orders / Referrals',
+  prior_authorization: 'Prior Authorization',
+  intake_form: 'Intake / Consent Forms',
+  correspondence: 'Correspondence',
+  discharge_summary: 'Discharge Summary',
+  other: 'Other',
+};
+
 export interface ClientDocument {
   id: number;
   client_id: number;
@@ -257,9 +319,18 @@ export interface ClientDocument {
   original_name: string;
   file_type: string;
   file_size: number;
-  category: string;
+  category: ClientDocumentCategory;
   notes: string;
+  // Certification/order tracking fields
+  certification_period_start: string;
+  certification_period_end: string;
+  received_date: string;
+  sent_date: string;
+  physician_name: string;
+  fax_confirmation_id: string;
+  // Standard fields
   created_at: string;
+  deleted_at: string | null;
 }
 
 // Superbill types
@@ -773,7 +844,24 @@ export interface PocketChartAPI {
     setTimeoutMinutes: (minutes: number) => Promise<boolean>;
   };
   documents: {
-    upload: (data: { clientId: number; category?: string }) => Promise<ClientDocument | null>;
+    upload: (data: {
+      clientId: number;
+      category?: string;
+      certification_period_start?: string;
+      certification_period_end?: string;
+      received_date?: string;
+      sent_date?: string;
+      physician_name?: string;
+    }) => Promise<ClientDocument | null>;
+    updateMeta: (data: {
+      documentId: number;
+      certification_period_start?: string;
+      certification_period_end?: string;
+      received_date?: string;
+      sent_date?: string;
+      physician_name?: string;
+      category?: string;
+    }) => Promise<ClientDocument>;
     list: (data: { clientId: number }) => Promise<ClientDocument[]>;
     open: (data: { documentId: number }) => Promise<string>;
     delete: (data: { documentId: number }) => Promise<boolean>;

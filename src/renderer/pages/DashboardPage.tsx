@@ -186,29 +186,29 @@ const DashboardPage: React.FC = () => {
     {
       label: 'Total Active Clients',
       count: stats.activeClients,
-      icon: <Users size={24} className="text-[var(--color-primary)]" />,
+      icon: <Users size={24} className="text-teal-500" />,
       bgClass: 'bg-teal-50',
       onClick: () => navigate('/clients'),
     },
     {
       label: 'Notes This Week',
       count: stats.notesThisWeek,
-      icon: <FileText size={24} className="text-blue-600" />,
-      bgClass: 'bg-blue-50',
+      icon: <FileText size={24} className="text-teal-500" />,
+      bgClass: 'bg-teal-50',
       onClick: () => navigate('/notes'),
     },
     {
       label: 'Upcoming Appointments',
       count: stats.upcomingAppointments,
-      icon: <Calendar size={24} className="text-purple-600" />,
-      bgClass: 'bg-purple-50',
+      icon: <Calendar size={24} className="text-teal-500" />,
+      bgClass: 'bg-teal-50',
       onClick: () => navigate('/calendar'),
     },
     {
       label: 'Unsigned Notes',
       count: stats.unsignedNotes,
-      icon: <PenLine size={24} className="text-amber-600" />,
-      bgClass: 'bg-amber-50',
+      icon: <PenLine size={24} className="text-teal-500" />,
+      bgClass: 'bg-teal-50',
       onClick: () => navigate('/notes'),
     },
   ];
@@ -248,18 +248,18 @@ const DashboardPage: React.FC = () => {
 
       {/* Backup Reminder Banner */}
       {showBackupReminder && (
-        <div className="mb-6 flex items-start gap-3 p-4 rounded-lg border border-amber-300 bg-amber-50 text-sm">
-          <ShieldAlert size={20} className="text-amber-600 flex-shrink-0 mt-0.5" />
+        <div className="mb-6 flex items-start gap-3 p-4 rounded-lg border border-orange-300 bg-orange-50 text-sm">
+          <ShieldAlert size={20} className="text-orange-600 flex-shrink-0 mt-0.5" />
           <div className="flex-1">
-            <p className="font-medium text-amber-800">
+            <p className="font-medium text-orange-800">
               {daysSinceBackup === null
                 ? "You haven't created a backup yet."
                 : `It's been ${daysSinceBackup} days since your last backup.`}
             </p>
-            <p className="text-amber-700 mt-1">
+            <p className="text-orange-700 mt-1">
               Protect your clinical records — go to{' '}
               <button
-                className="underline font-medium hover:text-amber-900"
+                className="underline font-medium hover:text-orange-900"
                 onClick={() => navigate('/settings')}
               >
                 Settings &gt; Backup & Export
@@ -269,7 +269,7 @@ const DashboardPage: React.FC = () => {
           </div>
           <button
             onClick={dismissBackupReminder}
-            className="text-amber-500 hover:text-amber-700 flex-shrink-0"
+            className="text-orange-500 hover:text-orange-700 flex-shrink-0"
             title="Dismiss for today"
           >
             <X size={16} />
@@ -282,7 +282,7 @@ const DashboardPage: React.FC = () => {
         {statCards.map((card) => (
           <div
             key={card.label}
-            className="card p-5 cursor-pointer hover:shadow-md hover:border-[var(--color-primary)]/30 transition-all group"
+            className="card p-5 cursor-pointer hover:shadow-md hover:border-teal-300 transition-all group"
             onClick={card.onClick}
           >
             <div className="flex items-center gap-4">
@@ -305,7 +305,7 @@ const DashboardPage: React.FC = () => {
         {/* Recent Activity */}
         <div className="card">
           <div className="flex items-center gap-2 px-5 py-4 border-b border-[var(--color-border)]">
-            <Activity size={18} className="text-[var(--color-primary)]" />
+            <Activity size={18} className="text-teal-500" />
             <h2 className="section-title mb-0">Recent Activity</h2>
           </div>
           <div className="divide-y divide-[var(--color-border)]">
@@ -350,7 +350,7 @@ const DashboardPage: React.FC = () => {
         {/* Upcoming Appointments */}
         <div className="card">
           <div className="flex items-center gap-2 px-5 py-4 border-b border-[var(--color-border)]">
-            <Clock size={18} className="text-purple-600" />
+            <Clock size={18} className="text-teal-500" />
             <h2 className="section-title mb-0">Upcoming Appointments</h2>
           </div>
           <div className="divide-y divide-[var(--color-border)]">

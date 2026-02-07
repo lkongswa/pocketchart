@@ -209,47 +209,47 @@ export default function NotesOverviewPage() {
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         <div
-          className="card p-4 cursor-pointer hover:shadow-md transition-all hover:border-amber-300"
+          className="card p-4 cursor-pointer hover:shadow-md transition-all hover:border-teal-300"
           onClick={() => setTab('due')}
         >
           <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-amber-50">
-              <CalendarCheck size={20} className="text-amber-600" />
+            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-teal-50">
+              <CalendarCheck size={20} className="text-teal-500" />
             </div>
             <div>
               <p className="text-xl font-bold text-[var(--color-text)]">{notesDue + drafts.length}</p>
               <p className="text-xs text-[var(--color-text-secondary)]">Notes Due</p>
-              <p className="text-[10px] text-amber-600">{notesDue} appts missing notes · {drafts.length} drafts</p>
+              <p className="text-[10px] text-[var(--color-text-secondary)]">{notesDue} appts missing notes · {drafts.length} drafts</p>
             </div>
           </div>
         </div>
         <div
-          className="card p-4 cursor-pointer hover:shadow-md transition-all hover:border-blue-300"
+          className="card p-4 cursor-pointer hover:shadow-md transition-all hover:border-teal-300"
           onClick={() => setTab('drafts')}
         >
           <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-blue-50">
-              <PenLine size={20} className="text-blue-600" />
+            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-teal-50">
+              <PenLine size={20} className="text-teal-500" />
             </div>
             <div>
               <p className="text-xl font-bold text-[var(--color-text)]">{drafts.length}</p>
               <p className="text-xs text-[var(--color-text-secondary)]">Drafts in Progress</p>
-              <p className="text-[10px] text-blue-600">Started but not signed</p>
+              <p className="text-[10px] text-[var(--color-text-secondary)]">Started but not signed</p>
             </div>
           </div>
         </div>
         <div
-          className="card p-4 cursor-pointer hover:shadow-md transition-all hover:border-red-300"
+          className="card p-4 cursor-pointer hover:shadow-md transition-all hover:border-teal-300"
           onClick={() => setTab('overdue')}
         >
           <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-red-50">
-              <AlertTriangle size={20} className="text-red-500" />
+            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-teal-50">
+              <AlertTriangle size={20} className="text-teal-500" />
             </div>
             <div>
-              <p className="text-xl font-bold text-red-600">{overdue.length}</p>
+              <p className="text-xl font-bold text-[var(--color-text)]">{overdue.length}</p>
               <p className="text-xs text-[var(--color-text-secondary)]">Overdue</p>
-              <p className="text-[10px] text-red-500">More than 48 hours since service</p>
+              <p className="text-[10px] text-[var(--color-text-secondary)]">More than 48 hours since service</p>
             </div>
           </div>
         </div>

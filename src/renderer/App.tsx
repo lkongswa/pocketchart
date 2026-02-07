@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { HashRouter, Routes, Route, NavLink, useLocation } from 'react-router-dom';
+import { HashRouter, Routes, Route, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { getSectionForPath } from './hooks/useSectionColor';
 import {
   LayoutDashboard,
@@ -14,6 +14,8 @@ import {
   Car,
   FileSpreadsheet,
   FileText,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import DashboardPage from './pages/DashboardPage';
 import ClientsPage from './pages/ClientsPage';
@@ -54,7 +56,7 @@ interface NavGroup {
 const navGroups: NavGroup[] = [
   {
     title: 'Clinical',
-    color: '#0ea5e9', // sky blue
+    color: '#14b8a6', // teal (matches logo)
     items: [
       { to: '/', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
       { to: '/clients', label: 'Clients', icon: <Users size={18} />, matchPrefix: '/clients' },
@@ -64,7 +66,7 @@ const navGroups: NavGroup[] = [
   },
   {
     title: 'Business',
-    color: '#f59e0b', // amber
+    color: '#2563eb', // deep blue
     items: [
       { to: '/billing', label: 'Billing', icon: <DollarSign size={18} /> },
       { to: '/entities', label: 'Contracts', icon: <Building2 size={18} />, matchPrefix: '/entities' },
@@ -200,15 +202,35 @@ const Sidebar: React.FC = () => {
   );
 };
 
-/** Thin colored accent strip at the top of the main content area */
-const SectionAccent: React.FC = () => {
+/** Top bar with colored accent + back/forward navigation */
+const TopNavBar: React.FC = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   const section = useMemo(() => getSectionForPath(location.pathname), [location.pathname]);
+
   return (
-    <div
-      className="h-1 w-full flex-shrink-0"
-      style={{ backgroundColor: section.color }}
-    />
+    <div className="flex-shrink-0">
+      <div
+        className="h-1 w-full"
+        style={{ backgroundColor: section.color }}
+      />
+      <div className="flex items-center gap-1 px-3 py-1 bg-[var(--color-surface)] border-b border-[var(--color-border)]">
+        <button
+          onClick={() => navigate(-1)}
+          className="p-1 rounded hover:bg-gray-100 text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors"
+          title="Go back"
+        >
+          <ChevronLeft size={16} />
+        </button>
+        <button
+          onClick={() => navigate(1)}
+          className="p-1 rounded hover:bg-gray-100 text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors"
+          title="Go forward"
+        >
+          <ChevronRight size={16} />
+        </button>
+      </div>
+    </div>
   );
 };
 
@@ -217,7 +239,7 @@ const AppLayout: React.FC = () => {
     <div className="flex min-h-screen">
       <Sidebar />
       <main className="ml-[240px] flex-1 overflow-y-auto min-h-screen flex flex-col">
-        <SectionAccent />
+        <TopNavBar />
         <div className="flex-1">
         <Routes>
           <Route path="/" element={<DashboardPage />} />

@@ -11,7 +11,8 @@ import { autoUpdater } from 'electron-updater';
 import Stripe from 'stripe';
 import { requiresReferral as checkDirectAccess, getAllRules as getDirectAccessRules } from '../shared/directAccessRules';
 import { detectCloudStorage } from './cloudDetection';
-import type { AppTier } from '../shared/types';
+import type { AppTier, NoteFormat } from '../shared/types';
+import { NOTE_FORMAT_SECTIONS } from '../shared/types';
 
 // ── Secure Storage Helpers ──
 // Uses Electron's safeStorage API which leverages OS credential storage:
@@ -1995,7 +1996,15 @@ function registerIpcHandlers() {
   });
 
   // ── Client Documents ──
-  safeHandle('documents:upload', async (_event, data: { clientId: number; category?: string }) => {
+  safeHandle('documents:upload', async (_event, data: {
+    clientId: number;
+    category?: string;
+    certification_period_start?: string;
+    certification_period_end?: string;
+    received_date?: string;
+    sent_date?: string;
+    physician_name?: string;
+  }) => {
     const { canceled, filePaths } = await dialog.showOpenDialog({
       title: 'Upload Document',
       filters: [
@@ -2020,11 +2029,50 @@ function registerIpcHandlers() {
     fs.copyFileSync(selectedFile, destPath);
 
     const result = db.prepare(`
-      INSERT INTO client_documents (client_id, filename, original_name, file_type, file_size, category)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(data.clientId, uuidName, originalName, fileType, fileStats.size, data.category || 'general');
+      INSERT INTO client_documents (client_id, filename, original_name, file_type, file_size, category,
+        certification_period_start, certification_period_end, received_date, sent_date, physician_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      data.clientId, uuidName, originalName, fileType, fileStats.size, data.category || 'other',
+      data.certification_period_start || '', data.certification_period_end || '',
+      data.received_date || '', data.sent_date || '', data.physician_name || ''
+    );
 
     return db.prepare('SELECT * FROM client_documents WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('documents:updateMeta', (_event, data: {
+    documentId: number;
+    certification_period_start?: string;
+    certification_period_end?: string;
+    received_date?: string;
+    sent_date?: string;
+    physician_name?: string;
+    category?: string;
+  }) => {
+    const doc = db.prepare('SELECT * FROM client_documents WHERE id = ? AND deleted_at IS NULL').get(data.documentId) as any;
+    if (!doc) throw new Error('Document not found');
+
+    db.prepare(`
+      UPDATE client_documents SET
+        certification_period_start = ?,
+        certification_period_end = ?,
+        received_date = ?,
+        sent_date = ?,
+        physician_name = ?,
+        category = ?
+      WHERE id = ?
+    `).run(
+      data.certification_period_start ?? doc.certification_period_start,
+      data.certification_period_end ?? doc.certification_period_end,
+      data.received_date ?? doc.received_date,
+      data.sent_date ?? doc.sent_date,
+      data.physician_name ?? doc.physician_name,
+      data.category ?? doc.category,
+      data.documentId
+    );
+
+    return db.prepare('SELECT * FROM client_documents WHERE id = ?').get(data.documentId);
   });
 
   safeHandle('documents:list', (_event, data: { clientId: number }) => {
@@ -3955,7 +4003,9 @@ function buildClientChartPdf(clientId: number): Buffer {
 
   // Notes
   if (notes.length > 0) {
-    addSectionHeader(`SOAP Notes (${notes.length})`);
+    const noteFormatVal = (db.prepare("SELECT value FROM settings WHERE key = 'note_format'").get() as any)?.value || 'SOAP';
+    const pdfSections = NOTE_FORMAT_SECTIONS[noteFormatVal as NoteFormat].filter((s: any) => s.label !== '(unused)');
+    addSectionHeader(`${noteFormatVal} Notes (${notes.length})`);
     for (const note of notes) {
       checkPageBreak(60);
       doc.setFontSize(10);
@@ -3987,37 +4037,16 @@ function buildClientChartPdf(clientId: number): Buffer {
       } else if (note.time_out) {
         addField('  Time Out', note.time_out);
       }
-      if (note.subjective) {
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(9);
-        checkPageBreak(14);
-        doc.text('  Subjective:', marginLeft, y);
-        y += 13;
-        addWrappedText(note.subjective, 20);
-      }
-      if (note.objective) {
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(9);
-        checkPageBreak(14);
-        doc.text('  Objective:', marginLeft, y);
-        y += 13;
-        addWrappedText(note.objective, 20);
-      }
-      if (note.assessment) {
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(9);
-        checkPageBreak(14);
-        doc.text('  Assessment:', marginLeft, y);
-        y += 13;
-        addWrappedText(note.assessment, 20);
-      }
-      if (note.plan) {
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(9);
-        checkPageBreak(14);
-        doc.text('  Plan:', marginLeft, y);
-        y += 13;
-        addWrappedText(note.plan, 20);
+      for (const sec of pdfSections) {
+        const value = (note as any)[sec.field];
+        if (value) {
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(9);
+          checkPageBreak(14);
+          doc.text(`  ${sec.label}:`, marginLeft, y);
+          y += 13;
+          addWrappedText(value, 20);
+        }
       }
       if (note.signature_typed) {
         addField('  Signed by', note.signature_typed);

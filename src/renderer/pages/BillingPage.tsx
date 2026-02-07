@@ -458,12 +458,12 @@ export default function BillingPage() {
           {/* Stats Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <div
-              className="card p-5 cursor-pointer hover:shadow-md hover:border-amber-300 transition-all"
+              className="card p-5 cursor-pointer hover:shadow-md hover:border-blue-300 transition-all"
               onClick={() => { setActiveTab('invoices'); setInvoiceFilter('sent'); }}
             >
               <div className="flex items-center justify-between mb-3">
                 <span className="text-sm text-[var(--color-text-secondary)]">Outstanding</span>
-                <AlertCircle className="w-5 h-5 text-amber-500" />
+                <AlertCircle className="w-5 h-5 text-blue-600" />
               </div>
               <p className="text-2xl font-bold text-[var(--color-text)]">
                 {formatCurrency(stats.totalOutstanding)}
@@ -474,12 +474,12 @@ export default function BillingPage() {
             </div>
 
             <div
-              className="card p-5 cursor-pointer hover:shadow-md hover:border-emerald-300 transition-all"
+              className="card p-5 cursor-pointer hover:shadow-md hover:border-blue-300 transition-all"
               onClick={() => setActiveTab('payments')}
             >
               <div className="flex items-center justify-between mb-3">
                 <span className="text-sm text-[var(--color-text-secondary)]">Paid This Month</span>
-                <TrendingUp className="w-5 h-5 text-emerald-500" />
+                <TrendingUp className="w-5 h-5 text-blue-600" />
               </div>
               <p className="text-2xl font-bold text-[var(--color-text)]">
                 {formatCurrency(stats.totalPaidThisMonth)}
@@ -497,12 +497,12 @@ export default function BillingPage() {
             </div>
 
             <div
-              className="card p-5 cursor-pointer hover:shadow-md hover:border-gray-300 transition-all"
+              className="card p-5 cursor-pointer hover:shadow-md hover:border-blue-300 transition-all"
               onClick={() => { setActiveTab('invoices'); setInvoiceFilter('draft'); }}
             >
               <div className="flex items-center justify-between mb-3">
                 <span className="text-sm text-[var(--color-text-secondary)]">Draft Invoices</span>
-                <FileText className="w-5 h-5 text-gray-400" />
+                <FileText className="w-5 h-5 text-blue-600" />
               </div>
               <p className="text-2xl font-bold text-[var(--color-text)]">{stats.invoicesDraft}</p>
               <p className="text-xs text-[var(--color-text-secondary)] mt-1">
@@ -511,12 +511,12 @@ export default function BillingPage() {
             </div>
 
             <div
-              className="card p-5 cursor-pointer hover:shadow-md hover:border-red-300 transition-all"
+              className="card p-5 cursor-pointer hover:shadow-md hover:border-blue-300 transition-all"
               onClick={() => { setActiveTab('invoices'); setInvoiceFilter('overdue'); }}
             >
               <div className="flex items-center justify-between mb-3">
                 <span className="text-sm text-[var(--color-text-secondary)]">Overdue</span>
-                <Clock className="w-5 h-5 text-red-500" />
+                <Clock className="w-5 h-5 text-blue-600" />
               </div>
               <p className="text-2xl font-bold text-red-600">{stats.invoicesOverdue}</p>
               <p className="text-xs text-[var(--color-text-secondary)] mt-1">

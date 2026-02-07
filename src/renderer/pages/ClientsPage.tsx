@@ -20,6 +20,7 @@ const disciplineBadgeClass: Record<Discipline, string> = {
   PT: 'badge-pt',
   OT: 'badge-ot',
   ST: 'badge-st',
+  MFT: 'badge-mft',
 };
 
 const ClientsPage: React.FC = () => {

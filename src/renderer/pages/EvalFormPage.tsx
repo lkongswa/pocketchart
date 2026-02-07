@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useSectionColor } from '../hooks/useSectionColor';
 import {
@@ -15,8 +15,11 @@ import {
   Plus,
   X,
   Trash2,
+  BookOpen,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
-import type { Client, Evaluation, Discipline, GoalType, EvalGoalEntry } from '../../shared/types';
+import type { Client, Evaluation, Discipline, GoalType, EvalGoalEntry, GoalsBankEntry } from '../../shared/types';
 import SignaturePad from '../components/SignaturePad';
 
 // ── Types ──
@@ -50,7 +53,16 @@ interface STObjectiveAssessment {
   cognition_communication: string;
 }
 
-type ObjectiveAssessment = PTObjectiveAssessment | OTObjectiveAssessment | STObjectiveAssessment;
+interface MFTObjectiveAssessment {
+  presenting_problem: string;
+  mental_status: string;
+  risk_assessment: string;
+  relationship_dynamics: string;
+  functional_impairment: string;
+  diagnostic_impressions: string;
+}
+
+type ObjectiveAssessment = PTObjectiveAssessment | OTObjectiveAssessment | STObjectiveAssessment | MFTObjectiveAssessment;
 
 interface EvalContent {
   referral_source: string;
@@ -72,6 +84,36 @@ const CATEGORY_OPTIONS: Record<Discipline, string[]> = {
   PT: ['Mobility', 'Strength', 'Balance', 'ROM', 'Pain Management', 'Gait', 'Functional Activity', 'Endurance', 'Transfers', 'Posture'],
   OT: ['ADLs', 'Fine Motor', 'Visual Motor', 'Sensory Processing', 'Handwriting', 'Self-Care', 'Feeding', 'Upper Extremity', 'Cognitive', 'Play Skills'],
   ST: ['Articulation', 'Language Comprehension', 'Language Expression', 'Fluency', 'Voice', 'Pragmatics', 'Phonological Awareness', 'Feeding/Swallowing', 'AAC', 'Cognitive-Communication'],
+  MFT: ['Depression', 'Anxiety', 'Trauma', 'Relationship', 'Family Systems', 'Coping Skills', 'Self-Esteem', 'Grief', 'Behavioral', 'Communication'],
+};
+
+// ── Treatment Plan Quick Chips by Discipline ──
+
+const TREATMENT_PLAN_CHIPS: Record<Discipline, string[]> = {
+  PT: [
+    'Therapeutic exercise', 'Manual therapy', 'Neuromuscular re-education',
+    'Gait training', 'Balance training', 'Modalities (e-stim, US, heat/cold)',
+    'Functional mobility training', 'Patient/caregiver education',
+    'Home exercise program', 'Aquatic therapy', 'Stretching/flexibility',
+  ],
+  OT: [
+    'ADL training', 'Fine motor training', 'Therapeutic exercise',
+    'Neuromuscular re-education', 'Sensory integration', 'Cognitive retraining',
+    'Splinting/orthotics', 'Visual-motor training', 'Feeding therapy',
+    'Home modification education', 'Adaptive equipment training',
+  ],
+  ST: [
+    'Articulation therapy', 'Language intervention', 'Fluency shaping',
+    'Voice therapy', 'Dysphagia management', 'Cognitive-communication training',
+    'AAC training', 'Oral motor exercises', 'Pragmatic language training',
+    'Phonological awareness', 'Parent/caregiver training',
+  ],
+  MFT: [
+    'Individual psychotherapy', 'Couples therapy', 'Family therapy',
+    'CBT techniques', 'DBT skills training', 'EMDR',
+    'Play therapy', 'Art/expressive therapy', 'Crisis intervention',
+    'Psychoeducation', 'Mindfulness/relaxation training',
+  ],
 };
 
 // ── Helpers ──
@@ -116,11 +158,23 @@ function emptySTObjective(): STObjectiveAssessment {
   };
 }
 
+function emptyMFTObjective(): MFTObjectiveAssessment {
+  return {
+    presenting_problem: '',
+    mental_status: '',
+    risk_assessment: '',
+    relationship_dynamics: '',
+    functional_impairment: '',
+    diagnostic_impressions: '',
+  };
+}
+
 function emptyObjectiveForDiscipline(discipline: Discipline): ObjectiveAssessment {
   switch (discipline) {
     case 'PT': return emptyPTObjective();
     case 'OT': return emptyOTObjective();
     case 'ST': return emptySTObjective();
+    case 'MFT': return emptyMFTObjective();
   }
 }
 
@@ -169,11 +223,21 @@ const ST_OBJECTIVE_FIELDS: Array<{ key: keyof STObjectiveAssessment; label: stri
   { key: 'cognition_communication', label: 'Cognition-Communication' },
 ];
 
+const MFT_OBJECTIVE_FIELDS: Array<{ key: keyof MFTObjectiveAssessment; label: string }> = [
+  { key: 'presenting_problem', label: 'Presenting Problem' },
+  { key: 'mental_status', label: 'Mental Status Exam' },
+  { key: 'risk_assessment', label: 'Risk Assessment (SI/HI/Abuse)' },
+  { key: 'relationship_dynamics', label: 'Relationship / Family Dynamics' },
+  { key: 'functional_impairment', label: 'Functional Impairment' },
+  { key: 'diagnostic_impressions', label: 'Diagnostic Impressions' },
+];
+
 function getObjectiveFields(discipline: Discipline) {
   switch (discipline) {
     case 'PT': return PT_OBJECTIVE_FIELDS;
     case 'OT': return OT_OBJECTIVE_FIELDS;
     case 'ST': return ST_OBJECTIVE_FIELDS;
+    case 'MFT': return MFT_OBJECTIVE_FIELDS;
   }
 }
 
@@ -181,6 +245,7 @@ const DISCIPLINE_LABELS: Record<Discipline, string> = {
   PT: 'Physical Therapy',
   OT: 'Occupational Therapy',
   ST: 'Speech Therapy',
+  MFT: 'Marriage & Family Therapy',
 };
 
 // ── Component ──
@@ -205,6 +270,19 @@ export default function EvalFormPage() {
   const [goalsAlreadyCreated, setGoalsAlreadyCreated] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
+  // Goal bank state
+  const [goalsBankEntries, setGoalsBankEntries] = useState<GoalsBankEntry[]>([]);
+  const [showGoalBank, setShowGoalBank] = useState<number | null>(null); // index of goal entry showing bank
+
+  // Frequency & Duration state
+  const [freqValue, setFreqValue] = useState<number>(0);
+  const [durValue, setDurValue] = useState<number>(0);
+
+  // Auto-save state
+  const [savedEvalId, setSavedEvalId] = useState<number | null>(evalId ? parseInt(evalId, 10) : null);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [lastAutoSaved, setLastAutoSaved] = useState<string | null>(null);
+
   // ── Data Loading ──
 
   const loadData = useCallback(async () => {
@@ -216,6 +294,14 @@ export default function EvalFormPage() {
       setClient(clientData);
 
       const discipline = clientData.discipline as Discipline;
+
+      // Load goals bank entries
+      try {
+        const bankEntries = await window.api.goalsBank.list({ discipline });
+        setGoalsBankEntries(bankEntries);
+      } catch (err) {
+        console.error('Failed to load goals bank:', err);
+      }
 
       if (evalId) {
         const evaluation = await window.api.evaluations.get(parseInt(evalId, 10));
@@ -241,6 +327,13 @@ export default function EvalFormPage() {
             if (parsed.created_goal_ids && parsed.created_goal_ids.length > 0) {
               setGoalsAlreadyCreated(true);
             }
+          }
+          // Parse frequency/duration
+          if (parsed.frequency_duration) {
+            const freqMatch = parsed.frequency_duration.match(/(\d+)x?\s*\/?\s*week/i);
+            const durMatch = parsed.frequency_duration.match(/(\d+)\s*weeks/i);
+            if (freqMatch) setFreqValue(parseInt(freqMatch[1], 10));
+            if (durMatch) setDurValue(parseInt(durMatch[1], 10));
           }
         } catch {
           setContent(emptyContent(discipline));
@@ -275,6 +368,83 @@ export default function EvalFormPage() {
     }
   }, [toast]);
 
+  // ── Reload goals bank when category changes ──
+
+  const loadGoalsBankForCategory = useCallback(async (category: string) => {
+    if (!client) return;
+    try {
+      const filters: any = { discipline: client.discipline };
+      if (category) filters.category = category;
+      const entries = await window.api.goalsBank.list(filters);
+      setGoalsBankEntries(entries);
+    } catch (err) {
+      console.error('Failed to load goals bank:', err);
+    }
+  }, [client]);
+
+  // ── Auto-Save ──
+
+  const performAutoSave = useCallback(async () => {
+    if (!clientId || !client || !content || existingSignedAt) return;
+
+    try {
+      const cid = parseInt(clientId, 10);
+      const contentToSave = {
+        ...content,
+        goal_entries: goalEntries,
+        created_goal_ids: content.created_goal_ids || [],
+      };
+
+      const evalData: Partial<Evaluation> = {
+        client_id: cid,
+        eval_date: evalDate,
+        discipline: client.discipline,
+        content: JSON.stringify(contentToSave),
+        signature_image: '',
+        signature_typed: '',
+        signed_at: '',
+      };
+
+      if (savedEvalId) {
+        await window.api.evaluations.update(savedEvalId, evalData);
+      } else {
+        const created = await window.api.evaluations.create(evalData);
+        if (created?.id) setSavedEvalId(created.id);
+      }
+      setLastAutoSaved(new Date().toLocaleTimeString());
+    } catch (err) {
+      console.error('Auto-save failed:', err);
+    }
+  }, [clientId, client, content, goalEntries, evalDate, savedEvalId, existingSignedAt]);
+
+  // Debounced auto-save: triggers 3 seconds after any change
+  useEffect(() => {
+    if (loading || !content || existingSignedAt) return;
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      performAutoSave();
+    }, 3000);
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [content, goalEntries, evalDate, performAutoSave, loading, existingSignedAt]);
+
+  // Warn on navigate away with unsaved changes
+  useEffect(() => {
+    const hasContent = content && (
+      content.referral_source?.trim() || content.medical_history?.trim() ||
+      content.current_complaints?.trim() || content.clinical_impression?.trim() ||
+      content.treatment_plan?.trim() || goalEntries.length > 0
+    );
+    if (!hasContent) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [content, goalEntries]);
+
   // ── Field update helpers ──
 
   const updateField = (field: keyof Omit<EvalContent, 'objective_assessment'>, value: string) => {
@@ -292,6 +462,40 @@ export default function EvalFormPage() {
         },
       };
     });
+  };
+
+  // ── Frequency & Duration helpers ──
+
+  const updateFreqDuration = (freq: number, dur: number) => {
+    setFreqValue(freq);
+    setDurValue(dur);
+    if (freq > 0 && dur > 0) {
+      updateField('frequency_duration', `${freq}x/week for ${dur} weeks`);
+    } else if (freq > 0) {
+      updateField('frequency_duration', `${freq}x/week`);
+    } else if (dur > 0) {
+      updateField('frequency_duration', `${dur} weeks`);
+    }
+  };
+
+  // ── Treatment Plan chip insert ──
+
+  const insertTreatmentChip = (chip: string) => {
+    setContent((prev) => {
+      if (!prev) return prev;
+      const current = prev.treatment_plan.trim();
+      const separator = current ? '; ' : '';
+      return { ...prev, treatment_plan: current + separator + chip };
+    });
+  };
+
+  // ── Goal bank template insert ──
+
+  const insertGoalFromBank = (template: string, category: string, goalIdx: number) => {
+    setGoalEntries(prev =>
+      prev.map((g, i) => i === goalIdx ? { ...g, goal_text: template, category } : g)
+    );
+    setShowGoalBank(null);
   };
 
   // ── Save ──
@@ -317,9 +521,9 @@ export default function EvalFormPage() {
       setSaving(true);
       const cid = parseInt(clientId, 10);
 
-      // Create Goal records from structured entries (only on new evals, not edits)
-      let createdGoalIds: number[] = [];
-      if (!isEditing && goalEntries.length > 0) {
+      // Create Goal records from structured entries (only on new evals or if not already created)
+      let createdGoalIds: number[] = content.created_goal_ids || [];
+      if (!goalsAlreadyCreated && goalEntries.length > 0) {
         const validEntries = goalEntries.filter(e => e.goal_text.trim());
         for (const entry of validEntries) {
           const goal = await window.api.goals.create({
@@ -338,9 +542,7 @@ export default function EvalFormPage() {
       const contentToSave = {
         ...content,
         goal_entries: goalEntries,
-        created_goal_ids: isEditing
-          ? (content.created_goal_ids || [])
-          : createdGoalIds,
+        created_goal_ids: createdGoalIds,
       };
 
       const evalData: Partial<Evaluation> = {
@@ -353,10 +555,11 @@ export default function EvalFormPage() {
         signed_at: sign ? new Date().toISOString() : '',
       };
 
-      if (isEditing && evalId) {
-        await window.api.evaluations.update(parseInt(evalId, 10), evalData);
+      if (savedEvalId) {
+        await window.api.evaluations.update(savedEvalId, evalData);
       } else {
-        await window.api.evaluations.create(evalData);
+        const created = await window.api.evaluations.create(evalData);
+        if (created?.id) setSavedEvalId(created.id);
       }
 
       setToast(sign ? 'Evaluation signed and saved' : 'Draft saved');
@@ -375,9 +578,10 @@ export default function EvalFormPage() {
       setTimeout(() => setConfirmingDelete(false), 3000);
       return;
     }
-    if (!evalId) return;
+    const idToDelete = savedEvalId || (evalId ? parseInt(evalId, 10) : null);
+    if (!idToDelete) return;
     try {
-      await window.api.evaluations.delete(parseInt(evalId, 10));
+      await window.api.evaluations.delete(idToDelete);
       setToast('Evaluation deleted');
       setTimeout(() => navigate(`/clients/${clientId}`), 500);
     } catch (err) {
@@ -406,6 +610,14 @@ export default function EvalFormPage() {
 
   const discipline = client.discipline as Discipline;
   const objectiveFields = getObjectiveFields(discipline);
+
+  // Filter bank entries for the currently active goal category
+  const getFilteredBankEntries = (category: string): GoalsBankEntry[] => {
+    if (!category) return goalsBankEntries;
+    return goalsBankEntries.filter(e =>
+      e.category?.toLowerCase() === category.toLowerCase()
+    );
+  };
 
   return (
     <div className="overflow-y-auto h-full p-6">
@@ -439,6 +651,11 @@ export default function EvalFormPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {lastAutoSaved && (
+              <span className="text-xs text-[var(--color-text-secondary)]">
+                Auto-saved {lastAutoSaved}
+              </span>
+            )}
             <span className={`badge badge-${discipline.toLowerCase()}`}>
               {DISCIPLINE_LABELS[discipline]}
             </span>
@@ -626,22 +843,75 @@ export default function EvalFormPage() {
             </div>
           ) : (
             <div className="space-y-4">
-              {goalEntries.map((entry, idx) => (
+              {goalEntries.map((entry, idx) => {
+                const bankForCategory = getFilteredBankEntries(entry.category);
+                const showBank = showGoalBank === idx;
+                return (
                 <div key={idx} className="p-4 bg-gray-50 rounded-lg border border-[var(--color-border)]">
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase">
                       Goal {idx + 1}
                     </span>
-                    {!goalsAlreadyCreated && (
-                      <button
-                        type="button"
-                        className="p-1 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
-                        onClick={() => setGoalEntries(prev => prev.filter((_, i) => i !== idx))}
-                      >
-                        <X size={16} />
-                      </button>
-                    )}
+                    <div className="flex items-center gap-1">
+                      {!goalsAlreadyCreated && (
+                        <>
+                          <button
+                            type="button"
+                            className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
+                              showBank ? 'bg-violet-100 text-violet-700' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] hover:bg-violet-50'
+                            }`}
+                            onClick={() => {
+                              if (showBank) {
+                                setShowGoalBank(null);
+                              } else {
+                                loadGoalsBankForCategory(entry.category);
+                                setShowGoalBank(idx);
+                              }
+                            }}
+                            title="Browse goals bank"
+                          >
+                            <BookOpen size={12} />
+                            Goal Bank
+                          </button>
+                          <button
+                            type="button"
+                            className="p-1 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                            onClick={() => setGoalEntries(prev => prev.filter((_, i) => i !== idx))}
+                          >
+                            <X size={16} />
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
+
+                  {/* Goal Bank Dropdown */}
+                  {showBank && !goalsAlreadyCreated && (
+                    <div className="mb-3 p-3 bg-violet-50 rounded-lg border border-violet-200 max-h-48 overflow-y-auto">
+                      <p className="text-xs font-semibold text-violet-700 mb-2">
+                        {entry.category ? `${entry.category} Templates` : 'All Templates'} ({bankForCategory.length})
+                      </p>
+                      {bankForCategory.length === 0 ? (
+                        <p className="text-xs text-[var(--color-text-secondary)] italic">
+                          No templates found for this category. Try selecting a different category.
+                        </p>
+                      ) : (
+                        <div className="space-y-1">
+                          {bankForCategory.map((bankEntry) => (
+                            <button
+                              key={bankEntry.id}
+                              type="button"
+                              className="w-full text-left p-2 rounded text-xs text-[var(--color-text)] hover:bg-violet-100 transition-colors leading-snug"
+                              onClick={() => insertGoalFromBank(bankEntry.goal_template, bankEntry.category, idx)}
+                            >
+                              {bankEntry.goal_template}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-3 gap-3 mb-3">
                     <div>
                       <label className="label text-xs">Type</label>
@@ -665,11 +935,16 @@ export default function EvalFormPage() {
                         className="select text-sm"
                         value={entry.category}
                         disabled={goalsAlreadyCreated}
-                        onChange={(e) =>
+                        onChange={(e) => {
+                          const newCat = e.target.value;
                           setGoalEntries(prev =>
-                            prev.map((g, i) => i === idx ? { ...g, category: e.target.value } : g)
-                          )
-                        }
+                            prev.map((g, i) => i === idx ? { ...g, category: newCat } : g)
+                          );
+                          // Reload bank for new category
+                          if (showGoalBank === idx) {
+                            loadGoalsBankForCategory(newCat);
+                          }
+                        }}
                       >
                         <option value="">Select</option>
                         {(CATEGORY_OPTIONS[discipline] || []).map(cat => (
@@ -697,7 +972,7 @@ export default function EvalFormPage() {
                     <textarea
                       className="textarea text-sm"
                       rows={2}
-                      placeholder="Enter goal text..."
+                      placeholder="Enter goal text or select from Goal Bank above..."
                       value={entry.goal_text}
                       disabled={goalsAlreadyCreated}
                       onChange={(e) =>
@@ -708,7 +983,8 @@ export default function EvalFormPage() {
                     />
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -732,10 +1008,26 @@ export default function EvalFormPage() {
         {/* Treatment Plan */}
         <div className="card p-6 mb-6">
           <h2 className="section-title">Treatment Plan</h2>
+          {/* Quick chips for treatment plan */}
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {(TREATMENT_PLAN_CHIPS[discipline] || []).map((chip) => (
+              <button
+                key={chip}
+                type="button"
+                className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium
+                  bg-teal-50 text-teal-700 border border-teal-200
+                  hover:bg-teal-100 active:bg-teal-200
+                  transition-colors cursor-pointer"
+                onClick={() => insertTreatmentChip(chip)}
+              >
+                {chip}
+              </button>
+            ))}
+          </div>
           <textarea
             className="textarea"
             rows={4}
-            placeholder="Planned interventions, modalities, techniques..."
+            placeholder="Planned interventions, modalities, techniques... (click chips above to add)"
             value={content.treatment_plan}
             onChange={(e) => updateField('treatment_plan', e.target.value)}
           />
@@ -744,6 +1036,80 @@ export default function EvalFormPage() {
         {/* Frequency & Duration */}
         <div className="card p-6 mb-6">
           <h2 className="section-title">Frequency & Duration</h2>
+
+          {/* Frequency quick taps */}
+          <div className="mb-4">
+            <label className="label text-xs mb-2">Frequency (times/week)</label>
+            <div className="flex items-center gap-2">
+              {[1, 2, 3].map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors border ${
+                    freqValue === f
+                      ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
+                      : 'bg-white text-[var(--color-text)] border-[var(--color-border)] hover:bg-gray-50'
+                  }`}
+                  onClick={() => updateFreqDuration(f, durValue)}
+                >
+                  {f}x
+                </button>
+              ))}
+              <div className="flex items-center gap-1 ml-2">
+                <input
+                  type="number"
+                  className="input w-16 text-sm text-center"
+                  placeholder="Other"
+                  min={1}
+                  max={7}
+                  value={freqValue > 3 ? freqValue : ''}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value, 10) || 0;
+                    updateFreqDuration(v, durValue);
+                  }}
+                />
+                <span className="text-xs text-[var(--color-text-secondary)]">x/wk</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Duration quick taps */}
+          <div className="mb-4">
+            <label className="label text-xs mb-2">Duration (weeks)</label>
+            <div className="flex items-center gap-2">
+              {[4, 8, 12].map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors border ${
+                    durValue === d
+                      ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
+                      : 'bg-white text-[var(--color-text)] border-[var(--color-border)] hover:bg-gray-50'
+                  }`}
+                  onClick={() => updateFreqDuration(freqValue, d)}
+                >
+                  {d} wks
+                </button>
+              ))}
+              <div className="flex items-center gap-1 ml-2">
+                <input
+                  type="number"
+                  className="input w-16 text-sm text-center"
+                  placeholder="Other"
+                  min={1}
+                  max={52}
+                  value={![4, 8, 12].includes(durValue) && durValue > 0 ? durValue : ''}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value, 10) || 0;
+                    updateFreqDuration(freqValue, v);
+                  }}
+                />
+                <span className="text-xs text-[var(--color-text-secondary)]">wks</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Editable summary */}
           <input
             type="text"
             className="input"
@@ -795,7 +1161,7 @@ export default function EvalFormPage() {
         {/* Action Buttons */}
         <div className="flex items-center justify-between pb-8">
           <div>
-            {isEditing && !existingSignedAt && (
+            {(isEditing || savedEvalId) && !existingSignedAt && (
               <button
                 className={`flex items-center gap-2 text-sm font-medium px-3 py-2 rounded-lg transition-colors ${
                   confirmingDelete

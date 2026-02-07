@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Settings, Building2, User, Stethoscope, Info, Save, CheckCircle, Database, Download, FileSpreadsheet, HardDrive, FolderOpen, RotateCcw, Upload, Trash2, Image, Clock, AlertTriangle, Shield, Lock, PenLine, BookOpen, ChevronDown, ShieldCheck } from 'lucide-react';
-import type { Practice, Discipline, CloudDetectionResult } from '../../shared/types';
+import type { Practice, Discipline, NoteFormat, CloudDetectionResult } from '../../shared/types';
+import { NOTE_FORMAT_LABELS, DISCIPLINE_DEFAULT_FORMAT } from '../../shared/types';
 import SignaturePad from '../components/SignaturePad';
 import GoalsBankPage from './GoalsBankPage';
 import NoteBankPage from './NoteBankPage';
@@ -50,6 +51,7 @@ const DISCIPLINES: Array<{ value: Discipline | 'MULTI'; label: string }> = [
   { value: 'PT', label: 'Physical Therapy (PT)' },
   { value: 'OT', label: 'Occupational Therapy (OT)' },
   { value: 'ST', label: 'Speech Therapy (ST)' },
+  { value: 'MFT', label: 'Marriage & Family Therapy (MFT)' },
   { value: 'MULTI', label: 'Multi-Discipline (MULTI)' },
 ];
 
@@ -81,6 +83,7 @@ const TAXONOMY_OPTIONS = [
   { value: '235Z00000X', label: 'Speech-Language Pathologist (235Z00000X)' },
   { value: '225X00000X', label: 'Occupational Therapist (225X00000X)' },
   { value: '225100000X', label: 'Physical Therapist (225100000X)' },
+  { value: '101YM0800X', label: 'Marriage & Family Therapist (101YM0800X)' },
 ];
 
 const emptyPractice: Omit<Practice, 'id'> = {
@@ -110,6 +113,7 @@ export default function SettingsPage() {
   const [defaultPath, setDefaultPath] = useState<string>('');
   const [logoBase64, setLogoBase64] = useState<string | null>(null);
   const [defaultSessionLength, setDefaultSessionLength] = useState<number>(45);
+  const [noteFormat, setNoteFormat] = useState<NoteFormat>('SOAP');
 
   // Signature state
   const [signatureName, setSignatureName] = useState('');
@@ -163,6 +167,9 @@ export default function SettingsPage() {
     window.api.settings.get('default_session_length').then((val) => {
       if (val) setDefaultSessionLength(parseInt(val, 10));
     }).catch(console.error);
+    window.api.settings.get('note_format').then((val) => {
+      if (val) setNoteFormat(val as NoteFormat);
+    }).catch(console.error);
     window.api.settings.get('signature_name').then((val) => {
       if (val) setSignatureName(val);
     }).catch(console.error);
@@ -213,6 +220,17 @@ export default function SettingsPage() {
       setToast('Failed to save settings. Please try again.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleNoteFormatChange = async (format: NoteFormat) => {
+    setNoteFormat(format);
+    try {
+      await window.api.settings.set('note_format', format);
+      await window.api.settings.set('note_format_explicit', 'true');
+      setToast('Note format updated');
+    } catch (err) {
+      console.error('Failed to save note format:', err);
     }
   };
 
@@ -759,8 +777,51 @@ export default function SettingsPage() {
         <div className="space-y-3">
           {DISCIPLINES.map((d) => (
             <label key={d.value} className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-gray-50 transition-colors">
-              <input type="radio" name="discipline" value={d.value} checked={formData.discipline === d.value} onChange={() => handleChange('discipline', d.value)} className="w-4 h-4 text-[var(--color-primary)] accent-[var(--color-primary)]" />
+              <input type="radio" name="discipline" value={d.value} checked={formData.discipline === d.value} onChange={async () => {
+                handleChange('discipline', d.value);
+                // Auto-set note format if not explicitly set
+                const hasExplicit = await window.api.settings.get('note_format_explicit');
+                if (!hasExplicit && d.value !== 'MULTI') {
+                  const defaultFormat = DISCIPLINE_DEFAULT_FORMAT[d.value as Discipline];
+                  setNoteFormat(defaultFormat);
+                  await window.api.settings.set('note_format', defaultFormat);
+                }
+              }} className="w-4 h-4 text-[var(--color-primary)] accent-[var(--color-primary)]" />
               <span className="text-sm font-medium">{d.label}</span>
+            </label>
+          ))}
+        </div>
+      </CollapsibleSection>
+
+      {/* Note Format */}
+      <CollapsibleSection
+        icon={<FileSpreadsheet className="w-5 h-5" />}
+        title="Note Format"
+        description={NOTE_FORMAT_LABELS[noteFormat]}
+      >
+        <p className="text-xs text-[var(--color-text-secondary)] mb-4">
+          Choose how progress notes are structured. All formats store data the same way —
+          only the section labels change. Existing notes are not affected.
+        </p>
+        <div className="space-y-3">
+          {(['SOAP', 'DAP', 'BIRP'] as NoteFormat[]).map((format) => (
+            <label key={format} className="flex items-start gap-3 cursor-pointer p-3 rounded-lg hover:bg-gray-50 transition-colors">
+              <input
+                type="radio"
+                name="noteFormat"
+                value={format}
+                checked={noteFormat === format}
+                onChange={() => handleNoteFormatChange(format)}
+                className="w-4 h-4 mt-0.5 text-[var(--color-primary)] accent-[var(--color-primary)]"
+              />
+              <div>
+                <span className="text-sm font-medium">{format}</span>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                  {format === 'SOAP' && 'Subjective, Objective, Assessment, Plan — standard for PT/OT/ST'}
+                  {format === 'DAP' && 'Data, Assessment, Plan — common for mental health clinicians'}
+                  {format === 'BIRP' && 'Behavior, Intervention, Response, Plan — behavioral health focus'}
+                </p>
+              </div>
             </label>
           ))}
         </div>

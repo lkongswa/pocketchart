@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { X } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Search } from 'lucide-react';
 import type { Client, Discipline, ClientStatus, Gender, SubscriberRelationship } from '../../shared/types';
+import { searchICD10, lookupICD10, type ICD10Entry } from '../../shared/icd10Data';
 
 // US States for dropdown
 const US_STATES = [
@@ -138,6 +139,14 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
   const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>({});
   const [saving, setSaving] = useState(false);
 
+  // ICD-10 search state
+  const [dxSuggestions, setDxSuggestions] = useState<ICD10Entry[]>([]);
+  const [showDxSuggestions, setShowDxSuggestions] = useState(false);
+  const [secDxSuggestions, setSecDxSuggestions] = useState<ICD10Entry[]>([]);
+  const [showSecDxSuggestions, setShowSecDxSuggestions] = useState(false);
+  const dxInputRef = useRef<HTMLInputElement>(null);
+  const secDxInputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     if (client) {
       const secDx = parseSecondaryDx(client.secondary_dx);
@@ -193,6 +202,48 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
     setForm((prev) => ({ ...prev, [name]: value }));
     if (errors[name as keyof FormData]) {
       setErrors((prev) => ({ ...prev, [name]: undefined }));
+    }
+
+    // ICD-10 auto-populate: search suggestions as user types dx code
+    if (name === 'primary_dx_code') {
+      if (value.length >= 2) {
+        const results = searchICD10(value, 8);
+        setDxSuggestions(results);
+        setShowDxSuggestions(results.length > 0);
+      } else {
+        setDxSuggestions([]);
+        setShowDxSuggestions(false);
+      }
+      // Auto-fill description on exact match
+      const match = lookupICD10(value);
+      if (match) {
+        setForm((prev) => ({ ...prev, primary_dx_description: match.description }));
+      }
+    }
+
+    if (name === 'secondary_dx_code') {
+      if (value.length >= 2) {
+        const results = searchICD10(value, 8);
+        setSecDxSuggestions(results);
+        setShowSecDxSuggestions(results.length > 0);
+      } else {
+        setSecDxSuggestions([]);
+        setShowSecDxSuggestions(false);
+      }
+      const match = lookupICD10(value);
+      if (match) {
+        setForm((prev) => ({ ...prev, secondary_dx_description: match.description }));
+      }
+    }
+  };
+
+  const selectDxCode = (entry: ICD10Entry, field: 'primary' | 'secondary') => {
+    if (field === 'primary') {
+      setForm((prev) => ({ ...prev, primary_dx_code: entry.code, primary_dx_description: entry.description }));
+      setShowDxSuggestions(false);
+    } else {
+      setForm((prev) => ({ ...prev, secondary_dx_code: entry.code, secondary_dx_description: entry.description }));
+      setShowSecDxSuggestions(false);
     }
   };
 
@@ -252,8 +303,8 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
           {/* Basic Info */}
-          <div>
-            <h3 className="section-title">Basic Information</h3>
+          <div className="rounded-lg border-l-4 border-blue-400 bg-blue-50/30 p-4">
+            <h3 className="section-title text-blue-700">Basic Information</h3>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="label" htmlFor="first_name">First Name *</label>
@@ -336,8 +387,8 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
           </div>
 
           {/* Address */}
-          <div>
-            <h3 className="section-title">Address</h3>
+          <div className="rounded-lg border-l-4 border-blue-400 bg-blue-50/30 p-4">
+            <h3 className="section-title text-blue-700">Address</h3>
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
                 <label className="label" htmlFor="address">Street Address</label>
@@ -391,8 +442,8 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
           </div>
 
           {/* Clinical */}
-          <div>
-            <h3 className="section-title">Clinical Information</h3>
+          <div className="rounded-lg border-l-4 border-violet-400 bg-violet-50/30 p-4">
+            <h3 className="section-title text-violet-700">Clinical Information</h3>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="label" htmlFor="discipline">Discipline *</label>
@@ -422,16 +473,38 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
                   placeholder="e.g. 97110"
                 />
               </div>
-              <div>
+              <div className="relative">
                 <label className="label" htmlFor="primary_dx_code">Primary Dx Code</label>
-                <input
-                  id="primary_dx_code"
-                  name="primary_dx_code"
-                  className="input"
-                  value={form.primary_dx_code}
-                  onChange={handleChange}
-                  placeholder="e.g. M54.5"
-                />
+                <div className="relative">
+                  <input
+                    ref={dxInputRef}
+                    id="primary_dx_code"
+                    name="primary_dx_code"
+                    className="input pr-8"
+                    value={form.primary_dx_code}
+                    onChange={handleChange}
+                    onFocus={() => { if (dxSuggestions.length > 0) setShowDxSuggestions(true); }}
+                    onBlur={() => { setTimeout(() => setShowDxSuggestions(false), 200); }}
+                    placeholder="e.g. M54.5"
+                    autoComplete="off"
+                  />
+                  <Search size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]" />
+                </div>
+                {showDxSuggestions && dxSuggestions.length > 0 && (
+                  <div className="absolute z-20 left-0 right-0 mt-1 bg-white border border-[var(--color-border)] rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                    {dxSuggestions.map((entry) => (
+                      <button
+                        key={entry.code}
+                        type="button"
+                        className="w-full text-left px-3 py-2 hover:bg-blue-50 flex items-center gap-2 text-sm transition-colors"
+                        onMouseDown={(e) => { e.preventDefault(); selectDxCode(entry, 'primary'); }}
+                      >
+                        <span className="font-mono font-semibold text-blue-600 shrink-0">{entry.code}</span>
+                        <span className="text-[var(--color-text-secondary)] truncate">{entry.description}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               <div>
                 <label className="label" htmlFor="primary_dx_description">Dx Description</label>
@@ -441,19 +514,42 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
                   className="input"
                   value={form.primary_dx_description}
                   onChange={handleChange}
-                  placeholder="e.g. Low back pain"
+                  placeholder="Auto-fills from code"
+                  readOnly={Boolean(form.primary_dx_code && lookupICD10(form.primary_dx_code))}
                 />
               </div>
-              <div>
+              <div className="relative">
                 <label className="label" htmlFor="secondary_dx_code">Secondary Dx Code</label>
-                <input
-                  id="secondary_dx_code"
-                  name="secondary_dx_code"
-                  className="input"
-                  value={form.secondary_dx_code}
-                  onChange={handleChange}
-                  placeholder="e.g. G89.29"
-                />
+                <div className="relative">
+                  <input
+                    ref={secDxInputRef}
+                    id="secondary_dx_code"
+                    name="secondary_dx_code"
+                    className="input pr-8"
+                    value={form.secondary_dx_code}
+                    onChange={handleChange}
+                    onFocus={() => { if (secDxSuggestions.length > 0) setShowSecDxSuggestions(true); }}
+                    onBlur={() => { setTimeout(() => setShowSecDxSuggestions(false), 200); }}
+                    placeholder="e.g. G89.29"
+                    autoComplete="off"
+                  />
+                  <Search size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]" />
+                </div>
+                {showSecDxSuggestions && secDxSuggestions.length > 0 && (
+                  <div className="absolute z-20 left-0 right-0 mt-1 bg-white border border-[var(--color-border)] rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                    {secDxSuggestions.map((entry) => (
+                      <button
+                        key={entry.code}
+                        type="button"
+                        className="w-full text-left px-3 py-2 hover:bg-blue-50 flex items-center gap-2 text-sm transition-colors"
+                        onMouseDown={(e) => { e.preventDefault(); selectDxCode(entry, 'secondary'); }}
+                      >
+                        <span className="font-mono font-semibold text-blue-600 shrink-0">{entry.code}</span>
+                        <span className="text-[var(--color-text-secondary)] truncate">{entry.description}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               <div>
                 <label className="label" htmlFor="secondary_dx_description">Secondary Dx Description</label>
@@ -463,15 +559,16 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
                   className="input"
                   value={form.secondary_dx_description}
                   onChange={handleChange}
-                  placeholder="e.g. Chronic pain"
+                  placeholder="Auto-fills from code"
+                  readOnly={Boolean(form.secondary_dx_code && lookupICD10(form.secondary_dx_code))}
                 />
               </div>
             </div>
           </div>
 
           {/* Insurance */}
-          <div>
-            <h3 className="section-title">Insurance</h3>
+          <div className="rounded-lg border-l-4 border-emerald-400 bg-emerald-50/30 p-4">
+            <h3 className="section-title text-emerald-700">Insurance</h3>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="label" htmlFor="insurance_payer">Insurance Payer</label>
@@ -573,8 +670,8 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
           </div>
 
           {/* Referral */}
-          <div>
-            <h3 className="section-title">Referral Information</h3>
+          <div className="rounded-lg border-l-4 border-amber-400 bg-amber-50/30 p-4">
+            <h3 className="section-title text-amber-700">Referral Information</h3>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="label" htmlFor="referral_source">Referral Source</label>

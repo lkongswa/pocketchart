@@ -10,22 +10,22 @@ export interface SectionColorInfo {
 
 /** Route prefix → section mapping */
 const ROUTE_SECTIONS: { prefix: string; section: string; color: string }[] = [
-  // Clinical (sky blue)
-  { prefix: '/clients', section: 'Clinical', color: '#0ea5e9' },
-  { prefix: '/calendar', section: 'Clinical', color: '#0ea5e9' },
-  { prefix: '/notes', section: 'Clinical', color: '#0ea5e9' },
-  // Business (amber)
-  { prefix: '/billing', section: 'Business', color: '#f59e0b' },
-  { prefix: '/entities', section: 'Business', color: '#f59e0b' },
-  { prefix: '/mileage', section: 'Business', color: '#f59e0b' },
-  { prefix: '/reports', section: 'Business', color: '#f59e0b' },
+  // Clinical (teal — matches logo)
+  { prefix: '/clients', section: 'Clinical', color: '#14b8a6' },
+  { prefix: '/calendar', section: 'Clinical', color: '#14b8a6' },
+  { prefix: '/notes', section: 'Clinical', color: '#14b8a6' },
+  // Business (deep blue)
+  { prefix: '/billing', section: 'Business', color: '#2563eb' },
+  { prefix: '/entities', section: 'Business', color: '#2563eb' },
+  { prefix: '/mileage', section: 'Business', color: '#2563eb' },
+  { prefix: '/reports', section: 'Business', color: '#2563eb' },
   // Professional (violet)
   { prefix: '/vault', section: 'Professional', color: '#8b5cf6' },
   // Settings (gray)
   { prefix: '/help', section: 'Settings', color: '#6b7280' },
   { prefix: '/settings', section: 'Settings', color: '#6b7280' },
   // Dashboard (Clinical)
-  { prefix: '/', section: 'Clinical', color: '#0ea5e9' },
+  { prefix: '/', section: 'Clinical', color: '#14b8a6' },
 ];
 
 export function getSectionForPath(pathname: string): SectionColorInfo {
@@ -37,7 +37,7 @@ export function getSectionForPath(pathname: string): SectionColorInfo {
     }
   }
   // Default: dashboard = Clinical
-  return { color: '#0ea5e9', section: 'Clinical' };
+  return { color: '#14b8a6', section: 'Clinical' };
 }
 
 export function useSectionColor(): SectionColorInfo {

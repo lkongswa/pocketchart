@@ -69,10 +69,26 @@ const ST_DIRECT_ACCESS_STATES: Record<string, boolean> = {
   // Most states require referral for SLP treatment
 };
 
+// ── Marriage & Family Therapy ──
+// MFTs do not require physician referrals — they operate under their own
+// license authority. All states set to false (no referral required).
+const MFT_DIRECT_ACCESS_STATES: Record<string, boolean> = {
+  AL: false, AK: false, AZ: false, AR: false, CA: false, CO: false,
+  CT: false, DE: false, DC: false, FL: false, GA: false, HI: false,
+  ID: false, IL: false, IN: false, IA: false, KS: false, KY: false,
+  LA: false, ME: false, MD: false, MA: false, MI: false, MN: false,
+  MS: false, MO: false, MT: false, NE: false, NV: false, NH: false,
+  NJ: false, NM: false, NY: false, NC: false, ND: false, OH: false,
+  OK: false, OR: false, PA: false, RI: false, SC: false, SD: false,
+  TN: false, TX: false, UT: false, VT: false, VA: false, WA: false,
+  WV: false, WI: false, WY: false,
+};
+
 const DISCIPLINE_MAPS: Record<Discipline, Record<string, boolean>> = {
   PT: PT_DIRECT_ACCESS_STATES,
   OT: OT_DIRECT_ACCESS_STATES,
   ST: ST_DIRECT_ACCESS_STATES,
+  MFT: MFT_DIRECT_ACCESS_STATES,
 };
 
 /**
@@ -98,7 +114,7 @@ export function getAllRules(): DirectAccessRule[] {
     'NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT',
     'VT','VA','WA','WV','WI','WY',
   ];
-  const disciplines: Discipline[] = ['PT', 'OT', 'ST'];
+  const disciplines: Discipline[] = ['PT', 'OT', 'ST', 'MFT'];
 
   for (const state of allStates) {
     for (const disc of disciplines) {

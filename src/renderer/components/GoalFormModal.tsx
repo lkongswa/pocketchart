@@ -56,6 +56,17 @@ const CATEGORY_OPTIONS: Record<Discipline, string[]> = {
     'AAC',
     'Cognitive-Communication',
   ],
+  MFT: [
+    'Depression',
+    'Anxiety',
+    'Trauma',
+    'Relationship',
+    'Family Systems',
+    'Coping Skills',
+    'Self-Esteem',
+    'Grief',
+    'Behavioral',
+  ],
 };
 
 const emptyForm: FormData = {

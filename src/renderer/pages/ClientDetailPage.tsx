@@ -42,6 +42,7 @@ import type {
   Client,
   ClientStatus,
   ClientDocument,
+  ClientDocumentCategory,
   Discipline,
   Note,
   Evaluation,
@@ -52,6 +53,7 @@ import type {
   Payment,
   PaymentMethod,
 } from '../../shared/types';
+import { CLIENT_DOCUMENT_CATEGORY_LABELS } from '../../shared/types';
 import ClientFormModal from '../components/ClientFormModal';
 import GoalFormModal from '../components/GoalFormModal';
 import GoalBuilderModal from '../components/GoalBuilderModal';
@@ -77,6 +79,7 @@ const disciplineBadgeClass: Record<Discipline, string> = {
   PT: 'badge-pt',
   OT: 'badge-ot',
   ST: 'badge-st',
+  MFT: 'badge-mft',
 };
 
 const goalStatusConfig: Record<GoalStatus, { className: string; icon: React.ElementType; label: string }> = {
@@ -108,20 +111,17 @@ const formatCurrency = (amount: number) =>
 
 const DOCUMENT_CATEGORIES = [
   { value: 'all', label: 'All' },
-  { value: 'general', label: 'General' },
-  { value: 'intake', label: 'Intake' },
-  { value: 'insurance', label: 'Insurance' },
-  { value: 'referral', label: 'Referral' },
-  { value: 'medical_records', label: 'Medical Records' },
-  { value: 'other', label: 'Other' },
+  ...Object.entries(CLIENT_DOCUMENT_CATEGORY_LABELS).map(([value, label]) => ({ value, label })),
 ];
 
 const categoryBadgeColors: Record<string, string> = {
-  general: 'bg-gray-100 text-gray-700',
-  intake: 'bg-blue-100 text-blue-700',
-  insurance: 'bg-purple-100 text-purple-700',
-  referral: 'bg-emerald-100 text-emerald-700',
-  medical_records: 'bg-amber-100 text-amber-700',
+  signed_poc: 'bg-emerald-100 text-emerald-700',
+  recertification: 'bg-teal-100 text-teal-700',
+  physician_order: 'bg-blue-100 text-blue-700',
+  prior_authorization: 'bg-purple-100 text-purple-700',
+  intake_form: 'bg-sky-100 text-sky-700',
+  correspondence: 'bg-slate-100 text-slate-700',
+  discharge_summary: 'bg-gray-100 text-gray-700',
   other: 'bg-slate-100 text-slate-700',
 };
 
@@ -214,26 +214,39 @@ function BillingChart({ invoices, payments }: { invoices: Invoice[]; payments: P
 
 // --- Collapsible Info Section ---
 
+type SectionColor = 'blue' | 'violet' | 'emerald' | 'amber' | 'slate' | 'teal';
+
+const sectionColorMap: Record<SectionColor, { border: string; bg: string; icon: string; dot: string }> = {
+  blue:    { border: 'border-blue-300',    bg: 'bg-blue-50/40',    icon: 'text-blue-500',    dot: 'bg-blue-400' },
+  violet:  { border: 'border-violet-300',  bg: 'bg-violet-50/40',  icon: 'text-violet-500',  dot: 'bg-violet-400' },
+  emerald: { border: 'border-emerald-300', bg: 'bg-emerald-50/40', icon: 'text-emerald-500', dot: 'bg-emerald-400' },
+  amber:   { border: 'border-amber-300',   bg: 'bg-amber-50/40',   icon: 'text-amber-500',   dot: 'bg-amber-400' },
+  slate:   { border: 'border-slate-300',   bg: 'bg-slate-50/40',   icon: 'text-slate-500',   dot: 'bg-slate-400' },
+  teal:    { border: 'border-teal-300',    bg: 'bg-teal-50/40',    icon: 'text-teal-500',    dot: 'bg-teal-400' },
+};
+
 interface CollapsibleInfoProps {
   icon: React.ReactNode;
   title: string;
   isComplete: boolean;
   children: React.ReactNode;
   onEdit?: () => void;
+  color?: SectionColor;
 }
 
-function CollapsibleInfo({ icon, title, isComplete, children, onEdit }: CollapsibleInfoProps) {
+function CollapsibleInfo({ icon, title, isComplete, children, onEdit, color = 'blue' }: CollapsibleInfoProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const scheme = sectionColorMap[color];
 
   return (
     <div
-      className={`rounded-lg border transition-all cursor-pointer select-none ${isComplete ? 'border-emerald-200 bg-emerald-50/30' : 'border-amber-200 bg-amber-50/30'}`}
+      className={`rounded-lg border transition-all cursor-pointer select-none ${scheme.border} ${scheme.bg}`}
       onClick={() => setIsOpen(!isOpen)}
     >
       <div className="w-full flex items-center gap-2 px-3 py-2">
-        <span className={`${isComplete ? 'text-emerald-500' : 'text-amber-500'}`}>{icon}</span>
+        <span className={scheme.icon}>{icon}</span>
         <span className="text-xs font-medium text-[var(--color-text)] flex-1">{title}</span>
-        <span className={`w-2 h-2 rounded-full ${isComplete ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+        <span className={`w-2 h-2 rounded-full ${isComplete ? 'bg-emerald-400' : 'bg-amber-400'}`} title={isComplete ? 'Complete' : 'Incomplete'} />
         <ChevronDown className={`w-3.5 h-3.5 text-[var(--color-text-secondary)] transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </div>
       {isOpen && (
@@ -286,6 +299,14 @@ const ClientDetailPage: React.FC = () => {
   const [generatingPaymentLink, setGeneratingPaymentLink] = useState<number | null>(null);
   const [checkingPaymentStatus, setCheckingPaymentStatus] = useState<number | null>(null);
   const [billingToast, setBillingToast] = useState<string | null>(null);
+
+  // Document upload form state
+  const [uploadCategory, setUploadCategory] = useState<ClientDocumentCategory>('other');
+  const [uploadCertStart, setUploadCertStart] = useState('');
+  const [uploadCertEnd, setUploadCertEnd] = useState('');
+  const [uploadReceivedDate, setUploadReceivedDate] = useState('');
+  const [uploadSentDate, setUploadSentDate] = useState('');
+  const [uploadPhysicianName, setUploadPhysicianName] = useState('');
 
   // Modals
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -388,9 +409,24 @@ const ClientDetailPage: React.FC = () => {
     }
   };
 
-  const handleUploadDocument = async (category?: string) => {
+  const handleUploadDocument = async (uploadOpts?: {
+    category?: string;
+    certification_period_start?: string;
+    certification_period_end?: string;
+    received_date?: string;
+    sent_date?: string;
+    physician_name?: string;
+  }) => {
     try {
-      const result = await window.api.documents.upload({ clientId, category });
+      const result = await window.api.documents.upload({
+        clientId,
+        category: uploadOpts?.category,
+        certification_period_start: uploadOpts?.certification_period_start,
+        certification_period_end: uploadOpts?.certification_period_end,
+        received_date: uploadOpts?.received_date,
+        sent_date: uploadOpts?.sent_date,
+        physician_name: uploadOpts?.physician_name,
+      });
       if (result) {
         const docsData = await window.api.documents.list({ clientId });
         setDocuments(docsData);
@@ -620,6 +656,7 @@ const ClientDetailPage: React.FC = () => {
             title="Demographics"
             isComplete={demographicsComplete}
             onEdit={() => setEditModalOpen(true)}
+            color="blue"
           >
             <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">DOB</span><span>{formatDate(client.dob)}</span></div>
             <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Phone</span><span>{client.phone || '--'}</span></div>
@@ -632,6 +669,7 @@ const ClientDetailPage: React.FC = () => {
             title="Insurance"
             isComplete={insuranceComplete}
             onEdit={() => setEditModalOpen(true)}
+            color="emerald"
           >
             <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Payer</span><span>{client.insurance_payer || '--'}</span></div>
             <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Member ID</span><span>{client.insurance_member_id || '--'}</span></div>
@@ -643,6 +681,7 @@ const ClientDetailPage: React.FC = () => {
             title="Diagnosis"
             isComplete={diagnosisComplete}
             onEdit={() => setEditModalOpen(true)}
+            color="violet"
           >
             <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Primary Dx</span><span>{client.primary_dx_code || '--'}</span></div>
             {client.primary_dx_description && <p className="text-xs text-[var(--color-text-secondary)] italic">{client.primary_dx_description}</p>}
@@ -654,6 +693,7 @@ const ClientDetailPage: React.FC = () => {
             title="Referring"
             isComplete={referringComplete}
             onEdit={() => setEditModalOpen(true)}
+            color="amber"
           >
             <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Physician</span><span>{client.referring_physician || '--'}</span></div>
             <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">NPI</span><span>{client.referring_npi || '--'}</span></div>
@@ -663,6 +703,7 @@ const ClientDetailPage: React.FC = () => {
             icon={<FolderOpen size={14} />}
             title={`Documents (${documents.length})`}
             isComplete={documents.length > 0}
+            color="slate"
           >
             <div className="space-y-1.5">
               {documents.slice(0, 3).map((doc) => (
@@ -683,6 +724,7 @@ const ClientDetailPage: React.FC = () => {
             icon={<Shield size={14} />}
             title="Compliance"
             isComplete={true}
+            color="teal"
           >
             <p className="text-xs text-[var(--color-text-secondary)]">Medicare tracking and progress report alerts</p>
             <button className="mt-2 text-xs text-[var(--color-primary)] hover:underline" onClick={() => setShowCompliance(true)}>
@@ -939,6 +981,143 @@ const ClientDetailPage: React.FC = () => {
         </div>
       </div>
 
+      {/* ══════════ ORDERS & CERTIFICATIONS ══════════ */}
+      <div className="card">
+        <div className="flex items-center justify-between p-5 border-b border-[var(--color-border)]">
+          <h2 className="text-lg font-semibold text-[var(--color-text)] flex items-center gap-2">
+            <ClipboardList size={20} className="text-[var(--color-primary)]" />
+            Orders & Certifications
+          </h2>
+          <div className="flex items-center gap-2">
+            <button
+              className="btn-primary btn-sm gap-1.5"
+              onClick={() => {
+                setUploadCategory('signed_poc');
+                setUploadPhysicianName(client.referring_physician || '');
+                setUploadReceivedDate(new Date().toISOString().split('T')[0]);
+                setShowDocuments(true);
+              }}
+            >
+              <Upload size={14} /> Upload Signed POC
+            </button>
+            <button
+              className="btn-secondary btn-sm gap-1.5"
+              onClick={() => {
+                setUploadCategory('recertification');
+                setUploadPhysicianName(client.referring_physician || '');
+                setUploadReceivedDate(new Date().toISOString().split('T')[0]);
+                setShowDocuments(true);
+              }}
+            >
+              <Upload size={14} /> Upload Recertification
+            </button>
+          </div>
+        </div>
+        <div className="p-5">
+          {/* Current POC Status Card */}
+          {(() => {
+            const today = new Date().toISOString().split('T')[0];
+            const pocDocs = documents.filter(
+              (d) => (d.category === 'signed_poc' || d.category === 'recertification') && !d.deleted_at
+            ).sort((a, b) => (b.certification_period_end || '').localeCompare(a.certification_period_end || ''));
+            const currentPoc = pocDocs[0];
+
+            const daysBetween = (d1: string, d2: string) => {
+              const a = new Date(d1 + 'T00:00:00');
+              const b = new Date(d2 + 'T00:00:00');
+              return Math.ceil((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
+            };
+
+            const pocStatus = !currentPoc ? 'missing'
+              : currentPoc.certification_period_end && currentPoc.certification_period_end < today ? 'expired'
+              : currentPoc.certification_period_end && daysBetween(today, currentPoc.certification_period_end) <= 30 ? 'expiring'
+              : 'current';
+
+            return (
+              <div className="mb-5">
+                <div className={`flex items-start gap-3 p-4 rounded-lg border ${
+                  pocStatus === 'current' ? 'border-emerald-200 bg-emerald-50/50' :
+                  pocStatus === 'expiring' ? 'border-orange-200 bg-orange-50/50' :
+                  'border-red-200 bg-red-50/50'
+                }`}>
+                  <span className={`status-dot mt-1.5 ${
+                    pocStatus === 'current' ? 'status-dot--good' :
+                    pocStatus === 'expiring' ? 'status-dot--attention' :
+                    'status-dot--urgent'
+                  }`} />
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-[var(--color-text)]">
+                      {pocStatus === 'current' && 'Current POC on file'}
+                      {pocStatus === 'expiring' && `POC expiring in ${currentPoc ? daysBetween(today, currentPoc.certification_period_end) : 0} days`}
+                      {pocStatus === 'expired' && 'POC expired'}
+                      {pocStatus === 'missing' && 'No POC on file'}
+                    </p>
+                    {currentPoc && (
+                      <div className="text-xs text-[var(--color-text-secondary)] mt-1 space-y-0.5">
+                        {currentPoc.certification_period_start && currentPoc.certification_period_end && (
+                          <p>Certification Period: {formatDate(currentPoc.certification_period_start)} — {formatDate(currentPoc.certification_period_end)}</p>
+                        )}
+                        {currentPoc.physician_name && <p>Physician: {currentPoc.physician_name}</p>}
+                        {currentPoc.received_date && <p>Received: {formatDate(currentPoc.received_date)}</p>}
+                      </div>
+                    )}
+                    {pocStatus === 'missing' && (
+                      <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+                        Upload a signed Plan of Care to begin tracking certifications.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Certification History */}
+          {(() => {
+            const certDocs = documents.filter(
+              (d) => (d.category === 'signed_poc' || d.category === 'recertification') && !d.deleted_at
+            ).sort((a, b) => (b.certification_period_end || '').localeCompare(a.certification_period_end || ''));
+
+            if (certDocs.length === 0) {
+              return (
+                <div className="py-6 text-center text-sm text-[var(--color-text-secondary)]">
+                  No certification documents uploaded yet.
+                </div>
+              );
+            }
+
+            return (
+              <div className="space-y-2">
+                <h3 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">Certification History</h3>
+                {certDocs.map((doc) => (
+                  <div key={doc.id} className="flex items-center justify-between p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <FileText size={16} className="text-[var(--color-text-secondary)] shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-[var(--color-text)]">
+                          {doc.category === 'signed_poc' ? 'Signed POC' : 'Recertification'}
+                          {doc.physician_name && ` — ${doc.physician_name}`}
+                        </p>
+                        <div className="flex items-center gap-3 mt-0.5 text-xs text-[var(--color-text-secondary)]">
+                          {doc.certification_period_start && doc.certification_period_end && (
+                            <span>{formatDate(doc.certification_period_start)} to {formatDate(doc.certification_period_end)}</span>
+                          )}
+                          {doc.sent_date && <span>Sent: {formatDate(doc.sent_date)}</span>}
+                          {doc.received_date && <span>Received: {formatDate(doc.received_date)}</span>}
+                        </div>
+                      </div>
+                    </div>
+                    <button className="btn-ghost btn-sm" onClick={() => handleOpenDocument(doc.id)}>
+                      <Eye size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+        </div>
+      </div>
+
       {/* ══════════ FULL-WIDTH: BILLING SECTION ══════════ */}
       <div className="card">
         <div className="flex items-center justify-between p-5 border-b border-[var(--color-border)]">
@@ -1153,6 +1332,54 @@ const ClientDetailPage: React.FC = () => {
               </button>
             </div>
             <div className="p-6 overflow-y-auto max-h-[60vh]">
+              {/* Upload Form */}
+              <div className="mb-4 p-4 rounded-lg border border-[var(--color-border)] bg-gray-50/50">
+                <div className="flex items-center gap-3 mb-3">
+                  <select
+                    className="input py-1.5 text-sm flex-1"
+                    value={uploadCategory}
+                    onChange={(e) => setUploadCategory(e.target.value as ClientDocumentCategory)}
+                  >
+                    {Object.entries(CLIENT_DOCUMENT_CATEGORY_LABELS).map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                  <button className="btn-primary btn-sm gap-1.5 whitespace-nowrap" onClick={() => {
+                    handleUploadDocument({
+                      category: uploadCategory,
+                      certification_period_start: uploadCertStart,
+                      certification_period_end: uploadCertEnd,
+                      received_date: uploadReceivedDate,
+                      sent_date: uploadSentDate,
+                      physician_name: uploadPhysicianName,
+                    });
+                  }}>
+                    <Upload size={14} /> Upload Document
+                  </button>
+                </div>
+                {(uploadCategory === 'signed_poc' || uploadCategory === 'recertification') && (
+                  <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-[var(--color-border)]/50">
+                    <div>
+                      <label className="text-xs font-medium text-[var(--color-text-secondary)] mb-1 block">Cert Period Start</label>
+                      <input type="date" className="input py-1.5 text-sm" value={uploadCertStart} onChange={(e) => setUploadCertStart(e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-[var(--color-text-secondary)] mb-1 block">Cert Period End</label>
+                      <input type="date" className="input py-1.5 text-sm" value={uploadCertEnd} onChange={(e) => setUploadCertEnd(e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-[var(--color-text-secondary)] mb-1 block">Physician Name</label>
+                      <input type="text" className="input py-1.5 text-sm" placeholder={client?.referring_physician || 'Dr. ...'} value={uploadPhysicianName} onChange={(e) => setUploadPhysicianName(e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-[var(--color-text-secondary)] mb-1 block">Received Date</label>
+                      <input type="date" className="input py-1.5 text-sm" value={uploadReceivedDate} onChange={(e) => setUploadReceivedDate(e.target.value)} />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Filter */}
               <div className="flex items-center justify-between mb-4">
                 <select
                   className="input py-1.5 text-sm w-44"
@@ -1163,9 +1390,6 @@ const ClientDetailPage: React.FC = () => {
                     <option key={cat.value} value={cat.value}>{cat.label}</option>
                   ))}
                 </select>
-                <button className="btn-primary btn-sm gap-1.5" onClick={() => handleUploadDocument()}>
-                  <Upload size={14} /> Upload Document
-                </button>
               </div>
               {(() => {
                 const filteredDocs = docCategoryFilter === 'all'
@@ -1189,10 +1413,18 @@ const ClientDetailPage: React.FC = () => {
                               <p className="text-sm font-medium text-[var(--color-text)] truncate">{doc.original_name}</p>
                               <div className="flex items-center gap-2 mt-0.5">
                                 <span className={`badge text-xs ${badgeColor}`}>
-                                  {DOCUMENT_CATEGORIES.find((c) => c.value === doc.category)?.label || doc.category}
+                                  {CLIENT_DOCUMENT_CATEGORY_LABELS[doc.category as ClientDocumentCategory] || doc.category}
                                 </span>
                                 <span className="text-xs text-[var(--color-text-secondary)]">{formatFileSize(doc.file_size)}</span>
+                                {doc.physician_name && (
+                                  <span className="text-xs text-[var(--color-text-secondary)]">{doc.physician_name}</span>
+                                )}
                               </div>
+                              {doc.certification_period_start && doc.certification_period_end && (
+                                <p className="text-[10px] text-[var(--color-text-secondary)] mt-0.5">
+                                  Cert: {formatDate(doc.certification_period_start)} — {formatDate(doc.certification_period_end)}
+                                </p>
+                              )}
                             </div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">

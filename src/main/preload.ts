@@ -128,7 +128,24 @@ const api = {
 
   // Client Documents
   documents: {
-    upload: (data: { clientId: number; category?: string }) => ipcRenderer.invoke('documents:upload', data),
+    upload: (data: {
+      clientId: number;
+      category?: string;
+      certification_period_start?: string;
+      certification_period_end?: string;
+      received_date?: string;
+      sent_date?: string;
+      physician_name?: string;
+    }) => ipcRenderer.invoke('documents:upload', data),
+    updateMeta: (data: {
+      documentId: number;
+      certification_period_start?: string;
+      certification_period_end?: string;
+      received_date?: string;
+      sent_date?: string;
+      physician_name?: string;
+      category?: string;
+    }) => ipcRenderer.invoke('documents:updateMeta', data),
     list: (data: { clientId: number }) => ipcRenderer.invoke('documents:list', data),
     open: (data: { documentId: number }) => ipcRenderer.invoke('documents:open', data),
     delete: (data: { documentId: number }) => ipcRenderer.invoke('documents:delete', data),
