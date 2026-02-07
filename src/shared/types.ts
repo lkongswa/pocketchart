@@ -195,6 +195,7 @@ export interface Note {
   frequency_notes: string;
   // Note type for compliance engine
   note_type: 'soap' | 'progress_report' | 'recertification' | 'discharge';
+  patient_name: string;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -218,6 +219,7 @@ export interface Appointment {
   entity_id: number | null;
   entity_rate: number | null;
   rate_override_reason: string;
+  patient_name: string;
   created_at: string;
   deleted_at: string | null;
   // Joined fields
@@ -330,6 +332,7 @@ export interface EntityFeeSchedule {
   id: number;
   entity_id: number;
   service_type: string;
+  cpt_code: string;
   description: string;
   default_rate: number;
   unit: EntityFeeUnit;
@@ -546,6 +549,7 @@ export interface Invoice {
   deleted_at: string | null;
   // Joined fields
   entity_name?: string;
+  cpt_summary?: string;
 }
 
 export interface InvoiceItem {
@@ -694,6 +698,7 @@ export interface PocketChartAPI {
     delete: (id: number) => Promise<boolean>;
   };
   notes: {
+    list: (filters?: { clientId?: number; entityId?: number; signed?: boolean }) => Promise<Note[]>;
     listByClient: (clientId: number) => Promise<Note[]>;
     get: (id: number) => Promise<Note>;
     create: (data: Partial<Note>) => Promise<Note>;
@@ -807,14 +812,15 @@ export interface PocketChartAPI {
     delete: (id: number) => Promise<boolean>;
   };
   invoices: {
-    list: (filters?: { clientId?: number; status?: InvoiceStatus; startDate?: string; endDate?: string }) => Promise<Invoice[]>;
+    list: (filters?: { clientId?: number; entityId?: number; status?: InvoiceStatus; startDate?: string; endDate?: string }) => Promise<Invoice[]>;
     get: (id: number) => Promise<Invoice & { items: InvoiceItem[] }>;
     create: (data: Partial<Invoice>, items: Partial<InvoiceItem>[]) => Promise<Invoice>;
     update: (id: number, data: Partial<Invoice>) => Promise<Invoice>;
     delete: (id: number) => Promise<boolean>;
-    generateFromNotes: (clientId: number, noteIds: number[]) => Promise<Invoice>;
+    generateFromNotes: (clientId: number, noteIds: number[], entityId?: number) => Promise<Invoice>;
     generatePdf: (invoiceId: number) => Promise<{ base64Pdf: string; filename: string }>;
     savePdf: (data: { base64Pdf: string; filename: string }) => Promise<string | null>;
+    createFeeInvoice: (data: { client_id?: number; entity_id?: number; description: string; amount: number; service_date: string }) => Promise<Invoice>;
     noteStatuses: () => Promise<Record<number, { invoice_id: number; invoice_number: string; status: string }>>;
   };
   payments: {

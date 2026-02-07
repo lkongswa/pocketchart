@@ -10,7 +10,7 @@ import {
   endOfMonth,
 } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
-import { Copy, Clipboard, Edit3, Trash2, X } from 'lucide-react';
+import { Copy, Clipboard, Edit3, Trash2, X, Ban, AlertTriangle } from 'lucide-react';
 import type { Appointment, Invoice, InvoiceItem } from '../../shared/types';
 import type { PaymentIndicator } from '../components/calendar/AppointmentBlock';
 import AppointmentModal from '../components/AppointmentModal';
@@ -286,6 +286,70 @@ export default function CalendarPage() {
     }
   };
 
+  // Cancel appointment with optional late cancel fee
+  const handleCancelAppointment = async (appt: Appointment) => {
+    setContextMenu(null);
+    const name = appt.first_name || appt.entity_name || 'this client';
+    if (!window.confirm(`Mark appointment for ${name} as cancelled?`)) return;
+
+    await window.api.appointments.update(appt.id, {
+      ...appt,
+      status: 'cancelled',
+      cancelled_at: new Date().toISOString(),
+      late_cancel: true,
+    });
+
+    // Check for late cancel fee setting
+    try {
+      const feeStr = await window.api.settings.get('late_cancel_fee');
+      const fee = parseFloat(feeStr || '0');
+      if (fee > 0) {
+        const charge = window.confirm(`Charge late cancellation fee of $${fee.toFixed(2)}?`);
+        if (charge) {
+          await window.api.invoices.createFeeInvoice({
+            client_id: appt.client_id || undefined,
+            entity_id: appt.entity_id || undefined,
+            description: 'Late Cancellation Fee',
+            amount: fee,
+            service_date: appt.scheduled_date,
+          });
+        }
+      }
+    } catch {}
+    await loadAppointments();
+  };
+
+  // No-show with optional fee
+  const handleNoShow = async (appt: Appointment) => {
+    setContextMenu(null);
+    const name = appt.first_name || appt.entity_name || 'this client';
+    if (!window.confirm(`Mark appointment for ${name} as no-show?`)) return;
+
+    await window.api.appointments.update(appt.id, {
+      ...appt,
+      status: 'no-show',
+    });
+
+    // Check for no-show fee setting
+    try {
+      const feeStr = await window.api.settings.get('no_show_fee');
+      const fee = parseFloat(feeStr || '0');
+      if (fee > 0) {
+        const charge = window.confirm(`Charge no-show fee of $${fee.toFixed(2)}?`);
+        if (charge) {
+          await window.api.invoices.createFeeInvoice({
+            client_id: appt.client_id || undefined,
+            entity_id: appt.entity_id || undefined,
+            description: 'No-Show Fee',
+            amount: fee,
+            service_date: appt.scheduled_date,
+          });
+        }
+      }
+    } catch {}
+    await loadAppointments();
+  };
+
   // Paste appointment on slot click (override normal slot click when clipboard has data)
   const handleSlotClickWithPaste = (date: string, time: string) => {
     if (clipboardAppt) {
@@ -400,6 +464,22 @@ export default function CalendarPage() {
             <Edit3 size={14} /> Edit
           </button>
           <div className="border-t border-[var(--color-border)] my-1" />
+          {contextMenu.appointment.status === 'scheduled' && (
+            <>
+              <button
+                className="w-full text-left px-3 py-2 text-sm hover:bg-amber-50 text-amber-700 flex items-center gap-2 transition-colors"
+                onClick={() => handleCancelAppointment(contextMenu.appointment)}
+              >
+                <Ban size={14} /> Late Cancel
+              </button>
+              <button
+                className="w-full text-left px-3 py-2 text-sm hover:bg-orange-50 text-orange-700 flex items-center gap-2 transition-colors"
+                onClick={() => handleNoShow(contextMenu.appointment)}
+              >
+                <AlertTriangle size={14} /> No-Show
+              </button>
+            </>
+          )}
           <button
             className="w-full text-left px-3 py-2 text-sm hover:bg-red-50 text-red-600 flex items-center gap-2 transition-colors"
             onClick={() => handleDeleteAppointment(contextMenu.appointment)}

@@ -25,6 +25,7 @@ import {
   Send,
   Undo2,
   Link,
+  Building2,
 } from 'lucide-react';
 import type {
   Invoice,
@@ -32,6 +33,7 @@ import type {
   Payment,
   FeeScheduleEntry,
   Client,
+  ContractedEntity,
   InvoiceStatus,
   PaymentMethod,
 } from '../../shared/types';
@@ -76,6 +78,12 @@ export default function BillingPage() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [feeSchedule, setFeeSchedule] = useState<FeeScheduleEntry[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
+  const [entities, setEntities] = useState<ContractedEntity[]>([]);
+
+  // Late cancel / no-show fee settings
+  const [lateCancelFee, setLateCancelFee] = useState('');
+  const [noShowFee, setNoShowFee] = useState('');
+  const [feeSaving, setFeeSaving] = useState(false);
 
   // Stripe settings
   const [stripeKeyMasked, setStripeKeyMasked] = useState<string | null>(null);
@@ -113,23 +121,32 @@ export default function BillingPage() {
         paymentsData,
         feeData,
         clientsData,
+        entitiesData,
         secureAvailable,
         stripeMasked,
+        savedLateCancelFee,
+        savedNoShowFee,
       ] = await Promise.all([
         window.api.invoices.list(),
         window.api.payments.list(),
         window.api.feeSchedule.list(),
         window.api.clients.list(),
+        window.api.contractedEntities.list().catch(() => [] as ContractedEntity[]),
         window.api.secureStorage.isAvailable(),
         window.api.secureStorage.getMasked('stripe_secret_key'),
+        window.api.settings.get('late_cancel_fee').catch(() => ''),
+        window.api.settings.get('no_show_fee').catch(() => ''),
       ]);
 
       setInvoices(invoicesData);
       setPayments(paymentsData);
       setFeeSchedule(feeData);
       setClients(clientsData);
+      setEntities(entitiesData);
       setSecureStorageAvailable(secureAvailable);
       setStripeKeyMasked(stripeMasked);
+      setLateCancelFee(savedLateCancelFee || '');
+      setNoShowFee(savedNoShowFee || '');
 
       // Calculate stats
       const now = new Date();
@@ -302,6 +319,14 @@ export default function BillingPage() {
     return client ? `${client.first_name} ${client.last_name}` : 'Unknown';
   };
 
+  const getInvoiceName = (inv: Invoice) => {
+    if (inv.entity_id) {
+      const entity = entities.find((e) => e.id === inv.entity_id);
+      return entity ? entity.name : 'Unknown Agency';
+    }
+    return getClientName(inv.client_id);
+  };
+
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
@@ -310,13 +335,19 @@ export default function BillingPage() {
   };
 
   const filteredInvoices = invoices.filter((inv) => {
-    if (clientFilter !== 'all' && inv.client_id !== clientFilter) return false;
+    if (clientFilter !== 'all') {
+      const filterVal = clientFilter as number;
+      // Positive = client, negative = entity (encoded as -entityId)
+      if (filterVal > 0 && inv.client_id !== filterVal) return false;
+      if (filterVal < 0 && inv.entity_id !== Math.abs(filterVal)) return false;
+    }
     if (invoiceFilter !== 'all' && inv.status !== invoiceFilter) return false;
     if (searchTerm) {
-      const clientName = getClientName(inv.client_id).toLowerCase();
+      const name = getInvoiceName(inv).toLowerCase();
       return (
-        clientName.includes(searchTerm.toLowerCase()) ||
-        inv.invoice_number.toLowerCase().includes(searchTerm.toLowerCase())
+        name.includes(searchTerm.toLowerCase()) ||
+        inv.invoice_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (inv.cpt_summary || '').toLowerCase().includes(searchTerm.toLowerCase())
       );
     }
     return true;
@@ -386,10 +417,19 @@ export default function BillingPage() {
             value={clientFilter}
             onChange={(e) => setClientFilter(e.target.value === 'all' ? 'all' : parseInt(e.target.value, 10))}
           >
-            <option value="all">All Clients</option>
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>{c.first_name} {c.last_name}</option>
-            ))}
+            <option value="all">All Clients & Agencies</option>
+            <optgroup label="Clients">
+              {clients.map((c) => (
+                <option key={`c-${c.id}`} value={c.id}>{c.first_name} {c.last_name}</option>
+              ))}
+            </optgroup>
+            {entities.length > 0 && (
+              <optgroup label="Agencies">
+                {entities.map((e) => (
+                  <option key={`e-${e.id}`} value={-e.id}>{e.name}</option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </div>
       </div>
@@ -625,7 +665,10 @@ export default function BillingPage() {
                     Invoice
                   </th>
                   <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
-                    Client
+                    Client / Agency
+                  </th>
+                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
+                    CPTs
                   </th>
                   <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
                     Date
@@ -650,7 +693,17 @@ export default function BillingPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-[var(--color-text)]">
-                      {getClientName(invoice.client_id)}
+                      <div className="flex items-center gap-1.5">
+                        {getInvoiceName(invoice)}
+                        {invoice.entity_id && (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-600">
+                            <Building2 className="w-3 h-3" />
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-[var(--color-text-secondary)] font-mono">
+                      {invoice.cpt_summary || ''}
                     </td>
                     <td className="px-4 py-3 text-[var(--color-text-secondary)]">
                       {invoice.invoice_date}
@@ -705,7 +758,7 @@ export default function BillingPage() {
                 ))}
                 {filteredInvoices.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-12 text-center text-[var(--color-text-secondary)]">
+                    <td colSpan={7} className="px-4 py-12 text-center text-[var(--color-text-secondary)]">
                       No invoices found
                     </td>
                   </tr>
@@ -1158,6 +1211,66 @@ export default function BillingPage() {
             )}
           </div>
 
+          {/* Late Cancel / No-Show Fees */}
+          <div className="card p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-lg bg-amber-100 flex items-center justify-center">
+                <AlertCircle className="w-5 h-5 text-amber-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-[var(--color-text)]">Late Cancel & No-Show Fees</h3>
+                <p className="text-sm text-[var(--color-text-secondary)]">
+                  Automatically prompt to create a fee invoice when an appointment is cancelled or marked no-show
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="label">Late Cancellation Fee ($)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  className="input"
+                  placeholder="0.00"
+                  value={lateCancelFee}
+                  onChange={(e) => setLateCancelFee(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="label">No-Show Fee ($)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  className="input"
+                  placeholder="0.00"
+                  value={noShowFee}
+                  onChange={(e) => setNoShowFee(e.target.value)}
+                />
+              </div>
+            </div>
+            <button
+              className="btn-primary"
+              disabled={feeSaving}
+              onClick={async () => {
+                setFeeSaving(true);
+                try {
+                  await window.api.settings.set('late_cancel_fee', lateCancelFee || '0');
+                  await window.api.settings.set('no_show_fee', noShowFee || '0');
+                  setToast('Fee settings saved');
+                } catch (err) {
+                  console.error('Failed to save fee settings:', err);
+                  setToast('Failed to save fee settings');
+                } finally {
+                  setFeeSaving(false);
+                }
+              }}
+            >
+              {feeSaving ? 'Saving...' : 'Save Fee Settings'}
+            </button>
+          </div>
+
           {/* Invoice Settings */}
           <div className="card p-6">
             <h3 className="font-semibold text-[var(--color-text)] mb-4">Invoice Settings</h3>
@@ -1196,6 +1309,7 @@ export default function BillingPage() {
           loadData();
         }}
         clients={clients}
+        entities={entities}
         feeSchedule={feeSchedule}
         invoice={editingInvoice || undefined}
       />

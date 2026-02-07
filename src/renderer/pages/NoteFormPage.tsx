@@ -140,6 +140,7 @@ export default function NoteFormPage() {
   const [rateOverride, setRateOverride] = useState<number | null>(null);
   const [rateOverrideReason, setRateOverrideReason] = useState('');
   const [noteType, setNoteType] = useState('');
+  const [patientName, setPatientName] = useState('');
 
   // UI state
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -260,6 +261,7 @@ export default function NoteFormPage() {
         if (note.entity_id) {
           setIsContractedVisit(true);
           setEntityId(note.entity_id);
+          setPatientName(note.patient_name || '');
           setRateOverride(note.rate_override ?? null);
           setRateOverrideReason(note.rate_override_reason || '');
           setNoteType(note.note_type || '');
@@ -455,6 +457,7 @@ export default function NoteFormPage() {
         rate_override: isContractedVisit ? rateOverride ?? undefined : undefined,
         rate_override_reason: isContractedVisit ? rateOverrideReason : '',
         note_type: isContractedVisit ? noteType as Note['note_type'] : undefined,
+        patient_name: isContractedVisit ? patientName : '',
       };
 
       let resultNoteId: number | null = null;
@@ -800,6 +803,17 @@ export default function NoteFormPage() {
               </label>
 
               {isContractedVisit && (
+                <div className="space-y-3">
+                <div>
+                  <label className="label">Patient Name</label>
+                  <input
+                    type="text"
+                    className="input w-full"
+                    placeholder="Name of the agency's patient/client"
+                    value={patientName}
+                    onChange={(e) => setPatientName(e.target.value)}
+                  />
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
                     <label className="label">Entity</label>
@@ -884,6 +898,7 @@ export default function NoteFormPage() {
                       />
                     </div>
                   )}
+                </div>
                 </div>
               )}
             </div>

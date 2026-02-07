@@ -1,25 +1,31 @@
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Trash2, Calculator } from 'lucide-react';
-import type { Client, Invoice, InvoiceItem, FeeScheduleEntry, Note } from '../../shared/types';
+import { X, Plus, Trash2, Calculator, Building2, User, CheckSquare, Square } from 'lucide-react';
+import type { Client, ContractedEntity, Invoice, InvoiceItem, FeeScheduleEntry, Note } from '../../shared/types';
 
 interface InvoiceModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (invoice: Invoice) => void;
   clients: Client[];
+  entities?: ContractedEntity[];
   feeSchedule: FeeScheduleEntry[];
   invoice?: Invoice & { items: InvoiceItem[] };
 }
+
+type BillToType = 'client' | 'entity';
 
 export default function InvoiceModal({
   isOpen,
   onClose,
   onSave,
   clients,
+  entities = [],
   feeSchedule,
   invoice,
 }: InvoiceModalProps) {
+  const [billToType, setBillToType] = useState<BillToType>('client');
   const [clientId, setClientId] = useState<number | ''>(invoice?.client_id || '');
+  const [entityId, setEntityId] = useState<number | ''>(invoice?.entity_id || '');
   const [invoiceDate, setInvoiceDate] = useState(
     invoice?.invoice_date || new Date().toISOString().slice(0, 10)
   );
@@ -30,22 +36,62 @@ export default function InvoiceModal({
     invoice?.items || [{ description: '', cpt_code: '', units: 1, unit_price: 0, amount: 0 }]
   );
   const [unbilledNotes, setUnbilledNotes] = useState<Note[]>([]);
+  const [selectedNoteIds, setSelectedNoteIds] = useState<Set<number>>(new Set());
   const [loadingNotes, setLoadingNotes] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // Load unbilled notes when client changes
+  // Sync state when invoice prop changes
   useEffect(() => {
-    if (!clientId) {
+    if (invoice) {
+      const isEntity = !!invoice.entity_id;
+      setBillToType(isEntity ? 'entity' : 'client');
+      setClientId(invoice.client_id || '');
+      setEntityId(invoice.entity_id || '');
+      setInvoiceDate(invoice.invoice_date || new Date().toISOString().slice(0, 10));
+      setDueDate(invoice.due_date || '');
+      setNotes(invoice.notes || '');
+      setStatus(invoice.status || 'draft');
+      setItems(invoice.items?.length ? invoice.items : [{ description: '', cpt_code: '', units: 1, unit_price: 0, amount: 0 }]);
+      setSelectedNoteIds(new Set());
+    } else {
+      setBillToType('client');
+      setClientId('');
+      setEntityId('');
+      setInvoiceDate(new Date().toISOString().slice(0, 10));
+      setDueDate('');
+      setNotes('');
+      setStatus('draft');
+      setItems([{ description: '', cpt_code: '', units: 1, unit_price: 0, amount: 0 }]);
       setUnbilledNotes([]);
-      return;
+      setSelectedNoteIds(new Set());
     }
+  }, [invoice]);
+
+  // Load unbilled notes when client/entity changes
+  useEffect(() => {
     const loadNotes = async () => {
+      if (billToType === 'client' && !clientId) { setUnbilledNotes([]); return; }
+      if (billToType === 'entity' && !entityId) { setUnbilledNotes([]); return; }
+
       setLoadingNotes(true);
       try {
-        const notes = await window.api.notes.listByClient(clientId as number);
-        // Filter to signed notes (could add more filters for unbilled)
-        const signed = notes.filter((n) => n.signed_at);
-        setUnbilledNotes(signed);
+        let allNotes: Note[];
+        if (billToType === 'client') {
+          allNotes = await window.api.notes.listByClient(clientId as number);
+        } else {
+          // For entities, get notes linked to this entity
+          allNotes = await window.api.notes.list({ entityId: entityId as number });
+        }
+        // Filter to signed notes only
+        const signed = allNotes.filter((n) => n.signed_at);
+
+        // Exclude notes that are already on an invoice
+        const billedMap = await window.api.invoices.noteStatuses();
+        const unbilled = signed.filter((n) => !billedMap[n.id]);
+
+        setUnbilledNotes(unbilled);
+        // Pre-select all unbilled
+        setSelectedNoteIds(new Set(unbilled.map(n => n.id)));
       } catch (err) {
         console.error('Failed to load notes:', err);
       } finally {
@@ -53,7 +99,9 @@ export default function InvoiceModal({
       }
     };
     loadNotes();
-  }, [clientId]);
+  }, [clientId, entityId, billToType]);
+
+  const selectedBillToId = billToType === 'client' ? clientId : entityId;
 
   const calculateTotal = () => {
     return items.reduce((sum, item) => sum + (item.amount || 0), 0);
@@ -62,14 +110,11 @@ export default function InvoiceModal({
   const handleItemChange = (index: number, field: keyof InvoiceItem, value: any) => {
     const updated = [...items];
     updated[index] = { ...updated[index], [field]: value };
-
-    // Auto-calculate amount when units or unit_price change
     if (field === 'units' || field === 'unit_price') {
       const units = field === 'units' ? value : updated[index].units || 1;
       const unitPrice = field === 'unit_price' ? value : updated[index].unit_price || 0;
       updated[index].amount = units * unitPrice;
     }
-
     setItems(updated);
   };
 
@@ -99,14 +144,32 @@ export default function InvoiceModal({
     }
   };
 
+  const toggleNoteSelection = (noteId: number) => {
+    setSelectedNoteIds(prev => {
+      const next = new Set(prev);
+      if (next.has(noteId)) next.delete(noteId);
+      else next.add(noteId);
+      return next;
+    });
+  };
+
+  const toggleAllNotes = () => {
+    if (selectedNoteIds.size === unbilledNotes.length) {
+      setSelectedNoteIds(new Set());
+    } else {
+      setSelectedNoteIds(new Set(unbilledNotes.map(n => n.id)));
+    }
+  };
+
   const handleGenerateFromNotes = async () => {
-    if (!clientId || unbilledNotes.length === 0) return;
+    if (selectedNoteIds.size === 0) return;
 
     try {
       setSaving(true);
-      const noteIds = unbilledNotes.map((n) => n.id);
-      const generated = await window.api.invoices.generateFromNotes(clientId as number, noteIds);
-      // Get the full invoice with items
+      const noteIds = Array.from(selectedNoteIds);
+      const cId = billToType === 'client' ? (clientId as number) : 0;
+      const eId = billToType === 'entity' ? (entityId as number) : undefined;
+      const generated = await window.api.invoices.generateFromNotes(cId, noteIds, eId);
       const full = await window.api.invoices.get(generated.id);
       onSave(full);
       onClose();
@@ -118,13 +181,14 @@ export default function InvoiceModal({
   };
 
   const handleSave = async () => {
-    if (!clientId) return;
+    if (!selectedBillToId) return;
 
     setSaving(true);
     try {
       const subtotal = calculateTotal();
       const data = {
-        client_id: clientId as number,
+        client_id: billToType === 'client' ? (clientId as number) : 0,
+        entity_id: billToType === 'entity' ? (entityId as number) : undefined,
         invoice_date: invoiceDate,
         due_date: dueDate || undefined,
         subtotal,
@@ -134,11 +198,9 @@ export default function InvoiceModal({
       };
 
       if (invoice) {
-        // Update existing
         const updated = await window.api.invoices.update(invoice.id, data);
         onSave(updated);
       } else {
-        // Create new
         const created = await window.api.invoices.create(data, items as InvoiceItem[]);
         onSave(created);
       }
@@ -171,23 +233,62 @@ export default function InvoiceModal({
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* Client & Dates */}
+          {/* Bill To & Dates */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="label">Client</label>
-              <select
-                className="select"
-                value={clientId}
-                onChange={(e) => setClientId(e.target.value ? Number(e.target.value) : '')}
-                disabled={!!invoice}
-              >
-                <option value="">Select client...</option>
-                {clients.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.first_name} {c.last_name}
-                  </option>
-                ))}
-              </select>
+              <label className="label">Bill To</label>
+              {/* Type toggle */}
+              {!invoice && entities.length > 0 && (
+                <div className="flex gap-1 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => { setBillToType('client'); setEntityId(''); }}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                      billToType === 'client' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                    }`}
+                  >
+                    <User className="w-3 h-3" /> Client
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setBillToType('entity'); setClientId(''); }}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                      billToType === 'entity' ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                    }`}
+                  >
+                    <Building2 className="w-3 h-3" /> Agency
+                  </button>
+                </div>
+              )}
+              {billToType === 'client' ? (
+                <select
+                  className="select"
+                  value={clientId}
+                  onChange={(e) => setClientId(e.target.value ? Number(e.target.value) : '')}
+                  disabled={!!invoice}
+                >
+                  <option value="">Select client...</option>
+                  {clients.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.first_name} {c.last_name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <select
+                  className="select"
+                  value={entityId}
+                  onChange={(e) => setEntityId(e.target.value ? Number(e.target.value) : '')}
+                  disabled={!!invoice}
+                >
+                  <option value="">Select agency...</option>
+                  {entities.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.name}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
             <div>
               <label className="label">Invoice Date</label>
@@ -209,25 +310,57 @@ export default function InvoiceModal({
             </div>
           </div>
 
-          {/* Quick Generate */}
-          {!invoice && clientId && unbilledNotes.length > 0 && (
+          {/* Quick Generate from Notes */}
+          {!invoice && selectedBillToId && unbilledNotes.length > 0 && (
             <div className="p-4 bg-blue-50 rounded-lg">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between mb-3">
                 <div>
-                  <p className="font-medium text-blue-800">Quick Generate</p>
+                  <p className="font-medium text-blue-800">Generate from Notes</p>
                   <p className="text-sm text-blue-600">
-                    {unbilledNotes.length} signed note{unbilledNotes.length !== 1 ? 's' : ''}{' '}
-                    available for this client
+                    {unbilledNotes.length} signed note{unbilledNotes.length !== 1 ? 's' : ''} available
                   </p>
                 </div>
-                <button
-                  onClick={handleGenerateFromNotes}
-                  disabled={saving}
-                  className="btn-primary gap-2"
-                >
-                  <Calculator className="w-4 h-4" />
-                  Generate from Notes
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={toggleAllNotes}
+                    className="text-xs text-blue-700 hover:underline"
+                  >
+                    {selectedNoteIds.size === unbilledNotes.length ? 'Deselect All' : 'Select All'}
+                  </button>
+                  <button
+                    onClick={handleGenerateFromNotes}
+                    disabled={saving || selectedNoteIds.size === 0}
+                    className="btn-primary gap-2 text-sm"
+                  >
+                    <Calculator className="w-4 h-4" />
+                    Generate ({selectedNoteIds.size})
+                  </button>
+                </div>
+              </div>
+              <div className="max-h-40 overflow-y-auto space-y-1">
+                {unbilledNotes.map((note) => (
+                  <button
+                    key={note.id}
+                    type="button"
+                    onClick={() => toggleNoteSelection(note.id)}
+                    className={`w-full text-left px-3 py-2 rounded flex items-center gap-2 text-sm transition-colors ${
+                      selectedNoteIds.has(note.id) ? 'bg-blue-100 text-blue-800' : 'bg-white text-gray-600 hover:bg-blue-50'
+                    }`}
+                  >
+                    {selectedNoteIds.has(note.id) ? (
+                      <CheckSquare className="w-4 h-4 flex-shrink-0 text-blue-600" />
+                    ) : (
+                      <Square className="w-4 h-4 flex-shrink-0 text-gray-400" />
+                    )}
+                    <span className="font-medium">{note.date_of_service}</span>
+                    {note.cpt_code && (
+                      <span className="text-xs font-mono bg-white px-1.5 py-0.5 rounded">{note.cpt_code}</span>
+                    )}
+                    {note.charge_amount > 0 && (
+                      <span className="ml-auto text-xs">${note.charge_amount.toFixed(2)}</span>
+                    )}
+                  </button>
+                ))}
               </div>
             </div>
           )}
@@ -371,7 +504,7 @@ export default function InvoiceModal({
             <button
               className="btn-primary"
               onClick={handleSave}
-              disabled={!clientId || saving}
+              disabled={!selectedBillToId || saving}
             >
               {saving ? 'Saving...' : invoice ? 'Update Invoice' : 'Create Invoice'}
             </button>

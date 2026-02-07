@@ -31,6 +31,7 @@ const api = {
 
   // Notes
   notes: {
+    list: (filters?: any) => ipcRenderer.invoke('notes:list', filters),
     listByClient: (clientId: number) => ipcRenderer.invoke('notes:listByClient', clientId),
     get: (id: number) => ipcRenderer.invoke('notes:get', id),
     create: (data: any) => ipcRenderer.invoke('notes:create', data),
@@ -166,10 +167,11 @@ const api = {
     create: (data: any, items: any[]) => ipcRenderer.invoke('invoices:create', data, items),
     update: (id: number, data: any) => ipcRenderer.invoke('invoices:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('invoices:delete', id),
-    generateFromNotes: (clientId: number, noteIds: number[]) => ipcRenderer.invoke('invoices:generateFromNotes', clientId, noteIds),
+    generateFromNotes: (clientId: number, noteIds: number[], entityId?: number) => ipcRenderer.invoke('invoices:generateFromNotes', clientId, noteIds, entityId),
     generatePdf: (invoiceId: number) => ipcRenderer.invoke('invoices:generatePdf', invoiceId),
     savePdf: (data: { base64Pdf: string; filename: string }) => ipcRenderer.invoke('invoices:savePdf', data),
     noteStatuses: () => ipcRenderer.invoke('invoices:noteStatuses'),
+    createFeeInvoice: (data: { client_id?: number; entity_id?: number; description: string; amount: number; service_date: string }) => ipcRenderer.invoke('invoices:createFeeInvoice', data),
   },
 
   // V2 Billing - Payments

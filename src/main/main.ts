@@ -486,6 +486,21 @@ function registerIpcHandlers() {
   });
 
   // ── Notes ──
+  safeHandle('notes:list', (_event, filters?: { clientId?: number; entityId?: number }) => {
+    let query = 'SELECT * FROM notes WHERE deleted_at IS NULL';
+    const params: any[] = [];
+    if (filters?.clientId) {
+      query += ' AND client_id = ?';
+      params.push(filters.clientId);
+    }
+    if (filters?.entityId) {
+      query += ' AND entity_id = ?';
+      params.push(filters.entityId);
+    }
+    query += ' ORDER BY date_of_service DESC';
+    return db.prepare(query).all(...params);
+  });
+
   safeHandle('notes:listByClient', (_event, clientId: number) => {
     return db.prepare(
       'SELECT * FROM notes WHERE client_id = ? AND deleted_at IS NULL ORDER BY date_of_service DESC'
@@ -510,8 +525,8 @@ function registerIpcHandlers() {
         cpt_codes, signature_image, signature_typed, rendering_provider_npi,
         cpt_modifiers, charge_amount, place_of_service, diagnosis_pointers,
         entity_id, rate_override, rate_override_reason,
-        frequency_per_week, duration_weeks, frequency_notes, note_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        frequency_per_week, duration_weeks, frequency_notes, note_type, patient_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.client_id, data.date_of_service, data.time_in, data.time_out, data.units,
       data.cpt_code, data.subjective, data.objective, data.assessment, data.plan,
@@ -522,7 +537,7 @@ function registerIpcHandlers() {
       data.place_of_service || '11', data.diagnosis_pointers || '[1]',
       data.entity_id || null, data.rate_override || null, data.rate_override_reason || '',
       data.frequency_per_week || null, data.duration_weeks || null,
-      data.frequency_notes || '', data.note_type || 'soap'
+      data.frequency_notes || '', data.note_type || 'soap', data.patient_name || ''
     );
 
     const note = db.prepare('SELECT * FROM notes WHERE id = ?').get(result.lastInsertRowid) as any;
@@ -558,6 +573,7 @@ function registerIpcHandlers() {
         rendering_provider_npi=?,
         entity_id=?, rate_override=?, rate_override_reason=?,
         frequency_per_week=?, duration_weeks=?, frequency_notes=?, note_type=?,
+        patient_name=?,
         updated_at=CURRENT_TIMESTAMP
       WHERE id=? AND deleted_at IS NULL
     `).run(
@@ -571,6 +587,7 @@ function registerIpcHandlers() {
       data.entity_id || null, data.rate_override || null, data.rate_override_reason || '',
       data.frequency_per_week || null, data.duration_weeks || null,
       data.frequency_notes || '', data.note_type || 'soap',
+      data.patient_name || '',
       id
     );
 
@@ -670,19 +687,19 @@ function registerIpcHandlers() {
 
   safeHandle('appointments:create', (_event, data) => {
     const result = db.prepare(`
-      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate, patient_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(data.client_id || 0, data.scheduled_date, data.scheduled_time,
       data.duration_minutes || 60, data.status || 'scheduled',
-      data.entity_id || null, data.entity_rate || null);
+      data.entity_id || null, data.entity_rate || null, data.patient_name || '');
     return db.prepare(apptSelectQuery + ' AND a.id = ?').get(result.lastInsertRowid);
   });
 
   // Batch create for recurring appointments
   safeHandle('appointments:createBatch', (_event, items: any[]) => {
     const insert = db.prepare(`
-      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate, patient_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const created: any[] = [];
     const txn = db.transaction(() => {
@@ -690,7 +707,7 @@ function registerIpcHandlers() {
         const result = insert.run(
           data.client_id || 0, data.scheduled_date, data.scheduled_time,
           data.duration_minutes || 60, data.status || 'scheduled',
-          data.entity_id || null, data.entity_rate || null
+          data.entity_id || null, data.entity_rate || null, data.patient_name || ''
         );
         const row = db.prepare(apptSelectQuery + ' AND a.id = ?').get(result.lastInsertRowid);
         if (row) created.push(row);
@@ -703,11 +720,11 @@ function registerIpcHandlers() {
   safeHandle('appointments:update', (_event, id: number, data) => {
     db.prepare(`
       UPDATE appointments SET client_id=?, scheduled_date=?, scheduled_time=?,
-        duration_minutes=?, status=?, note_id=?, entity_id=?, entity_rate=?
+        duration_minutes=?, status=?, note_id=?, entity_id=?, entity_rate=?, patient_name=?
       WHERE id=? AND deleted_at IS NULL
     `).run(data.client_id, data.scheduled_date, data.scheduled_time,
       data.duration_minutes, data.status, data.note_id,
-      data.entity_id || null, data.entity_rate || null, id);
+      data.entity_id || null, data.entity_rate || null, data.patient_name || '', id);
     return db.prepare(apptSelectQuery + ' AND a.id = ?').get(id);
   });
 
@@ -2088,29 +2105,52 @@ function registerIpcHandlers() {
     return true;
   });
 
+  // ── Invoice number generation ──
+  const generateInvoiceNumber = (): string => {
+    const now = new Date();
+    const prefix = `INV-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const lastInvoice = db.prepare(
+      `SELECT invoice_number FROM invoices WHERE invoice_number LIKE ? ORDER BY invoice_number DESC LIMIT 1`
+    ).get(`${prefix}-%`) as any;
+    let seq = 1;
+    if (lastInvoice) {
+      const parts = lastInvoice.invoice_number.split('-');
+      const lastSeq = parseInt(parts[2], 10);
+      if (!isNaN(lastSeq)) seq = lastSeq + 1;
+    }
+    return `${prefix}-${String(seq).padStart(3, '0')}`;
+  };
+
   // ── Invoices ──
-  safeHandle('invoices:list', (_event, filters?: { clientId?: number; status?: string; startDate?: string; endDate?: string }) => {
-    let query = 'SELECT * FROM invoices WHERE deleted_at IS NULL';
+  safeHandle('invoices:list', (_event, filters?: { clientId?: number; entityId?: number; status?: string; startDate?: string; endDate?: string }) => {
+    let query = `SELECT i.*, GROUP_CONCAT(DISTINCT ii.cpt_code) as cpt_summary
+      FROM invoices i
+      LEFT JOIN invoice_items ii ON ii.invoice_id = i.id AND ii.cpt_code != ''
+      WHERE i.deleted_at IS NULL`;
     const params: any[] = [];
 
     if (filters?.clientId) {
-      query += ' AND client_id = ?';
+      query += ' AND i.client_id = ?';
       params.push(filters.clientId);
     }
+    if (filters?.entityId) {
+      query += ' AND i.entity_id = ?';
+      params.push(filters.entityId);
+    }
     if (filters?.status) {
-      query += ' AND status = ?';
+      query += ' AND i.status = ?';
       params.push(filters.status);
     }
     if (filters?.startDate) {
-      query += ' AND invoice_date >= ?';
+      query += ' AND i.invoice_date >= ?';
       params.push(filters.startDate);
     }
     if (filters?.endDate) {
-      query += ' AND invoice_date <= ?';
+      query += ' AND i.invoice_date <= ?';
       params.push(filters.endDate);
     }
 
-    query += ' ORDER BY invoice_date DESC';
+    query += ' GROUP BY i.id ORDER BY i.invoice_date DESC';
     return db.prepare(query).all(...params);
   });
 
@@ -2122,12 +2162,13 @@ function registerIpcHandlers() {
   });
 
   safeHandle('invoices:create', (_event, data: any, items: any[]) => {
-    const invoiceNumber = `INV-${Date.now().toString(36).toUpperCase()}`;
+    const invoiceNumber = generateInvoiceNumber();
     const result = db.prepare(`
-      INSERT INTO invoices (client_id, invoice_number, invoice_date, due_date, subtotal, discount_amount, total_amount, status, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO invoices (client_id, entity_id, invoice_number, invoice_date, due_date, subtotal, discount_amount, total_amount, status, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      data.client_id,
+      data.client_id || null,
+      data.entity_id || null,
       invoiceNumber,
       data.invoice_date || new Date().toISOString().slice(0, 10),
       data.due_date || null,
@@ -2237,26 +2278,43 @@ function registerIpcHandlers() {
     return map;
   });
 
-  safeHandle('invoices:generateFromNotes', (_event, clientId: number, noteIds: number[]) => {
+  safeHandle('invoices:generateFromNotes', (_event, clientId: number, noteIds: number[], entityId?: number) => {
     const feeSchedule = db.prepare('SELECT * FROM fee_schedule WHERE deleted_at IS NULL').all() as any[];
     const feeMap = new Map(feeSchedule.map(f => [f.cpt_code, f]));
 
+    // If entity, also load entity fee schedule for rate overrides
+    let entityFeeMap = new Map<string, any>();
+    if (entityId) {
+      const entityFees = db.prepare('SELECT * FROM entity_fee_schedules WHERE entity_id = ? AND deleted_at IS NULL').all(entityId) as any[];
+      entityFeeMap = new Map(entityFees.filter(f => f.cpt_code).map(f => [f.cpt_code, f]));
+    }
+
     const placeholders = noteIds.map(() => '?').join(',');
-    const notes = db.prepare(
-      `SELECT * FROM notes WHERE id IN (${placeholders}) AND client_id = ? AND deleted_at IS NULL`
-    ).all(...noteIds, clientId) as any[];
+    // Support fetching by entity_id or client_id
+    let noteQuery: string;
+    let noteParams: any[];
+    if (entityId) {
+      noteQuery = `SELECT * FROM notes WHERE id IN (${placeholders}) AND entity_id = ? AND deleted_at IS NULL`;
+      noteParams = [...noteIds, entityId];
+    } else {
+      noteQuery = `SELECT * FROM notes WHERE id IN (${placeholders}) AND client_id = ? AND deleted_at IS NULL`;
+      noteParams = [...noteIds, clientId];
+    }
+    const notes = db.prepare(noteQuery).all(...noteParams) as any[];
 
     let subtotal = 0;
     const items: any[] = [];
 
     for (const note of notes) {
+      // Prefer entity fee schedule rate, then global fee schedule, then note charge_amount
+      const entityFee = entityFeeMap.get(note.cpt_code);
       const fee = feeMap.get(note.cpt_code);
-      const unitPrice = fee?.amount || note.charge_amount || 0;
+      const unitPrice = entityFee?.default_rate || note.rate_override || fee?.amount || note.charge_amount || 0;
       const amount = unitPrice * (note.units || 1);
       subtotal += amount;
       items.push({
         note_id: note.id,
-        description: fee?.description || `Service on ${note.date_of_service}`,
+        description: entityFee?.description || fee?.description || `Service on ${note.date_of_service}`,
         cpt_code: note.cpt_code,
         service_date: note.date_of_service,
         units: note.units || 1,
@@ -2265,11 +2323,11 @@ function registerIpcHandlers() {
       });
     }
 
-    const invoiceNumber = `INV-${Date.now().toString(36).toUpperCase()}`;
+    const invoiceNumber = generateInvoiceNumber();
     const result = db.prepare(`
-      INSERT INTO invoices (client_id, invoice_number, invoice_date, subtotal, total_amount, status)
-      VALUES (?, ?, ?, ?, ?, 'draft')
-    `).run(clientId, invoiceNumber, new Date().toISOString().slice(0, 10), subtotal, subtotal);
+      INSERT INTO invoices (client_id, entity_id, invoice_number, invoice_date, subtotal, total_amount, status)
+      VALUES (?, ?, ?, ?, ?, ?, 'draft')
+    `).run(clientId || null, entityId || null, invoiceNumber, new Date().toISOString().slice(0, 10), subtotal, subtotal);
     const invoiceId = result.lastInsertRowid;
 
     const insertItem = db.prepare(`
@@ -2280,6 +2338,21 @@ function registerIpcHandlers() {
       insertItem.run(invoiceId, item.note_id, item.description, item.cpt_code, item.service_date, item.units, item.unit_price, item.amount);
     }
 
+    return db.prepare('SELECT * FROM invoices WHERE id = ?').get(invoiceId);
+  });
+
+  // Create a fee invoice (late cancel / no-show)
+  safeHandle('invoices:createFeeInvoice', (_event, data: { client_id?: number; entity_id?: number; description: string; amount: number; service_date: string }) => {
+    const invoiceNumber = generateInvoiceNumber();
+    const result = db.prepare(`
+      INSERT INTO invoices (client_id, entity_id, invoice_number, invoice_date, subtotal, total_amount, status)
+      VALUES (?, ?, ?, ?, ?, ?, 'draft')
+    `).run(data.client_id || null, data.entity_id || null, invoiceNumber, new Date().toISOString().slice(0, 10), data.amount, data.amount);
+    const invoiceId = result.lastInsertRowid;
+    db.prepare(`
+      INSERT INTO invoice_items (invoice_id, description, service_date, units, unit_price, amount)
+      VALUES (?, ?, ?, 1, ?, ?)
+    `).run(invoiceId, data.description, data.service_date, data.amount, data.amount);
     return db.prepare('SELECT * FROM invoices WHERE id = ?').get(invoiceId);
   });
 
@@ -2729,9 +2802,9 @@ function registerIpcHandlers() {
   safeHandle('contractedEntities:createFeeScheduleEntry', (_event, data: any) => {
     requireTier('pro');
     const result = db.prepare(`
-      INSERT INTO entity_fee_schedules (entity_id, service_type, description, default_rate, unit, effective_date, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(data.entity_id, data.service_type, data.description || '', data.default_rate,
+      INSERT INTO entity_fee_schedules (entity_id, service_type, cpt_code, description, default_rate, unit, effective_date, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(data.entity_id, data.service_type, data.cpt_code || '', data.description || '', data.default_rate,
       data.unit || 'per_visit', data.effective_date || '', data.notes || '');
     return db.prepare('SELECT * FROM entity_fee_schedules WHERE id = ?').get(result.lastInsertRowid);
   });
@@ -2740,7 +2813,7 @@ function registerIpcHandlers() {
     requireTier('pro');
     const fields: string[] = [];
     const values: any[] = [];
-    const allowed = ['service_type', 'description', 'default_rate', 'unit', 'effective_date', 'notes'];
+    const allowed = ['service_type', 'cpt_code', 'description', 'default_rate', 'unit', 'effective_date', 'notes'];
     for (const key of allowed) {
       if (data[key] !== undefined) {
         fields.push(`${key} = ?`);

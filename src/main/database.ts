@@ -679,6 +679,27 @@ function runMigrations(): void {
         }
       },
     },
+    {
+      version: 16,
+      description: 'Invoice enhancements, entity fee CPT codes, patient name, cancel/no-show fees',
+      up: () => {
+        // Invoice number unique index
+        db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_invoice_number ON invoices(invoice_number)");
+
+        // Entity fee schedule: add CPT code
+        if (!columnExists('entity_fee_schedules', 'cpt_code')) {
+          db.exec("ALTER TABLE entity_fee_schedules ADD COLUMN cpt_code TEXT DEFAULT ''");
+        }
+
+        // Patient name on appointments and notes (for agency work)
+        if (!columnExists('appointments', 'patient_name')) {
+          db.exec("ALTER TABLE appointments ADD COLUMN patient_name TEXT DEFAULT ''");
+        }
+        if (!columnExists('notes', 'patient_name')) {
+          db.exec("ALTER TABLE notes ADD COLUMN patient_name TEXT DEFAULT ''");
+        }
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);

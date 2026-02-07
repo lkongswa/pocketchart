@@ -28,6 +28,7 @@ const EntityDetailPage: React.FC = () => {
   const [feeSchedule, setFeeSchedule] = useState<EntityFeeSchedule[]>([]);
   const [showFeeForm, setShowFeeForm] = useState(false);
   const [feeServiceType, setFeeServiceType] = useState('');
+  const [feeCptCode, setFeeCptCode] = useState('');
   const [feeDescription, setFeeDescription] = useState('');
   const [feeRate, setFeeRate] = useState('');
   const [feeUnit, setFeeUnit] = useState('per_visit');
@@ -77,11 +78,13 @@ const EntityDetailPage: React.FC = () => {
       await window.api.contractedEntities.createFeeScheduleEntry({
         entity_id: entityId,
         service_type: feeServiceType.trim(),
+        cpt_code: feeCptCode.trim(),
         description: feeDescription.trim(),
         default_rate: parseFloat(feeRate),
         unit: feeUnit,
       } as any);
       setFeeServiceType('');
+      setFeeCptCode('');
       setFeeDescription('');
       setFeeRate('');
       setFeeUnit('per_visit');
@@ -282,7 +285,7 @@ const EntityDetailPage: React.FC = () => {
 
           {showFeeForm && (
             <div className="card p-4 mb-4 space-y-3">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="label">Service Type *</label>
                   <select className="select w-full" value={feeServiceType} onChange={(e) => setFeeServiceType(e.target.value)}>
@@ -292,6 +295,11 @@ const EntityDetailPage: React.FC = () => {
                     <option value="reassessment">Reassessment</option>
                     <option value="discharge">Discharge</option>
                   </select>
+                </div>
+                <div>
+                  <label className="label">CPT Code</label>
+                  <input className="input w-full" value={feeCptCode}
+                    onChange={(e) => setFeeCptCode(e.target.value)} placeholder="e.g. 97110" />
                 </div>
                 <div>
                   <label className="label">Rate *</label>
@@ -335,6 +343,7 @@ const EntityDetailPage: React.FC = () => {
                 <thead>
                   <tr className="border-b border-[var(--color-border)]">
                     <th className="table-header">Service Type</th>
+                    <th className="table-header">CPT</th>
                     <th className="table-header">Description</th>
                     <th className="table-header">Rate</th>
                     <th className="table-header">Unit</th>
@@ -345,7 +354,8 @@ const EntityDetailPage: React.FC = () => {
                   {feeSchedule.map((fee) => (
                     <tr key={fee.id} className="border-b border-[var(--color-border)] last:border-b-0">
                       <td className="table-cell font-medium capitalize">{fee.service_type}</td>
-                      <td className="table-cell text-[var(--color-text-secondary)]">{fee.description || '--'}</td>
+                      <td className="table-cell font-mono text-sm text-[var(--color-text-secondary)]">{fee.cpt_code || ''}</td>
+                      <td className="table-cell text-[var(--color-text-secondary)]">{fee.description || ''}</td>
                       <td className="table-cell font-medium">{formatCurrency(fee.default_rate)}</td>
                       <td className="table-cell text-[var(--color-text-secondary)] capitalize">
                         {fee.unit.replace('_', ' ')}

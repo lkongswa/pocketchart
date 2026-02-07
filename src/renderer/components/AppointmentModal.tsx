@@ -68,6 +68,7 @@ export default function AppointmentModal({
     duration_minutes: 45,
     status: 'scheduled' as AppointmentStatus,
   });
+  const [patientName, setPatientName] = useState('');
 
   useEffect(() => {
     if (!isOpen) return;
@@ -102,6 +103,7 @@ export default function AppointmentModal({
           setSearchQuery(`${appointment.first_name} ${appointment.last_name}`);
         }
         setEntityRate(appointment.entity_rate ?? null);
+        setPatientName(appointment.patient_name || '');
       } else {
         let duration = 45;
         try {
@@ -119,6 +121,7 @@ export default function AppointmentModal({
         setSearchQuery('');
         setSelectedItem(null);
         setEntityRate(null);
+        setPatientName('');
         setRepeatFrequency('none');
         setRepeatEndDate('');
         setShowRepeat(false);
@@ -208,6 +211,7 @@ export default function AppointmentModal({
         client_id: selectedItem.type === 'client' ? selectedItem.id : 0,
         entity_id: selectedItem.type === 'contract' ? selectedItem.id : undefined,
         entity_rate: selectedItem.type === 'contract' ? entityRate ?? undefined : undefined,
+        patient_name: selectedItem.type === 'contract' ? patientName : '',
       };
 
       if (repeatFrequency !== 'none' && repeatEndDate && !appointment && onSaveBatch) {
@@ -352,6 +356,23 @@ export default function AppointmentModal({
               </div>
             )}
           </div>
+
+          {/* Patient Name (for contract appointments) */}
+          {selectedItem?.type === 'contract' && (
+            <div>
+              <label className="label">
+                <User className="w-3.5 h-3.5 inline mr-1" />
+                Patient Name
+              </label>
+              <input
+                type="text"
+                className="input"
+                placeholder="Name of the agency's patient/client"
+                value={patientName}
+                onChange={(e) => setPatientName(e.target.value)}
+              />
+            </div>
+          )}
 
           {/* Date */}
           <div>

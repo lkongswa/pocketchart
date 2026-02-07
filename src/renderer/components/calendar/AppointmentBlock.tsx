@@ -59,9 +59,12 @@ export default function AppointmentBlock({
   const heightPx = Math.max((appointment.duration_minutes / 30) * slotHeight, 24);
 
   const isContractorAppt = Boolean(appointment.entity_id);
-  const clientName = isContractorAppt && appointment.entity_name
+  const baseName = isContractorAppt && appointment.entity_name
     ? appointment.entity_name
     : `${appointment.first_name || 'Unknown'} ${appointment.last_name ? appointment.last_name.charAt(0) + '.' : ''}`;
+  const clientName = isContractorAppt && appointment.patient_name
+    ? `${baseName} — ${appointment.patient_name}`
+    : baseName;
 
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>) => {
     e.dataTransfer.setData('text/plain', appointment.id.toString());
