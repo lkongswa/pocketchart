@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import { app } from 'electron';
 import Store from 'electron-store';
-import { seedDefaultData, seedDefaultQuickChips, seedPayers, seedFeeSchedule, seedMFTData } from './seed';
+import { seedDefaultData, seedDefaultQuickChips, seedPayers, seedFeeSchedule, seedMFTData, autoFixFeeSchedule } from './seed';
 
 let db: Database.Database;
 
@@ -77,6 +77,7 @@ export function initDatabase(): void {
   // V2/V3 billing seed data (run after migrations create tables)
   seedPayers(db);
   seedFeeSchedule(db);
+  autoFixFeeSchedule(db);
 }
 
 function getSchemaVersion(): number {
@@ -757,6 +758,50 @@ function runMigrations(): void {
           WHERE category IN ('medical_records', 'Medical Records')
           AND deleted_at IS NULL
         `);
+      },
+    },
+    {
+      version: 18,
+      description: 'Add eval_type column to evaluations',
+      up: () => {
+        // Add eval_type column for initial/reassessment/discharge tracking
+        const cols = db.prepare("PRAGMA table_info('evaluations')").all() as any[];
+        if (!cols.find((c: any) => c.name === 'eval_type')) {
+          db.exec("ALTER TABLE evaluations ADD COLUMN eval_type TEXT DEFAULT 'initial'");
+        }
+      },
+    },
+    {
+      version: 19,
+      description: 'Normalize goals_bank categories to match UI display names',
+      up: () => {
+        // Map old seed category names → CATEGORY_OPTIONS display names
+        const renames: [string, string][] = [
+          // PT
+          ['mobility', 'Mobility'], ['strength', 'Strength'], ['balance', 'Balance'],
+          ['pain', 'Pain Management'], ['function', 'Functional Activity'], ['transfers', 'Transfers'],
+          // OT
+          ['ADL', 'ADLs'], ['IADL', 'ADLs'], ['hand_function', 'Fine Motor'],
+          ['cognition', 'Cognitive'], ['UE_function', 'Upper Extremity'], ['safety', 'Self-Care'],
+          // ST
+          ['articulation', 'Articulation'], ['language_expression', 'Language Expression'],
+          ['language_comprehension', 'Language Comprehension'], ['voice', 'Voice'],
+          ['fluency', 'Fluency'], ['swallowing', 'Feeding/Swallowing'],
+          // MFT
+          ['depression', 'Depression'], ['anxiety', 'Anxiety'], ['trauma', 'Trauma'],
+          ['relationship', 'Relationship'], ['family_systems', 'Family Systems'],
+          ['coping_skills', 'Coping Skills'], ['self_esteem', 'Self-Esteem'],
+          ['grief', 'Grief'], ['behavioral', 'Behavioral'],
+        ];
+        const stmt = db.prepare('UPDATE goals_bank SET category = ? WHERE category = ?');
+        for (const [oldCat, newCat] of renames) {
+          stmt.run(newCat, oldCat);
+        }
+        // Also normalize in goals table
+        const stmtGoals = db.prepare('UPDATE goals SET category = ? WHERE category = ?');
+        for (const [oldCat, newCat] of renames) {
+          stmtGoals.run(newCat, oldCat);
+        }
       },
     },
   ];

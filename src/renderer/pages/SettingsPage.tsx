@@ -778,6 +778,7 @@ export default function SettingsPage() {
           {DISCIPLINES.map((d) => (
             <label key={d.value} className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-gray-50 transition-colors">
               <input type="radio" name="discipline" value={d.value} checked={formData.discipline === d.value} onChange={async () => {
+                const oldDiscipline = formData.discipline;
                 handleChange('discipline', d.value);
                 // Auto-set note format if not explicitly set
                 const hasExplicit = await window.api.settings.get('note_format_explicit');
@@ -785,6 +786,21 @@ export default function SettingsPage() {
                   const defaultFormat = DISCIPLINE_DEFAULT_FORMAT[d.value as Discipline];
                   setNoteFormat(defaultFormat);
                   await window.api.settings.set('note_format', defaultFormat);
+                }
+                // Reset fee schedule if discipline changed
+                if (oldDiscipline !== d.value && d.value !== 'MULTI') {
+                  const resetFees = window.confirm(
+                    `Discipline changed to ${d.label}.\n\nWould you like to reset your fee schedule to the default CPT codes for ${d.value}?\n\n(This replaces all current fee schedule entries.)`
+                  );
+                  if (resetFees) {
+                    try {
+                      await window.api.feeSchedule.reset(d.value);
+                      setToast(`Fee schedule reset to ${d.value} codes`);
+                    } catch (err) {
+                      console.error('Failed to reset fee schedule:', err);
+                      setToast('Failed to reset fee schedule.');
+                    }
+                  }
                 }
               }} className="w-4 h-4 text-[var(--color-primary)] accent-[var(--color-primary)]" />
               <span className="text-sm font-medium">{d.label}</span>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, useBlocker } from 'react-router-dom';
 import { useSectionColor } from '../hooks/useSectionColor';
 import {
   ArrowLeft,
@@ -159,6 +159,10 @@ export default function NoteFormPage() {
   // Post-sign state
   const [justSigned, setJustSigned] = useState(false);
   const [savedNoteId, setSavedNoteId] = useState<number | null>(null);
+
+  // Autosave state
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [lastAutoSaved, setLastAutoSaved] = useState<string | null>(null);
   const [creatingInvoice, setCreatingInvoice] = useState(false);
   const [existingInvoice, setExistingInvoice] = useState<{ invoice_id: number; invoice_number: string; status: string } | null>(null);
 
@@ -328,16 +332,96 @@ export default function NoteFormPage() {
   const [formSaved, setFormSaved] = useState(false);
   const hasUnsavedChanges = hasFormContent && !formSaved;
 
-  // Browser/Electron beforeunload
+  // Save on window close (fire-and-forget, don't block close)
   useEffect(() => {
-    if (!hasUnsavedChanges) return;
-    const handler = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = '';
+    const handler = () => {
+      if (hasUnsavedChanges && !existingSignedAt) {
+        performAutoSaveRef.current();
+      }
     };
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
-  }, [hasUnsavedChanges]);
+  }, [hasUnsavedChanges, existingSignedAt]);
+
+  // Keep a ref to the latest performAutoSave so useBlocker can call it
+  const performAutoSaveRef = useRef<() => Promise<void>>(async () => {});
+
+  // Block React Router navigation and auto-save before leaving
+  const noteBlocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      hasUnsavedChanges && !existingSignedAt && currentLocation.pathname !== nextLocation.pathname
+  );
+
+  useEffect(() => {
+    if (noteBlocker.state === 'blocked') {
+      performAutoSaveRef.current().then(() => {
+        noteBlocker.proceed();
+      }).catch(() => {
+        noteBlocker.proceed();
+      });
+    }
+  }, [noteBlocker]);
+
+  // ── Autosave (debounced 3s) ──
+  const performAutoSave = useCallback(async () => {
+    if (!clientId || !client || existingSignedAt) return;
+    if (!subjective.trim() && !objective.trim() && !assessment.trim() && !plan.trim()) return;
+
+    try {
+      const filteredCptLines = cptLines.filter(l => l.code.trim());
+      const noteData: Partial<Note> = {
+        client_id: parseInt(clientId, 10),
+        date_of_service: dateOfService,
+        time_in: timeIn,
+        time_out: timeOut,
+        units: filteredCptLines.reduce((sum, l) => sum + (l.units || 0), 0),
+        cpt_code: filteredCptLines[0]?.code || '',
+        cpt_codes: JSON.stringify(filteredCptLines),
+        cpt_modifiers: JSON.stringify(cptModifiers),
+        place_of_service: placeOfService,
+        charge_amount: chargeAmount,
+        subjective,
+        objective,
+        assessment,
+        plan,
+        goals_addressed: JSON.stringify(goalsAddressed),
+        signature_image: '',
+        signature_typed: '',
+        signed_at: '',
+        entity_id: isContractedVisit ? entityId ?? undefined : undefined,
+        rate_override: isContractedVisit ? rateOverride ?? undefined : undefined,
+        rate_override_reason: isContractedVisit ? rateOverrideReason : '',
+        note_type: isContractedVisit ? noteType as Note['note_type'] : undefined,
+        patient_name: isContractedVisit ? patientName : '',
+      };
+
+      if (savedNoteId) {
+        await window.api.notes.update(savedNoteId, noteData);
+      } else {
+        const created = await window.api.notes.create(noteData);
+        if (created?.id) setSavedNoteId(created.id);
+      }
+      setLastAutoSaved(new Date().toLocaleTimeString());
+    } catch (err) {
+      console.error('Auto-save failed:', err);
+    }
+  }, [clientId, client, existingSignedAt, subjective, objective, assessment, plan, dateOfService, timeIn, timeOut, cptLines, cptModifiers, placeOfService, chargeAmount, goalsAddressed, savedNoteId, isContractedVisit, entityId, rateOverride, rateOverrideReason, noteType, patientName]);
+
+  // Keep ref current for the navigation blocker
+  performAutoSaveRef.current = performAutoSave;
+
+  // Debounced auto-save: triggers 3 seconds after any content change
+  useEffect(() => {
+    if (loading || existingSignedAt) return;
+    if (!subjective.trim() && !objective.trim() && !assessment.trim() && !plan.trim()) return;
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      performAutoSave();
+    }, 3000);
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [subjective, objective, assessment, plan, dateOfService, timeIn, timeOut, cptLines, performAutoSave, loading, existingSignedAt]);
 
   // ── Actions ──
 
@@ -591,8 +675,11 @@ export default function NoteFormPage() {
           <div className="flex items-center gap-3">
             <button
               className="btn-ghost p-2"
-              onClick={() => {
-                if (hasUnsavedChanges && !window.confirm('You have unsaved changes. Are you sure you want to leave?')) return;
+              onClick={async () => {
+                if (hasUnsavedChanges && !existingSignedAt) {
+                  // Auto-save draft before navigating away
+                  await performAutoSave();
+                }
                 navigate(`/clients/${clientId}`);
               }}
               title="Back to client"
@@ -610,6 +697,11 @@ export default function NoteFormPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {lastAutoSaved && (
+              <span className="text-xs text-[var(--color-text-secondary)]">
+                Auto-saved {lastAutoSaved}
+              </span>
+            )}
             {!isEditing && recentNotes.length > 0 && (
               <button
                 className="btn-secondary flex items-center gap-2"

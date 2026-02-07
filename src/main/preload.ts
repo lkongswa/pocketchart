@@ -46,6 +46,9 @@ const api = {
     create: (data: any) => ipcRenderer.invoke('evaluations:create', data),
     update: (id: number, data: any) => ipcRenderer.invoke('evaluations:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('evaluations:delete', id),
+    createReassessment: (clientId: number) => ipcRenderer.invoke('evaluations:createReassessment', clientId),
+    countIncomplete: () => ipcRenderer.invoke('evaluations:countIncomplete'),
+    listIncomplete: () => ipcRenderer.invoke('evaluations:listIncomplete'),
   },
 
   // Appointments
@@ -175,6 +178,7 @@ const api = {
     create: (data: any) => ipcRenderer.invoke('feeSchedule:create', data),
     update: (id: number, data: any) => ipcRenderer.invoke('feeSchedule:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('feeSchedule:delete', id),
+    reset: (discipline: string) => ipcRenderer.invoke('feeSchedule:reset', discipline),
   },
 
   // V2 Billing - Invoices

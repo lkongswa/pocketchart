@@ -141,6 +141,11 @@ const allSections: HelpSectionData[] = [
             PocketChart automatically locks itself and requires the PIN to re-enter.
           </li>
           <li>
+            <B>Quick Lock</B> — Click the <B>PocketChart logo</B> in the sidebar (or press{' '}
+            <B>Ctrl+L</B>) to instantly lock the app. The logo shows a lock icon on hover as
+            a visual cue.
+          </li>
+          <li>
             <B>Data Retention</B> — When you delete a client, note, evaluation, goal, document, or
             appointment, PocketChart performs a <B>soft delete</B>. The record is hidden from the
             interface but retained in the database to comply with HIPAA record-retention guidelines

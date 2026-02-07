@@ -15,12 +15,14 @@ const DISCIPLINE_TABS: Array<{ value: Discipline | 'ALL'; label: string }> = [
   { value: 'PT', label: 'PT' },
   { value: 'OT', label: 'OT' },
   { value: 'ST', label: 'ST' },
+  { value: 'MFT', label: 'MFT' },
 ];
 
 const DISCIPLINE_BADGE: Record<string, string> = {
   PT: 'badge-pt',
   OT: 'badge-ot',
   ST: 'badge-st',
+  MFT: 'badge-mft',
 };
 
 /**
@@ -67,6 +69,7 @@ export default function GoalsBankPage({ embedded }: GoalsBankPageProps = {}) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState({ discipline: 'PT' as Discipline, category: '', goal_template: '' });
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
 
   // New goal template form state
   const [newGoal, setNewGoal] = useState({
@@ -119,6 +122,18 @@ export default function GoalsBankPage({ embedded }: GoalsBankPageProps = {}) {
   );
 
   const sortedCategories = Object.keys(groupedEntries).sort();
+
+  const toggleCategory = (category: string) => {
+    setExpandedCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(category)) {
+        next.delete(category);
+      } else {
+        next.add(category);
+      }
+      return next;
+    });
+  };
 
   const startEdit = (entry: GoalsBankEntry) => {
     setEditingId(entry.id);
@@ -218,6 +233,7 @@ export default function GoalsBankPage({ embedded }: GoalsBankPageProps = {}) {
                 <option value="PT">PT</option>
                 <option value="OT">OT</option>
                 <option value="ST">ST</option>
+                <option value="MFT">MFT</option>
               </select>
             </div>
             <div>
@@ -325,16 +341,22 @@ export default function GoalsBankPage({ embedded }: GoalsBankPageProps = {}) {
           </p>
         </div>
       ) : (
-        <div className="space-y-6">
-          {sortedCategories.map((category) => (
+        <div className="space-y-3">
+          {sortedCategories.map((category) => {
+            const isExpanded = expandedCategories.has(category);
+            return (
             <div key={category}>
-              <h3 className="section-title flex items-center gap-2">
-                <ChevronDown className="w-4 h-4 text-[var(--color-text-secondary)]" />
+              <button
+                className="section-title flex items-center gap-2 w-full text-left cursor-pointer hover:text-[var(--color-primary)] transition-colors"
+                onClick={() => toggleCategory(category)}
+              >
+                <ChevronDown className={`w-4 h-4 text-[var(--color-text-secondary)] transition-transform ${isExpanded ? '' : '-rotate-90'}`} />
                 {formatCategory(category)}
                 <span className="text-xs font-normal text-[var(--color-text-secondary)]">
                   ({groupedEntries[category].length})
                 </span>
-              </h3>
+              </button>
+              {isExpanded && (
               <div className="card divide-y divide-[var(--color-border)]">
                 {groupedEntries[category].map((entry) => (
                   <div
@@ -349,6 +371,7 @@ export default function GoalsBankPage({ embedded }: GoalsBankPageProps = {}) {
                             <option value="PT">PT</option>
                             <option value="OT">OT</option>
                             <option value="ST">ST</option>
+                            <option value="MFT">MFT</option>
                           </select>
                           <input type="text" className="input text-sm" placeholder="Category" value={editForm.category} onChange={(e) => setEditForm((p) => ({ ...p, category: e.target.value }))} />
                         </div>
@@ -410,8 +433,10 @@ export default function GoalsBankPage({ embedded }: GoalsBankPageProps = {}) {
                   </div>
                 ))}
               </div>
+              )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

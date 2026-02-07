@@ -630,21 +630,21 @@ function registerIpcHandlers() {
   safeHandle('evaluations:create', (_event, data) => {
     const result = db.prepare(`
       INSERT INTO evaluations (client_id, eval_date, discipline, content, signed_at,
-        signature_image, signature_typed)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+        signature_image, signature_typed, eval_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(data.client_id, data.eval_date, data.discipline, data.content, data.signed_at,
-      data.signature_image || '', data.signature_typed || '');
+      data.signature_image || '', data.signature_typed || '', data.eval_type || 'initial');
     return db.prepare('SELECT * FROM evaluations WHERE id = ?').get(result.lastInsertRowid);
   });
 
   safeHandle('evaluations:update', (_event, id: number, data) => {
     db.prepare(`
       UPDATE evaluations SET eval_date=?, discipline=?, content=?, signed_at=?,
-        signature_image=?, signature_typed=?,
+        signature_image=?, signature_typed=?, eval_type=COALESCE(?, eval_type),
         updated_at=CURRENT_TIMESTAMP
       WHERE id=? AND deleted_at IS NULL
     `).run(data.eval_date, data.discipline, data.content, data.signed_at,
-      data.signature_image || '', data.signature_typed || '', id);
+      data.signature_image || '', data.signature_typed || '', data.eval_type || null, id);
     return db.prepare('SELECT * FROM evaluations WHERE id = ?').get(id);
   });
 
@@ -652,6 +652,49 @@ function registerIpcHandlers() {
   safeHandle('evaluations:delete', (_event, id: number) => {
     db.prepare('UPDATE evaluations SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL').run(id);
     return true;
+  });
+
+  // Create reassessment — pre-populate from most recent signed eval
+  safeHandle('evaluations:createReassessment', (_event, clientId: number) => {
+    const lastEval = db.prepare(`
+      SELECT * FROM evaluations
+      WHERE client_id = ? AND signed_at IS NOT NULL AND signed_at != '' AND deleted_at IS NULL
+      ORDER BY eval_date DESC LIMIT 1
+    `).get(clientId) as any;
+
+    if (!lastEval) {
+      return { priorContent: null, activeGoals: [] };
+    }
+
+    let priorContent = null;
+    try { priorContent = JSON.parse(lastEval.content); } catch {}
+
+    const activeGoals = db.prepare(`
+      SELECT * FROM goals
+      WHERE client_id = ? AND status = 'active' AND deleted_at IS NULL
+      ORDER BY created_at ASC
+    `).all(clientId);
+
+    return { priorContent, activeGoals, priorEvalId: lastEval.id };
+  });
+
+  // Count incomplete (unsigned) evals
+  safeHandle('evaluations:countIncomplete', () => {
+    const result = db.prepare(
+      'SELECT COUNT(*) as count FROM evaluations WHERE (signed_at IS NULL OR signed_at = \'\') AND deleted_at IS NULL'
+    ).get() as any;
+    return result?.count || 0;
+  });
+
+  // List all incomplete (unsigned) evals with client info
+  safeHandle('evaluations:listIncomplete', () => {
+    return db.prepare(`
+      SELECT e.*, c.first_name, c.last_name, c.discipline AS client_discipline
+      FROM evaluations e
+      JOIN clients c ON c.id = e.client_id AND c.deleted_at IS NULL
+      WHERE (e.signed_at IS NULL OR e.signed_at = '') AND e.deleted_at IS NULL
+      ORDER BY e.eval_date DESC
+    `).all();
   });
 
   // ── Appointments ──
@@ -795,7 +838,7 @@ function registerIpcHandlers() {
       params.push(filters.discipline);
     }
     if (filters?.category) {
-      query += ' AND category = ?';
+      query += ' AND category = ? COLLATE NOCASE';
       params.push(filters.category);
     }
 
@@ -2151,6 +2194,12 @@ function registerIpcHandlers() {
   safeHandle('feeSchedule:delete', (_event, id: number) => {
     db.prepare('UPDATE fee_schedule SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
     return true;
+  });
+
+  safeHandle('feeSchedule:reset', (_event, discipline: string) => {
+    const { resetFeeSchedule } = require('./seed');
+    resetFeeSchedule(db, discipline);
+    return { success: true };
   });
 
   // ── Invoice number generation ──

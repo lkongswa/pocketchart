@@ -11,11 +11,12 @@ import {
   Activity,
   ShieldAlert,
   X,
+  ClipboardList,
 } from 'lucide-react';
 import type { Client, Note, Appointment } from '../../shared/types';
 
 interface DashboardStats {
-  activeClients: number;
+  incompleteEvals: number;
   notesThisWeek: number;
   upcomingAppointments: number;
   unsignedNotes: number;
@@ -31,7 +32,7 @@ const BACKUP_REMINDER_DAYS = 7;
 const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
   const [stats, setStats] = useState<DashboardStats>({
-    activeClients: 0,
+    incompleteEvals: 0,
     notesThisWeek: 0,
     upcomingAppointments: 0,
     unsignedNotes: 0,
@@ -93,8 +94,8 @@ const DashboardPage: React.FC = () => {
     try {
       setLoading(true);
 
-      // Get all active clients
-      const clients: Client[] = await window.api.clients.list({ status: 'active' });
+      // Get incomplete evals count and all clients
+      const incompleteEvals: number = await window.api.evaluations.countIncomplete().catch(() => 0);
       const allClients: Client[] = await window.api.clients.list();
 
       // Calculate date boundaries
@@ -151,7 +152,7 @@ const DashboardPage: React.FC = () => {
       const unsignedNotes = allNotes.filter((item) => !item.note.signed_at).length;
 
       setStats({
-        activeClients: clients.length,
+        incompleteEvals,
         notesThisWeek,
         upcomingAppointments: appointments.filter((a) => a.status === 'scheduled').length,
         unsignedNotes,
@@ -184,11 +185,11 @@ const DashboardPage: React.FC = () => {
 
   const statCards = [
     {
-      label: 'Total Active Clients',
-      count: stats.activeClients,
-      icon: <Users size={24} className="text-teal-500" />,
-      bgClass: 'bg-teal-50',
-      onClick: () => navigate('/clients'),
+      label: 'Incomplete Evals',
+      count: stats.incompleteEvals,
+      icon: <ClipboardList size={24} className="text-amber-500" />,
+      bgClass: 'bg-amber-50',
+      onClick: () => navigate('/evals'),
     },
     {
       label: 'Notes This Week',

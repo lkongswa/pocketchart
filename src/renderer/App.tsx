@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { HashRouter, Routes, Route, NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { createHashRouter, RouterProvider, Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { getSectionForPath } from './hooks/useSectionColor';
 import {
   LayoutDashboard,
@@ -16,6 +16,7 @@ import {
   FileText,
   ChevronLeft,
   ChevronRight,
+  Lock,
 } from 'lucide-react';
 import DashboardPage from './pages/DashboardPage';
 import ClientsPage from './pages/ClientsPage';
@@ -33,6 +34,7 @@ import VaultPage from './pages/VaultPage';
 import MileagePage from './pages/MileagePage';
 import YearEndSummaryPage from './pages/YearEndSummaryPage';
 import NotesOverviewPage from './pages/NotesOverviewPage';
+import EvalsQueuePage from './pages/EvalsQueuePage';
 import PinLockScreen from './components/PinLockScreen';
 import ErrorBoundary from './components/ErrorBoundary';
 import OnboardingScreen from './components/OnboardingScreen';
@@ -110,10 +112,15 @@ function darkenHex(hex: string, amount: number): string {
 const Sidebar: React.FC = () => {
   const location = useLocation();
   const [appVersion, setAppVersion] = useState('');
+  const [logoHover, setLogoHover] = useState(false);
 
   useEffect(() => {
     window.api.app.getVersion().then((v) => setAppVersion(v)).catch(() => {});
   }, []);
+
+  const handleLockClick = () => {
+    window.dispatchEvent(new CustomEvent('pocketchart:lock'));
+  };
 
   const isActive = (item: NavItem): boolean => {
     if (item.matchPrefix) {
@@ -127,20 +134,29 @@ const Sidebar: React.FC = () => {
 
   return (
     <aside className="fixed top-0 left-0 h-full w-[240px] bg-[var(--color-surface)] border-r border-[var(--color-border)] flex flex-col z-10">
-      {/* Logo / App Name */}
-      <div className="flex items-center gap-3 px-5 py-5 border-b border-[var(--color-border)]">
-        <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-[var(--color-primary)] text-white">
-          <ClipboardList size={20} />
+      {/* Logo / App Name — click to lock */}
+      <button
+        className="flex items-center gap-3 px-5 py-5 border-b border-[var(--color-border)] w-full text-left hover:bg-gray-50/50 transition-colors cursor-pointer"
+        onClick={handleLockClick}
+        onMouseEnter={() => setLogoHover(true)}
+        onMouseLeave={() => setLogoHover(false)}
+        title="Click to lock (Ctrl+L)"
+      >
+        <div className="relative flex items-center justify-center w-9 h-9 rounded-lg bg-[var(--color-primary)] text-white">
+          {logoHover ? <Lock size={18} /> : <ClipboardList size={20} />}
+          {logoHover && (
+            <div className="absolute inset-0 rounded-lg bg-black/20" />
+          )}
         </div>
         <div>
           <h1 className="text-base font-bold text-[var(--color-text)] leading-tight">
             PocketChart
           </h1>
           <p className="text-xs text-[var(--color-text-secondary)] leading-tight">
-            Therapy Notes
+            {logoHover ? 'Click to lock' : 'Therapy Notes'}
           </p>
         </div>
-      </div>
+      </button>
 
       {/* Grouped Navigation */}
       <nav className="flex-1 px-3 py-3 overflow-y-auto space-y-1">
@@ -241,31 +257,39 @@ const AppLayout: React.FC = () => {
       <main className="ml-[240px] flex-1 overflow-y-auto min-h-screen flex flex-col">
         <TopNavBar />
         <div className="flex-1">
-        <Routes>
-          <Route path="/" element={<DashboardPage />} />
-          <Route path="/clients" element={<ClientsPage />} />
-          <Route path="/clients/:id" element={<ClientDetailPage />} />
-          <Route path="/clients/:id/note/new" element={<NoteFormPage />} />
-          <Route path="/clients/:id/note/:noteId" element={<NoteFormPage />} />
-          <Route path="/clients/:id/eval/new" element={<EvalFormPage />} />
-          <Route path="/clients/:id/eval/:evalId" element={<EvalFormPage />} />
-          <Route path="/clients/:id/superbill" element={<SuperbillPage />} />
-          <Route path="/notes" element={<NotesOverviewPage />} />
-          <Route path="/calendar" element={<CalendarPage />} />
-          <Route path="/billing" element={<BillingPage />} />
-          <Route path="/entities" element={<ContractedEntitiesPage />} />
-          <Route path="/entities/:id" element={<EntityDetailPage />} />
-          <Route path="/vault" element={<VaultPage />} />
-          <Route path="/mileage" element={<MileagePage />} />
-          <Route path="/reports" element={<YearEndSummaryPage />} />
-          <Route path="/help" element={<HelpPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-        </Routes>
+          <Outlet />
         </div>
       </main>
     </div>
   );
 };
+
+const router = createHashRouter([
+  {
+    element: <AppLayout />,
+    children: [
+      { path: '/', element: <DashboardPage /> },
+      { path: '/clients', element: <ClientsPage /> },
+      { path: '/clients/:id', element: <ClientDetailPage /> },
+      { path: '/clients/:id/note/new', element: <NoteFormPage /> },
+      { path: '/clients/:id/note/:noteId', element: <NoteFormPage /> },
+      { path: '/clients/:id/eval/new', element: <EvalFormPage /> },
+      { path: '/clients/:id/eval/:evalId', element: <EvalFormPage /> },
+      { path: '/clients/:id/superbill', element: <SuperbillPage /> },
+      { path: '/evals', element: <EvalsQueuePage /> },
+      { path: '/notes', element: <NotesOverviewPage /> },
+      { path: '/calendar', element: <CalendarPage /> },
+      { path: '/billing', element: <BillingPage /> },
+      { path: '/entities', element: <ContractedEntitiesPage /> },
+      { path: '/entities/:id', element: <EntityDetailPage /> },
+      { path: '/vault', element: <VaultPage /> },
+      { path: '/mileage', element: <MileagePage /> },
+      { path: '/reports', element: <YearEndSummaryPage /> },
+      { path: '/help', element: <HelpPage /> },
+      { path: '/settings', element: <SettingsPage /> },
+    ],
+  },
+]);
 
 const App: React.FC = () => {
   const [isLocked, setIsLocked] = useState(false);
@@ -315,6 +339,31 @@ const App: React.FC = () => {
     window.addEventListener('pocketchart:security-changed', handleSecurityChange);
     return () => window.removeEventListener('pocketchart:security-changed', handleSecurityChange);
   }, []);
+
+  // Listen for lock event (from sidebar logo click)
+  useEffect(() => {
+    const handleLock = () => {
+      if (pinEnabled) {
+        setIsLocked(true);
+      }
+    };
+    window.addEventListener('pocketchart:lock', handleLock);
+    return () => window.removeEventListener('pocketchart:lock', handleLock);
+  }, [pinEnabled]);
+
+  // Ctrl+L keyboard shortcut to lock
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === 'l') {
+        e.preventDefault();
+        if (pinEnabled && !isLocked) {
+          setIsLocked(true);
+        }
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => document.removeEventListener('keydown', handleKeyDown, true);
+  }, [pinEnabled, isLocked]);
 
   // Activity tracking and auto-timeout
   useEffect(() => {
@@ -370,10 +419,8 @@ const App: React.FC = () => {
   return (
     <ErrorBoundary>
       {showOnboarding && <OnboardingScreen onComplete={handleOnboardingComplete} />}
-      <HashRouter>
-        {isLocked && pinEnabled && !showOnboarding && <PinLockScreen onUnlock={handleUnlock} />}
-        <AppLayout />
-      </HashRouter>
+      {isLocked && pinEnabled && !showOnboarding && <PinLockScreen onUnlock={handleUnlock} />}
+      <RouterProvider router={router} />
       <UpdateNotification />
     </ErrorBoundary>
   );

@@ -782,6 +782,9 @@ export interface PocketChartAPI {
     create: (data: Partial<Evaluation>) => Promise<Evaluation>;
     update: (id: number, data: Partial<Evaluation>) => Promise<Evaluation>;
     delete: (id: number) => Promise<boolean>;
+    createReassessment: (clientId: number) => Promise<{ priorContent: string; activeGoals: any[] } | null>;
+    countIncomplete: () => Promise<number>;
+    listIncomplete: () => Promise<any[]>;
   };
   appointments: {
     list: (filters?: { startDate?: string; endDate?: string; clientId?: number }) => Promise<Appointment[]>;
@@ -898,6 +901,7 @@ export interface PocketChartAPI {
     create: (data: Partial<FeeScheduleEntry>) => Promise<FeeScheduleEntry>;
     update: (id: number, data: Partial<FeeScheduleEntry>) => Promise<FeeScheduleEntry>;
     delete: (id: number) => Promise<boolean>;
+    reset: (discipline: string) => Promise<boolean>;
   };
   invoices: {
     list: (filters?: { clientId?: number; entityId?: number; status?: InvoiceStatus; startDate?: string; endDate?: string }) => Promise<Invoice[]>;

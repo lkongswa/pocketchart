@@ -154,59 +154,59 @@ export function seedDefaultData(db: Database.Database): void {
 
     // ── Goals Bank ──
     // PT Goals
-    insertGoalsBank.run('PT', 'mobility', 'Pt will ambulate ___ ft with ___ device and ___ assist in ___ weeks.');
-    insertGoalsBank.run('PT', 'mobility', 'Pt will ambulate on level surfaces with normalized gait pattern, no device, within ___ weeks.');
-    insertGoalsBank.run('PT', 'mobility', 'Pt will navigate stairs with ___ assist and ___ railing in ___ weeks.');
-    insertGoalsBank.run('PT', 'mobility', 'Pt will perform sit-to-stand from standard height chair with ___ assist in ___ weeks.');
-    insertGoalsBank.run('PT', 'strength', 'Pt will demonstrate ___ strength of ___/5 in ___ within ___ weeks.');
-    insertGoalsBank.run('PT', 'strength', 'Pt will improve grip strength to ___lbs bilaterally within ___ weeks.');
+    insertGoalsBank.run('PT', 'Mobility', 'Pt will ambulate ___ ft with ___ device and ___ assist in ___ weeks.');
+    insertGoalsBank.run('PT', 'Mobility', 'Pt will ambulate on level surfaces with normalized gait pattern, no device, within ___ weeks.');
+    insertGoalsBank.run('PT', 'Mobility', 'Pt will navigate stairs with ___ assist and ___ railing in ___ weeks.');
+    insertGoalsBank.run('PT', 'Mobility', 'Pt will perform sit-to-stand from standard height chair with ___ assist in ___ weeks.');
+    insertGoalsBank.run('PT', 'Strength', 'Pt will demonstrate ___ strength of ___/5 in ___ within ___ weeks.');
+    insertGoalsBank.run('PT', 'Strength', 'Pt will improve grip strength to ___lbs bilaterally within ___ weeks.');
     insertGoalsBank.run('PT', 'ROM', 'Pt will achieve ___ AROM of ___ degrees within ___ weeks.');
     insertGoalsBank.run('PT', 'ROM', 'Pt will demonstrate functional ROM for ___ within ___ weeks.');
-    insertGoalsBank.run('PT', 'balance', 'Pt will maintain static standing balance for ___ seconds without LOB within ___ weeks.');
-    insertGoalsBank.run('PT', 'balance', 'Pt will achieve Berg Balance Scale score of ___/56 within ___ weeks.');
-    insertGoalsBank.run('PT', 'balance', 'Pt will perform dynamic balance activities with ___ LOB in ___ weeks.');
-    insertGoalsBank.run('PT', 'pain', 'Pt will report pain reduction to ___/10 with functional activities within ___ weeks.');
-    insertGoalsBank.run('PT', 'function', 'Pt will independently perform HEP with correct form within ___ weeks.');
-    insertGoalsBank.run('PT', 'function', 'Pt will return to ___ (work/sport/activity) without limitations within ___ weeks.');
-    insertGoalsBank.run('PT', 'transfers', 'Pt will complete bed mobility with ___ assist within ___ weeks.');
-    insertGoalsBank.run('PT', 'transfers', 'Pt will perform all transfers with ___ assist within ___ weeks.');
+    insertGoalsBank.run('PT', 'Balance', 'Pt will maintain static standing balance for ___ seconds without LOB within ___ weeks.');
+    insertGoalsBank.run('PT', 'Balance', 'Pt will achieve Berg Balance Scale score of ___/56 within ___ weeks.');
+    insertGoalsBank.run('PT', 'Balance', 'Pt will perform dynamic balance activities with ___ LOB in ___ weeks.');
+    insertGoalsBank.run('PT', 'Pain Management', 'Pt will report pain reduction to ___/10 with functional activities within ___ weeks.');
+    insertGoalsBank.run('PT', 'Functional Activity', 'Pt will independently perform HEP with correct form within ___ weeks.');
+    insertGoalsBank.run('PT', 'Functional Activity', 'Pt will return to ___ (work/sport/activity) without limitations within ___ weeks.');
+    insertGoalsBank.run('PT', 'Transfers', 'Pt will complete bed mobility with ___ assist within ___ weeks.');
+    insertGoalsBank.run('PT', 'Transfers', 'Pt will perform all transfers with ___ assist within ___ weeks.');
 
     // OT Goals
-    insertGoalsBank.run('OT', 'ADL', 'Pt will complete upper body dressing with ___ assist within ___ weeks.');
-    insertGoalsBank.run('OT', 'ADL', 'Pt will complete lower body dressing with ___ assist within ___ weeks.');
-    insertGoalsBank.run('OT', 'ADL', 'Pt will complete grooming tasks with ___ assist within ___ weeks.');
-    insertGoalsBank.run('OT', 'ADL', 'Pt will complete bathing with ___ assist within ___ weeks.');
-    insertGoalsBank.run('OT', 'ADL', 'Pt will independently feed self with ___ setup within ___ weeks.');
-    insertGoalsBank.run('OT', 'IADL', 'Pt will prepare a simple meal with ___ assist within ___ weeks.');
-    insertGoalsBank.run('OT', 'IADL', 'Pt will manage medications with ___ assist within ___ weeks.');
-    insertGoalsBank.run('OT', 'IADL', 'Pt will perform light housekeeping with ___ assist within ___ weeks.');
-    insertGoalsBank.run('OT', 'hand_function', 'Pt will demonstrate functional grasp/release for ___ tasks within ___ weeks.');
-    insertGoalsBank.run('OT', 'hand_function', 'Pt will improve fine motor coordination for ___ within ___ weeks.');
-    insertGoalsBank.run('OT', 'hand_function', 'Pt will achieve grip strength of ___lbs for functional tasks within ___ weeks.');
-    insertGoalsBank.run('OT', 'cognition', 'Pt will follow ___-step commands with ___ cues within ___ weeks.');
-    insertGoalsBank.run('OT', 'cognition', 'Pt will demonstrate improved sequencing for ___-step tasks within ___ weeks.');
-    insertGoalsBank.run('OT', 'cognition', 'Pt will utilize compensatory strategies for ___ with ___ cues within ___ weeks.');
-    insertGoalsBank.run('OT', 'UE_function', 'Pt will achieve functional AROM of ___ for ___ within ___ weeks.');
-    insertGoalsBank.run('OT', 'safety', 'Pt will demonstrate safe ___ techniques with ___ cues within ___ weeks.');
+    insertGoalsBank.run('OT', 'ADLs', 'Pt will complete upper body dressing with ___ assist within ___ weeks.');
+    insertGoalsBank.run('OT', 'ADLs', 'Pt will complete lower body dressing with ___ assist within ___ weeks.');
+    insertGoalsBank.run('OT', 'ADLs', 'Pt will complete grooming tasks with ___ assist within ___ weeks.');
+    insertGoalsBank.run('OT', 'ADLs', 'Pt will complete bathing with ___ assist within ___ weeks.');
+    insertGoalsBank.run('OT', 'ADLs', 'Pt will independently feed self with ___ setup within ___ weeks.');
+    insertGoalsBank.run('OT', 'ADLs', 'Pt will prepare a simple meal with ___ assist within ___ weeks.');
+    insertGoalsBank.run('OT', 'ADLs', 'Pt will manage medications with ___ assist within ___ weeks.');
+    insertGoalsBank.run('OT', 'ADLs', 'Pt will perform light housekeeping with ___ assist within ___ weeks.');
+    insertGoalsBank.run('OT', 'Fine Motor', 'Pt will demonstrate functional grasp/release for ___ tasks within ___ weeks.');
+    insertGoalsBank.run('OT', 'Fine Motor', 'Pt will improve fine motor coordination for ___ within ___ weeks.');
+    insertGoalsBank.run('OT', 'Fine Motor', 'Pt will achieve grip strength of ___lbs for functional tasks within ___ weeks.');
+    insertGoalsBank.run('OT', 'Cognitive', 'Pt will follow ___-step commands with ___ cues within ___ weeks.');
+    insertGoalsBank.run('OT', 'Cognitive', 'Pt will demonstrate improved sequencing for ___-step tasks within ___ weeks.');
+    insertGoalsBank.run('OT', 'Cognitive', 'Pt will utilize compensatory strategies for ___ with ___ cues within ___ weeks.');
+    insertGoalsBank.run('OT', 'Upper Extremity', 'Pt will achieve functional AROM of ___ for ___ within ___ weeks.');
+    insertGoalsBank.run('OT', 'Self-Care', 'Pt will demonstrate safe ___ techniques with ___ cues within ___ weeks.');
 
     // ST Goals
-    insertGoalsBank.run('ST', 'articulation', 'Pt will produce target sounds in ___ position with ___% accuracy at ___ level within ___ weeks.');
-    insertGoalsBank.run('ST', 'articulation', 'Pt will produce ___% intelligible speech in ___ context within ___ weeks.');
-    insertGoalsBank.run('ST', 'language_expression', 'Pt will name ___ items in ___ categories with ___% accuracy within ___ weeks.');
-    insertGoalsBank.run('ST', 'language_expression', 'Pt will produce grammatically correct sentences of ___+ words within ___ weeks.');
-    insertGoalsBank.run('ST', 'language_expression', 'Pt will use ___ word retrieval strategies with ___ cues within ___ weeks.');
-    insertGoalsBank.run('ST', 'language_comprehension', 'Pt will follow ___-step commands with ___% accuracy within ___ weeks.');
-    insertGoalsBank.run('ST', 'language_comprehension', 'Pt will answer ___ questions about ___ with ___% accuracy within ___ weeks.');
-    insertGoalsBank.run('ST', 'language_comprehension', 'Pt will identify main idea in ___ with ___% accuracy within ___ weeks.');
-    insertGoalsBank.run('ST', 'voice', 'Pt will demonstrate appropriate vocal quality during ___ tasks within ___ weeks.');
-    insertGoalsBank.run('ST', 'voice', 'Pt will maintain adequate breath support for ___ within ___ weeks.');
-    insertGoalsBank.run('ST', 'fluency', 'Pt will use ___ fluency strategy with ___% success in ___ context within ___ weeks.');
-    insertGoalsBank.run('ST', 'fluency', 'Pt will demonstrate ___% fluent speech in ___ speaking tasks within ___ weeks.');
-    insertGoalsBank.run('ST', 'swallowing', 'Pt will safely tolerate ___ consistency with ___ strategy within ___ weeks.');
-    insertGoalsBank.run('ST', 'swallowing', 'Pt will demonstrate safe swallow with ___ diet with no s/s aspiration within ___ weeks.');
-    insertGoalsBank.run('ST', 'cognition', 'Pt will recall ___/5 items after ___ delay with ___ cues within ___ weeks.');
-    insertGoalsBank.run('ST', 'cognition', 'Pt will sustain attention for ___ min on ___ task within ___ weeks.');
-    insertGoalsBank.run('ST', 'cognition', 'Pt will identify ___/5 safety concerns in functional scenarios within ___ weeks.');
+    insertGoalsBank.run('ST', 'Articulation', 'Pt will produce target sounds in ___ position with ___% accuracy at ___ level within ___ weeks.');
+    insertGoalsBank.run('ST', 'Articulation', 'Pt will produce ___% intelligible speech in ___ context within ___ weeks.');
+    insertGoalsBank.run('ST', 'Language Expression', 'Pt will name ___ items in ___ categories with ___% accuracy within ___ weeks.');
+    insertGoalsBank.run('ST', 'Language Expression', 'Pt will produce grammatically correct sentences of ___+ words within ___ weeks.');
+    insertGoalsBank.run('ST', 'Language Expression', 'Pt will use ___ word retrieval strategies with ___ cues within ___ weeks.');
+    insertGoalsBank.run('ST', 'Language Comprehension', 'Pt will follow ___-step commands with ___% accuracy within ___ weeks.');
+    insertGoalsBank.run('ST', 'Language Comprehension', 'Pt will answer ___ questions about ___ with ___% accuracy within ___ weeks.');
+    insertGoalsBank.run('ST', 'Language Comprehension', 'Pt will identify main idea in ___ with ___% accuracy within ___ weeks.');
+    insertGoalsBank.run('ST', 'Voice', 'Pt will demonstrate appropriate vocal quality during ___ tasks within ___ weeks.');
+    insertGoalsBank.run('ST', 'Voice', 'Pt will maintain adequate breath support for ___ within ___ weeks.');
+    insertGoalsBank.run('ST', 'Fluency', 'Pt will use ___ fluency strategy with ___% success in ___ context within ___ weeks.');
+    insertGoalsBank.run('ST', 'Fluency', 'Pt will demonstrate ___% fluent speech in ___ speaking tasks within ___ weeks.');
+    insertGoalsBank.run('ST', 'Feeding/Swallowing', 'Pt will safely tolerate ___ consistency with ___ strategy within ___ weeks.');
+    insertGoalsBank.run('ST', 'Feeding/Swallowing', 'Pt will demonstrate safe swallow with ___ diet with no s/s aspiration within ___ weeks.');
+    insertGoalsBank.run('ST', 'Cognitive-Communication', 'Pt will recall ___/5 items after ___ delay with ___ cues within ___ weeks.');
+    insertGoalsBank.run('ST', 'Cognitive-Communication', 'Pt will sustain attention for ___ min on ___ task within ___ weeks.');
+    insertGoalsBank.run('ST', 'Cognitive-Communication', 'Pt will identify ___/5 safety concerns in functional scenarios within ___ weeks.');
   });
 
   seedTransaction();
@@ -345,139 +345,192 @@ export function seedMFTData(db: Database.Database): void {
     insertNoteBank.run('MFT', 'discharge', 'P', 'Recommend step-down to ___ frequency as goals are met.');
 
     // ── MFT Goals Bank ──
-    insertGoalsBank.run('MFT', 'depression', 'Client will report reduction in depressive symptoms to a PHQ-9 score of ___ or below within ___ weeks.');
-    insertGoalsBank.run('MFT', 'depression', 'Client will identify ___ positive coping strategies for managing depressive episodes within ___ weeks.');
-    insertGoalsBank.run('MFT', 'depression', 'Client will engage in ___ pleasurable activities per week as reported in session within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Depression', 'Client will report reduction in depressive symptoms to a PHQ-9 score of ___ or below within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Depression', 'Client will identify ___ positive coping strategies for managing depressive episodes within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Depression', 'Client will engage in ___ pleasurable activities per week as reported in session within ___ weeks.');
 
-    insertGoalsBank.run('MFT', 'anxiety', 'Client will report reduction in anxiety symptoms to a GAD-7 score of ___ or below within ___ weeks.');
-    insertGoalsBank.run('MFT', 'anxiety', 'Client will demonstrate use of ___ anxiety management techniques in daily life within ___ weeks.');
-    insertGoalsBank.run('MFT', 'anxiety', 'Client will reduce avoidance behaviors related to ___ as evidenced by ___ within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Anxiety', 'Client will report reduction in anxiety symptoms to a GAD-7 score of ___ or below within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Anxiety', 'Client will demonstrate use of ___ anxiety management techniques in daily life within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Anxiety', 'Client will reduce avoidance behaviors related to ___ as evidenced by ___ within ___ weeks.');
 
-    insertGoalsBank.run('MFT', 'trauma', 'Client will demonstrate reduction in trauma-related symptoms as measured by ___ within ___ weeks.');
-    insertGoalsBank.run('MFT', 'trauma', 'Client will develop and utilize a safety plan for managing trauma triggers within ___ weeks.');
-    insertGoalsBank.run('MFT', 'trauma', 'Client will process traumatic experiences as evidenced by decreased avoidance and intrusive symptoms within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Trauma', 'Client will demonstrate reduction in trauma-related symptoms as measured by ___ within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Trauma', 'Client will develop and utilize a safety plan for managing trauma triggers within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Trauma', 'Client will process traumatic experiences as evidenced by decreased avoidance and intrusive symptoms within ___ weeks.');
 
-    insertGoalsBank.run('MFT', 'relationship', 'Client/couple will demonstrate improved communication skills as evidenced by ___ within ___ weeks.');
-    insertGoalsBank.run('MFT', 'relationship', 'Client/couple will reduce frequency of escalated conflicts from ___ to ___ per week within ___ weeks.');
-    insertGoalsBank.run('MFT', 'relationship', 'Client/couple will identify and modify ___ negative interaction patterns within ___ weeks.');
-    insertGoalsBank.run('MFT', 'relationship', 'Client/couple will report improved relationship satisfaction as measured by ___ within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Relationship', 'Client/couple will demonstrate improved communication skills as evidenced by ___ within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Relationship', 'Client/couple will reduce frequency of escalated conflicts from ___ to ___ per week within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Relationship', 'Client/couple will identify and modify ___ negative interaction patterns within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Relationship', 'Client/couple will report improved relationship satisfaction as measured by ___ within ___ weeks.');
 
-    insertGoalsBank.run('MFT', 'family_systems', 'Family will establish and maintain ___ healthy boundaries as evidenced by ___ within ___ weeks.');
-    insertGoalsBank.run('MFT', 'family_systems', 'Family members will demonstrate improved conflict resolution skills within ___ weeks.');
-    insertGoalsBank.run('MFT', 'family_systems', 'Family will increase frequency of positive interactions to ___ per week within ___ weeks.');
-    insertGoalsBank.run('MFT', 'family_systems', 'Parent(s) will implement ___ consistent parenting strategies as discussed in session within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Family Systems', 'Family will establish and maintain ___ healthy boundaries as evidenced by ___ within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Family Systems', 'Family members will demonstrate improved conflict resolution skills within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Family Systems', 'Family will increase frequency of positive interactions to ___ per week within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Family Systems', 'Parent(s) will implement ___ consistent parenting strategies as discussed in session within ___ weeks.');
 
-    insertGoalsBank.run('MFT', 'coping_skills', 'Client will identify and practice ___ healthy coping mechanisms for managing ___ within ___ weeks.');
-    insertGoalsBank.run('MFT', 'coping_skills', 'Client will demonstrate ability to use grounding techniques when experiencing ___ within ___ weeks.');
-    insertGoalsBank.run('MFT', 'coping_skills', 'Client will develop a personalized wellness plan including ___ self-care activities within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Coping Skills', 'Client will identify and practice ___ healthy coping mechanisms for managing ___ within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Coping Skills', 'Client will demonstrate ability to use grounding techniques when experiencing ___ within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Coping Skills', 'Client will develop a personalized wellness plan including ___ self-care activities within ___ weeks.');
 
-    insertGoalsBank.run('MFT', 'self_esteem', 'Client will identify ___ personal strengths and report improved self-perception within ___ weeks.');
-    insertGoalsBank.run('MFT', 'self_esteem', 'Client will challenge ___ negative self-beliefs per session as evidenced by cognitive restructuring within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Self-Esteem', 'Client will identify ___ personal strengths and report improved self-perception within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Self-Esteem', 'Client will challenge ___ negative self-beliefs per session as evidenced by cognitive restructuring within ___ weeks.');
 
-    insertGoalsBank.run('MFT', 'grief', 'Client will process grief related to ___ as evidenced by decreased emotional distress within ___ weeks.');
-    insertGoalsBank.run('MFT', 'grief', 'Client will identify ___ healthy ways to honor/memorialize their loss within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Grief', 'Client will process grief related to ___ as evidenced by decreased emotional distress within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Grief', 'Client will identify ___ healthy ways to honor/memorialize their loss within ___ weeks.');
 
-    insertGoalsBank.run('MFT', 'behavioral', 'Client will reduce frequency of ___ (target behavior) from ___ to ___ per week within ___ weeks.');
-    insertGoalsBank.run('MFT', 'behavioral', 'Client will increase frequency of ___ (replacement behavior) to ___ per week within ___ weeks.');
-    insertGoalsBank.run('MFT', 'behavioral', 'Client will identify ___ triggers for maladaptive behaviors and develop alternative responses within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Behavioral', 'Client will reduce frequency of ___ (target behavior) from ___ to ___ per week within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Behavioral', 'Client will increase frequency of ___ (replacement behavior) to ___ per week within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Behavioral', 'Client will identify ___ triggers for maladaptive behaviors and develop alternative responses within ___ weeks.');
   });
 
   seedTransaction();
+}
 
-  // ── MFT CPT Codes in Fee Schedule ──
-  try {
-    const hasFeeData = db.prepare(
-      "SELECT COUNT(*) as count FROM fee_schedule WHERE cpt_code = '90834'"
-    ).get() as any;
-    if (hasFeeData.count === 0) {
-      const insertFee = db.prepare(
-        'INSERT INTO fee_schedule (cpt_code, description, default_units, amount, effective_date) VALUES (?, ?, ?, ?, ?)'
-      );
-      const today = new Date().toISOString().slice(0, 10);
+// Discipline-specific CPT code sets
+function getCPTCodesForDiscipline(discipline: string): Array<{ cpt_code: string; description: string; default_units: number; amount: number }> {
+  const ptOtShared = [
+    { cpt_code: '97110', description: 'Therapeutic exercises', default_units: 1, amount: 50.00 },
+    { cpt_code: '97112', description: 'Neuromuscular reeducation', default_units: 1, amount: 50.00 },
+    { cpt_code: '97116', description: 'Gait training', default_units: 1, amount: 50.00 },
+    { cpt_code: '97140', description: 'Manual therapy', default_units: 1, amount: 55.00 },
+    { cpt_code: '97530', description: 'Therapeutic activities', default_units: 1, amount: 50.00 },
+    { cpt_code: '97535', description: 'Self-care/home management training', default_units: 1, amount: 50.00 },
+    { cpt_code: '97542', description: 'Wheelchair management training', default_units: 1, amount: 45.00 },
+    { cpt_code: '97750', description: 'Physical performance test', default_units: 1, amount: 60.00 },
+    { cpt_code: '97533', description: 'Sensory integration', default_units: 1, amount: 50.00 },
+  ];
 
-      const mftCPTCodes = [
+  switch (discipline) {
+    case 'PT':
+      return [
+        ...ptOtShared,
+        { cpt_code: '97161', description: 'PT evaluation - low complexity', default_units: 1, amount: 150.00 },
+        { cpt_code: '97162', description: 'PT evaluation - moderate complexity', default_units: 1, amount: 175.00 },
+        { cpt_code: '97163', description: 'PT evaluation - high complexity', default_units: 1, amount: 200.00 },
+        { cpt_code: '97164', description: 'PT re-evaluation', default_units: 1, amount: 100.00 },
+      ];
+    case 'OT':
+      return [
+        ...ptOtShared,
+        { cpt_code: '97165', description: 'OT evaluation - low complexity', default_units: 1, amount: 150.00 },
+        { cpt_code: '97166', description: 'OT evaluation - moderate complexity', default_units: 1, amount: 175.00 },
+        { cpt_code: '97167', description: 'OT evaluation - high complexity', default_units: 1, amount: 200.00 },
+        { cpt_code: '97168', description: 'OT re-evaluation', default_units: 1, amount: 100.00 },
+      ];
+    case 'ST':
+      return [
+        { cpt_code: '92507', description: 'Speech/language treatment', default_units: 1, amount: 75.00 },
+        { cpt_code: '92508', description: 'Speech/language treatment (group)', default_units: 1, amount: 50.00 },
+        { cpt_code: '92521', description: 'Evaluation of speech fluency', default_units: 1, amount: 150.00 },
+        { cpt_code: '92522', description: 'Evaluation of speech production', default_units: 1, amount: 150.00 },
+        { cpt_code: '92523', description: 'Speech/language evaluation', default_units: 1, amount: 200.00 },
+        { cpt_code: '92524', description: 'Behavioral/qualitative voice analysis', default_units: 1, amount: 150.00 },
+        { cpt_code: '92526', description: 'Oral function treatment', default_units: 1, amount: 75.00 },
+        { cpt_code: '92610', description: 'Swallowing function evaluation', default_units: 1, amount: 175.00 },
+        { cpt_code: '97129', description: 'Cognitive function intervention, first 15 min', default_units: 1, amount: 50.00 },
+        { cpt_code: '97130', description: 'Cognitive function intervention, add-on 15 min', default_units: 1, amount: 38.00 },
+      ];
+    case 'MFT':
+      return [
         { cpt_code: '90791', description: 'Psychiatric diagnostic evaluation', default_units: 1, amount: 200.00 },
         { cpt_code: '90834', description: 'Psychotherapy, 45 minutes', default_units: 1, amount: 130.00 },
         { cpt_code: '90837', description: 'Psychotherapy, 60 minutes', default_units: 1, amount: 170.00 },
         { cpt_code: '90832', description: 'Psychotherapy, 30 minutes', default_units: 1, amount: 85.00 },
         { cpt_code: '90847', description: 'Family psychotherapy, with patient', default_units: 1, amount: 160.00 },
         { cpt_code: '90846', description: 'Family psychotherapy, without patient', default_units: 1, amount: 150.00 },
-        { cpt_code: '90839', description: 'Psychotherapy for crisis, first 60 min', default_units: 1, amount: 200.00 },
-        { cpt_code: '90840', description: 'Psychotherapy for crisis, add-on 30 min', default_units: 1, amount: 100.00 },
         { cpt_code: '90853', description: 'Group psychotherapy', default_units: 1, amount: 55.00 },
-        { cpt_code: '96156', description: 'Health behavior assessment/reassessment', default_units: 1, amount: 150.00 },
-        { cpt_code: '96158', description: 'Health behavior intervention, first 30 min', default_units: 1, amount: 75.00 },
-        { cpt_code: '96159', description: 'Health behavior intervention, add-on 15 min', default_units: 1, amount: 38.00 },
       ];
-
-      const feeTransaction = db.transaction(() => {
-        for (const fee of mftCPTCodes) {
-          insertFee.run(fee.cpt_code, fee.description, fee.default_units, fee.amount, today);
-        }
-      });
-      feeTransaction();
-    }
-  } catch {
-    // Fee schedule table may not exist yet
+    default: // MULTI or unknown — broad set
+      return [
+        { cpt_code: '97110', description: 'Therapeutic exercises', default_units: 1, amount: 50.00 },
+        { cpt_code: '97530', description: 'Therapeutic activities', default_units: 1, amount: 50.00 },
+        { cpt_code: '97140', description: 'Manual therapy', default_units: 1, amount: 55.00 },
+        { cpt_code: '92507', description: 'Speech/language treatment', default_units: 1, amount: 75.00 },
+        { cpt_code: '92523', description: 'Speech/language evaluation', default_units: 1, amount: 200.00 },
+        { cpt_code: '97161', description: 'PT evaluation - low complexity', default_units: 1, amount: 150.00 },
+        { cpt_code: '97165', description: 'OT evaluation - low complexity', default_units: 1, amount: 150.00 },
+        { cpt_code: '90834', description: 'Psychotherapy, 45 minutes', default_units: 1, amount: 130.00 },
+      ];
   }
 }
 
-// Seed common fee schedule entries for V2 billing
-export function seedFeeSchedule(db: Database.Database): void {
-  // Check if fee_schedule table exists and has data
+// Seed fee schedule entries — discipline-aware
+export function seedFeeSchedule(db: Database.Database, discipline?: string): void {
   try {
     const hasData = db.prepare('SELECT COUNT(*) as count FROM fee_schedule').get() as any;
     if (hasData.count > 0) return;
   } catch {
-    // Table doesn't exist yet (migrations haven't run)
     return;
   }
 
+  // Determine discipline from settings if not passed
+  let disc = discipline;
+  if (!disc) {
+    try {
+      const row = db.prepare("SELECT value FROM settings WHERE key = 'discipline'").get() as any;
+      disc = row?.value || 'ST';
+    } catch {
+      disc = 'ST';
+    }
+  }
+
+  const codes = getCPTCodesForDiscipline(disc || 'ST');
+  const today = new Date().toISOString().slice(0, 10);
   const insertFee = db.prepare(
     'INSERT INTO fee_schedule (cpt_code, description, default_units, amount, effective_date) VALUES (?, ?, ?, ?, ?)'
   );
 
-  const commonCPTCodes = [
-    // Speech Therapy
-    { cpt_code: '92507', description: 'Speech/language treatment', default_units: 1, amount: 75.00 },
-    { cpt_code: '92508', description: 'Speech/language treatment (group)', default_units: 1, amount: 50.00 },
-    { cpt_code: '92521', description: 'Evaluation of speech fluency', default_units: 1, amount: 150.00 },
-    { cpt_code: '92522', description: 'Evaluation of speech production', default_units: 1, amount: 150.00 },
-    { cpt_code: '92523', description: 'Speech/language evaluation', default_units: 1, amount: 200.00 },
-    { cpt_code: '92524', description: 'Behavioral/qualitative voice analysis', default_units: 1, amount: 150.00 },
-    { cpt_code: '92526', description: 'Oral function treatment', default_units: 1, amount: 75.00 },
-    { cpt_code: '92610', description: 'Swallowing function evaluation', default_units: 1, amount: 175.00 },
-    // Physical/Occupational Therapy
-    { cpt_code: '97110', description: 'Therapeutic exercises', default_units: 1, amount: 50.00 },
-    { cpt_code: '97112', description: 'Neuromuscular reeducation', default_units: 1, amount: 50.00 },
-    { cpt_code: '97116', description: 'Gait training', default_units: 1, amount: 50.00 },
-    { cpt_code: '97140', description: 'Manual therapy', default_units: 1, amount: 50.00 },
-    { cpt_code: '97530', description: 'Therapeutic activities', default_units: 1, amount: 50.00 },
-    { cpt_code: '97533', description: 'Sensory integration', default_units: 1, amount: 50.00 },
-    { cpt_code: '97535', description: 'Self-care/home management training', default_units: 1, amount: 50.00 },
-    { cpt_code: '97542', description: 'Wheelchair management training', default_units: 1, amount: 50.00 },
-    { cpt_code: '97750', description: 'Physical performance test', default_units: 1, amount: 75.00 },
-    { cpt_code: '97755', description: 'Assistive technology assessment', default_units: 1, amount: 100.00 },
-    { cpt_code: '97760', description: 'Orthotic management/training', default_units: 1, amount: 50.00 },
-    { cpt_code: '97761', description: 'Prosthetic training', default_units: 1, amount: 50.00 },
-    // Evaluations
-    { cpt_code: '97161', description: 'PT evaluation - low complexity', default_units: 1, amount: 125.00 },
-    { cpt_code: '97162', description: 'PT evaluation - moderate complexity', default_units: 1, amount: 150.00 },
-    { cpt_code: '97163', description: 'PT evaluation - high complexity', default_units: 1, amount: 175.00 },
-    { cpt_code: '97164', description: 'PT re-evaluation', default_units: 1, amount: 100.00 },
-    { cpt_code: '97165', description: 'OT evaluation - low complexity', default_units: 1, amount: 125.00 },
-    { cpt_code: '97166', description: 'OT evaluation - moderate complexity', default_units: 1, amount: 150.00 },
-    { cpt_code: '97167', description: 'OT evaluation - high complexity', default_units: 1, amount: 175.00 },
-    { cpt_code: '97168', description: 'OT re-evaluation', default_units: 1, amount: 100.00 },
-  ];
-
-  const today = new Date().toISOString().slice(0, 10);
-
-  const seedTransaction = db.transaction(() => {
-    for (const fee of commonCPTCodes) {
+  const tx = db.transaction(() => {
+    for (const fee of codes) {
       insertFee.run(fee.cpt_code, fee.description, fee.default_units, fee.amount, today);
     }
   });
+  tx();
+}
 
-  seedTransaction();
+// Reset fee schedule to discipline defaults (called when discipline changes)
+export function resetFeeSchedule(db: Database.Database, discipline: string): void {
+  try {
+    db.prepare('DELETE FROM fee_schedule').run();
+  } catch {
+    return;
+  }
+  // Force re-seed by calling with discipline
+  const codes = getCPTCodesForDiscipline(discipline);
+  const today = new Date().toISOString().slice(0, 10);
+  const insertFee = db.prepare(
+    'INSERT INTO fee_schedule (cpt_code, description, default_units, amount, effective_date) VALUES (?, ?, ?, ?, ?)'
+  );
+  const tx = db.transaction(() => {
+    for (const fee of codes) {
+      insertFee.run(fee.cpt_code, fee.description, fee.default_units, fee.amount, today);
+    }
+  });
+  tx();
+}
+
+// Auto-fix: detect mismatched fee schedule on startup
+export function autoFixFeeSchedule(db: Database.Database): void {
+  try {
+    const feeCount = (db.prepare('SELECT COUNT(*) as count FROM fee_schedule').get() as any)?.count || 0;
+    if (feeCount === 0) return; // Will be seeded by seedFeeSchedule
+
+    const discRow = db.prepare("SELECT value FROM settings WHERE key = 'discipline'").get() as any;
+    const discipline = discRow?.value;
+    if (!discipline || discipline === 'MFT') return; // MFT codes are correct for MFT users
+
+    // Check if all codes are MFT-style (90xxx codes only, no 97xxx or 92xxx)
+    const allAreMFT = db.prepare(`
+      SELECT COUNT(*) as total,
+        SUM(CASE WHEN cpt_code IN ('90791','90834','90837','90832','90847','90846','90839','90840','90853','96156','96158','96159') THEN 1 ELSE 0 END) as mft_count
+      FROM fee_schedule
+    `).get() as any;
+
+    if (allAreMFT.total > 0 && allAreMFT.total === allAreMFT.mft_count) {
+      // All codes are MFT but discipline isn't MFT — reset
+      db.prepare('DELETE FROM fee_schedule').run();
+      seedFeeSchedule(db, discipline);
+    }
+  } catch {
+    // Silently fail
+  }
 }

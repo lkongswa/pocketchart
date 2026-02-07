@@ -746,12 +746,22 @@ const ClientDetailPage: React.FC = () => {
                 Evaluations
                 <span className="text-xs font-normal text-[var(--color-text-secondary)]">({evaluations.length})</span>
               </h3>
-              <button
-                className="btn-accent btn-sm gap-1.5"
-                onClick={() => navigate(`/clients/${clientId}/eval/new`)}
-              >
-                <Plus size={14} /> New Eval
-              </button>
+              <div className="flex items-center gap-2">
+                {evaluations.some(e => e.signed_at) && (
+                  <button
+                    className="btn-secondary btn-sm gap-1.5"
+                    onClick={() => navigate(`/clients/${clientId}/eval/new`, { state: { reassessment: true } })}
+                  >
+                    <RefreshCw size={14} /> Reassessment
+                  </button>
+                )}
+                <button
+                  className="btn-accent btn-sm gap-1.5"
+                  onClick={() => navigate(`/clients/${clientId}/eval/new`)}
+                >
+                  <Plus size={14} /> New Eval
+                </button>
+              </div>
             </div>
             {evaluations.length === 0 ? (
               <div className="p-6 text-center text-sm text-[var(--color-text-secondary)]">
@@ -770,6 +780,11 @@ const ClientDetailPage: React.FC = () => {
                         {formatDate(evalItem.eval_date)}
                       </span>
                       <span className={disciplineBadgeClass[evalItem.discipline]}>{evalItem.discipline}</span>
+                      {(evalItem as any).eval_type === 'reassessment' && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-700">
+                          UPDATE
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       {evalItem.signed_at ? (

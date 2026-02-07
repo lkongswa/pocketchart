@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, useBlocker } from 'react-router-dom';
 import { useSectionColor } from '../hooks/useSectionColor';
 import {
   ArrowLeft,
@@ -248,13 +248,157 @@ const DISCIPLINE_LABELS: Record<Discipline, string> = {
   MFT: 'Marriage & Family Therapy',
 };
 
+// ── Rehab Potential Section ──
+
+const REHAB_RATINGS = ['Good', 'Fair', 'Poor'] as const;
+type RehabRating = typeof REHAB_RATINGS[number];
+
+const REHAB_REASON_CHIPS: string[] = [
+  'patient demonstrates motivation',
+  'family/caregiver support available',
+  'prior functional level consistent with expected recovery',
+  'good cognitive awareness',
+  'active participation in treatment',
+  'responds well to therapeutic interventions',
+  'medical complexity limits progress',
+  'limited support system',
+  'cognitive deficits may slow progress',
+  'multiple comorbidities present',
+];
+
+/** Build a proper narrative from rating + selected reasons */
+function composeRehabNarrative(rating: RehabRating | null, reasons: string[]): string {
+  if (!rating && reasons.length === 0) return '';
+  if (!rating && reasons.length > 0) return reasons.join(', ') + '.';
+  if (rating && reasons.length === 0) return `Rehabilitation potential is ${rating.toLowerCase()}.`;
+  // rating + reasons
+  if (reasons.length === 1) {
+    return `Rehabilitation potential is ${rating!.toLowerCase()} due to ${reasons[0]}.`;
+  }
+  const allButLast = reasons.slice(0, -1).join(', ');
+  const last = reasons[reasons.length - 1];
+  return `Rehabilitation potential is ${rating!.toLowerCase()} due to ${allButLast}, and ${last}.`;
+}
+
+/** Parse active reasons from the current narrative text */
+function parseActiveReasons(text: string): string[] {
+  return REHAB_REASON_CHIPS.filter((r) => text.toLowerCase().includes(r.toLowerCase()));
+}
+
+function RehabPotentialSection({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (val: string) => void;
+}) {
+  // Parse current rating from value
+  const currentRating = REHAB_RATINGS.find((r) =>
+    value.toLowerCase().includes(`potential is ${r.toLowerCase()}`)
+  ) || null;
+
+  const activeReasons = parseActiveReasons(value);
+
+  const selectRating = (rating: RehabRating) => {
+    if (currentRating === rating) {
+      // Toggle off — rebuild with no rating
+      onChange(composeRehabNarrative(null, activeReasons));
+      return;
+    }
+    onChange(composeRehabNarrative(rating, activeReasons));
+  };
+
+  const toggleReasonChip = (reason: string) => {
+    const isActive = activeReasons.some(r => r.toLowerCase() === reason.toLowerCase());
+    let newReasons: string[];
+    if (isActive) {
+      newReasons = activeReasons.filter(r => r.toLowerCase() !== reason.toLowerCase());
+    } else {
+      newReasons = [...activeReasons, reason];
+    }
+    onChange(composeRehabNarrative(currentRating, newReasons));
+  };
+
+  const ratingColors: Record<RehabRating, { active: string; inactive: string }> = {
+    Good: { active: 'bg-emerald-500 text-white border-emerald-500', inactive: 'bg-white text-emerald-700 border-emerald-300 hover:bg-emerald-50' },
+    Fair: { active: 'bg-amber-500 text-white border-amber-500', inactive: 'bg-white text-amber-700 border-amber-300 hover:bg-amber-50' },
+    Poor: { active: 'bg-red-500 text-white border-red-500', inactive: 'bg-white text-red-700 border-red-300 hover:bg-red-50' },
+  };
+
+  return (
+    <div className="card p-6 mb-6">
+      <h2 className="section-title">Rehabilitation Potential / Prognosis</h2>
+
+      {/* Rating chips */}
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-xs font-medium text-[var(--color-text-secondary)] mr-1">Rating:</span>
+        {REHAB_RATINGS.map((rating) => {
+          const isSelected = currentRating === rating;
+          const colors = ratingColors[rating];
+          return (
+            <button
+              key={rating}
+              type="button"
+              className={`px-4 py-1.5 rounded-full text-sm font-semibold border transition-colors ${
+                isSelected ? colors.active : colors.inactive
+              }`}
+              onClick={() => selectRating(rating)}
+            >
+              {rating}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Reason chips */}
+      <div className="flex flex-wrap gap-1.5 mb-3">
+        {REHAB_REASON_CHIPS.map((reason) => {
+          const isActive = activeReasons.some(r => r.toLowerCase() === reason.toLowerCase());
+          const displayLabel = reason.charAt(0).toUpperCase() + reason.slice(1);
+          return (
+            <button
+              key={reason}
+              type="button"
+              className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border transition-colors cursor-pointer ${
+                isActive
+                  ? 'bg-violet-100 text-violet-700 border-violet-300'
+                  : 'bg-gray-50 text-[var(--color-text-secondary)] border-[var(--color-border)] hover:bg-violet-50 hover:text-violet-600'
+              }`}
+              onClick={() => toggleReasonChip(reason)}
+            >
+              {displayLabel}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Editable textarea */}
+      <textarea
+        className="textarea"
+        rows={3}
+        placeholder="Select a rating and reasons above, or type freely..."
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </div>
+  );
+}
+
 // ── Component ──
 
 export default function EvalFormPage() {
   const { id: clientId, evalId } = useParams<{ id: string; evalId?: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const sectionColor = useSectionColor();
   const isEditing = Boolean(evalId);
+
+  // Reassessment mode via route state
+  const isReassessment = Boolean((location.state as any)?.reassessment);
+  const [evalType, setEvalType] = useState<'initial' | 'reassessment' | 'discharge'>(
+    isReassessment ? 'reassessment' : 'initial'
+  );
+  const [priorFieldKeys, setPriorFieldKeys] = useState<Set<string>>(new Set());
 
   const [client, setClient] = useState<Client | null>(null);
   const [loading, setLoading] = useState(true);
@@ -282,6 +426,7 @@ export default function EvalFormPage() {
   const [savedEvalId, setSavedEvalId] = useState<number | null>(evalId ? parseInt(evalId, 10) : null);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [lastAutoSaved, setLastAutoSaved] = useState<string | null>(null);
+  const isDirty = useRef(false); // true once user edits any field
 
   // ── Data Loading ──
 
@@ -309,6 +454,9 @@ export default function EvalFormPage() {
         setSignatureImage(evaluation.signature_image || '');
         setSignatureTyped(evaluation.signature_typed || '');
         setExistingSignedAt(evaluation.signed_at || '');
+        if ((evaluation as any).eval_type) {
+          setEvalType((evaluation as any).eval_type);
+        }
         try {
           const parsed = JSON.parse(evaluation.content || '{}') as Partial<EvalContent>;
           // Merge with empty content to fill in any missing keys
@@ -322,12 +470,52 @@ export default function EvalFormPage() {
             },
           });
           // Load structured goal entries if present
+          let loadedEntries: EvalGoalEntry[] = [];
+          let alreadyCreatedIds: number[] = [];
           if (parsed.goal_entries && Array.isArray(parsed.goal_entries)) {
-            setGoalEntries(parsed.goal_entries);
+            loadedEntries = parsed.goal_entries;
             if (parsed.created_goal_ids && parsed.created_goal_ids.length > 0) {
+              alreadyCreatedIds = parsed.created_goal_ids;
               setGoalsAlreadyCreated(true);
             }
           }
+
+          // Two-way sync: merge client goals into draft eval
+          if (!evaluation.signed_at) {
+            try {
+              const clientGoals = await window.api.goals.listByClient(cid);
+              const activeClientGoals = clientGoals.filter((g: any) => g.status === 'active');
+              for (const cg of activeClientGoals) {
+                // Skip goals already tracked by this eval
+                if (alreadyCreatedIds.includes(cg.id)) continue;
+                // Skip if goal text already present in entries
+                const alreadyInEntries = loadedEntries.some(
+                  (e) => e.goal_text.trim().toLowerCase() === (cg.goal_text || '').trim().toLowerCase()
+                );
+                if (alreadyInEntries) continue;
+                // Add as a linked goal entry (from goals card)
+                loadedEntries.push({
+                  goal_text: cg.goal_text || '',
+                  goal_type: cg.goal_type || 'STG',
+                  category: cg.category || '',
+                  target_date: cg.target_date || '',
+                });
+                alreadyCreatedIds.push(cg.id);
+              }
+              if (alreadyCreatedIds.length > 0) {
+                setGoalsAlreadyCreated(true);
+              }
+            } catch (err) {
+              console.error('Failed to merge client goals:', err);
+            }
+          }
+
+          setGoalEntries(loadedEntries);
+          // Update content with merged goal IDs
+          if (alreadyCreatedIds.length > 0) {
+            setContent(prev => prev ? { ...prev, created_goal_ids: alreadyCreatedIds } : prev);
+          }
+
           // Parse frequency/duration
           if (parsed.frequency_duration) {
             const freqMatch = parsed.frequency_duration.match(/(\d+)x?\s*\/?\s*week/i);
@@ -338,8 +526,109 @@ export default function EvalFormPage() {
         } catch {
           setContent(emptyContent(discipline));
         }
+      } else if (isReassessment) {
+        // ── Pre-populate from prior signed eval ──
+        try {
+          const prior = await window.api.evaluations.createReassessment(cid);
+          if (prior && prior.priorContent) {
+            const parsed = typeof prior.priorContent === 'string'
+              ? JSON.parse(prior.priorContent) as Partial<EvalContent>
+              : prior.priorContent as Partial<EvalContent>;
+            const base = emptyContent(discipline);
+            const prePopulated: EvalContent = {
+              ...base,
+              referral_source: parsed.referral_source || '',
+              medical_history: parsed.medical_history || '',
+              prior_level_of_function: '', // blank — user fills new CLOF
+              current_complaints: '', // blank — user fills new complaints
+              objective_assessment: base.objective_assessment, // blank — new objective needed
+              clinical_impression: parsed.clinical_impression || '',
+              rehabilitation_potential: parsed.rehabilitation_potential || '',
+              precautions: parsed.precautions || '',
+              goals: '',
+              treatment_plan: parsed.treatment_plan || '',
+              frequency_duration: parsed.frequency_duration || '',
+            };
+            setContent(prePopulated);
+
+            // Track which fields were pre-populated for UPDATE badges
+            const prefilled = new Set<string>();
+            if (parsed.referral_source?.trim()) prefilled.add('referral_source');
+            if (parsed.medical_history?.trim()) prefilled.add('medical_history');
+            if (parsed.clinical_impression?.trim()) prefilled.add('clinical_impression');
+            if (parsed.rehabilitation_potential?.trim()) prefilled.add('rehabilitation_potential');
+            if (parsed.precautions?.trim()) prefilled.add('precautions');
+            if (parsed.treatment_plan?.trim()) prefilled.add('treatment_plan');
+            if (parsed.frequency_duration?.trim()) prefilled.add('frequency_duration');
+            setPriorFieldKeys(prefilled);
+
+            // Parse frequency/duration from prior
+            if (parsed.frequency_duration) {
+              const freqMatch = parsed.frequency_duration.match(/(\d+)x?\s*\/?\s*week/i);
+              const durMatch = parsed.frequency_duration.match(/(\d+)\s*weeks/i);
+              if (freqMatch) setFreqValue(parseInt(freqMatch[1], 10));
+              if (durMatch) setDurValue(parseInt(durMatch[1], 10));
+            }
+
+            // Load active goals if present — link them to existing Goal records
+            if (prior.activeGoals && Array.isArray(prior.activeGoals) && prior.activeGoals.length > 0) {
+              const entries = prior.activeGoals.map((g: any) => ({
+                goal_text: g.goal_text || '',
+                goal_type: g.goal_type || 'STG',
+                category: g.category || '',
+                target_date: g.target_date || '',
+              }));
+              const linkedIds = prior.activeGoals.map((g: any) => g.id).filter(Boolean);
+              setGoalEntries(entries);
+              if (linkedIds.length > 0) {
+                setContent(prev => prev ? { ...prev, created_goal_ids: linkedIds } : prev);
+                setGoalsAlreadyCreated(true);
+              }
+            }
+
+            isDirty.current = true; // Mark dirty so autosave persists pre-populated data
+            setToast('Pre-populated from prior evaluation — review and update fields');
+          } else {
+            setContent(emptyContent(discipline));
+            setToast('No prior signed evaluation found — starting fresh');
+          }
+        } catch (err) {
+          console.error('Failed to load prior eval for reassessment:', err);
+          setContent(emptyContent(discipline));
+        }
+        // Pre-fill signature from settings
+        const [sigName, sigCreds, sigImage] = await Promise.all([
+          window.api.settings.get('signature_name'),
+          window.api.settings.get('signature_credentials'),
+          window.api.settings.get('signature_image'),
+        ]);
+        const typed = [sigName, sigCreds].filter(Boolean).join(', ');
+        setSignatureTyped(typed);
+        if (sigImage) setSignatureImage(sigImage);
       } else {
-        setContent(emptyContent(discipline));
+        const newContent = emptyContent(discipline);
+        setContent(newContent);
+
+        // Load existing client goals into new eval
+        try {
+          const clientGoals = await window.api.goals.listByClient(cid);
+          const activeClientGoals = clientGoals.filter((g: any) => g.status === 'active');
+          if (activeClientGoals.length > 0) {
+            const entries: EvalGoalEntry[] = activeClientGoals.map((cg: any) => ({
+              goal_text: cg.goal_text || '',
+              goal_type: cg.goal_type || 'STG',
+              category: cg.category || '',
+              target_date: cg.target_date || '',
+            }));
+            const linkedIds = activeClientGoals.map((cg: any) => cg.id);
+            setGoalEntries(entries);
+            setContent(prev => prev ? { ...prev, created_goal_ids: linkedIds } : prev);
+            setGoalsAlreadyCreated(true);
+          }
+        } catch (err) {
+          console.error('Failed to load client goals for new eval:', err);
+        }
+
         // Pre-fill signature from settings
         const [sigName, sigCreds, sigImage] = await Promise.all([
           window.api.settings.get('signature_name'),
@@ -386,23 +675,69 @@ export default function EvalFormPage() {
 
   const performAutoSave = useCallback(async () => {
     if (!clientId || !client || !content || existingSignedAt) return;
+    // Don't autosave until user has actually edited something
+    if (!isDirty.current && !savedEvalId) return;
 
     try {
       const cid = parseInt(clientId, 10);
+
+      // Sync goal records to the goals table on every autosave
+      let updatedGoalIds: number[] = [...(content.created_goal_ids || [])];
+      for (let i = 0; i < goalEntries.length; i++) {
+        const entry = goalEntries[i];
+        if (!entry.goal_text.trim()) continue;
+        const existingId = i < updatedGoalIds.length ? updatedGoalIds[i] : null;
+        if (existingId) {
+          try {
+            await window.api.goals.update(existingId, {
+              goal_text: entry.goal_text,
+              goal_type: entry.goal_type,
+              category: entry.category,
+              target_date: entry.target_date,
+              status: 'active',
+              met_date: undefined,
+            });
+          } catch (err) {
+            console.error('Auto-save: failed to update linked goal:', err);
+          }
+        } else {
+          try {
+            const goal = await window.api.goals.create({
+              client_id: cid,
+              goal_text: entry.goal_text,
+              goal_type: entry.goal_type,
+              category: entry.category,
+              target_date: entry.target_date,
+              status: 'active',
+            });
+            while (updatedGoalIds.length <= i) updatedGoalIds.push(0);
+            updatedGoalIds[i] = goal.id;
+          } catch (err) {
+            console.error('Auto-save: failed to create goal:', err);
+          }
+        }
+      }
+
+      // Update content state with any newly created goal IDs
+      if (JSON.stringify(updatedGoalIds) !== JSON.stringify(content.created_goal_ids || [])) {
+        setContent(prev => prev ? { ...prev, created_goal_ids: updatedGoalIds } : prev);
+      }
+
       const contentToSave = {
         ...content,
         goal_entries: goalEntries,
-        created_goal_ids: content.created_goal_ids || [],
+        created_goal_ids: updatedGoalIds,
       };
 
-      const evalData: Partial<Evaluation> = {
+      const evalData: any = {
         client_id: cid,
         eval_date: evalDate,
         discipline: client.discipline,
         content: JSON.stringify(contentToSave),
         signature_image: '',
         signature_typed: '',
-        signed_at: '',
+        signed_at: null,
+        eval_type: evalType,
       };
 
       if (savedEvalId) {
@@ -415,11 +750,13 @@ export default function EvalFormPage() {
     } catch (err) {
       console.error('Auto-save failed:', err);
     }
-  }, [clientId, client, content, goalEntries, evalDate, savedEvalId, existingSignedAt]);
+  }, [clientId, client, content, goalEntries, evalDate, savedEvalId, existingSignedAt, evalType]);
 
-  // Debounced auto-save: triggers 3 seconds after any change
+  // Debounced auto-save: triggers 3 seconds after any user change
   useEffect(() => {
     if (loading || !content || existingSignedAt) return;
+    // Skip autosave until user has actually edited something
+    if (!isDirty.current && !savedEvalId) return;
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(() => {
       performAutoSave();
@@ -427,19 +764,35 @@ export default function EvalFormPage() {
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
-  }, [content, goalEntries, evalDate, performAutoSave, loading, existingSignedAt]);
+  }, [content, goalEntries, evalDate, performAutoSave, loading, existingSignedAt, savedEvalId]);
 
-  // Warn on navigate away with unsaved changes
+  // Keep a ref to the latest performAutoSave so useBlocker can call it
+  const performAutoSaveRef = useRef(performAutoSave);
+  performAutoSaveRef.current = performAutoSave;
+
+  // Block navigation and auto-save before leaving
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      isDirty.current && !existingSignedAt && currentLocation.pathname !== nextLocation.pathname
+  );
+
   useEffect(() => {
-    const hasContent = content && (
-      content.referral_source?.trim() || content.medical_history?.trim() ||
-      content.current_complaints?.trim() || content.clinical_impression?.trim() ||
-      content.treatment_plan?.trim() || goalEntries.length > 0
-    );
-    if (!hasContent) return;
-    const handler = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = '';
+    if (blocker.state === 'blocked') {
+      // Save then proceed
+      performAutoSaveRef.current().then(() => {
+        blocker.proceed();
+      }).catch(() => {
+        blocker.proceed(); // proceed even if save fails
+      });
+    }
+  }, [blocker]);
+
+  // Save on window close (fire-and-forget, don't block close)
+  useEffect(() => {
+    const handler = () => {
+      if (isDirty.current && !existingSignedAt) {
+        performAutoSaveRef.current();
+      }
     };
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
@@ -448,10 +801,12 @@ export default function EvalFormPage() {
   // ── Field update helpers ──
 
   const updateField = (field: keyof Omit<EvalContent, 'objective_assessment'>, value: string) => {
+    isDirty.current = true;
     setContent((prev) => (prev ? { ...prev, [field]: value } : prev));
   };
 
   const updateObjectiveField = (key: string, value: string) => {
+    isDirty.current = true;
     setContent((prev) => {
       if (!prev) return prev;
       return {
@@ -481,6 +836,7 @@ export default function EvalFormPage() {
   // ── Treatment Plan chip insert ──
 
   const insertTreatmentChip = (chip: string) => {
+    isDirty.current = true;
     setContent((prev) => {
       if (!prev) return prev;
       const current = prev.treatment_plan.trim();
@@ -492,10 +848,17 @@ export default function EvalFormPage() {
   // ── Goal bank template insert ──
 
   const insertGoalFromBank = (template: string, category: string, goalIdx: number) => {
+    isDirty.current = true;
     setGoalEntries(prev =>
       prev.map((g, i) => i === goalIdx ? { ...g, goal_text: template, category } : g)
     );
     setShowGoalBank(null);
+  };
+
+  // Wrapper to mark dirty when goal entries change inline
+  const updateGoalEntries = (updater: React.SetStateAction<EvalGoalEntry[]>) => {
+    isDirty.current = true;
+    setGoalEntries(updater);
   };
 
   // ── Save ──
@@ -521,11 +884,28 @@ export default function EvalFormPage() {
       setSaving(true);
       const cid = parseInt(clientId, 10);
 
-      // Create Goal records from structured entries (only on new evals or if not already created)
-      let createdGoalIds: number[] = content.created_goal_ids || [];
-      if (!goalsAlreadyCreated && goalEntries.length > 0) {
-        const validEntries = goalEntries.filter(e => e.goal_text.trim());
-        for (const entry of validEntries) {
+      // Sync Goal records: update existing linked goals, create new ones
+      let createdGoalIds: number[] = [...(content.created_goal_ids || [])];
+      for (let i = 0; i < goalEntries.length; i++) {
+        const entry = goalEntries[i];
+        if (!entry.goal_text.trim()) continue; // skip empty entries but keep index alignment
+        const existingId = i < createdGoalIds.length ? createdGoalIds[i] : null;
+        if (existingId) {
+          // Update existing goal in the goals table
+          try {
+            await window.api.goals.update(existingId, {
+              goal_text: entry.goal_text,
+              goal_type: entry.goal_type,
+              category: entry.category,
+              target_date: entry.target_date,
+              status: 'active',
+              met_date: undefined,
+            });
+          } catch (err) {
+            console.error('Failed to update linked goal:', err);
+          }
+        } else {
+          // Create new goal
           const goal = await window.api.goals.create({
             client_id: cid,
             goal_text: entry.goal_text,
@@ -534,7 +914,9 @@ export default function EvalFormPage() {
             target_date: entry.target_date,
             status: 'active',
           });
-          createdGoalIds.push(goal.id);
+          // Ensure createdGoalIds array is long enough
+          while (createdGoalIds.length <= i) createdGoalIds.push(0);
+          createdGoalIds[i] = goal.id;
         }
       }
 
@@ -545,14 +927,15 @@ export default function EvalFormPage() {
         created_goal_ids: createdGoalIds,
       };
 
-      const evalData: Partial<Evaluation> = {
+      const evalData: any = {
         client_id: cid,
         eval_date: evalDate,
         discipline: client.discipline,
         content: JSON.stringify(contentToSave),
         signature_image: sign ? signatureImage : '',
         signature_typed: sign ? signatureTyped : '',
-        signed_at: sign ? new Date().toISOString() : '',
+        signed_at: sign ? new Date().toISOString() : null,
+        eval_type: evalType,
       };
 
       if (savedEvalId) {
@@ -635,7 +1018,12 @@ export default function EvalFormPage() {
           <div className="flex items-center gap-3">
             <button
               className="btn-ghost p-2"
-              onClick={() => navigate(`/clients/${clientId}`)}
+              onClick={async () => {
+                if (!existingSignedAt && isDirty.current) {
+                  await performAutoSave();
+                }
+                navigate(`/clients/${clientId}`);
+              }}
               title="Back to client"
             >
               <ArrowLeft className="w-5 h-5" />
@@ -646,7 +1034,12 @@ export default function EvalFormPage() {
               </p>
               <h1 className="page-title flex items-center gap-2">
                 <ClipboardList className="w-6 h-6" style={{ color: sectionColor.color }} />
-                {isEditing ? 'Edit Evaluation' : 'New Evaluation'}
+                {isEditing ? 'Edit Evaluation' : evalType === 'reassessment' ? 'Reassessment / Updated Plan of Care' : 'New Evaluation'}
+                {evalType === 'reassessment' && (
+                  <span className="ml-2 px-2 py-0.5 rounded text-xs font-bold bg-blue-100 text-blue-700">
+                    UPDATE
+                  </span>
+                )}
               </h1>
             </div>
           </div>
@@ -673,7 +1066,7 @@ export default function EvalFormPage() {
               type="date"
               className="input"
               value={evalDate}
-              onChange={(e) => setEvalDate(e.target.value)}
+              onChange={(e) => { isDirty.current = true; setEvalDate(e.target.value); }}
             />
           </div>
         </div>
@@ -695,7 +1088,14 @@ export default function EvalFormPage() {
 
         {/* Medical History */}
         <div className="card p-6 mb-6">
-          <h2 className="section-title">Medical History</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="section-title">Medical History</h2>
+            {priorFieldKeys.has('medical_history') && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-700 mb-2">
+                UPDATE
+              </span>
+            )}
+          </div>
           <textarea
             className="textarea"
             rows={4}
@@ -705,13 +1105,18 @@ export default function EvalFormPage() {
           />
         </div>
 
-        {/* Prior Level of Function */}
+        {/* Prior / Current Level of Function */}
         <div className="card p-6 mb-6">
-          <h2 className="section-title">Prior Level of Function</h2>
+          <h2 className="section-title">
+            {evalType === 'reassessment' ? 'Current Level of Function' : 'Prior Level of Function'}
+          </h2>
           <textarea
             className="textarea"
             rows={3}
-            placeholder="Patient's functional status prior to current condition..."
+            placeholder={evalType === 'reassessment'
+              ? "Patient's current functional status at time of reassessment..."
+              : "Patient's functional status prior to current condition..."
+            }
             value={content.prior_level_of_function}
             onChange={(e) => updateField('prior_level_of_function', e.target.value)}
           />
@@ -759,6 +1164,11 @@ export default function EvalFormPage() {
           <div className="flex items-center gap-2 mb-4">
             <FileText className="w-5 h-5 text-[var(--color-primary)]" />
             <h2 className="section-title mb-0">Clinical Impression</h2>
+            {priorFieldKeys.has('clinical_impression') && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-700">
+                UPDATE
+              </span>
+            )}
           </div>
           <textarea
             className="textarea"
@@ -770,16 +1180,10 @@ export default function EvalFormPage() {
         </div>
 
         {/* Rehabilitation Potential / Prognosis */}
-        <div className="card p-6 mb-6">
-          <h2 className="section-title">Rehabilitation Potential / Prognosis</h2>
-          <textarea
-            className="textarea"
-            rows={3}
-            placeholder="Good/Fair/Poor. Patient demonstrates motivation, family support, and prior functional level consistent with expected recovery..."
-            value={content.rehabilitation_potential}
-            onChange={(e) => updateField('rehabilitation_potential', e.target.value)}
-          />
-        </div>
+        <RehabPotentialSection
+          value={content.rehabilitation_potential}
+          onChange={(val) => updateField('rehabilitation_potential', val)}
+        />
 
         {/* Precautions / Contraindications */}
         <div className="card p-6 mb-6">
@@ -800,12 +1204,12 @@ export default function EvalFormPage() {
               <Target className="w-5 h-5 text-[var(--color-primary)]" />
               <h2 className="section-title mb-0">Goals</h2>
             </div>
-            {!goalsAlreadyCreated && (
+            {!existingSignedAt && (
               <button
                 type="button"
                 className="btn-ghost btn-sm gap-1 text-xs"
                 onClick={() =>
-                  setGoalEntries(prev => [
+                  updateGoalEntries(prev => [
                     ...prev,
                     { goal_text: '', goal_type: 'STG' as GoalType, category: (CATEGORY_OPTIONS[discipline] || [])[0] || '', target_date: '' },
                   ])
@@ -846,47 +1250,60 @@ export default function EvalFormPage() {
               {goalEntries.map((entry, idx) => {
                 const bankForCategory = getFilteredBankEntries(entry.category);
                 const showBank = showGoalBank === idx;
+                const isLinked = Boolean((content.created_goal_ids || [])[idx]);
                 return (
-                <div key={idx} className="p-4 bg-gray-50 rounded-lg border border-[var(--color-border)]">
+                <div key={idx} className={`p-4 rounded-lg border ${isLinked ? 'bg-blue-50/40 border-blue-200' : 'bg-gray-50 border-[var(--color-border)]'}`}>
                   <div className="flex items-center justify-between mb-3">
-                    <span className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase">
-                      Goal {idx + 1}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      {!goalsAlreadyCreated && (
-                        <>
-                          <button
-                            type="button"
-                            className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
-                              showBank ? 'bg-violet-100 text-violet-700' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] hover:bg-violet-50'
-                            }`}
-                            onClick={() => {
-                              if (showBank) {
-                                setShowGoalBank(null);
-                              } else {
-                                loadGoalsBankForCategory(entry.category);
-                                setShowGoalBank(idx);
-                              }
-                            }}
-                            title="Browse goals bank"
-                          >
-                            <BookOpen size={12} />
-                            Goal Bank
-                          </button>
-                          <button
-                            type="button"
-                            className="p-1 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
-                            onClick={() => setGoalEntries(prev => prev.filter((_, i) => i !== idx))}
-                          >
-                            <X size={16} />
-                          </button>
-                        </>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase">
+                        Goal {idx + 1}
+                      </span>
+                      {isLinked && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-600">
+                          Synced
+                        </span>
                       )}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
+                          showBank ? 'bg-violet-100 text-violet-700' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] hover:bg-violet-50'
+                        }`}
+                        onClick={() => {
+                          if (showBank) {
+                            setShowGoalBank(null);
+                          } else {
+                            loadGoalsBankForCategory(entry.category);
+                            setShowGoalBank(idx);
+                          }
+                        }}
+                        title="Browse goals bank"
+                      >
+                        <BookOpen size={12} />
+                        Goal Bank
+                      </button>
+                      <button
+                        type="button"
+                        className="p-1 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                        onClick={() => {
+                          // Also remove the linked ID at this index
+                          setContent(prev => {
+                            if (!prev) return prev;
+                            const ids = [...(prev.created_goal_ids || [])];
+                            ids.splice(idx, 1);
+                            return { ...prev, created_goal_ids: ids };
+                          });
+                          updateGoalEntries(prev => prev.filter((_, i) => i !== idx));
+                        }}
+                      >
+                        <X size={16} />
+                      </button>
                     </div>
                   </div>
 
                   {/* Goal Bank Dropdown */}
-                  {showBank && !goalsAlreadyCreated && (
+                  {showBank && (
                     <div className="mb-3 p-3 bg-violet-50 rounded-lg border border-violet-200 max-h-48 overflow-y-auto">
                       <p className="text-xs font-semibold text-violet-700 mb-2">
                         {entry.category ? `${entry.category} Templates` : 'All Templates'} ({bankForCategory.length})
@@ -918,9 +1335,8 @@ export default function EvalFormPage() {
                       <select
                         className="select text-sm"
                         value={entry.goal_type}
-                        disabled={goalsAlreadyCreated}
                         onChange={(e) =>
-                          setGoalEntries(prev =>
+                          updateGoalEntries(prev =>
                             prev.map((g, i) => i === idx ? { ...g, goal_type: e.target.value as GoalType } : g)
                           )
                         }
@@ -934,10 +1350,9 @@ export default function EvalFormPage() {
                       <select
                         className="select text-sm"
                         value={entry.category}
-                        disabled={goalsAlreadyCreated}
                         onChange={(e) => {
                           const newCat = e.target.value;
-                          setGoalEntries(prev =>
+                          updateGoalEntries(prev =>
                             prev.map((g, i) => i === idx ? { ...g, category: newCat } : g)
                           );
                           // Reload bank for new category
@@ -958,9 +1373,8 @@ export default function EvalFormPage() {
                         type="date"
                         className="input text-sm"
                         value={entry.target_date}
-                        disabled={goalsAlreadyCreated}
                         onChange={(e) =>
-                          setGoalEntries(prev =>
+                          updateGoalEntries(prev =>
                             prev.map((g, i) => i === idx ? { ...g, target_date: e.target.value } : g)
                           )
                         }
@@ -974,9 +1388,8 @@ export default function EvalFormPage() {
                       rows={2}
                       placeholder="Enter goal text or select from Goal Bank above..."
                       value={entry.goal_text}
-                      disabled={goalsAlreadyCreated}
                       onChange={(e) =>
-                        setGoalEntries(prev =>
+                        updateGoalEntries(prev =>
                           prev.map((g, i) => i === idx ? { ...g, goal_text: e.target.value } : g)
                         )
                       }
@@ -988,26 +1401,36 @@ export default function EvalFormPage() {
             </div>
           )}
 
-          {goalsAlreadyCreated && goalEntries.length > 0 && (
-            <div className="mt-3 p-2 bg-blue-50 rounded-lg">
-              <p className="text-xs text-blue-700">
-                These goals have been created in the client's Goals tab. Edit them from the Goals tab.
-              </p>
-            </div>
-          )}
-
-          {!goalsAlreadyCreated && goalEntries.length > 0 && (
-            <div className="mt-3 p-2 bg-amber-50 rounded-lg">
-              <p className="text-xs text-amber-700">
-                These goals will be added to the client's Goals tab when you save this evaluation.
-              </p>
-            </div>
-          )}
+          {goalEntries.length > 0 && (() => {
+            const linkedCount = (content.created_goal_ids || []).filter(Boolean).length;
+            const newCount = goalEntries.length - linkedCount;
+            return (
+              <div className="mt-3 p-2 bg-blue-50 rounded-lg space-y-1">
+                {linkedCount > 0 && (
+                  <p className="text-xs text-blue-700">
+                    {linkedCount} goal{linkedCount > 1 ? 's' : ''} synced with the client's Goals tab. Edits here will update the Goals tab on save.
+                  </p>
+                )}
+                {newCount > 0 && (
+                  <p className="text-xs text-amber-700">
+                    {newCount} new goal{newCount > 1 ? 's' : ''} will be added to the Goals tab when you save.
+                  </p>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         {/* Treatment Plan */}
         <div className="card p-6 mb-6">
-          <h2 className="section-title">Treatment Plan</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="section-title">Treatment Plan</h2>
+            {priorFieldKeys.has('treatment_plan') && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-700 mb-2">
+                UPDATE
+              </span>
+            )}
+          </div>
           {/* Quick chips for treatment plan */}
           <div className="flex flex-wrap gap-1.5 mb-3">
             {(TREATMENT_PLAN_CHIPS[discipline] || []).map((chip) => (
@@ -1035,7 +1458,14 @@ export default function EvalFormPage() {
 
         {/* Frequency & Duration */}
         <div className="card p-6 mb-6">
-          <h2 className="section-title">Frequency & Duration</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="section-title">Frequency & Duration</h2>
+            {priorFieldKeys.has('frequency_duration') && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-700 mb-2">
+                UPDATE
+              </span>
+            )}
+          </div>
 
           {/* Frequency quick taps */}
           <div className="mb-4">
