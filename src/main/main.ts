@@ -1238,11 +1238,11 @@ function registerIpcHandlers() {
       const data = await response.json() as any;
 
       if (!data.valid && data.error) {
-        return { valid: false, tier: 'free', subscriptionStatus: null, subscriptionExpiresAt: null, error: data.error };
+        return { valid: false, tier: 'unlicensed', subscriptionStatus: null, subscriptionExpiresAt: null, error: data.error };
       }
 
       if (!data.valid) {
-        return { valid: false, tier: 'free', subscriptionStatus: null, subscriptionExpiresAt: null, error: 'Invalid license key' };
+        return { valid: false, tier: 'unlicensed', subscriptionStatus: null, subscriptionExpiresAt: null, error: 'Invalid license key' };
       }
 
       // Determine tier from the product/variant name
@@ -1262,11 +1262,12 @@ function registerIpcHandlers() {
         subscriptionStatus = 'active';
       } else if (data.license_key?.status === 'expired') {
         subscriptionStatus = 'expired';
-        // Pro subscription expired → downgrade to basic
-        if (tier === 'pro') tier = 'basic';
+        // Pro subscription expired → unlicensed (they never paid for Basic)
+        if (tier === 'pro') tier = 'unlicensed';
       } else if (data.license_key?.status === 'disabled') {
         subscriptionStatus = 'cancelled';
-        if (tier === 'pro') tier = 'basic';
+        // Pro subscription cancelled → unlicensed
+        if (tier === 'pro') tier = 'unlicensed';
       }
 
       if (data.license_key?.expires_at) {
@@ -1277,7 +1278,7 @@ function registerIpcHandlers() {
     } catch (err: any) {
       console.warn('Lemon Squeezy validation failed (offline?):', err?.message);
       // Return null to indicate network failure — caller should use cached state
-      return { valid: false, tier: 'free', subscriptionStatus: null, subscriptionExpiresAt: null, error: 'network_error' };
+      return { valid: false, tier: 'unlicensed', subscriptionStatus: null, subscriptionExpiresAt: null, error: 'network_error' };
     }
   }
 
@@ -1294,7 +1295,7 @@ function registerIpcHandlers() {
       };
     }
 
-    const tier = (getSetting('app_tier') || 'free') as AppTier;
+    const tier = (getSetting('app_tier') || 'unlicensed') as AppTier;
     const licenseKey = getSetting('license_key');
     const activatedAt = getSetting('license_activated_at');
     const subscriptionStatus = getSetting('subscription_status') as 'active' | 'expired' | 'cancelled' | null;
@@ -1318,11 +1319,11 @@ function registerIpcHandlers() {
     if (result.error === 'network_error') {
       // Can't reach API — store key optimistically but don't set tier yet
       // User can retry when online
-      return { success: false, tier: 'free' as AppTier, error: 'Unable to validate license. Please check your internet connection and try again.' };
+      return { success: false, tier: 'unlicensed' as AppTier, error: 'Unable to validate license. Please check your internet connection and try again.' };
     }
 
     if (!result.valid) {
-      return { success: false, tier: 'free' as AppTier, error: result.error || 'Invalid license key' };
+      return { success: false, tier: 'unlicensed' as AppTier, error: result.error || 'Invalid license key' };
     }
 
     // Store license info
@@ -1343,12 +1344,12 @@ function registerIpcHandlers() {
 
   safeHandle('license:deactivate', () => {
     deleteSetting('license_key');
-    setSetting('app_tier', 'free');
+    setSetting('app_tier', 'unlicensed');
     deleteSetting('license_activated_at');
     deleteSetting('subscription_status');
     deleteSetting('subscription_expires_at');
     deleteSetting('last_license_validation');
-    return { success: true, tier: 'free' as AppTier };
+    return { success: true, tier: 'unlicensed' as AppTier };
   });
 
   // Background re-validation: check license every 7-14 days
@@ -1388,8 +1389,8 @@ function registerIpcHandlers() {
         setSetting('subscription_expires_at', result.subscriptionExpiresAt);
       }
     } else {
-      // License no longer valid — downgrade
-      setSetting('app_tier', 'free');
+      // License no longer valid — drop to unlicensed
+      setSetting('app_tier', 'unlicensed');
       deleteSetting('subscription_status');
       deleteSetting('subscription_expires_at');
     }
@@ -1402,8 +1403,8 @@ function registerIpcHandlers() {
   // ── Tier-Gated Helper ──
   function requireTier(requiredTier: 'basic' | 'pro'): void {
     if (FORCE_PRO) return; // Bypass tier check when workshopping Pro features
-    const currentTier = (getSetting('app_tier') || 'free') as AppTier;
-    const tierRank = { free: 0, basic: 1, pro: 2 };
+    const currentTier = (getSetting('app_tier') || 'unlicensed') as AppTier;
+    const tierRank = { unlicensed: 0, basic: 1, pro: 2 };
     if (tierRank[currentTier] < tierRank[requiredTier]) {
       throw new Error(`This feature requires PocketChart ${requiredTier === 'pro' ? 'Pro' : 'Basic'}. Please upgrade to access this feature.`);
     }
@@ -1579,10 +1580,12 @@ function registerIpcHandlers() {
     doc.setFont('helvetica', 'normal');
     doc.text(`${client.first_name} ${client.last_name}`, clientInfoLeft + doc.getTextWidth('Name: '), y);
 
-    doc.setFont('helvetica', 'bold');
-    doc.text('DOB: ', clientInfoRight, y);
-    doc.setFont('helvetica', 'normal');
-    doc.text(client.dob || '--', clientInfoRight + doc.getTextWidth('DOB: '), y);
+    if (client.dob) {
+      doc.setFont('helvetica', 'bold');
+      doc.text('DOB: ', clientInfoRight, y);
+      doc.setFont('helvetica', 'normal');
+      doc.text(client.dob, clientInfoRight + doc.getTextWidth('DOB: '), y);
+    }
     y += 13;
 
     if (client.address) {
@@ -1595,28 +1598,37 @@ function registerIpcHandlers() {
 
     y += 6;
 
-    // ── Insurance Info Section ──
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Insurance Information', marginLeft, y);
-    y += 14;
-    doc.setFontSize(9);
+    // ── Insurance Info Section (skip entirely if no insurance data) ──
+    if (client.insurance_payer || client.insurance_member_id) {
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Insurance Information', marginLeft, y);
+      y += 14;
+      doc.setFontSize(9);
 
-    doc.setFont('helvetica', 'bold');
-    doc.text('Payer: ', clientInfoLeft, y);
-    doc.setFont('helvetica', 'normal');
-    doc.text(client.insurance_payer || '--', clientInfoLeft + doc.getTextWidth('Payer: '), y);
-    y += 13;
+      if (client.insurance_payer) {
+        doc.setFont('helvetica', 'bold');
+        doc.text('Payer: ', clientInfoLeft, y);
+        doc.setFont('helvetica', 'normal');
+        doc.text(client.insurance_payer, clientInfoLeft + doc.getTextWidth('Payer: '), y);
+        y += 13;
+      }
 
-    doc.setFont('helvetica', 'bold');
-    doc.text('Member ID: ', clientInfoLeft, y);
-    doc.setFont('helvetica', 'normal');
-    doc.text(client.insurance_member_id || '--', clientInfoLeft + doc.getTextWidth('Member ID: '), y);
+      if (client.insurance_member_id) {
+        doc.setFont('helvetica', 'bold');
+        doc.text('Member ID: ', clientInfoLeft, y);
+        doc.setFont('helvetica', 'normal');
+        doc.text(client.insurance_member_id, clientInfoLeft + doc.getTextWidth('Member ID: '), y);
+        y += 13;
+      }
+    }
 
-    doc.setFont('helvetica', 'bold');
-    doc.text('Group #: ', clientInfoRight, y);
-    doc.setFont('helvetica', 'normal');
-    doc.text(client.insurance_group || '--', clientInfoRight + doc.getTextWidth('Group #: '), y);
+    if (client.insurance_group) {
+      doc.setFont('helvetica', 'bold');
+      doc.text('Group #: ', clientInfoRight, y);
+      doc.setFont('helvetica', 'normal');
+      doc.text(client.insurance_group, clientInfoRight + doc.getTextWidth('Group #: '), y);
+    }
     y += 18;
 
     doc.setLineWidth(0.5);
@@ -1789,6 +1801,24 @@ function registerIpcHandlers() {
     doc.line(marginLeft, y, marginLeft + 150, y);
     y += 14;
     doc.text('Date', marginLeft, y);
+
+    // Add confidentiality footer to all pages
+    const sbTotalPages = doc.getNumberOfPages();
+    for (let i = 1; i <= sbTotalPages; i++) {
+      doc.setPage(i);
+      doc.setFontSize(7);
+      doc.setTextColor(128, 128, 128);
+      doc.text(
+        'This document contains confidential health information. Unauthorized disclosure is prohibited.',
+        pageWidth / 2,
+        pageHeight - 20,
+        { align: 'center' }
+      );
+      if (sbTotalPages > 1) {
+        doc.text(`Page ${i} of ${sbTotalPages}`, pageWidth / 2, pageHeight - 12, { align: 'center' });
+      }
+      doc.setTextColor(0, 0, 0);
+    }
 
     const dateStr = new Date().toISOString().slice(0, 10);
     const filename = `Superbill_${client.last_name}_${client.first_name}_${dateStr}.pdf`;
@@ -3698,13 +3728,14 @@ function buildClientChartPdf(clientId: number): Buffer {
   };
 
   const addField = (label: string, value: string) => {
+    if (!value || value === '--' || value.trim() === '' || value.trim() === '-') return;
     checkPageBreak(18);
     doc.setFontSize(9);
     doc.setFont('helvetica', 'bold');
     doc.text(`${label}: `, marginLeft, y);
     const labelWidth = doc.getTextWidth(`${label}: `);
     doc.setFont('helvetica', 'normal');
-    const lines = doc.splitTextToSize(value || '--', maxWidth - labelWidth);
+    const lines = doc.splitTextToSize(value, maxWidth - labelWidth);
     doc.text(lines, marginLeft + labelWidth, y);
     y += lines.length * 13;
   };
@@ -3734,21 +3765,23 @@ function buildClientChartPdf(clientId: number): Buffer {
   // Client Info
   addSectionHeader('Client Information');
   addField('Name', `${client.first_name} ${client.last_name}`);
-  addField('DOB', client.dob || '--');
-  addField('Phone', client.phone || '--');
-  addField('Email', client.email || '--');
-  addField('Address', [client.address, client.city, client.state, client.zip].filter(Boolean).join(', ') || '--');
-  addField('Status', client.status || '--');
-  addField('Discipline', client.discipline || '--');
-  addField('Primary Dx', `${client.primary_dx_code || ''} - ${client.primary_dx_description || ''}`);
+  addField('DOB', client.dob);
+  addField('Phone', client.phone);
+  addField('Email', client.email);
+  const clientAddr = [client.address, client.city, client.state, client.zip].filter(Boolean).join(', ');
+  addField('Address', clientAddr);
+  addField('Status', client.status);
+  addField('Discipline', client.discipline);
+  const dxParts = [client.primary_dx_code, client.primary_dx_description].filter(Boolean).join(' - ');
+  if (dxParts) addField('Primary Dx', dxParts);
   y += 6;
 
   // Insurance
   if (client.insurance_payer || client.insurance_member_id) {
     addSectionHeader('Insurance');
-    addField('Payer', client.insurance_payer || '--');
-    addField('Member ID', client.insurance_member_id || '--');
-    addField('Group #', client.insurance_group_number || '--');
+    addField('Payer', client.insurance_payer);
+    addField('Member ID', client.insurance_member_id);
+    addField('Group #', client.insurance_group_number);
     y += 6;
   }
 
@@ -3775,29 +3808,61 @@ function buildClientChartPdf(clientId: number): Buffer {
 
   // Evaluations
   if (evals.length > 0) {
-    addSectionHeader(`Evaluations (${evals.length})`);
+    addSectionHeader(`Evaluations / Plan of Care (${evals.length})`);
     for (const evalItem of evals) {
       checkPageBreak(40);
       doc.setFontSize(10);
       doc.setFont('helvetica', 'bold');
-      doc.text(`${evalItem.eval_date} - ${evalItem.discipline}`, marginLeft, y);
+      const evalHeaderLabel = 'Initial Evaluation / Plan of Care';
+      doc.text(`${evalItem.eval_date} - ${evalItem.discipline} — ${evalHeaderLabel}`, marginLeft, y);
       if (evalItem.signed_at) {
         doc.setFontSize(8);
         doc.setFont('helvetica', 'normal');
-        doc.text('  (Signed)', marginLeft + doc.getTextWidth(`${evalItem.eval_date} - ${evalItem.discipline}`), y);
+        const headerText = `${evalItem.eval_date} - ${evalItem.discipline} — ${evalHeaderLabel}`;
+        doc.text('  (Signed)', marginLeft + doc.getTextWidth(headerText), y);
       }
       y += 14;
       if (evalItem.content) {
         try {
           const content = JSON.parse(evalItem.content);
           if (typeof content === 'object') {
+            // Pretty field labels for eval content
+            const evalFieldLabels: Record<string, string> = {
+              referral_source: 'Referral Source',
+              medical_history: 'Medical History',
+              prior_level_of_function: 'Prior Level of Function',
+              current_complaints: 'Current Complaints',
+              clinical_impression: 'Clinical Impression',
+              rehabilitation_potential: 'Rehabilitation Potential / Prognosis',
+              precautions: 'Precautions / Contraindications',
+              goals: 'Goals',
+              treatment_plan: 'Treatment Plan',
+              frequency_duration: 'Frequency & Duration',
+            };
             for (const [key, val] of Object.entries(content)) {
-              if (val && key !== 'goal_entries' && key !== 'created_goal_ids' && key !== 'objective_assessment') {
-                addField(`  ${key}`, String(val));
-              }
-              if (key === 'objective_assessment' && val && typeof val === 'object') {
-                for (const [oKey, oVal] of Object.entries(val as Record<string, string>)) {
-                  if (oVal) addField(`    ${oKey}`, String(oVal));
+              if (key === 'goal_entries' || key === 'created_goal_ids' || key === 'objective_assessment') continue;
+              if (!val || (typeof val === 'string' && !val.trim())) continue;
+              const label = evalFieldLabels[key] || key;
+              addField(`  ${label}`, String(val));
+            }
+            if (content.objective_assessment && typeof content.objective_assessment === 'object') {
+              const objFields: Record<string, string> = {
+                rom: 'ROM', strength_mmt: 'Strength / MMT', posture: 'Posture',
+                gait_analysis: 'Gait Analysis', balance: 'Balance',
+                functional_mobility: 'Functional Mobility', pain_assessment: 'Pain Assessment',
+                adl_assessment: 'ADL Assessment', hand_function: 'Hand Function',
+                cognition_screening: 'Cognition Screening', sensory: 'Sensory',
+                visual_perceptual: 'Visual-Perceptual', home_safety: 'Home Safety',
+                speech_intelligibility: 'Speech Intelligibility',
+                language_comprehension: 'Language Comprehension',
+                language_expression: 'Language Expression', voice: 'Voice',
+                fluency: 'Fluency', swallowing_dysphagia: 'Swallowing / Dysphagia',
+                cognition_communication: 'Cognition-Communication',
+              };
+              for (const [oKey, oVal] of Object.entries(content.objective_assessment as Record<string, string>)) {
+                if (oVal && oVal.trim()) {
+                  const oLabel = objFields[oKey] || oKey;
+                  addField(`    ${oLabel}`, String(oVal));
                 }
               }
             }
@@ -3842,8 +3907,12 @@ function buildClientChartPdf(clientId: number): Buffer {
       }
       y += 14;
 
-      if (note.time_in || note.time_out) {
-        addField('  Time', `${note.time_in || '--'} to ${note.time_out || '--'}`);
+      if (note.time_in && note.time_out) {
+        addField('  Time', `${note.time_in} to ${note.time_out}`);
+      } else if (note.time_in) {
+        addField('  Time In', note.time_in);
+      } else if (note.time_out) {
+        addField('  Time Out', note.time_out);
       }
       if (note.subjective) {
         doc.setFont('helvetica', 'bold');
@@ -3886,6 +3955,30 @@ function buildClientChartPdf(clientId: number): Buffer {
       doc.line(marginLeft + 20, y, pageWidth - marginRight - 20, y);
       y += 10;
     }
+  }
+
+  // Add confidentiality footer to all pages
+  const totalPages = doc.getNumberOfPages();
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7);
+    doc.setTextColor(128, 128, 128);
+    doc.text(
+      'This document contains confidential health information. Unauthorized disclosure is prohibited.',
+      pageWidth / 2,
+      doc.internal.pageSize.getHeight() - 20,
+      { align: 'center' }
+    );
+    // Page numbers only for multi-page documents
+    if (totalPages > 1) {
+      doc.text(
+        `Page ${i} of ${totalPages}`,
+        pageWidth / 2,
+        doc.internal.pageSize.getHeight() - 12,
+        { align: 'center' }
+      );
+    }
+    doc.setTextColor(0, 0, 0);
   }
 
   const pdfOutput = doc.output('arraybuffer');

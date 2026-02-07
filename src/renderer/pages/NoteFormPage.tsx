@@ -415,6 +415,18 @@ export default function NoteFormPage() {
 
   const handleSave = async (sign: boolean) => {
     if (!clientId) return;
+
+    // Soft validation before signing — warn about empty SOAP sections
+    if (sign) {
+      const hasContent = subjective.trim() || objective.trim() || assessment.trim() || plan.trim();
+      if (!hasContent) {
+        const proceed = window.confirm(
+          'All SOAP sections (Subjective, Objective, Assessment, Plan) are empty.\n\nSign anyway?'
+        );
+        if (!proceed) return;
+      }
+    }
+
     try {
       setSaving(true);
       const filteredCptLines = cptLines.filter(l => l.code.trim());

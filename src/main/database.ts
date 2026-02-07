@@ -162,7 +162,7 @@ function runMigrations(): void {
         // Just ensure defaults exist.
         const existing = db.prepare("SELECT value FROM settings WHERE key = 'app_tier'").get();
         if (!existing) {
-          db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run('app_tier', 'free');
+          db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run('app_tier', 'unlicensed');
         }
       },
     },

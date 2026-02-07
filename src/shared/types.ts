@@ -288,7 +288,7 @@ export interface PinSetupResult {
   error?: string;
 }
 
-export type AppTier = 'free' | 'basic' | 'pro';
+export type AppTier = 'unlicensed' | 'basic' | 'pro';
 
 export interface LicenseStatus {
   tier: AppTier;

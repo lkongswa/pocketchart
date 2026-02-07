@@ -79,7 +79,7 @@ export default function AppointmentBlock({
   const dollarBadge = paymentStatus === 'paid'
     ? <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-emerald-500 text-white text-[9px] font-bold flex-shrink-0" title="Paid">$</span>
     : paymentStatus === 'unpaid'
-    ? <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-amber-400 text-white text-[9px] font-bold flex-shrink-0" title="Unpaid">$</span>
+    ? <span className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-gray-400 text-gray-400 bg-white text-[9px] font-bold flex-shrink-0" title="Unpaid">$</span>
     : null;
 
   // Compact mode: inline rendering for month view

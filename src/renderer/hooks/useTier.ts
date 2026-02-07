@@ -14,7 +14,7 @@ const PRO_FEATURES = new Set([
 ]);
 
 export function useTier() {
-  const [tier, setTier] = useState<AppTier>('free');
+  const [tier, setTier] = useState<AppTier>('unlicensed');
   const [licenseStatus, setLicenseStatus] = useState<LicenseStatus | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -42,6 +42,7 @@ export function useTier() {
   }, [refresh]);
 
   const hasFeature = useCallback((feature: string): boolean => {
+    if (tier === 'unlicensed') return false;
     if (PRO_FEATURES.has(feature)) return tier === 'pro';
     // Basic features are available to basic and pro
     return tier === 'basic' || tier === 'pro';
@@ -49,6 +50,7 @@ export function useTier() {
 
   const isBasicOrHigher = tier === 'basic' || tier === 'pro';
   const isPro = tier === 'pro';
+  const isUnlicensed = tier === 'unlicensed';
 
   return {
     tier,
@@ -57,6 +59,7 @@ export function useTier() {
     hasFeature,
     isBasicOrHigher,
     isPro,
+    isUnlicensed,
     refresh,
   };
 }

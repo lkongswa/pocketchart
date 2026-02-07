@@ -59,6 +59,8 @@ interface EvalContent {
   current_complaints: string;
   objective_assessment: ObjectiveAssessment;
   clinical_impression: string;
+  rehabilitation_potential: string;
+  precautions: string;
   goals: string; // legacy free-text
   goal_entries?: EvalGoalEntry[]; // structured goals
   created_goal_ids?: number[]; // IDs of created Goal records
@@ -130,6 +132,8 @@ function emptyContent(discipline: Discipline): EvalContent {
     current_complaints: '',
     objective_assessment: emptyObjectiveForDiscipline(discipline),
     clinical_impression: '',
+    rehabilitation_potential: '',
+    precautions: '',
     goals: '',
     treatment_plan: '',
     frequency_duration: '',
@@ -294,6 +298,21 @@ export default function EvalFormPage() {
 
   const handleSave = async (sign: boolean) => {
     if (!clientId || !client || !content) return;
+
+    // Soft validation before signing — warn about missing critical fields
+    if (sign) {
+      const missingFields: string[] = [];
+      if (!content.clinical_impression?.trim()) missingFields.push('Clinical Impression');
+      if (!content.frequency_duration?.trim()) missingFields.push('Frequency & Duration');
+      if (goalEntries.length === 0 && !content.goals?.trim()) missingFields.push('Goals');
+      if (missingFields.length > 0) {
+        const proceed = window.confirm(
+          `The following fields are empty:\n\n• ${missingFields.join('\n• ')}\n\nThese are important for compliance. Sign anyway?`
+        );
+        if (!proceed) return;
+      }
+    }
+
     try {
       setSaving(true);
       const cid = parseInt(clientId, 10);
@@ -530,6 +549,30 @@ export default function EvalFormPage() {
             placeholder="Clinical impression, diagnosis, prognosis, justification for skilled services..."
             value={content.clinical_impression}
             onChange={(e) => updateField('clinical_impression', e.target.value)}
+          />
+        </div>
+
+        {/* Rehabilitation Potential / Prognosis */}
+        <div className="card p-6 mb-6">
+          <h2 className="section-title">Rehabilitation Potential / Prognosis</h2>
+          <textarea
+            className="textarea"
+            rows={3}
+            placeholder="Good/Fair/Poor. Patient demonstrates motivation, family support, and prior functional level consistent with expected recovery..."
+            value={content.rehabilitation_potential}
+            onChange={(e) => updateField('rehabilitation_potential', e.target.value)}
+          />
+        </div>
+
+        {/* Precautions / Contraindications */}
+        <div className="card p-6 mb-6">
+          <h2 className="section-title">Precautions / Contraindications</h2>
+          <textarea
+            className="textarea"
+            rows={3}
+            placeholder="Fall risk, weight-bearing restrictions, cardiac precautions, aspiration risk, swallowing precautions, behavioral considerations..."
+            value={content.precautions}
+            onChange={(e) => updateField('precautions', e.target.value)}
           />
         </div>
 
