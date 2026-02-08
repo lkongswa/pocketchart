@@ -123,8 +123,16 @@ export default function UnlicensedLandingPage() {
 
         {/* Feedback messages */}
         {error && (
-          <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+          <div className={`p-3 rounded-lg text-sm ${
+            error.includes('already active on') ? 'bg-amber-50 border border-amber-200 text-amber-800' : 'bg-red-50 border border-red-200 text-red-700'
+          }`}>
             {error}
+            {error.includes('already active on') && (
+              <p className="mt-2 text-xs text-amber-700">
+                To use PocketChart on this computer, deactivate one of your other devices first
+                (Settings → License → Deactivate This Device), then enter your license key here again.
+              </p>
+            )}
           </div>
         )}
         {success && (

@@ -504,10 +504,16 @@ function registerIpcHandlers() {
 
   // Soft delete: sets deleted_at timestamp instead of hard deleting
   safeHandle('clients:delete', (_event, id: number) => {
+    const signedNotes = (db.prepare(
+      "SELECT COUNT(*) as count FROM notes WHERE client_id = ? AND signed_at IS NOT NULL AND deleted_at IS NULL"
+    ).get(id) as any)?.count || 0;
+    const signedEvals = (db.prepare(
+      "SELECT COUNT(*) as count FROM evaluations WHERE client_id = ? AND signed_at IS NOT NULL AND deleted_at IS NULL"
+    ).get(id) as any)?.count || 0;
     db.prepare(
       "UPDATE clients SET status = 'discharged', deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL"
     ).run(id);
-    auditLog({ actionType: 'client_archived', entityType: 'client', entityId: id, clientId: id });
+    auditLog({ actionType: 'client_archived', entityType: 'client', entityId: id, clientId: id, detail: { signedNotes, signedEvals } });
     return true;
   });
 
@@ -885,9 +891,13 @@ function registerIpcHandlers() {
     return db.prepare('SELECT * FROM notes WHERE id = ?').get(id);
   });
 
-  // Soft delete
+  // Soft delete — blocked for signed notes
   safeHandle('notes:delete', (_event, id: number) => {
+    const note = db.prepare('SELECT signed_at, client_id FROM notes WHERE id = ? AND deleted_at IS NULL').get(id) as any;
+    if (!note) throw new Error('Note not found');
+    if (note.signed_at) throw new Error('Cannot delete a signed note. Signed documents are part of the permanent medical record.');
     db.prepare('UPDATE notes SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL').run(id);
+    auditLog({ actionType: 'note_deleted', entityType: 'note', entityId: id, clientId: note.client_id });
     return true;
   });
 
@@ -995,9 +1005,13 @@ function registerIpcHandlers() {
     return db.prepare('SELECT * FROM evaluations WHERE id = ?').get(id);
   });
 
-  // Soft delete
+  // Soft delete — blocked for signed evaluations
   safeHandle('evaluations:delete', (_event, id: number) => {
+    const evalRecord = db.prepare('SELECT signed_at, client_id FROM evaluations WHERE id = ? AND deleted_at IS NULL').get(id) as any;
+    if (!evalRecord) throw new Error('Evaluation not found');
+    if (evalRecord.signed_at) throw new Error('Cannot delete a signed evaluation. Signed documents are part of the permanent medical record.');
     db.prepare('UPDATE evaluations SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL').run(id);
+    auditLog({ actionType: 'evaluation_deleted', entityType: 'evaluation', entityId: id, clientId: evalRecord.client_id });
     return true;
   });
 
@@ -1125,7 +1139,9 @@ function registerIpcHandlers() {
 
   // Soft delete
   safeHandle('appointments:delete', (_event, id: number) => {
+    const appt = db.prepare('SELECT client_id FROM appointments WHERE id = ?').get(id) as any;
     db.prepare('UPDATE appointments SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL').run(id);
+    auditLog({ actionType: 'appointment_deleted', entityType: 'appointment', entityId: id, clientId: appt?.client_id });
     return true;
   });
 
@@ -1694,6 +1710,122 @@ function registerIpcHandlers() {
     }
   }
 
+  /**
+   * Activate a license key via the Lemon Squeezy /activate endpoint.
+   * This registers this machine as an instance (counts toward the device limit).
+   */
+  async function activateLemonSqueezyLicense(licenseKey: string): Promise<{
+    valid: boolean;
+    tier: AppTier;
+    subscriptionStatus: string | null;
+    subscriptionExpiresAt: string | null;
+    instanceId: string | null;
+    activationLimit: number | null;
+    activationUsage: number | null;
+    error?: string;
+  }> {
+    try {
+      const response = await fetch('https://api.lemonsqueezy.com/v1/licenses/activate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          license_key: licenseKey,
+          instance_name: os.hostname(),
+        }),
+      });
+
+      const data = await response.json() as any;
+
+      // Check for activation limit reached
+      if (!response.ok && data.error) {
+        if (data.error === 'This license key has reached its activation limit.' ||
+            (data.meta?.activation_usage >= data.meta?.activation_limit)) {
+          return {
+            valid: false,
+            tier: 'unlicensed',
+            subscriptionStatus: null,
+            subscriptionExpiresAt: null,
+            instanceId: null,
+            activationLimit: data.meta?.activation_limit || 2,
+            activationUsage: data.meta?.activation_usage || null,
+            error: 'activation_limit_reached',
+          };
+        }
+        return {
+          valid: false,
+          tier: 'unlicensed',
+          subscriptionStatus: null,
+          subscriptionExpiresAt: null,
+          instanceId: null,
+          activationLimit: null,
+          activationUsage: null,
+          error: data.error,
+        };
+      }
+
+      if (!data.activated) {
+        return {
+          valid: false,
+          tier: 'unlicensed',
+          subscriptionStatus: null,
+          subscriptionExpiresAt: null,
+          instanceId: null,
+          activationLimit: null,
+          activationUsage: null,
+          error: data.error || 'Activation failed',
+        };
+      }
+
+      // Determine tier from product/variant name (same logic as validate)
+      const productName = (data.meta?.product_name || '').toLowerCase();
+      const variantName = (data.meta?.variant_name || '').toLowerCase();
+      let tier: AppTier = 'basic';
+      if (productName.includes('pro') || variantName.includes('pro')) {
+        tier = 'pro';
+      }
+
+      // Subscription status (same logic as validate)
+      let subscriptionStatus: string | null = null;
+      let subscriptionExpiresAt: string | null = null;
+
+      if (data.license_key?.status === 'active') {
+        subscriptionStatus = 'active';
+      } else if (data.license_key?.status === 'expired') {
+        subscriptionStatus = 'expired';
+        if (tier === 'pro') tier = 'basic';
+      } else if (data.license_key?.status === 'disabled') {
+        subscriptionStatus = 'cancelled';
+        if (tier === 'pro') tier = 'basic';
+      }
+
+      if (data.license_key?.expires_at) {
+        subscriptionExpiresAt = data.license_key.expires_at;
+      }
+
+      return {
+        valid: true,
+        tier,
+        subscriptionStatus,
+        subscriptionExpiresAt,
+        instanceId: data.instance?.id || null,
+        activationLimit: data.meta?.activation_limit || null,
+        activationUsage: data.meta?.activation_usage || null,
+      };
+    } catch (err: any) {
+      console.warn('Lemon Squeezy activation failed (offline?):', err?.message);
+      return {
+        valid: false,
+        tier: 'unlicensed',
+        subscriptionStatus: null,
+        subscriptionExpiresAt: null,
+        instanceId: null,
+        activationLimit: null,
+        activationUsage: null,
+        error: 'network_error',
+      };
+    }
+  }
+
   safeHandle('license:getStatus', () => {
     // In development mode or when FORCE_PRO is enabled, grant Pro tier access for testing
     if (isDev || FORCE_PRO) {
@@ -1725,25 +1857,37 @@ function registerIpcHandlers() {
   });
 
   safeHandle('license:activate', async (_event, licenseKey: string) => {
-    // Validate against Lemon Squeezy API
-    const result = await validateLemonSqueezyLicense(licenseKey);
+    // Activate via Lemon Squeezy /activate endpoint (registers this device)
+    const result = await activateLemonSqueezyLicense(licenseKey);
 
     if (result.error === 'network_error') {
-      // Can't reach API — store key optimistically but don't set tier yet
-      // User can retry when online
-      return { success: false, tier: 'unlicensed' as AppTier, error: 'Unable to validate license. Please check your internet connection and try again.' };
+      return {
+        success: false,
+        tier: 'unlicensed' as AppTier,
+        error: 'Unable to validate license. Please check your internet connection and try again.',
+      };
+    }
+
+    if (result.error === 'activation_limit_reached') {
+      return {
+        success: false,
+        tier: 'unlicensed' as AppTier,
+        error: `This license key is already active on ${result.activationUsage} of ${result.activationLimit} allowed devices. Please deactivate one of your other devices first, then try again.`,
+      };
     }
 
     if (!result.valid) {
       return { success: false, tier: 'unlicensed' as AppTier, error: result.error || 'Invalid license key' };
     }
 
-    // Store license info
+    // Store license info including instance_id
     setSetting('license_key', licenseKey);
     setSetting('app_tier', result.tier);
     setSetting('license_activated_at', new Date().toISOString());
     setSetting('last_license_validation', new Date().toISOString());
-
+    if (result.instanceId) {
+      setSetting('license_instance_id', result.instanceId);
+    }
     if (result.subscriptionStatus) {
       setSetting('subscription_status', result.subscriptionStatus);
     }
@@ -1754,14 +1898,62 @@ function registerIpcHandlers() {
     return { success: true, tier: result.tier };
   });
 
-  safeHandle('license:deactivate', () => {
+  safeHandle('license:deactivate', async () => {
+    const licenseKey = getSetting('license_key');
+    const instanceId = getSetting('license_instance_id');
+
+    // Call Lemon Squeezy deactivate API to free the activation slot
+    if (licenseKey && instanceId) {
+      try {
+        await fetch('https://api.lemonsqueezy.com/v1/licenses/deactivate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            license_key: licenseKey,
+            instance_id: instanceId,
+          }),
+        });
+      } catch (err: any) {
+        // Log but don't block — user should still be able to deactivate locally
+        // The activation slot will be freed on next validation or can be
+        // managed through Lemon Squeezy dashboard
+        console.warn('Failed to deactivate with Lemon Squeezy:', err?.message);
+      }
+    }
+
+    // Clear local settings regardless of API result
     deleteSetting('license_key');
     setSetting('app_tier', 'unlicensed');
     deleteSetting('license_activated_at');
+    deleteSetting('license_instance_id');
     deleteSetting('subscription_status');
     deleteSetting('subscription_expires_at');
     deleteSetting('last_license_validation');
+
     return { success: true, tier: 'unlicensed' as AppTier };
+  });
+
+  safeHandle('license:getActivationInfo', async () => {
+    const licenseKey = getSetting('license_key');
+    if (!licenseKey) {
+      return { activationUsage: 0, activationLimit: 2 };
+    }
+
+    // Use validate (not activate) to check current usage without consuming a slot
+    try {
+      const response = await fetch('https://api.lemonsqueezy.com/v1/licenses/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ license_key: licenseKey }),
+      });
+      const data = await response.json() as any;
+      return {
+        activationUsage: data.meta?.activation_usage ?? null,
+        activationLimit: data.meta?.activation_limit ?? 2,
+      };
+    } catch {
+      return { activationUsage: null, activationLimit: 2 };
+    }
   });
 
   // Background re-validation: check license every 7-14 days
@@ -2531,6 +2723,7 @@ function registerIpcHandlers() {
 
     // Don't delete the file — soft delete only. File stays for HIPAA retention.
     db.prepare('UPDATE client_documents SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?').run(data.documentId);
+    auditLog({ actionType: 'document_deleted', entityType: 'document', entityId: data.documentId, clientId: doc.client_id, detail: { filename: doc.filename } });
     return true;
   });
 
@@ -2584,6 +2777,7 @@ function registerIpcHandlers() {
 
   safeHandle('feeSchedule:delete', (_event, id: number) => {
     db.prepare('UPDATE fee_schedule SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
+    auditLog({ actionType: 'fee_schedule_deleted', entityType: 'fee_schedule', entityId: id });
     return true;
   });
 
@@ -2722,7 +2916,9 @@ function registerIpcHandlers() {
   });
 
   safeHandle('invoices:delete', (_event, id: number) => {
+    const invoice = db.prepare('SELECT client_id, invoice_number FROM invoices WHERE id = ?').get(id) as any;
     db.prepare('UPDATE invoices SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
+    auditLog({ actionType: 'invoice_deleted', entityType: 'invoice', entityId: id, clientId: invoice?.client_id, detail: { invoice_number: invoice?.invoice_number } });
     return true;
   });
 
@@ -3152,7 +3348,9 @@ function registerIpcHandlers() {
   });
 
   safeHandle('payers:delete', (_event, id: number) => {
+    const payer = db.prepare('SELECT name FROM payers WHERE id = ?').get(id) as any;
     db.prepare('DELETE FROM payers WHERE id = ?').run(id);
+    auditLog({ actionType: 'payer_deleted', entityType: 'payer', entityId: id, detail: { name: payer?.name } });
     return true;
   });
 
@@ -3277,7 +3475,9 @@ function registerIpcHandlers() {
 
   safeHandle('contractedEntities:delete', (_event, id: number) => {
     requireTier('pro');
+    const entity = db.prepare('SELECT name FROM contracted_entities WHERE id = ?').get(id) as any;
     db.prepare("UPDATE contracted_entities SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+    auditLog({ actionType: 'entity_deleted', entityType: 'contracted_entity', entityId: id, detail: { name: entity?.name } });
     return true;
   });
 
@@ -3366,7 +3566,9 @@ function registerIpcHandlers() {
 
   safeHandle('entityDocuments:delete', (_event, documentId: number) => {
     requireTier('pro');
+    const doc = db.prepare('SELECT entity_id, filename FROM entity_documents WHERE id = ?').get(documentId) as any;
     db.prepare("UPDATE entity_documents SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").run(documentId);
+    auditLog({ actionType: 'entity_document_deleted', entityType: 'entity_document', entityId: documentId, detail: { entity_id: doc?.entity_id, filename: doc?.filename } });
     return true;
   });
 
@@ -3434,7 +3636,9 @@ function registerIpcHandlers() {
 
   safeHandle('vault:delete', (_event, id: number) => {
     requireTier('pro');
+    const doc = db.prepare('SELECT doc_type, title FROM vault_documents WHERE id = ?').get(id) as any;
     db.prepare("UPDATE vault_documents SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+    auditLog({ actionType: 'vault_document_deleted', entityType: 'vault_document', entityId: id, detail: { doc_type: doc?.doc_type, title: doc?.title } });
     return true;
   });
 
@@ -3740,6 +3944,7 @@ function registerIpcHandlers() {
   safeHandle('mileage:delete', (_event, id: number) => {
     requireTier('pro');
     db.prepare("UPDATE mileage_log SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+    auditLog({ actionType: 'mileage_deleted', entityType: 'mileage', entityId: id });
     return true;
   });
 
@@ -3821,7 +4026,9 @@ function registerIpcHandlers() {
 
   safeHandle('communicationLog:delete', (_event, id: number) => {
     requireTier('pro');
+    const entry = db.prepare('SELECT client_id FROM communication_log WHERE id = ?').get(id) as any;
     db.prepare("UPDATE communication_log SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+    auditLog({ actionType: 'communication_deleted', entityType: 'communication_log', entityId: id, clientId: entry?.client_id });
     return true;
   });
 

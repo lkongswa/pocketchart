@@ -172,7 +172,11 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
               (b) securing your device with a strong operating system password, full-disk encryption,
               and physical security; (c) ensuring your use of PocketChart complies with HIPAA, state
               regulations, and the policies of your organization or professional licensing board;
-              (d) safeguarding your PIN and recovery credentials.
+              (d) safeguarding your PIN and recovery credentials;
+              (e) ensuring continuity of access to your clinical records, including
+              maintaining current backups in a secure location known to a designated
+              trusted person (spouse, attorney, or practice successor) in case you
+              become unable to access your practice.
             </p>
 
             <p className="font-medium text-[var(--color-text)]">3. No Warranty of Data Preservation</p>
@@ -207,7 +211,19 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
               and to ensure backup copies exist in case of hardware failure.
             </p>
 
-            <p className="font-medium text-[var(--color-text)]">7. Updates & Changes</p>
+            <p className="font-medium text-[var(--color-text)]">7. Regulatory Compliance & Direct Access</p>
+            <p>
+              PocketChart includes features that prompt for physician referrals and track compliance
+              based on state direct-access rules. These prompts are provided as informational guidance
+              only. <strong>PocketChart does not provide legal advice.</strong> State practice acts,
+              payer requirements, and direct-access regulations change frequently and vary by state,
+              discipline, and clinical setting. You are solely responsible for verifying that your
+              practice complies with all applicable state laws, licensure requirements, payer
+              contracts, and professional board regulations. PocketChart makes no warranty that its
+              built-in rules are current, complete, or applicable to your specific practice situation.
+            </p>
+
+            <p className="font-medium text-[var(--color-text)]">8. Updates & Changes</p>
             <p>
               These terms may be updated with new versions of PocketChart. Continued use after an
               update constitutes acceptance of the revised terms.

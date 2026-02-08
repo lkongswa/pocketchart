@@ -1043,6 +1043,7 @@ export interface PocketChartAPI {
     getStatus: () => Promise<LicenseStatus>;
     activate: (licenseKey: string) => Promise<LicenseActivateResult>;
     deactivate: () => Promise<LicenseActivateResult>;
+    getActivationInfo: () => Promise<{ activationUsage: number | null; activationLimit: number }>;
   };
   secureStorage: {
     /** Check if OS-level encryption is available */

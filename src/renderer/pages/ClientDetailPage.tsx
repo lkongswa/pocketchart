@@ -950,6 +950,23 @@ const ClientDetailPage: React.FC = () => {
                             >
                               <Flag size={12} />
                             </button>
+                            <button
+                              className="btn-ghost p-1 text-red-400 hover:text-red-600 hover:bg-red-50"
+                              title="Delete Goal"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                if (!window.confirm('Delete this goal? This action cannot be undone.')) return;
+                                try {
+                                  await window.api.goals.delete(goal.id);
+                                  const updatedGoals = await window.api.goals.listByClient(clientId);
+                                  setGoals(updatedGoals);
+                                } catch (err) {
+                                  console.error('Failed to delete goal:', err);
+                                }
+                              }}
+                            >
+                              <Trash2 size={12} />
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -1030,6 +1047,23 @@ const ClientDetailPage: React.FC = () => {
                                   </select>
                                   <button className="btn-ghost p-1" onClick={() => openEditGoal(goal)}>
                                     <Edit size={11} />
+                                  </button>
+                                  <button
+                                    className="btn-ghost p-1 text-red-400 hover:text-red-600 hover:bg-red-50"
+                                    title="Delete Goal"
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      if (!window.confirm('Delete this goal? This action cannot be undone.')) return;
+                                      try {
+                                        await window.api.goals.delete(goal.id);
+                                        const updatedGoals = await window.api.goals.listByClient(clientId);
+                                        setGoals(updatedGoals);
+                                      } catch (err) {
+                                        console.error('Failed to delete goal:', err);
+                                      }
+                                    }}
+                                  >
+                                    <Trash2 size={11} />
                                   </button>
                                 </div>
                               </div>

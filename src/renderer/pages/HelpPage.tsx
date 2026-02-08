@@ -23,6 +23,9 @@ import {
   MessageSquare,
   Briefcase,
   CheckSquare,
+  Scale,
+  MessageCircle,
+  Key,
 } from 'lucide-react';
 
 /* ------------------------------------------------------------------ */
@@ -115,7 +118,61 @@ const allSections: HelpSectionData[] = [
     ),
   },
 
-  /* 2 — Security & Privacy ---------------------------------------- */
+  /* 2 — Licensing & Device Limits ----------------------------------- */
+  {
+    id: 'licensing-devices',
+    icon: <Key className="w-5 h-5 text-[var(--color-primary)]" />,
+    title: 'Licensing & Device Limits',
+    keywords: ['license', 'activation', 'device', 'limit', 'deactivate', 'key', 'pro', 'basic', 'subscription'],
+    content: (
+      <>
+        <p>
+          PocketChart requires a license key to unlock features. You can purchase a license
+          from our website and activate it in <B>Settings → License & Activation</B>.
+        </p>
+
+        <p className="font-medium text-[var(--color-text)] mt-3">Device limits</p>
+        <ul className="list-disc list-inside space-y-1.5 ml-1">
+          <li>
+            Your license key can be active on up to <B>2 devices</B> at a time (for example,
+            your office computer and a laptop).
+          </li>
+          <li>
+            To move PocketChart to a new device, go to <B>Settings → License → Deactivate
+            This Device</B> on the old computer first. This frees up an activation slot
+            for the new one.
+          </li>
+          <li>
+            If you no longer have access to an old device (lost, broken, or replaced),
+            contact <B>support@pocketchart.app</B> and we can reset your activation remotely.
+          </li>
+        </ul>
+
+        <p className="font-medium text-[var(--color-text)] mt-3">Plan types</p>
+        <ul className="list-disc list-inside space-y-1.5 ml-1">
+          <li>
+            <B>Basic</B> — Core documentation features: client management, clinical notes,
+            evaluations, goals, calendar, and data export.
+          </li>
+          <li>
+            <B>Pro</B> — Everything in Basic plus billing & invoices, contracted entities,
+            compliance tracking, professional vault, mileage tracking, communication log,
+            and year-end summary.
+          </li>
+        </ul>
+
+        <p className="font-medium text-[var(--color-text)] mt-3">Uninstalling without deactivating</p>
+        <p>
+          If you uninstall PocketChart or replace your computer without deactivating first,
+          the activation slot stays consumed. You can either: (a) reinstall PocketChart on
+          the old machine and deactivate through Settings, or (b) email{' '}
+          <B>support@pocketchart.app</B> and we will reset your activation remotely.
+        </p>
+      </>
+    ),
+  },
+
+  /* 3 — Security & Privacy ---------------------------------------- */
   {
     id: 'security-privacy',
     icon: <Shield className="w-5 h-5 text-[var(--color-primary)]" />,
@@ -198,7 +255,82 @@ const allSections: HelpSectionData[] = [
     ),
   },
 
-  /* 3 — Your Data: Backups, Uninstall & Reinstall ------------------ */
+  /* 3 — Regulatory Compliance & Direct Access ---------------------- */
+  {
+    id: 'regulatory-compliance',
+    icon: <Scale className="w-5 h-5 text-[var(--color-primary)]" />,
+    title: 'Regulatory Compliance & Direct Access',
+    keywords: ['direct access', 'referral', 'regulation', 'state law', 'practice act', 'physician', 'prescription', 'disclaimer', 'liability', 'compliance', 'payer', 'licensure'],
+    content: (
+      <>
+        <p>
+          PocketChart includes a <B>compliance engine</B> that checks your state's direct-access rules
+          based on your discipline and practice state. When a referral may be required, PocketChart
+          displays a prompt to help you stay on track.
+        </p>
+
+        <div className="mt-3 p-3 rounded-lg border border-amber-200 bg-amber-50/60">
+          <p className="font-medium text-amber-800 text-sm mb-2">Important Disclaimer</p>
+          <p className="text-amber-900 text-xs leading-relaxed">
+            PocketChart's compliance prompts and direct-access rules are provided as
+            <B> informational guidance only</B> and do not constitute legal advice. State practice
+            acts, payer requirements, and direct-access regulations change frequently and vary by
+            state, discipline, setting, and payer. <B>You are solely responsible</B> for verifying
+            that your practice complies with all applicable state laws, licensure board requirements,
+            payer contracts, and institutional policies. PocketChart makes no warranty that its
+            built-in rules are current, complete, or applicable to your specific situation.
+          </p>
+        </div>
+
+        <p className="font-medium text-[var(--color-text)] mt-3">What PocketChart does:</p>
+        <ul className="list-disc list-inside space-y-1.5 ml-1">
+          <li>
+            <B>State-based referral prompts</B> — Based on your state and discipline, PocketChart
+            alerts you when a physician referral or order may be required before initiating treatment.
+          </li>
+          <li>
+            <B>Compliance tracking</B> — Track visit limits, progress report intervals, and
+            recertification deadlines per client.
+          </li>
+          <li>
+            <B>Physician order tracking</B> — Monitor whether a current physician order is on file
+            and when it needs to be renewed.
+          </li>
+          <li>
+            <B>Conservative defaults</B> — When PocketChart is unsure about a state's rules, it
+            defaults to requiring a referral to err on the side of caution.
+          </li>
+        </ul>
+
+        <p className="font-medium text-[var(--color-text)] mt-3">What you are responsible for:</p>
+        <ul className="list-disc list-inside space-y-1.5 ml-1">
+          <li>
+            <B>Verifying state regulations</B> — Check your state's current practice act and any
+            recent legislative changes that may affect direct-access rules.
+          </li>
+          <li>
+            <B>Payer-specific requirements</B> — Some payers (e.g., Medicare, Medicaid, certain
+            private insurers) have referral or authorization requirements that go beyond state law.
+            These are your responsibility to follow.
+          </li>
+          <li>
+            <B>Scope of practice</B> — Ensure you are practicing within the scope defined by your
+            state licensure board and professional credentials.
+          </li>
+          <li>
+            <B>Institutional policies</B> — If you work within a facility or agency, their policies
+            may impose additional requirements beyond state and payer rules.
+          </li>
+          <li>
+            <B>Consulting legal counsel</B> — For questions about specific regulatory situations,
+            consult a healthcare attorney or your professional licensing board.
+          </li>
+        </ul>
+      </>
+    ),
+  },
+
+  /* 4 — Your Data: Backups, Uninstall & Reinstall ------------------ */
   {
     id: 'data-backup-uninstall',
     icon: <HardDrive className="w-5 h-5 text-[var(--color-primary)]" />,
@@ -259,6 +391,16 @@ const allSections: HelpSectionData[] = [
           </li>
         </ul>
 
+        <div className="mt-2 p-3 bg-blue-50 rounded-lg border border-blue-200">
+          <p className="text-xs text-blue-800">
+            <B>Single-device use:</B> PocketChart is designed to be used on one computer at a time.
+            Do not copy the database file to a second computer and work on both simultaneously —
+            this creates two divergent medical records that cannot be merged. If you need to switch
+            computers, always export your database from the old machine first, then set up the new
+            machine with that export.
+          </p>
+        </div>
+
         <p className="font-medium text-[var(--color-text)] mt-3">Backup best practices</p>
         <ul className="list-disc list-inside space-y-1.5 ml-1">
           <li>
@@ -273,6 +415,33 @@ const allSections: HelpSectionData[] = [
             For automatic off-site backup, set your PocketChart data folder to a cloud-synced
             location (Google Drive, OneDrive, or Dropbox). The data will sync automatically every
             time you use the app.
+          </li>
+        </ul>
+
+        <p className="font-medium text-[var(--color-text)] mt-3">Solo practitioner continuity planning</p>
+        <ul className="list-disc list-inside space-y-1.5 ml-1">
+          <li>
+            As a solo practitioner, your PocketChart database may be the <B>only copy</B> of
+            your clients' clinical records. HIPAA requires that patients can access their records
+            even if you are unable to practice.
+          </li>
+          <li>
+            <B>Designate a trusted person</B> (spouse, attorney, or practice successor) who knows
+            the location of your database backups and how to access them in an emergency.
+          </li>
+          <li>
+            Keep a current database backup in a <B>secure location separate from your primary
+            computer</B> — such as an encrypted USB drive in a safe, or a HIPAA-compliant
+            cloud folder with BAA.
+          </li>
+          <li>
+            Consider documenting your PocketChart data location and PIN in your professional
+            estate plan or succession documents.
+          </li>
+          <li>
+            Remember: anyone with access to your database file can open it in PocketChart on
+            another computer. The backup <B>is</B> the continuity plan — keep it current and keep
+            it accessible to the right person.
           </li>
         </ul>
       </>
@@ -818,6 +987,22 @@ const allSections: HelpSectionData[] = [
             counts, date ranges, and remaining visits.
           </li>
         </ul>
+
+        <div className="mt-3 p-3 bg-amber-50 rounded-lg border border-amber-200">
+          <p className="text-xs text-amber-800">
+            <B>Important:</B> PocketChart ships with Medicare compliance thresholds current as of
+            February 2026 (progress reports every 10 visits or 30 days; recertification every 90 days).
+            CMS may update these requirements at any time. You can adjust thresholds per client in
+            their compliance settings. Verify current CMS requirements at{' '}
+            <button
+              className="text-amber-700 underline hover:text-amber-900"
+              onClick={() => window.api.shell.openExternal('https://www.cms.gov/Medicare/Billing/TherapyServices')}
+            >
+              cms.gov/Medicare/Billing/TherapyServices
+            </button>{' '}
+            and update your settings if needed.
+          </p>
+        </div>
       </div>
     ),
   },
@@ -940,6 +1125,37 @@ const allSections: HelpSectionData[] = [
             communications including date, time, participants, and a summary of what was discussed.
           </li>
         </ul>
+      </div>
+    ),
+  },
+
+  /* 20 — Getting Help & Support Scope -------------------------------- */
+  {
+    id: 'support-scope',
+    icon: <MessageCircle className="w-5 h-5 text-[var(--color-primary)]" />,
+    title: 'Getting Help & Support Scope',
+    keywords: ['support', 'help', 'contact', 'email', 'question', 'compliance', 'legal', 'advice'],
+    content: (
+      <div className="space-y-3">
+        <p>
+          For technical support, feature questions, or bug reports, email{' '}
+          <button
+            className="text-[var(--color-primary)] underline hover:opacity-80"
+            onClick={() => window.api.shell.openExternal('mailto:support@pocketchart.app')}
+          >
+            support@pocketchart.app
+          </button>.
+        </p>
+        <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
+          <p className="text-xs text-amber-800">
+            <B>Please note:</B> PocketChart support can help with how the software works — installation,
+            features, billing, and troubleshooting. We <B>cannot</B> provide guidance on clinical
+            documentation practices, Medicare/Medicaid compliance questions, state regulatory
+            requirements, HIPAA compliance for your practice, or legal advice of any kind. For these
+            questions, please consult your compliance officer, licensing board, professional association,
+            or legal counsel.
+          </p>
+        </div>
       </div>
     ),
   },

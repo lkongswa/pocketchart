@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Settings, Building2, User, Stethoscope, Info, Save, CheckCircle, Database, Download, FileSpreadsheet, HardDrive, FolderOpen, RotateCcw, Upload, Trash2, Image, Clock, AlertTriangle, Shield, Lock, PenLine, BookOpen, ChevronDown, ShieldCheck } from 'lucide-react';
-import type { Practice, Discipline, NoteFormat, CloudDetectionResult } from '../../shared/types';
+import { Settings, Building2, User, Stethoscope, Info, Save, CheckCircle, Database, Download, FileSpreadsheet, HardDrive, FolderOpen, RotateCcw, Upload, Trash2, Image, Clock, AlertTriangle, Shield, Lock, PenLine, BookOpen, ChevronDown, ShieldCheck, Key, Monitor, Loader2 } from 'lucide-react';
+import type { Practice, Discipline, NoteFormat, CloudDetectionResult, AppTier } from '../../shared/types';
 import { NOTE_FORMAT_LABELS, DISCIPLINE_DEFAULT_FORMAT } from '../../shared/types';
 import SignaturePad from '../components/SignaturePad';
 import GoalsBankPage from './GoalsBankPage';
 import NoteBankPage from './NoteBankPage';
 import BAAComplianceModal from '../components/BAAComplianceModal';
 import { useSectionColor } from '../hooks/useSectionColor';
+import { useTier } from '../hooks/useTier';
 
 // ── Collapsible Section Component ──
 interface CollapsibleSectionProps {
@@ -149,6 +150,18 @@ export default function SettingsPage() {
   // Cloud backup warning for export
   const [cloudExportWarning, setCloudExportWarning] = useState<string | null>(null);
 
+  // License & Activation state
+  const { tier, licenseStatus, refresh: refreshTier } = useTier();
+  const [activationUsage, setActivationUsage] = useState<number | null>(null);
+  const [activationLimit, setActivationLimit] = useState<number>(2);
+  const [activationLoading, setActivationLoading] = useState(false);
+  const [deactivating, setDeactivating] = useState(false);
+  const [confirmDeactivate, setConfirmDeactivate] = useState(false);
+  const [licenseKeyInput, setLicenseKeyInput] = useState('');
+  const [licenseActivating, setLicenseActivating] = useState(false);
+  const [licenseError, setLicenseError] = useState('');
+  const [licenseSuccess, setLicenseSuccess] = useState('');
+
   const loadLogoPreview = useCallback(async () => {
     try {
       const base64 = await window.api.logo.getBase64();
@@ -182,7 +195,64 @@ export default function SettingsPage() {
     window.api.security.isPinEnabled().then(setPinEnabled).catch(console.error);
     window.api.security.getTimeoutMinutes().then(setAutoTimeoutMinutes).catch(console.error);
     window.api.app.getVersion().then(setAppVersion).catch(console.error);
+    // Load activation info
+    loadActivationInfo();
   }, [loadLogoPreview]);
+
+  const loadActivationInfo = async () => {
+    setActivationLoading(true);
+    try {
+      const info = await window.api.license.getActivationInfo();
+      setActivationUsage(info.activationUsage);
+      setActivationLimit(info.activationLimit);
+    } catch {
+      setActivationUsage(null);
+    } finally {
+      setActivationLoading(false);
+    }
+  };
+
+  const handleLicenseActivate = async () => {
+    const key = licenseKeyInput.trim();
+    if (!key) { setLicenseError('Please enter a license key.'); return; }
+    setLicenseActivating(true);
+    setLicenseError('');
+    setLicenseSuccess('');
+    try {
+      const result = await window.api.license.activate(key);
+      if (result.success) {
+        setLicenseSuccess('License activated successfully!');
+        setLicenseKeyInput('');
+        refreshTier();
+        loadActivationInfo();
+        window.dispatchEvent(new CustomEvent('pocketchart:tier-changed'));
+      } else {
+        setLicenseError(result.error || 'Activation failed.');
+      }
+    } catch (err: any) {
+      setLicenseError(err?.message || 'Activation failed.');
+    } finally {
+      setLicenseActivating(false);
+    }
+  };
+
+  const handleDeactivateDevice = async () => {
+    setDeactivating(true);
+    try {
+      await window.api.license.deactivate();
+      setConfirmDeactivate(false);
+      setLicenseSuccess('');
+      setLicenseError('');
+      refreshTier();
+      loadActivationInfo();
+      window.dispatchEvent(new CustomEvent('pocketchart:tier-changed'));
+      setToast('License deactivated from this device.');
+    } catch (err: any) {
+      setLicenseError(err?.message || 'Deactivation failed.');
+    } finally {
+      setDeactivating(false);
+    }
+  };
 
   useEffect(() => {
     if (toast) {
@@ -1068,6 +1138,142 @@ export default function SettingsPage() {
       </CollapsibleSection>
 
       {/* About PocketChart */}
+      {/* License & Activation */}
+      <CollapsibleSection
+        icon={<Key className="w-5 h-5" />}
+        title="License & Activation"
+        description={tier === 'unlicensed' ? 'No active license' : `${tier.charAt(0).toUpperCase() + tier.slice(1)} plan active`}
+      >
+        <div className="space-y-4">
+          {/* Current status */}
+          {tier !== 'unlicensed' ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-green-500" />
+                <span className="text-sm font-medium text-[var(--color-text)]">
+                  PocketChart {tier === 'pro' ? 'Pro' : 'Basic'} — Active
+                </span>
+              </div>
+
+              {licenseStatus?.licenseKey && (
+                <p className="text-xs text-[var(--color-text-secondary)]">
+                  License: {licenseStatus.licenseKey.slice(0, 8)}...{licenseStatus.licenseKey.slice(-4)}
+                </p>
+              )}
+
+              {/* Activation count */}
+              <div className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
+                <Monitor className="w-3.5 h-3.5" />
+                {activationLoading ? (
+                  <span>Checking device count...</span>
+                ) : activationUsage !== null ? (
+                  <span>Activated on {activationUsage} of {activationLimit} devices</span>
+                ) : (
+                  <span className="text-amber-600">Activation info unavailable — check internet connection</span>
+                )}
+              </div>
+
+              {licenseStatus?.subscriptionStatus && (
+                <p className="text-xs text-[var(--color-text-secondary)]">
+                  Subscription: {licenseStatus.subscriptionStatus === 'active' ? (
+                    <span className="text-green-600 font-medium">Active</span>
+                  ) : licenseStatus.subscriptionStatus === 'expired' ? (
+                    <span className="text-amber-600 font-medium">Expired</span>
+                  ) : (
+                    <span className="text-red-600 font-medium">Cancelled</span>
+                  )}
+                  {licenseStatus.subscriptionExpiresAt && (
+                    <> — Renews {new Date(licenseStatus.subscriptionExpiresAt).toLocaleDateString()}</>
+                  )}
+                </p>
+              )}
+
+              {/* Deactivate this device */}
+              {!confirmDeactivate ? (
+                <button
+                  className="text-xs text-red-600 hover:text-red-700 hover:underline mt-2"
+                  onClick={() => setConfirmDeactivate(true)}
+                >
+                  Deactivate This Device
+                </button>
+              ) : (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg space-y-3 mt-2">
+                  <p className="text-sm font-medium text-red-800">Deactivate this device?</p>
+                  <p className="text-xs text-red-700">
+                    This will remove your PocketChart license from this computer and free up
+                    an activation slot. Your data will remain on this device, but you'll need
+                    to re-enter your license key to unlock features again.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="btn-sm text-xs px-3 py-1.5 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg hover:bg-gray-100"
+                      onClick={() => setConfirmDeactivate(false)}
+                      disabled={deactivating}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className="btn-sm text-xs px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center gap-1.5"
+                      onClick={handleDeactivateDevice}
+                      disabled={deactivating}
+                    >
+                      {deactivating && <Loader2 className="w-3 h-3 animate-spin" />}
+                      {deactivating ? 'Deactivating...' : 'Deactivate'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            /* Unlicensed — show activation form */
+            <div className="space-y-3">
+              <p className="text-sm text-[var(--color-text-secondary)]">
+                Enter your license key to activate PocketChart.
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  className="input flex-1"
+                  placeholder="Enter license key"
+                  value={licenseKeyInput}
+                  onChange={(e) => setLicenseKeyInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleLicenseActivate()}
+                  disabled={licenseActivating}
+                />
+                <button
+                  className="btn-primary btn-sm flex items-center gap-1.5 px-4"
+                  onClick={handleLicenseActivate}
+                  disabled={licenseActivating}
+                >
+                  {licenseActivating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Key className="w-3.5 h-3.5" />}
+                  {licenseActivating ? 'Activating...' : 'Activate'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Feedback messages */}
+          {licenseError && (
+            <div className={`p-3 rounded-lg text-xs ${
+              licenseError.includes('already active on') ? 'bg-amber-50 border border-amber-200 text-amber-800' : 'bg-red-50 border border-red-200 text-red-700'
+            }`}>
+              {licenseError}
+              {licenseError.includes('already active on') && (
+                <p className="mt-2 text-amber-700">
+                  To use PocketChart on this computer, deactivate one of your other devices first
+                  (Settings → License → Deactivate This Device), then enter your license key here again.
+                </p>
+              )}
+            </div>
+          )}
+          {licenseSuccess && (
+            <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
+              {licenseSuccess}
+            </div>
+          )}
+        </div>
+      </CollapsibleSection>
+
       <CollapsibleSection
         icon={<Info className="w-5 h-5" />}
         title="About PocketChart"

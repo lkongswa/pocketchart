@@ -177,6 +177,7 @@ const api = {
     getStatus: () => ipcRenderer.invoke('license:getStatus'),
     activate: (licenseKey: string) => ipcRenderer.invoke('license:activate', licenseKey),
     deactivate: () => ipcRenderer.invoke('license:deactivate'),
+    getActivationInfo: () => ipcRenderer.invoke('license:getActivationInfo'),
   },
 
   // Secure Storage (OS-level encryption for API keys, etc.)
