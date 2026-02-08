@@ -53,6 +53,8 @@ const api = {
     create: (data: any) => ipcRenderer.invoke('notes:create', data),
     update: (id: number, data: any) => ipcRenderer.invoke('notes:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('notes:delete', id),
+    getEpisodeSummary: (clientId: number) => ipcRenderer.invoke('notes:getEpisodeSummary', clientId),
+    getUnbilledForClient: (clientId: number) => ipcRenderer.invoke('notes:getUnbilledForClient', clientId),
   },
 
   // Evaluations

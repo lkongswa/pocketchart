@@ -55,6 +55,7 @@ interface ClientFormModalProps {
   onClose: () => void;
   client?: Client | null;
   onSave: (client: Client) => void;
+  onDischarge?: () => void;
 }
 
 interface FormData {
@@ -134,6 +135,7 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
   onClose,
   client,
   onSave,
+  onDischarge,
 }) => {
   const [form, setForm] = useState<FormData>(emptyForm);
   const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>({});
@@ -199,6 +201,21 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => {
     const { name, value } = e.target;
+
+    // Status change intercept: prompt for discharge summary
+    if (name === 'status' && value === 'discharged' && form.status !== 'discharged' && onDischarge) {
+      const createSummary = window.confirm(
+        'Would you like to create a discharge summary?\n\n' +
+        'A discharge summary documents final goal statuses, outcomes, and recommendations.\n\n' +
+        'Click OK to create one, or Cancel to change status without a summary.'
+      );
+      if (createSummary) {
+        onClose();
+        onDischarge();
+        return;
+      }
+    }
+
     setForm((prev) => ({ ...prev, [name]: value }));
     if (errors[name as keyof FormData]) {
       setErrors((prev) => ({ ...prev, [name]: undefined }));

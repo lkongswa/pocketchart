@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import type { Client, Evaluation, Discipline, GoalType, EvalGoalEntry, GoalsBankEntry } from '../../shared/types';
 import SignaturePad from '../components/SignaturePad';
+import SignConfirmDialog from '../components/SignConfirmDialog';
 
 // ── Types ──
 
@@ -404,6 +405,9 @@ export default function EvalFormPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [signDialogOpen, setSignDialogOpen] = useState(false);
+  const [signDialogErrors, setSignDialogErrors] = useState<string[]>([]);
+  const [signDialogWarnings, setSignDialogWarnings] = useState<string[]>([]);
 
   const [evalDate, setEvalDate] = useState(todayISO());
   const [content, setContent] = useState<EvalContent | null>(null);
@@ -875,22 +879,47 @@ export default function EvalFormPage() {
 
   // ── Save ──
 
+  /** Pre-sign validation for evaluations */
+  const runSignValidation = (): { errors: string[]; warnings: string[] } => {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+
+    if (!content) {
+      errors.push('Evaluation content is empty.');
+      return { errors, warnings };
+    }
+
+    // Required fields that block signing
+    if (goalEntries.length === 0 && !content.goals?.trim()) {
+      errors.push('At least one goal is required before signing.');
+    }
+
+    // Check for unfilled template blanks in goals
+    const hasUnfilledBlanks = goalEntries.some(g => g.goal_text.includes('___'));
+    if (hasUnfilledBlanks) {
+      errors.push('Some goals have unfilled template blanks (___). Please complete all goals before signing.');
+    }
+
+    // Non-blocking warnings
+    if (!content.clinical_impression?.trim()) warnings.push('Clinical Impression is empty.');
+    if (!content.frequency_duration?.trim()) warnings.push('Frequency & Duration is empty.');
+
+    if (!signatureTyped.trim()) {
+      warnings.push('Provider signature name is not set. Update it in Settings > Provider Information.');
+    }
+
+    return { errors, warnings };
+  };
+
+  const handleSignClick = () => {
+    const { errors, warnings } = runSignValidation();
+    setSignDialogErrors(errors);
+    setSignDialogWarnings(warnings);
+    setSignDialogOpen(true);
+  };
+
   const handleSave = async (sign: boolean) => {
     if (!clientId || !client || !content) return;
-
-    // Soft validation before signing — warn about missing critical fields
-    if (sign) {
-      const missingFields: string[] = [];
-      if (!content.clinical_impression?.trim()) missingFields.push('Clinical Impression');
-      if (!content.frequency_duration?.trim()) missingFields.push('Frequency & Duration');
-      if (goalEntries.length === 0 && !content.goals?.trim()) missingFields.push('Goals');
-      if (missingFields.length > 0) {
-        const proceed = window.confirm(
-          `The following fields are empty:\n\n• ${missingFields.join('\n• ')}\n\nThese are important for compliance. Sign anyway?`
-        );
-        if (!proceed) return;
-      }
-    }
 
     try {
       setSaving(true);
@@ -1672,7 +1701,7 @@ export default function EvalFormPage() {
             Cancel
           </button>
           <button
-            className="btn-secondary flex items-center gap-2"
+            className="btn-primary flex items-center gap-2"
             onClick={() => handleSave(false)}
             disabled={saving}
           >
@@ -1680,16 +1709,28 @@ export default function EvalFormPage() {
             {saving ? 'Saving...' : 'Save Draft'}
           </button>
           <button
-            className="btn-primary flex items-center gap-2"
-            onClick={() => handleSave(true)}
-            disabled={saving}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border-2 border-amber-500 text-amber-700 bg-white hover:bg-amber-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={handleSignClick}
+            disabled={saving || Boolean(existingSignedAt)}
           >
             <CheckCircle className="w-4 h-4" />
-            {saving ? 'Saving...' : 'Sign & Save'}
+            {saving ? 'Saving...' : 'Sign & Finalize'}
           </button>
           </div>
         </div>
       </div>
+
+      {/* Sign Confirmation Dialog */}
+      <SignConfirmDialog
+        isOpen={signDialogOpen}
+        onClose={() => setSignDialogOpen(false)}
+        onConfirm={() => {
+          setSignDialogOpen(false);
+          handleSave(true);
+        }}
+        errors={signDialogErrors}
+        warnings={signDialogWarnings}
+      />
     </div>
   );
 }

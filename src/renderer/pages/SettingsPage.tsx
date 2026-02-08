@@ -391,7 +391,7 @@ export default function SettingsPage() {
       setExporting(true);
       const result = await window.api.backup.exportAllChartsPdf();
       if (result) {
-        setToast(`Exported ${result.clientCount} client charts to ZIP`);
+        setToast(`Exported ${result.documentCount} documents for ${result.clientCount} clients`);
       }
     } catch (err: any) {
       console.error('Failed to export charts:', err);
@@ -1027,7 +1027,7 @@ export default function SettingsPage() {
             </button>
             <button className="btn-secondary gap-2" onClick={handleExportAllCharts} disabled={exporting}>
               <Download className="w-4 h-4" />
-              {exporting ? 'Exporting...' : 'Export All Charts (ZIP)'}
+              {exporting ? 'Exporting...' : 'Export All Charts (PDFs)'}
             </button>
           </div>
 

@@ -39,6 +39,8 @@ import PinLockScreen from './components/PinLockScreen';
 import ErrorBoundary from './components/ErrorBoundary';
 import OnboardingScreen from './components/OnboardingScreen';
 import UpdateNotification from './components/UpdateNotification';
+import UnlicensedLandingPage from './components/UnlicensedLandingPage';
+import { useTier } from './hooks/useTier';
 
 interface NavItem {
   to: string;
@@ -299,6 +301,7 @@ const App: React.FC = () => {
   const [initialLoading, setInitialLoading] = useState(true);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const lastActivityRef = useRef<number>(Date.now());
+  const { tier, loading: tierLoading } = useTier();
 
   // Initialize lock state on mount
   useEffect(() => {
@@ -396,7 +399,7 @@ const App: React.FC = () => {
     lastActivityRef.current = Date.now();
   };
 
-  if (initialLoading) {
+  if (initialLoading || tierLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[var(--color-bg)]">
         <div className="text-[var(--color-text-secondary)]">Loading...</div>
@@ -416,6 +419,15 @@ const App: React.FC = () => {
       }
     } catch {}
   };
+
+  // Unlicensed users see only the activation/export landing page
+  if (tier === 'unlicensed' && !showOnboarding) {
+    return (
+      <ErrorBoundary>
+        <UnlicensedLandingPage />
+      </ErrorBoundary>
+    );
+  }
 
   return (
     <ErrorBoundary>

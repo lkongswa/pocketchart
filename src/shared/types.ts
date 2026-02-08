@@ -257,6 +257,7 @@ export interface Note {
   note_type: 'soap' | 'progress_report' | 'recertification' | 'discharge';
   patient_name: string;
   progress_report_data: string;          // JSON ProgressReportData
+  discharge_data: string;                // JSON DischargeData
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -575,6 +576,92 @@ export interface ProgressReportData {
   visits_in_period: number;
 }
 
+// ── Discharge Summary Types ──
+
+export type NoteMode = 'soap' | 'progress_report' | 'discharge';
+
+export type DischargeReason =
+  | 'goals_met'
+  | 'patient_choice'
+  | 'non_compliance'
+  | 'moved'
+  | 'physician_order'
+  | 'auth_exhausted'
+  | 'referred_out'
+  | 'medical_change'
+  | 'other';
+
+export const DISCHARGE_REASON_LABELS: Record<DischargeReason, string> = {
+  goals_met: 'Goals met / max benefit reached',
+  patient_choice: 'Patient choice',
+  non_compliance: 'Non-compliance / attendance',
+  moved: 'Moved / relocated',
+  physician_order: 'Physician order to discharge',
+  auth_exhausted: 'Authorization / insurance exhausted',
+  referred_out: 'Referred to another provider',
+  medical_change: 'Medical status change',
+  other: 'Other',
+};
+
+export type DischargeGoalStatus = 'met' | 'partially_met' | 'not_met' | 'discontinued' | 'deferred';
+
+export const DISCHARGE_GOAL_STATUS_LABELS: Record<DischargeGoalStatus, string> = {
+  met: 'Met',
+  partially_met: 'Partially Met',
+  not_met: 'Not Met',
+  discontinued: 'Discontinued',
+  deferred: 'Deferred (referred out)',
+};
+
+export type DischargeRecommendation =
+  | 'home_program'
+  | 'caregiver_training'
+  | 'referral'
+  | 'return_to_therapy'
+  | 'follow_up_physician'
+  | 'equipment';
+
+export const DISCHARGE_RECOMMENDATION_LABELS: Record<DischargeRecommendation, string> = {
+  home_program: 'Home exercise program / home program provided',
+  caregiver_training: 'Caregiver / family training completed',
+  referral: 'Referral to another provider',
+  return_to_therapy: 'Return to therapy if condition changes',
+  follow_up_physician: 'Follow up with physician',
+  equipment: 'Equipment recommendations',
+};
+
+export interface DischargeData {
+  discharge_reason: DischargeReason;
+  discharge_reason_detail: string;
+  start_of_care: string;
+  discharge_date: string;
+  total_visits: number;
+  frequency_per_week: number | null;
+  duration_weeks: number | null;
+  frequency_notes: string;
+  primary_dx: string;
+  discipline: string;
+  prior_level_of_function: string;
+  current_level_of_function: string;
+  recommendations: DischargeRecommendation[];
+  referral_to: string;
+  return_to_therapy_if: string;
+  equipment_details: string;
+  additional_recommendations: string;
+  is_standalone: boolean;
+}
+
+export interface EpisodeSummary {
+  start_of_care: string | null;
+  total_visits: number;
+  frequency_per_week: number | null;
+  duration_weeks: number | null;
+  frequency_notes: string;
+  primary_dx_code: string;
+  primary_dx_description: string;
+  discipline: string;
+}
+
 // ── Mileage Types ──
 
 export interface MileageEntry {
@@ -855,6 +942,8 @@ export interface PocketChartAPI {
     create: (data: Partial<Note>) => Promise<Note>;
     update: (id: number, data: Partial<Note>) => Promise<Note>;
     delete: (id: number) => Promise<boolean>;
+    getEpisodeSummary: (clientId: number) => Promise<EpisodeSummary>;
+    getUnbilledForClient: (clientId: number) => Promise<Array<{ id: number; date_of_service: string; cpt_code: string; charge_amount: number; entity_id: number | null }>>;
   };
   evaluations: {
     listByClient: (clientId: number) => Promise<Evaluation[]>;
@@ -901,7 +990,7 @@ export interface PocketChartAPI {
     exportClientPdf: (data: { clientId: number }) => Promise<string>;
     savePdf: (data: { base64Pdf: string; defaultFilename: string }) => Promise<string | null>;
     exportCsv: () => Promise<string | null>;
-    exportAllChartsPdf: () => Promise<{ path: string; clientCount: number } | null>;
+    exportAllChartsPdf: () => Promise<{ path: string; clientCount: number; documentCount: number } | null>;
   };
   storage: {
     getDataPath: () => Promise<string>;

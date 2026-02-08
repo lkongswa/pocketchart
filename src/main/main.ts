@@ -11,8 +11,8 @@ import { autoUpdater } from 'electron-updater';
 import Stripe from 'stripe';
 import { requiresReferral as checkDirectAccess, getAllRules as getDirectAccessRules } from '../shared/directAccessRules';
 import { detectCloudStorage } from './cloudDetection';
-import type { AppTier, NoteFormat } from '../shared/types';
-import { NOTE_FORMAT_SECTIONS } from '../shared/types';
+import type { AppTier, NoteFormat, DischargeData, DischargeGoalStatus } from '../shared/types';
+import { NOTE_FORMAT_SECTIONS, DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS } from '../shared/types';
 
 // ── Secure Storage Helpers ──
 // Uses Electron's safeStorage API which leverages OS credential storage:
@@ -335,8 +335,47 @@ app.on('window-all-closed', () => {
   }
 });
 
+// ── Session & Audit ──
+const sessionId = crypto.randomUUID();
+const deviceIdentifier = os.hostname();
+
 function registerIpcHandlers() {
   const db = getDatabase();
+
+  // ── Audit Log Helper ──
+  function auditLog(params: {
+    actionType: string;
+    entityType: string;
+    entityId?: number | null;
+    clientId?: number | null;
+    detail?: Record<string, any> | null;
+    contentHash?: string | null;
+  }) {
+    try {
+      db.prepare(`
+        INSERT INTO audit_log (timestamp, user_id, user_role, session_id, action_type,
+          entity_type, entity_id, client_id, detail, content_hash, device_identifier)
+        VALUES (datetime('now'), 1, 'owner', ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        sessionId,
+        params.actionType,
+        params.entityType,
+        params.entityId ?? null,
+        params.clientId ?? null,
+        params.detail ? JSON.stringify(params.detail) : null,
+        params.contentHash ?? null,
+        deviceIdentifier
+      );
+    } catch (err) {
+      console.error('Audit log write failed:', err);
+    }
+  }
+
+  /** Compute SHA-256 of canonical JSON for content integrity */
+  function computeContentHash(content: Record<string, any>): string {
+    const canonical = JSON.stringify(content, Object.keys(content).sort());
+    return crypto.createHash('sha256').update(canonical).digest('hex');
+  }
 
   // ── App Info ──
   safeHandle('app:getVersion', () => {
@@ -426,10 +465,21 @@ function registerIpcHandlers() {
       data.insurance_group, data.referring_physician, data.referring_npi,
       data.status || 'active', data.discipline
     );
-    return db.prepare('SELECT * FROM clients WHERE id = ?').get(result.lastInsertRowid);
+    const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(result.lastInsertRowid) as any;
+    auditLog({ actionType: 'client_created', entityType: 'client', entityId: client.id, clientId: client.id });
+    return client;
   });
 
   safeHandle('clients:update', (_event, id: number, data) => {
+    // Track which fields changed for audit trail
+    const before = db.prepare('SELECT * FROM clients WHERE id = ?').get(id) as any;
+    const changedFields: string[] = [];
+    if (before) {
+      for (const key of ['first_name','last_name','dob','phone','email','address','primary_dx_code','primary_dx_description','status','discipline']) {
+        if (before[key] !== data[key]) changedFields.push(key);
+      }
+    }
+
     db.prepare(`
       UPDATE clients SET first_name=?, last_name=?, dob=?, phone=?, email=?, address=?,
         primary_dx_code=?, primary_dx_description=?, secondary_dx=?, default_cpt_code=?,
@@ -444,6 +494,11 @@ function registerIpcHandlers() {
       data.insurance_group, data.referring_physician, data.referring_npi,
       data.status, data.discipline, id
     );
+
+    if (changedFields.length > 0) {
+      auditLog({ actionType: 'client_modified', entityType: 'client', entityId: id, clientId: id, detail: { fields_changed: changedFields } });
+    }
+
     return db.prepare('SELECT * FROM clients WHERE id = ?').get(id);
   });
 
@@ -452,6 +507,7 @@ function registerIpcHandlers() {
     db.prepare(
       "UPDATE clients SET status = 'discharged', deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL"
     ).run(id);
+    auditLog({ actionType: 'client_archived', entityType: 'client', entityId: id, clientId: id });
     return true;
   });
 
@@ -468,21 +524,37 @@ function registerIpcHandlers() {
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(data.client_id, data.goal_text, data.goal_type, data.category,
       data.status || 'active', data.target_date);
-    return db.prepare('SELECT * FROM goals WHERE id = ?').get(result.lastInsertRowid);
+    const goal = db.prepare('SELECT * FROM goals WHERE id = ?').get(result.lastInsertRowid) as any;
+    auditLog({ actionType: 'goal_created', entityType: 'goal', entityId: goal.id, clientId: data.client_id });
+    return goal;
   });
 
   safeHandle('goals:update', (_event, id: number, data) => {
+    const before = db.prepare('SELECT status, client_id FROM goals WHERE id = ?').get(id) as any;
     db.prepare(`
       UPDATE goals SET goal_text=?, goal_type=?, category=?, status=?, target_date=?, met_date=?
       WHERE id=? AND deleted_at IS NULL
     `).run(data.goal_text, data.goal_type, data.category, data.status,
       data.target_date, data.met_date, id);
-    return db.prepare('SELECT * FROM goals WHERE id = ?').get(id);
+    const goal = db.prepare('SELECT * FROM goals WHERE id = ?').get(id) as any;
+
+    // Determine specific audit action
+    if (data.status === 'met' && before?.status !== 'met') {
+      auditLog({ actionType: 'goal_met', entityType: 'goal', entityId: id, clientId: before?.client_id });
+    } else if (data.status === 'discontinued' && before?.status !== 'discontinued') {
+      auditLog({ actionType: 'goal_discontinued', entityType: 'goal', entityId: id, clientId: before?.client_id });
+    } else {
+      auditLog({ actionType: 'goal_modified', entityType: 'goal', entityId: id, clientId: before?.client_id });
+    }
+
+    return goal;
   });
 
   // Soft delete
   safeHandle('goals:delete', (_event, id: number) => {
+    const goal = db.prepare('SELECT client_id FROM goals WHERE id = ?').get(id) as any;
     db.prepare('UPDATE goals SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL').run(id);
+    auditLog({ actionType: 'goal_discontinued', entityType: 'goal', entityId: id, clientId: goal?.client_id });
     return true;
   });
 
@@ -620,8 +692,8 @@ function registerIpcHandlers() {
         cpt_modifiers, charge_amount, place_of_service, diagnosis_pointers,
         entity_id, rate_override, rate_override_reason,
         frequency_per_week, duration_weeks, frequency_notes, note_type, patient_name,
-        progress_report_data)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        progress_report_data, discharge_data)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.client_id, data.date_of_service, data.time_in, data.time_out, data.units,
       data.cpt_code, data.subjective, data.objective, data.assessment, data.plan,
@@ -633,10 +705,20 @@ function registerIpcHandlers() {
       data.entity_id || null, data.rate_override || null, data.rate_override_reason || '',
       data.frequency_per_week || null, data.duration_weeks || null,
       data.frequency_notes || '', data.note_type || 'soap', data.patient_name || '',
-      data.progress_report_data || ''
+      data.progress_report_data || '', data.discharge_data || ''
     );
 
     const note = db.prepare('SELECT * FROM notes WHERE id = ?').get(result.lastInsertRowid) as any;
+
+    // Audit logging
+    if (data.signed_at) {
+      const hash = computeContentHash({ subjective: data.subjective, objective: data.objective, assessment: data.assessment, plan: data.plan });
+      db.prepare('UPDATE notes SET content_hash = ? WHERE id = ?').run(hash, note.id);
+      auditLog({ actionType: 'note_created', entityType: 'note', entityId: note.id, clientId: data.client_id, contentHash: hash });
+      auditLog({ actionType: 'note_signed', entityType: 'note', entityId: note.id, clientId: data.client_id, contentHash: hash });
+    } else {
+      auditLog({ actionType: 'note_created', entityType: 'note', entityId: note.id, clientId: data.client_id });
+    }
 
     // If note is signed, update compliance tracking
     if (data.signed_at && data.client_id) {
@@ -654,6 +736,24 @@ function registerIpcHandlers() {
                   updated_at = CURRENT_TIMESTAMP
               WHERE client_id = ?
             `).run(now, now, data.client_id);
+          } else if (data.note_type === 'discharge') {
+            // Discharge: close out compliance tracking entirely
+            db.prepare(`
+              UPDATE compliance_tracking
+              SET tracking_enabled = 0, updated_at = CURRENT_TIMESTAMP
+              WHERE client_id = ?
+            `).run(data.client_id);
+            // Dismiss any remaining staged goals
+            db.prepare(`
+              UPDATE staged_goals
+              SET status = 'dismissed', dismissed_at = datetime('now'), dismiss_reason = 'Client discharged'
+              WHERE client_id = ? AND status = 'staged'
+            `).run(data.client_id);
+            // Set client status to discharged
+            db.prepare(`
+              UPDATE clients SET status = 'discharged', updated_at = CURRENT_TIMESTAMP
+              WHERE id = ? AND deleted_at IS NULL
+            `).run(data.client_id);
           } else {
             db.prepare(`
               UPDATE compliance_tracking
@@ -662,6 +762,19 @@ function registerIpcHandlers() {
               WHERE client_id = ?
             `).run(data.client_id);
           }
+        }
+        // Discharge handling even if compliance not enabled
+        if (data.note_type === 'discharge' && !compliance?.tracking_enabled) {
+          try {
+            db.prepare(`
+              UPDATE staged_goals SET status = 'dismissed', dismissed_at = datetime('now'), dismiss_reason = 'Client discharged'
+              WHERE client_id = ? AND status = 'staged'
+            `).run(data.client_id);
+            db.prepare(`
+              UPDATE clients SET status = 'discharged', updated_at = CURRENT_TIMESTAMP
+              WHERE id = ? AND deleted_at IS NULL
+            `).run(data.client_id);
+          } catch { /* graceful */ }
         }
       } catch { /* compliance tracking may not exist yet */ }
     }
@@ -682,7 +795,7 @@ function registerIpcHandlers() {
         rendering_provider_npi=?,
         entity_id=?, rate_override=?, rate_override_reason=?,
         frequency_per_week=?, duration_weeks=?, frequency_notes=?, note_type=?,
-        patient_name=?, progress_report_data=?,
+        patient_name=?, progress_report_data=?, discharge_data=?,
         updated_at=CURRENT_TIMESTAMP
       WHERE id=? AND deleted_at IS NULL
     `).run(
@@ -696,9 +809,19 @@ function registerIpcHandlers() {
       data.entity_id || null, data.rate_override || null, data.rate_override_reason || '',
       data.frequency_per_week || null, data.duration_weeks || null,
       data.frequency_notes || '', data.note_type || 'soap',
-      data.patient_name || '', data.progress_report_data || '',
+      data.patient_name || '', data.progress_report_data || '', data.discharge_data || '',
       id
     );
+
+    // Audit logging
+    const clientId = existingNote?.client_id || data.client_id;
+    if (isNewlySignedNote) {
+      const hash = computeContentHash({ subjective: data.subjective, objective: data.objective, assessment: data.assessment, plan: data.plan });
+      db.prepare('UPDATE notes SET content_hash = ? WHERE id = ?').run(hash, id);
+      auditLog({ actionType: 'note_signed', entityType: 'note', entityId: id, clientId, contentHash: hash });
+    } else {
+      auditLog({ actionType: 'note_draft_saved', entityType: 'note', entityId: id, clientId });
+    }
 
     // If note was just signed, update compliance tracking
     if (isNewlySignedNote && existingNote?.client_id) {
@@ -716,6 +839,24 @@ function registerIpcHandlers() {
                   updated_at = CURRENT_TIMESTAMP
               WHERE client_id = ?
             `).run(now, now, existingNote.client_id);
+          } else if (data.note_type === 'discharge') {
+            // Discharge: close out compliance tracking entirely
+            db.prepare(`
+              UPDATE compliance_tracking
+              SET tracking_enabled = 0, updated_at = CURRENT_TIMESTAMP
+              WHERE client_id = ?
+            `).run(existingNote.client_id);
+            // Dismiss any remaining staged goals
+            db.prepare(`
+              UPDATE staged_goals
+              SET status = 'dismissed', dismissed_at = datetime('now'), dismiss_reason = 'Client discharged'
+              WHERE client_id = ? AND status = 'staged'
+            `).run(existingNote.client_id);
+            // Set client status to discharged
+            db.prepare(`
+              UPDATE clients SET status = 'discharged', updated_at = CURRENT_TIMESTAMP
+              WHERE id = ? AND deleted_at IS NULL
+            `).run(existingNote.client_id);
           } else {
             db.prepare(`
               UPDATE compliance_tracking
@@ -724,6 +865,19 @@ function registerIpcHandlers() {
               WHERE client_id = ?
             `).run(existingNote.client_id);
           }
+        }
+        // Discharge handling even if compliance not enabled
+        if (data.note_type === 'discharge' && !compliance?.tracking_enabled) {
+          try {
+            db.prepare(`
+              UPDATE staged_goals SET status = 'dismissed', dismissed_at = datetime('now'), dismiss_reason = 'Client discharged'
+              WHERE client_id = ? AND status = 'staged'
+            `).run(existingNote.client_id);
+            db.prepare(`
+              UPDATE clients SET status = 'discharged', updated_at = CURRENT_TIMESTAMP
+              WHERE id = ? AND deleted_at IS NULL
+            `).run(existingNote.client_id);
+          } catch { /* graceful */ }
         }
       } catch { /* compliance tracking may not exist yet */ }
     }
@@ -735,6 +889,52 @@ function registerIpcHandlers() {
   safeHandle('notes:delete', (_event, id: number) => {
     db.prepare('UPDATE notes SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL').run(id);
     return true;
+  });
+
+  // Episode summary for discharge auto-population
+  safeHandle('notes:getEpisodeSummary', (_event, clientId: number) => {
+    const firstEval = db.prepare(
+      'SELECT eval_date FROM evaluations WHERE client_id = ? AND deleted_at IS NULL ORDER BY eval_date ASC LIMIT 1'
+    ).get(clientId) as any;
+
+    const firstNote = db.prepare(
+      'SELECT date_of_service FROM notes WHERE client_id = ? AND deleted_at IS NULL ORDER BY date_of_service ASC LIMIT 1'
+    ).get(clientId) as any;
+
+    const visitCount = db.prepare(
+      'SELECT COUNT(*) as count FROM notes WHERE client_id = ? AND signed_at IS NOT NULL AND deleted_at IS NULL'
+    ).get(clientId) as any;
+
+    const freqData = db.prepare(
+      'SELECT frequency_per_week, duration_weeks, frequency_notes FROM notes WHERE client_id = ? AND frequency_per_week IS NOT NULL AND deleted_at IS NULL ORDER BY date_of_service DESC LIMIT 1'
+    ).get(clientId) as any;
+
+    const client = db.prepare(
+      'SELECT primary_dx_code, primary_dx_description, discipline FROM clients WHERE id = ?'
+    ).get(clientId) as any;
+
+    return {
+      start_of_care: firstEval?.eval_date || firstNote?.date_of_service || null,
+      total_visits: visitCount?.count || 0,
+      frequency_per_week: freqData?.frequency_per_week || null,
+      duration_weeks: freqData?.duration_weeks || null,
+      frequency_notes: freqData?.frequency_notes || '',
+      primary_dx_code: client?.primary_dx_code || '',
+      primary_dx_description: client?.primary_dx_description || '',
+      discipline: client?.discipline || '',
+    };
+  });
+
+  // Check for unbilled notes (for discharge final invoice prompt)
+  safeHandle('notes:getUnbilledForClient', (_event, clientId: number) => {
+    return db.prepare(`
+      SELECT n.id, n.date_of_service, n.cpt_code, n.charge_amount, n.entity_id
+      FROM notes n
+      WHERE n.client_id = ? AND n.signed_at IS NOT NULL AND n.deleted_at IS NULL
+        AND n.charge_amount > 0
+        AND n.id NOT IN (SELECT DISTINCT note_id FROM invoice_items WHERE note_id IS NOT NULL)
+      ORDER BY n.date_of_service DESC
+    `).all(clientId);
   });
 
   // ── Evaluations ──
@@ -755,10 +955,25 @@ function registerIpcHandlers() {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(data.client_id, data.eval_date, data.discipline, data.content, data.signed_at,
       data.signature_image || '', data.signature_typed || '', data.eval_type || 'initial');
-    return db.prepare('SELECT * FROM evaluations WHERE id = ?').get(result.lastInsertRowid);
+    const evalRecord = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(result.lastInsertRowid) as any;
+
+    // Audit logging
+    if (data.signed_at) {
+      const hash = computeContentHash(JSON.parse(data.content || '{}'));
+      db.prepare('UPDATE evaluations SET content_hash = ? WHERE id = ?').run(hash, evalRecord.id);
+      auditLog({ actionType: 'eval_created', entityType: 'evaluation', entityId: evalRecord.id, clientId: data.client_id, contentHash: hash });
+      auditLog({ actionType: 'eval_signed', entityType: 'evaluation', entityId: evalRecord.id, clientId: data.client_id, contentHash: hash });
+    } else {
+      auditLog({ actionType: 'eval_created', entityType: 'evaluation', entityId: evalRecord.id, clientId: data.client_id });
+    }
+
+    return evalRecord;
   });
 
   safeHandle('evaluations:update', (_event, id: number, data) => {
+    const existingEval = db.prepare('SELECT signed_at, client_id FROM evaluations WHERE id = ?').get(id) as any;
+    const isNewlySigned = !existingEval?.signed_at && data.signed_at;
+
     db.prepare(`
       UPDATE evaluations SET eval_date=?, discipline=?, content=?, signed_at=?,
         signature_image=?, signature_typed=?, eval_type=COALESCE(?, eval_type),
@@ -766,6 +981,17 @@ function registerIpcHandlers() {
       WHERE id=? AND deleted_at IS NULL
     `).run(data.eval_date, data.discipline, data.content, data.signed_at,
       data.signature_image || '', data.signature_typed || '', data.eval_type || null, id);
+
+    // Audit logging
+    const clientId = existingEval?.client_id || data.client_id;
+    if (isNewlySigned) {
+      const hash = computeContentHash(JSON.parse(data.content || '{}'));
+      db.prepare('UPDATE evaluations SET content_hash = ? WHERE id = ?').run(hash, id);
+      auditLog({ actionType: 'eval_signed', entityType: 'evaluation', entityId: id, clientId, contentHash: hash });
+    } else {
+      auditLog({ actionType: 'eval_draft_saved', entityType: 'evaluation', entityId: id, clientId });
+    }
+
     return db.prepare('SELECT * FROM evaluations WHERE id = ?').get(id);
   });
 
@@ -1448,12 +1674,12 @@ function registerIpcHandlers() {
         subscriptionStatus = 'active';
       } else if (data.license_key?.status === 'expired') {
         subscriptionStatus = 'expired';
-        // Pro subscription expired → unlicensed (they never paid for Basic)
-        if (tier === 'pro') tier = 'unlicensed';
+        // Pro subscription expired → basic (they still own the documentation tool)
+        if (tier === 'pro') tier = 'basic';
       } else if (data.license_key?.status === 'disabled') {
         subscriptionStatus = 'cancelled';
-        // Pro subscription cancelled → unlicensed
-        if (tier === 'pro') tier = 'unlicensed';
+        // Pro subscription cancelled → basic (they still own the documentation tool)
+        if (tier === 'pro') tier = 'basic';
       }
 
       if (data.license_key?.expires_at) {
@@ -1609,6 +1835,7 @@ function registerIpcHandlers() {
     fs.copyFileSync(dbPath, filePath);
     // Stamp the last backup date so the dashboard can show reminders
     db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_backup_date', ?)").run(new Date().toISOString());
+    auditLog({ actionType: 'bulk_export_performed', entityType: 'backup', detail: { export_type: 'database' } });
     return filePath;
   });
 
@@ -1618,6 +1845,7 @@ function registerIpcHandlers() {
 
   safeHandle('backup:exportClientPdf', (_event, { clientId }: { clientId: number }) => {
     const pdfBuffer = buildClientChartPdf(clientId);
+    auditLog({ actionType: 'chart_exported', entityType: 'client', entityId: clientId, clientId, detail: { export_type: 'clinical' } });
     return pdfBuffer.toString('base64');
   });
 
@@ -1626,37 +1854,75 @@ function registerIpcHandlers() {
     if (clients.length === 0) throw new Error('No clients to export');
 
     const today = new Date().toISOString().slice(0, 10);
-    const { canceled, filePath } = await dialog.showSaveDialog({
-      title: 'Export All Client Charts',
-      defaultPath: `pocketchart_charts_${today}.zip`,
-      filters: [{ name: 'ZIP Archive', extensions: ['zip'] }],
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: 'Choose Export Folder',
+      properties: ['openDirectory'],
     });
-    if (canceled || !filePath) return null;
+    if (canceled || !filePaths?.[0]) return null;
 
-    return new Promise<{ path: string; clientCount: number }>((resolve, reject) => {
-      const output = fs.createWriteStream(filePath);
-      const archive = archiver('zip', { zlib: { level: 5 } });
+    const exportRoot = path.join(filePaths[0], `PocketChart_Export_${today}`);
+    fs.mkdirSync(exportRoot, { recursive: true });
 
-      output.on('close', () => {
-        resolve({ path: filePath, clientCount: clients.length });
+    const noteFormatVal = (db.prepare("SELECT value FROM settings WHERE key = 'note_format'").get() as any)?.value || 'SOAP';
+    const pdfSections = NOTE_FORMAT_SECTIONS[noteFormatVal as NoteFormat].filter((s: any) => s.label !== '(unused)');
+    let totalDocs = 0;
+
+    for (let ci = 0; ci < clients.length; ci++) {
+      const client = clients[ci];
+      const safeLast = (client.last_name || 'Unknown').replace(/[^a-zA-Z0-9_-]/g, '');
+      const safeFirst = (client.first_name || 'Unknown').replace(/[^a-zA-Z0-9_-]/g, '');
+      const clientDir = path.join(exportRoot, `${safeLast}_${safeFirst}`);
+      fs.mkdirSync(clientDir, { recursive: true });
+
+      // Send progress to renderer
+      mainWindow?.webContents.send('export:progress', {
+        current: ci + 1,
+        total: clients.length,
+        clientName: `${client.first_name} ${client.last_name}`,
       });
-      archive.on('error', (err: Error) => reject(err));
-      archive.pipe(output);
 
-      for (const client of clients) {
+      // Export evaluations as individual PDFs
+      const evals = db.prepare('SELECT * FROM evaluations WHERE client_id = ? AND deleted_at IS NULL ORDER BY eval_date DESC').all(client.id) as any[];
+      for (const evalItem of evals) {
         try {
-          const pdfBuffer = buildClientChartPdf(client.id);
-          const safeLast = (client.last_name || 'Unknown').replace(/[^a-zA-Z0-9]/g, '');
-          const safeFirst = (client.first_name || 'Unknown').replace(/[^a-zA-Z0-9]/g, '');
-          const filename = `${safeLast}_${safeFirst}_${client.id}.pdf`;
-          archive.append(pdfBuffer, { name: filename });
+          const pdfBuffer = buildSingleEvalPdf(client, evalItem);
+          const dateStr = evalItem.eval_date || 'undated';
+          fs.writeFileSync(path.join(clientDir, `Evaluation_${dateStr}.pdf`), pdfBuffer);
+          totalDocs++;
         } catch (err) {
-          console.error(`Failed to generate PDF for client ${client.id}:`, err);
+          console.error(`Failed to generate eval PDF for client ${client.id}, eval ${evalItem.id}:`, err);
         }
       }
 
-      archive.finalize();
-    });
+      // Export notes as individual PDFs
+      const notes = db.prepare('SELECT * FROM notes WHERE client_id = ? AND deleted_at IS NULL ORDER BY date_of_service DESC').all(client.id) as any[];
+      for (const note of notes) {
+        try {
+          const pdfBuffer = buildSingleNotePdf(client, note, pdfSections);
+          const dateStr = note.date_of_service || 'undated';
+          let docType = 'SOAP';
+          if (note.note_type === 'progress_report') docType = 'Progress_Report';
+          else if (note.note_type === 'discharge') docType = 'Discharge_Summary';
+          fs.writeFileSync(path.join(clientDir, `${docType}_${dateStr}.pdf`), pdfBuffer);
+          totalDocs++;
+        } catch (err) {
+          console.error(`Failed to generate note PDF for client ${client.id}, note ${note.id}:`, err);
+        }
+      }
+
+      // If client has no docs, export their chart summary as a single PDF
+      if (evals.length === 0 && notes.length === 0) {
+        try {
+          const pdfBuffer = buildClientChartPdf(client.id);
+          fs.writeFileSync(path.join(clientDir, `Client_Summary.pdf`), pdfBuffer);
+          totalDocs++;
+        } catch (err) {
+          console.error(`Failed to generate summary PDF for client ${client.id}:`, err);
+        }
+      }
+    }
+
+    return { path: exportRoot, clientCount: clients.length, documentCount: totalDocs };
   });
 
   safeHandle('backup:savePdf', async (_event, { base64Pdf, defaultFilename }: { base64Pdf: string; defaultFilename: string }) => {
@@ -3987,6 +4253,449 @@ function buildInvoicePdf(invoice: any, items: any[], client: any, practice: any)
   return { base64Pdf, filename };
 }
 
+// ── Per-Document PDF Builders (for bulk export) ──
+
+/** Shared PDF utilities for per-document exports with professional styling */
+function createPdfHelpers(doc: any, options?: { client?: any; practice?: any }) {
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const marginLeft = 72;  // 1 inch
+  const marginRight = 72; // 1 inch
+  const maxWidth = pageWidth - marginLeft - marginRight;
+  const headerHeight = 70; // Reserve space for practice header
+  const footerHeight = 40; // Reserve space for footer
+  let y = headerHeight;
+
+  const practice = options?.practice || null;
+  const client = options?.client || null;
+
+  const checkPageBreak = (needed: number) => {
+    if (y + needed > pageHeight - footerHeight) {
+      doc.addPage();
+      y = headerHeight;
+    }
+  };
+
+  const addSectionHeader = (text: string) => {
+    checkPageBreak(34);
+    y += 12; // spacing above
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(0, 0, 0);
+    doc.text(text, marginLeft, y);
+    y += 6;
+    doc.setLineWidth(0.3);
+    doc.setDrawColor(180, 180, 180);
+    doc.line(marginLeft, y, pageWidth - marginRight, y);
+    doc.setDrawColor(0, 0, 0);
+    y += 10;
+  };
+
+  const addField = (label: string, value: string) => {
+    if (!value || value === '--' || value.trim() === '' || value.trim() === '-') return;
+    checkPageBreak(18);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(0, 0, 0);
+    doc.text(`${label}: `, marginLeft, y);
+    const labelWidth = doc.getTextWidth(`${label}: `);
+    doc.setFont('helvetica', 'normal');
+    const lines = doc.splitTextToSize(value, maxWidth - labelWidth);
+    doc.text(lines, marginLeft + labelWidth, y);
+    y += lines.length * 14;
+  };
+
+  const addWrappedText = (text: string, indent = 0) => {
+    if (!text) return;
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(0, 0, 0);
+    const lines = doc.splitTextToSize(text, maxWidth - indent);
+    for (const line of lines) {
+      checkPageBreak(15);
+      doc.text(line, marginLeft + indent, y);
+      y += 14;
+    }
+  };
+
+  /** Add practice header and client footer to every page */
+  const addHeaderFooter = () => {
+    const totalPages = doc.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+
+      // ── Practice Header ──
+      if (practice) {
+        let hy = 30;
+        doc.setTextColor(68, 68, 68); // #444
+        if (practice.name) {
+          doc.setFontSize(10);
+          doc.setFont('helvetica', 'bold');
+          doc.text(practice.name, marginLeft, hy);
+          hy += 13;
+        }
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        // Provider line: signature_name, credentials | NPI
+        const sigName = getSetting('signature_name');
+        const sigCreds = getSetting('signature_credentials');
+        const providerParts: string[] = [];
+        if (sigName) providerParts.push(sigCreds ? `${sigName}, ${sigCreds}` : sigName);
+        if (practice.npi) providerParts.push(`NPI: ${practice.npi}`);
+        if (providerParts.length > 0) {
+          doc.text(providerParts.join(' | '), marginLeft, hy);
+          hy += 12;
+        }
+        // Address line
+        const addrParts: string[] = [];
+        if (practice.address) addrParts.push(practice.address);
+        const cityStateZip = [practice.city, practice.state, practice.zip].filter(Boolean).join(', ');
+        if (cityStateZip) addrParts.push(cityStateZip);
+        if (practice.phone) addrParts.push(practice.phone);
+        if (addrParts.length > 0) {
+          doc.text(addrParts.join(' | '), marginLeft, hy);
+          hy += 10;
+        }
+        // Thin rule below header
+        doc.setLineWidth(0.5);
+        doc.setDrawColor(68, 68, 68);
+        doc.line(marginLeft, hy, pageWidth - marginRight, hy);
+        doc.setDrawColor(0, 0, 0);
+      }
+
+      // ── Client Footer ──
+      doc.setFontSize(8);
+      doc.setTextColor(68, 68, 68);
+      const footerParts: string[] = [];
+      footerParts.push(`Page ${i} of ${totalPages}`);
+      if (client) {
+        if (client.last_name || client.first_name) {
+          footerParts.push(`${client.last_name || ''}, ${client.first_name || ''}`);
+        }
+        if (client.dob) footerParts.push(`DOB: ${client.dob}`);
+      }
+      footerParts.push('CONFIDENTIAL');
+      doc.text(footerParts.join('  |  '), pageWidth / 2, pageHeight - 20, { align: 'center' });
+      doc.setTextColor(0, 0, 0);
+    }
+  };
+
+  return {
+    pageWidth, marginLeft, marginRight, maxWidth,
+    get y() { return y; },
+    set y(val: number) { y = val; },
+    checkPageBreak, addSectionHeader, addField, addWrappedText, addHeaderFooter,
+  };
+}
+
+/** Retrieve a setting value from the database */
+function getSetting(key: string): string {
+  try {
+    const db = getDatabase();
+    const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as any;
+    return row?.value || '';
+  } catch {
+    return '';
+  }
+}
+
+/** Build a PDF for a single evaluation */
+function buildSingleEvalPdf(client: any, evalItem: any): Buffer {
+  const db = getDatabase();
+  const practice = db.prepare('SELECT * FROM practice WHERE id = 1').get() as any;
+  const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+  const h = createPdfHelpers(doc, { client, practice });
+
+  // Title
+  const evalTypeLabel = evalItem.eval_type === 'reassessment' ? 'Reassessment' : 'Initial Evaluation';
+  doc.setFontSize(17);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(0, 0, 0);
+  doc.text(evalTypeLabel, h.marginLeft, h.y);
+  h.y += 10;
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Generated: ${new Date().toLocaleDateString()}`, h.marginLeft, h.y + 10);
+  h.y += 30;
+
+  // Client info header
+  h.addSectionHeader('Client Information');
+  h.addField('Name', `${client.first_name} ${client.last_name}`);
+  h.addField('DOB', client.dob);
+  h.addField('Discipline', client.discipline);
+  const dxParts = [client.primary_dx_code, client.primary_dx_description].filter(Boolean).join(' - ');
+  if (dxParts) h.addField('Primary Dx', dxParts);
+  h.y += 6;
+
+  // Eval details
+  h.addSectionHeader(`Evaluation — ${evalItem.eval_date || 'Undated'}`);
+  h.addField('Discipline', evalItem.discipline);
+  if (evalItem.signed_at) h.addField('Status', 'Signed');
+
+  if (evalItem.content) {
+    try {
+      const content = JSON.parse(evalItem.content);
+      if (typeof content === 'object') {
+        const evalFieldLabels: Record<string, string> = {
+          referral_source: 'Referral Source',
+          medical_history: 'Medical History',
+          prior_level_of_function: 'Prior Level of Function',
+          current_complaints: 'Current Complaints',
+          clinical_impression: 'Clinical Impression',
+          rehabilitation_potential: 'Rehabilitation Potential / Prognosis',
+          precautions: 'Precautions / Contraindications',
+          goals: 'Goals',
+          treatment_plan: 'Treatment Plan',
+          frequency_duration: 'Frequency & Duration',
+        };
+        for (const [key, val] of Object.entries(content)) {
+          if (key === 'goal_entries' || key === 'created_goal_ids' || key === 'objective_assessment') continue;
+          if (!val || (typeof val === 'string' && !val.trim())) continue;
+          const label = evalFieldLabels[key] || key;
+          h.addField(label, String(val));
+        }
+        if (content.objective_assessment && typeof content.objective_assessment === 'object') {
+          h.addSectionHeader('Objective Assessment');
+          const objFields: Record<string, string> = {
+            rom: 'ROM', strength_mmt: 'Strength / MMT', posture: 'Posture',
+            gait_analysis: 'Gait Analysis', balance: 'Balance',
+            functional_mobility: 'Functional Mobility', pain_assessment: 'Pain Assessment',
+            adl_assessment: 'ADL Assessment', hand_function: 'Hand Function',
+            cognition_screening: 'Cognition Screening', sensory: 'Sensory',
+            visual_perceptual: 'Visual-Perceptual', home_safety: 'Home Safety',
+            speech_intelligibility: 'Speech Intelligibility',
+            language_comprehension: 'Language Comprehension',
+            language_expression: 'Language Expression', voice: 'Voice',
+            fluency: 'Fluency', swallowing_dysphagia: 'Swallowing / Dysphagia',
+            cognition_communication: 'Cognition-Communication',
+          };
+          for (const [oKey, oVal] of Object.entries(content.objective_assessment as Record<string, string>)) {
+            if (oVal && oVal.trim()) {
+              const oLabel = objFields[oKey] || oKey;
+              h.addField(oLabel, String(oVal));
+            }
+          }
+        }
+      } else {
+        h.addWrappedText(evalItem.content, 10);
+      }
+    } catch {
+      h.addWrappedText(evalItem.content, 10);
+    }
+  }
+
+  if (evalItem.signature_typed) {
+    h.y += 6;
+    h.addField('Signed by', evalItem.signature_typed);
+  }
+
+  h.addHeaderFooter();
+  const pdfOutput = doc.output('arraybuffer');
+  return Buffer.from(pdfOutput);
+}
+
+/** Build a PDF for a single note (SOAP, progress report, or discharge summary) */
+function buildSingleNotePdf(client: any, note: any, pdfSections: any[]): Buffer {
+  const db = getDatabase();
+  const practice = db.prepare('SELECT * FROM practice WHERE id = 1').get() as any;
+  const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+  const h = createPdfHelpers(doc, { client, practice });
+
+  const isProgressReport = note.note_type === 'progress_report';
+  const isDischargeNote = note.note_type === 'discharge';
+
+  // Title — include date for context
+  let docTitle = 'SOAP Note';
+  if (isProgressReport) docTitle = 'Progress Report';
+  else if (isDischargeNote) docTitle = 'Discharge Summary';
+  const dateStr = note.date_of_service ? ` — ${note.date_of_service}` : '';
+
+  doc.setFontSize(17);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(0, 0, 0);
+  doc.text(`${docTitle}${dateStr}`, h.marginLeft, h.y);
+  h.y += 10;
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Generated: ${new Date().toLocaleDateString()}`, h.marginLeft, h.y + 10);
+  h.y += 30;
+
+  // Client info header
+  h.addSectionHeader('Client Information');
+  h.addField('Name', `${client.first_name} ${client.last_name}`);
+  h.addField('DOB', client.dob);
+  h.addField('Discipline', client.discipline);
+  h.y += 6;
+
+  // Note header
+  h.addSectionHeader(`${note.date_of_service || 'Undated'}`);
+
+  // CPT / units
+  let cptDisplay = note.cpt_code || '--';
+  let unitsDisplay = String(note.units || '--');
+  try {
+    const cptLines = JSON.parse(note.cpt_codes || '[]');
+    if (Array.isArray(cptLines) && cptLines.length > 0) {
+      cptDisplay = cptLines.map((l: any) => `${l.code} (${l.units}u)`).join(', ');
+      unitsDisplay = String(cptLines.reduce((s: number, l: any) => s + (l.units || 0), 0));
+    }
+  } catch { /* use legacy fields */ }
+
+  const isStandaloneDC = isDischargeNote && (!note.cpt_code || note.charge_amount === 0);
+  if (!isStandaloneDC) {
+    h.addField('CPT', cptDisplay);
+    h.addField('Units', unitsDisplay);
+  }
+  if (note.signed_at) h.addField('Status', 'Signed');
+
+  if (note.time_in && note.time_out) {
+    h.addField('Time', `${note.time_in} to ${note.time_out}`);
+  } else if (note.time_in) {
+    h.addField('Time In', note.time_in);
+  } else if (note.time_out) {
+    h.addField('Time Out', note.time_out);
+  }
+
+  // Note sections (S/O/A/P or DAP/BIRP etc.)
+  for (const sec of pdfSections) {
+    const value = (note as any)[sec.field];
+    if (value) {
+      h.checkPageBreak(14);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9);
+      doc.text(`${sec.label}:`, h.marginLeft, h.y);
+      h.y += 13;
+      h.addWrappedText(value, 10);
+    }
+  }
+
+  // Progress Report additional sections
+  if (isProgressReport) {
+    const prGoals = db.prepare('SELECT * FROM progress_report_goals WHERE note_id = ? AND deleted_at IS NULL').all(note.id) as any[];
+    if (prGoals.length > 0) {
+      h.addSectionHeader('Goal Progress');
+      for (const prGoal of prGoals) {
+        h.checkPageBreak(40);
+        const statusLabel = prGoal.status_at_report ? prGoal.status_at_report.charAt(0).toUpperCase() + prGoal.status_at_report.slice(1) : 'N/A';
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`[${statusLabel}]`, h.marginLeft, h.y);
+        const statusWidth = doc.getTextWidth(`[${statusLabel}] `);
+        doc.setFont('helvetica', 'normal');
+        if (prGoal.goal_text_snapshot) {
+          const goalLines = doc.splitTextToSize(prGoal.goal_text_snapshot, h.maxWidth - statusWidth - 10);
+          doc.text(goalLines, h.marginLeft + statusWidth, h.y);
+          h.y += goalLines.length * 13;
+        } else {
+          h.y += 13;
+        }
+        if (prGoal.performance_data) h.addField('  Performance', prGoal.performance_data);
+        if (prGoal.clinical_notes) h.addField('  Clinical Notes', prGoal.clinical_notes);
+        h.y += 4;
+      }
+    }
+
+    if (note.progress_report_data) {
+      try {
+        const prData = JSON.parse(note.progress_report_data);
+        if (prData.clinical_summary) {
+          h.addSectionHeader('Clinical Summary');
+          h.addWrappedText(prData.clinical_summary, 10);
+        }
+        if (prData.continued_treatment_justification) {
+          h.addSectionHeader('Continued Treatment Justification');
+          h.addWrappedText(prData.continued_treatment_justification, 10);
+        }
+        if (prData.plan_of_care_update) {
+          h.addSectionHeader('Plan of Care Update');
+          h.addWrappedText(prData.plan_of_care_update, 10);
+        }
+        const freqParts: string[] = [];
+        if (prData.frequency_per_week) freqParts.push(`${prData.frequency_per_week}x/week`);
+        if (prData.duration_weeks) freqParts.push(`for ${prData.duration_weeks} weeks`);
+        if (freqParts.length > 0) h.addField('Frequency/Duration', freqParts.join(' '));
+        if (prData.report_period_start || prData.report_period_end) {
+          h.addField('Report Period', [prData.report_period_start, prData.report_period_end].filter(Boolean).join(' to '));
+        }
+        if (prData.visits_in_period) h.addField('Visits in Period', String(prData.visits_in_period));
+      } catch { /* skip invalid JSON */ }
+    }
+  }
+
+  // Discharge Summary sections
+  if (isDischargeNote && note.discharge_data) {
+    try {
+      const dcData = JSON.parse(note.discharge_data) as DischargeData;
+
+      h.addSectionHeader('Discharge Details');
+      const reasonLabel = DISCHARGE_REASON_LABELS[dcData.discharge_reason] || dcData.discharge_reason;
+      h.addField('Discharge Reason', reasonLabel);
+      if (dcData.discharge_reason_detail) h.addField('Details', dcData.discharge_reason_detail);
+
+      h.addField('Start of Care', dcData.start_of_care || '');
+      h.addField('Discharge Date', dcData.discharge_date || note.date_of_service);
+      h.addField('Total Visits', String(dcData.total_visits));
+      if (dcData.primary_dx) h.addField('Primary Diagnosis', dcData.primary_dx);
+
+      // Final Goal Status
+      const dcGoals = db.prepare('SELECT * FROM progress_report_goals WHERE note_id = ? AND deleted_at IS NULL').all(note.id) as any[];
+      if (dcGoals.length > 0) {
+        h.addSectionHeader('Final Goal Status');
+        for (const goal of dcGoals) {
+          h.checkPageBreak(40);
+          const statusLabel = DISCHARGE_GOAL_STATUS_LABELS[goal.status_at_report as DischargeGoalStatus]
+            || goal.status_at_report || 'N/A';
+          doc.setFontSize(9);
+          doc.setFont('helvetica', 'bold');
+          doc.text(`[${statusLabel}]`, h.marginLeft, h.y);
+          const statusWidth = doc.getTextWidth(`[${statusLabel}] `);
+          doc.setFont('helvetica', 'normal');
+          if (goal.goal_text_snapshot) {
+            const goalLines = doc.splitTextToSize(goal.goal_text_snapshot, h.maxWidth - statusWidth - 10);
+            doc.text(goalLines, h.marginLeft + statusWidth, h.y);
+            h.y += goalLines.length * 13;
+          } else {
+            h.y += 13;
+          }
+          if (goal.performance_data) h.addField('  Final Performance', goal.performance_data);
+          if (goal.clinical_notes) h.addField('  Summary', goal.clinical_notes);
+          h.y += 4;
+        }
+      }
+
+      // Functional Outcomes
+      if (dcData.prior_level_of_function || dcData.current_level_of_function) {
+        h.addSectionHeader('Functional Outcomes');
+        if (dcData.prior_level_of_function) h.addField('Prior Level of Function', dcData.prior_level_of_function);
+        if (dcData.current_level_of_function) h.addField('Current Level of Function', dcData.current_level_of_function);
+      }
+
+      // Recommendations
+      const hasRecs = (dcData.recommendations && dcData.recommendations.length > 0) || dcData.additional_recommendations;
+      if (hasRecs) {
+        h.addSectionHeader('Discharge Recommendations');
+        for (const rec of dcData.recommendations || []) {
+          const recLabel = DISCHARGE_RECOMMENDATION_LABELS[rec] || rec;
+          h.addField('\u2713', recLabel);
+          if (rec === 'referral' && dcData.referral_to) h.addField('  Referred to', dcData.referral_to);
+          if (rec === 'return_to_therapy' && dcData.return_to_therapy_if) h.addField('  Return if', dcData.return_to_therapy_if);
+          if (rec === 'equipment' && dcData.equipment_details) h.addField('  Equipment', dcData.equipment_details);
+        }
+        if (dcData.additional_recommendations) h.addWrappedText(dcData.additional_recommendations, 10);
+      }
+    } catch { /* skip invalid JSON */ }
+  }
+
+  if (note.signature_typed) {
+    h.y += 6;
+    h.addField('Signed by', note.signature_typed);
+  }
+
+  h.addHeaderFooter();
+  const pdfOutput = doc.output('arraybuffer');
+  return Buffer.from(pdfOutput);
+}
+
 // Helper: build a single-client chart PDF and return as Buffer
 function buildClientChartPdf(clientId: number): Buffer {
   const db = getDatabase();
@@ -4196,7 +4905,13 @@ function buildClientChartPdf(clientId: number): Buffer {
       } catch { /* use legacy fields */ }
 
       const isProgressReport = note.note_type === 'progress_report';
-      const noteHeader = `${note.date_of_service} | CPT: ${cptDisplay} | Units: ${unitsDisplay}`;
+      const isDischargeNote = note.note_type === 'discharge';
+      const isStandaloneDC = isDischargeNote && (!note.cpt_code || note.charge_amount === 0);
+
+      // Header line: standalone discharge shows just date, otherwise full CPT/units
+      const noteHeader = isStandaloneDC
+        ? `${note.date_of_service} | Discharge Summary (Administrative)`
+        : `${note.date_of_service} | CPT: ${cptDisplay} | Units: ${unitsDisplay}`;
       doc.text(noteHeader, marginLeft, y);
       let headerOffset = doc.getTextWidth(noteHeader);
       if (isProgressReport) {
@@ -4205,6 +4920,14 @@ function buildClientChartPdf(clientId: number): Buffer {
         doc.setTextColor(0, 128, 128);
         doc.text('  [PROGRESS REPORT]', marginLeft + headerOffset, y);
         headerOffset += doc.getTextWidth('  [PROGRESS REPORT]');
+        doc.setTextColor(0, 0, 0);
+      }
+      if (isDischargeNote) {
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(180, 83, 9); // amber-700
+        doc.text('  [DISCHARGE SUMMARY]', marginLeft + headerOffset, y);
+        headerOffset += doc.getTextWidth('  [DISCHARGE SUMMARY]');
         doc.setTextColor(0, 0, 0);
       }
       if (note.signed_at) {
@@ -4315,6 +5038,105 @@ function buildClientChartPdf(clientId: number): Buffer {
         }
       }
 
+      // Discharge Summary sections
+      if (isDischargeNote && note.discharge_data) {
+        try {
+          const dcData = JSON.parse(note.discharge_data) as DischargeData;
+
+          // Discharge Reason
+          checkPageBreak(30);
+          doc.setFontSize(10);
+          doc.setFont('helvetica', 'bold');
+          doc.text('  Discharge Reason:', marginLeft, y);
+          y += 14;
+          const reasonLabel = DISCHARGE_REASON_LABELS[dcData.discharge_reason] || dcData.discharge_reason;
+          addField('    Reason', reasonLabel);
+          if (dcData.discharge_reason_detail) {
+            addField('    Details', dcData.discharge_reason_detail);
+          }
+
+          // Episode Summary
+          checkPageBreak(30);
+          doc.setFontSize(10);
+          doc.setFont('helvetica', 'bold');
+          doc.text('  Episode Summary:', marginLeft, y);
+          y += 14;
+          if (dcData.start_of_care) addField('    Start of Care', dcData.start_of_care);
+          addField('    Discharge Date', dcData.discharge_date || note.date_of_service);
+          addField('    Total Visits', String(dcData.total_visits));
+          const freqPartsDC: string[] = [];
+          if (dcData.frequency_per_week) freqPartsDC.push(`${dcData.frequency_per_week}x/week`);
+          if (dcData.duration_weeks) freqPartsDC.push(`for ${dcData.duration_weeks} weeks`);
+          if (freqPartsDC.length > 0) addField('    Frequency/Duration', freqPartsDC.join(' '));
+          if (dcData.primary_dx) addField('    Primary Diagnosis', dcData.primary_dx);
+
+          // Final Goal Status (from progress_report_goals table — reused)
+          const dcGoals = db.prepare(
+            'SELECT * FROM progress_report_goals WHERE note_id = ? AND deleted_at IS NULL'
+          ).all(note.id) as any[];
+          if (dcGoals.length > 0) {
+            checkPageBreak(30);
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'bold');
+            doc.text('  Final Goal Status:', marginLeft, y);
+            y += 14;
+            for (const goal of dcGoals) {
+              checkPageBreak(40);
+              const statusLabel = DISCHARGE_GOAL_STATUS_LABELS[goal.status_at_report as DischargeGoalStatus]
+                || goal.status_at_report || 'N/A';
+              doc.setFontSize(9);
+              doc.setFont('helvetica', 'bold');
+              doc.text(`    [${statusLabel}]`, marginLeft, y);
+              const statusWidth = doc.getTextWidth(`    [${statusLabel}] `);
+              doc.setFont('helvetica', 'normal');
+              if (goal.goal_text_snapshot) {
+                const goalLines = doc.splitTextToSize(goal.goal_text_snapshot, maxWidth - statusWidth - 20);
+                doc.text(goalLines, marginLeft + statusWidth, y);
+                y += goalLines.length * 13;
+              } else {
+                y += 13;
+              }
+              if (goal.performance_data) addField('      Final Performance', goal.performance_data);
+              if (goal.clinical_notes) addField('      Summary', goal.clinical_notes);
+              y += 4;
+            }
+          }
+
+          // Functional Outcomes
+          if (dcData.prior_level_of_function || dcData.current_level_of_function) {
+            checkPageBreak(30);
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'bold');
+            doc.text('  Functional Outcomes:', marginLeft, y);
+            y += 14;
+            if (dcData.prior_level_of_function) addField('    Prior Level of Function', dcData.prior_level_of_function);
+            if (dcData.current_level_of_function) addField('    Current Level of Function', dcData.current_level_of_function);
+          }
+
+          // Recommendations
+          const hasRecs = (dcData.recommendations && dcData.recommendations.length > 0) || dcData.additional_recommendations;
+          if (hasRecs) {
+            checkPageBreak(30);
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'bold');
+            doc.text('  Discharge Recommendations:', marginLeft, y);
+            y += 14;
+            for (const rec of dcData.recommendations || []) {
+              const recLabel = DISCHARGE_RECOMMENDATION_LABELS[rec] || rec;
+              addField('    \u2713', recLabel);
+              if (rec === 'referral' && dcData.referral_to) addField('      Referred to', dcData.referral_to);
+              if (rec === 'return_to_therapy' && dcData.return_to_therapy_if) addField('      Return if', dcData.return_to_therapy_if);
+              if (rec === 'equipment' && dcData.equipment_details) addField('      Equipment', dcData.equipment_details);
+            }
+            if (dcData.additional_recommendations) {
+              addWrappedText(dcData.additional_recommendations, 20);
+            }
+          }
+        } catch {
+          // Invalid JSON, skip discharge data
+        }
+      }
+
       if (note.signature_typed) {
         addField('  Signed by', note.signature_typed);
       }
@@ -4326,27 +5148,20 @@ function buildClientChartPdf(clientId: number): Buffer {
     }
   }
 
-  // Add confidentiality footer to all pages
+  // Add professional footer to all pages
   const totalPages = doc.getNumberOfPages();
+  const pgHeight = doc.internal.pageSize.getHeight();
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i);
-    doc.setFontSize(7);
-    doc.setTextColor(128, 128, 128);
-    doc.text(
-      'This document contains confidential health information. Unauthorized disclosure is prohibited.',
-      pageWidth / 2,
-      doc.internal.pageSize.getHeight() - 20,
-      { align: 'center' }
-    );
-    // Page numbers only for multi-page documents
-    if (totalPages > 1) {
-      doc.text(
-        `Page ${i} of ${totalPages}`,
-        pageWidth / 2,
-        doc.internal.pageSize.getHeight() - 12,
-        { align: 'center' }
-      );
+    doc.setFontSize(8);
+    doc.setTextColor(68, 68, 68);
+    const footerParts: string[] = [`Page ${i} of ${totalPages}`];
+    if (client.last_name || client.first_name) {
+      footerParts.push(`${client.last_name || ''}, ${client.first_name || ''}`);
     }
+    if (client.dob) footerParts.push(`DOB: ${client.dob}`);
+    footerParts.push('CONFIDENTIAL');
+    doc.text(footerParts.join('  |  '), pageWidth / 2, pgHeight - 20, { align: 'center' });
     doc.setTextColor(0, 0, 0);
   }
 

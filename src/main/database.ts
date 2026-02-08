@@ -36,6 +36,8 @@ const VALID_TABLES = new Set([
   'vault_documents', 'compliance_tracking', 'mileage_log', 'communication_log',
   // V5 Progress Report tables
   'staged_goals', 'progress_report_goals',
+  // V6 Amendments
+  'note_amendments',
 ]);
 
 export function getDataPath(): string {
@@ -859,6 +861,75 @@ function runMigrations(): void {
         if (!columnExists('appointments', 'visit_type')) {
           db.exec("ALTER TABLE appointments ADD COLUMN visit_type TEXT DEFAULT 'O'");
         }
+      },
+    },
+    {
+      version: 21,
+      description: 'Add discharge_data column to notes for discharge summaries',
+      up: () => {
+        if (!columnExists('notes', 'discharge_data')) {
+          db.exec("ALTER TABLE notes ADD COLUMN discharge_data TEXT DEFAULT ''");
+        }
+      },
+    },
+    {
+      version: 22,
+      description: 'Audit trail v2, note amendments, content hashing',
+      up: () => {
+        // Upgrade audit_log with new columns for clinical audit trail
+        if (!columnExists('audit_log', 'timestamp')) {
+          db.exec("ALTER TABLE audit_log ADD COLUMN timestamp TEXT NOT NULL DEFAULT (datetime('now'))");
+        }
+        if (!columnExists('audit_log', 'user_role')) {
+          db.exec("ALTER TABLE audit_log ADD COLUMN user_role TEXT NOT NULL DEFAULT 'owner'");
+        }
+        if (!columnExists('audit_log', 'session_id')) {
+          db.exec("ALTER TABLE audit_log ADD COLUMN session_id TEXT");
+        }
+        if (!columnExists('audit_log', 'action_type')) {
+          db.exec("ALTER TABLE audit_log ADD COLUMN action_type TEXT NOT NULL DEFAULT ''");
+        }
+        if (!columnExists('audit_log', 'detail')) {
+          db.exec("ALTER TABLE audit_log ADD COLUMN detail TEXT");
+        }
+        if (!columnExists('audit_log', 'content_hash')) {
+          db.exec("ALTER TABLE audit_log ADD COLUMN content_hash TEXT");
+        }
+        if (!columnExists('audit_log', 'device_identifier')) {
+          db.exec("ALTER TABLE audit_log ADD COLUMN device_identifier TEXT");
+        }
+
+        // Note amendments table
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS note_amendments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            note_id INTEGER NOT NULL REFERENCES notes(id),
+            amendment_type TEXT NOT NULL,
+            content TEXT NOT NULL,
+            original_text TEXT,
+            corrected_text TEXT,
+            reason TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            signed_at TEXT,
+            signature_typed TEXT,
+            signature_image TEXT,
+            content_hash TEXT
+          )
+        `);
+        db.exec('CREATE INDEX IF NOT EXISTS idx_amendments_note ON note_amendments(note_id)');
+
+        // Content hash columns on notes and evaluations
+        if (!columnExists('notes', 'content_hash')) {
+          db.exec("ALTER TABLE notes ADD COLUMN content_hash TEXT");
+        }
+        if (!columnExists('evaluations', 'content_hash')) {
+          db.exec("ALTER TABLE evaluations ADD COLUMN content_hash TEXT");
+        }
+
+        // Audit log indexes for the new fields
+        db.exec('CREATE INDEX IF NOT EXISTS idx_audit_action_type ON audit_log(action_type)');
+        db.exec('CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp)');
+        db.exec('CREATE INDEX IF NOT EXISTS idx_audit_session ON audit_log(session_id)');
       },
     },
   ];

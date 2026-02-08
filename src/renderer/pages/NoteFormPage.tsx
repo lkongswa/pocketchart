@@ -25,9 +25,13 @@ import {
   Flag,
   TrendingUp,
   ClipboardCheck,
+  LogOut,
+  Archive,
+  AlertTriangle,
 } from 'lucide-react';
-import type { Client, Note, Goal, GoalStatus, Discipline, SOAPSection, NoteFormat, CptLine, PlaceOfService, ContractedEntity, EntityFeeSchedule, StagedGoal, ProgressReportGoalStatus, ProgressReportData, ComplianceTracking, VisitType, GoalsBankEntry, Evaluation } from '../../shared/types';
-import { NOTE_FORMAT_SECTIONS, PROGRESS_REPORT_GOAL_STATUS_LABELS } from '../../shared/types';
+import type { Client, Note, Goal, GoalStatus, Discipline, SOAPSection, NoteFormat, CptLine, PlaceOfService, ContractedEntity, EntityFeeSchedule, StagedGoal, ProgressReportGoalStatus, ProgressReportData, ComplianceTracking, VisitType, GoalsBankEntry, Evaluation, NoteMode, DischargeData, DischargeGoalStatus, DischargeReason, DischargeRecommendation, EpisodeSummary } from '../../shared/types';
+import { NOTE_FORMAT_SECTIONS, PROGRESS_REPORT_GOAL_STATUS_LABELS, DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS } from '../../shared/types';
+import SignConfirmDialog from '../components/SignConfirmDialog';
 
 // Place of service options
 const PLACE_OF_SERVICE_OPTIONS = [
@@ -99,12 +103,16 @@ export default function NoteFormPage() {
   const sectionColor = useSectionColor();
   const isEditing = Boolean(noteId);
 
-  // Appointment context passed from calendar
+  // Appointment context passed from calendar or discharge navigation
   const apptState = (location.state as {
     appointmentDate?: string;
     appointmentTime?: string;
     appointmentDuration?: number;
+    noteMode?: NoteMode;
+    standalone?: boolean;
   }) || {};
+
+  const isStandaloneDischarge = apptState.standalone === true && apptState.noteMode === 'discharge';
 
   // Data
   const [client, setClient] = useState<Client | null>(null);
@@ -113,6 +121,9 @@ export default function NoteFormPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [signDialogOpen, setSignDialogOpen] = useState(false);
+  const [signDialogErrors, setSignDialogErrors] = useState<string[]>([]);
+  const [signDialogWarnings, setSignDialogWarnings] = useState<string[]>([]);
 
   // Form state — pre-fill from appointment context if available
   const [dateOfService, setDateOfService] = useState(apptState.appointmentDate || todayISO());
@@ -192,8 +203,43 @@ export default function NoteFormPage() {
   const [goalsBankCategories, setGoalsBankCategories] = useState<string[]>([]);
   const [treatmentPlanSummary, setTreatmentPlanSummary] = useState<{ treatmentPlan: string; frequencyDuration: string } | null>(null);
 
-  // Progress report state
-  const [isProgressReport, setIsProgressReport] = useState(false);
+  // Note mode state (replaces isProgressReport boolean)
+  const [noteMode, setNoteMode] = useState<NoteMode>(isStandaloneDischarge ? 'discharge' : 'soap');
+  const isProgressReport = noteMode === 'progress_report';
+  const isDischarge = noteMode === 'discharge';
+
+  // Discharge state
+  const [dischargeData, setDischargeData] = useState<DischargeData>({
+    discharge_reason: 'goals_met' as DischargeReason,
+    discharge_reason_detail: '',
+    start_of_care: '',
+    discharge_date: '',
+    total_visits: 0,
+    frequency_per_week: null,
+    duration_weeks: null,
+    frequency_notes: '',
+    primary_dx: '',
+    discipline: '',
+    prior_level_of_function: '',
+    current_level_of_function: '',
+    recommendations: [],
+    referral_to: '',
+    return_to_therapy_if: '',
+    equipment_details: '',
+    additional_recommendations: '',
+    is_standalone: isStandaloneDischarge,
+  });
+  const [dischargeGoals, setDischargeGoals] = useState<{
+    goal_id: number;
+    goal_text_snapshot: string;
+    goal_type: string;
+    status_at_report: string;
+    performance_data: string;
+    clinical_notes: string;
+    is_new_goal: boolean;
+    is_staged_promotion: boolean;
+    staged_goal_id: number | null;
+  }[]>([]);
   const [complianceData, setComplianceData] = useState<ComplianceTracking | null>(null);
   const [progressReportGoals, setProgressReportGoals] = useState<{
     goal_id: number;
@@ -352,7 +398,7 @@ export default function NoteFormPage() {
 
         // Progress report fields
         if (note.note_type === 'progress_report') {
-          setIsProgressReport(true);
+          setNoteMode('progress_report');
           try {
             const prData: ProgressReportData = JSON.parse(note.progress_report_data || '{}');
             setClinicalSummary(prData.clinical_summary || '');
@@ -373,6 +419,29 @@ export default function NoteFormPage() {
               is_new_goal: g.is_new_goal || false,
               is_staged_promotion: g.is_staged_promotion || false,
               staged_goal_id: g.staged_goal_id || null,
+            })));
+          } catch {}
+        }
+
+        // Discharge fields
+        if (note.note_type === 'discharge') {
+          setNoteMode('discharge');
+          try {
+            const dcData: DischargeData = JSON.parse(note.discharge_data || '{}');
+            setDischargeData(dcData);
+          } catch {}
+          try {
+            const dcGoals = await window.api.progressReportGoals.listByNote(parseInt(noteId, 10));
+            setDischargeGoals(dcGoals.map((g: any) => ({
+              goal_id: g.goal_id,
+              goal_text_snapshot: g.goal_text_snapshot,
+              goal_type: g.goal_type || 'STG',
+              status_at_report: g.status_at_report || '',
+              performance_data: g.performance_data || '',
+              clinical_notes: g.clinical_notes || '',
+              is_new_goal: false,
+              is_staged_promotion: false,
+              staged_goal_id: null,
             })));
           } catch {}
         }
@@ -491,7 +560,7 @@ export default function NoteFormPage() {
         entity_id: isContractedVisit ? entityId ?? undefined : undefined,
         rate_override: isContractedVisit ? rateOverride ?? undefined : undefined,
         rate_override_reason: isContractedVisit ? rateOverrideReason : '',
-        note_type: isProgressReport ? 'progress_report' as Note['note_type'] : (isContractedVisit ? noteType as Note['note_type'] : 'soap' as Note['note_type']),
+        note_type: noteMode !== 'soap' ? noteMode as Note['note_type'] : (isContractedVisit ? noteType as Note['note_type'] : 'soap' as Note['note_type']),
         progress_report_data: isProgressReport ? JSON.stringify({
           clinical_summary: clinicalSummary,
           continued_treatment_justification: continuedTreatmentJustification,
@@ -502,8 +571,19 @@ export default function NoteFormPage() {
           report_period_end: dateOfService,
           visits_in_period: complianceData?.visits_since_last_progress || 0,
         } as ProgressReportData) : '',
+        discharge_data: isDischarge ? JSON.stringify(dischargeData) : '',
         patient_name: isContractedVisit ? patientName : '',
       };
+
+      // Standalone discharge: zero out billing fields
+      if (isStandaloneDischarge) {
+        noteData.charge_amount = 0;
+        noteData.cpt_code = '';
+        noteData.cpt_codes = '[]';
+        noteData.time_in = '';
+        noteData.time_out = '';
+        noteData.units = 0;
+      }
 
       if (savedNoteId) {
         await window.api.notes.update(savedNoteId, noteData);
@@ -515,7 +595,7 @@ export default function NoteFormPage() {
     } catch (err) {
       console.error('Auto-save failed:', err);
     }
-  }, [clientId, client, existingSignedAt, subjective, objective, assessment, plan, dateOfService, timeIn, timeOut, cptLines, cptModifiers, placeOfService, chargeAmount, goalsAddressed, savedNoteId, isContractedVisit, entityId, rateOverride, rateOverrideReason, noteType, patientName, isProgressReport, clinicalSummary, continuedTreatmentJustification, planOfCareUpdate, prFrequencyPerWeek, prDurationWeeks, complianceData]);
+  }, [clientId, client, existingSignedAt, subjective, objective, assessment, plan, dateOfService, timeIn, timeOut, cptLines, cptModifiers, placeOfService, chargeAmount, goalsAddressed, savedNoteId, isContractedVisit, entityId, rateOverride, rateOverrideReason, noteType, patientName, noteMode, isProgressReport, isDischarge, clinicalSummary, continuedTreatmentJustification, planOfCareUpdate, prFrequencyPerWeek, prDurationWeeks, complianceData, dischargeData, isStandaloneDischarge]);
 
   // Keep ref current for the navigation blocker
   performAutoSaveRef.current = performAutoSave;
@@ -531,7 +611,7 @@ export default function NoteFormPage() {
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
-  }, [subjective, objective, assessment, plan, dateOfService, timeIn, timeOut, cptLines, performAutoSave, loading, existingSignedAt, isProgressReport, clinicalSummary, continuedTreatmentJustification, planOfCareUpdate, prFrequencyPerWeek, prDurationWeeks]);
+  }, [subjective, objective, assessment, plan, dateOfService, timeIn, timeOut, cptLines, performAutoSave, loading, existingSignedAt, noteMode, clinicalSummary, continuedTreatmentJustification, planOfCareUpdate, prFrequencyPerWeek, prDurationWeeks, dischargeData]);
 
   // ── Actions ──
 
@@ -616,19 +696,55 @@ export default function NoteFormPage() {
     });
   };
 
-  const handleSave = async (sign: boolean) => {
-    if (!clientId) return;
+  /** Pre-sign validation: collect blocking errors and non-blocking warnings */
+  const runSignValidation = (): { errors: string[]; warnings: string[] } => {
+    const errors: string[] = [];
+    const warnings: string[] = [];
 
-    // Soft validation before signing — warn about empty SOAP sections
-    if (sign) {
-      const hasContent = subjective.trim() || objective.trim() || assessment.trim() || plan.trim();
-      if (!hasContent) {
-        const proceed = window.confirm(
-          `All ${noteFormat} sections (${NOTE_FORMAT_SECTIONS[noteFormat].filter(s => s.label !== '(unused)').map(s => s.label).join(', ')}) are empty.\n\nSign anyway?`
-        );
-        if (!proceed) return;
+    // Date of service
+    if (!dateOfService) errors.push('Date of service is required.');
+
+    // Discharge-specific
+    if (isDischarge) {
+      if (!dischargeData.discharge_reason) errors.push('Discharge reason is required.');
+      if (dischargeData.discharge_reason === 'other' && !dischargeData.discharge_reason_detail.trim()) {
+        errors.push('Please provide details for the discharge reason.');
+      }
+      const hasUnresolvedGoals = dischargeGoals.some(g => !g.status_at_report || g.status_at_report === 'progressing');
+      if (hasUnresolvedGoals) errors.push('All goals must have a final status before signing a discharge summary.');
+      if (!dischargeData.current_level_of_function.trim()) {
+        warnings.push('Current Level of Function is empty — important for discharge documentation.');
       }
     }
+
+    // SOAP section content (skip for standalone discharge)
+    if (!isStandaloneDischarge) {
+      const hasContent = subjective.trim() || objective.trim() || assessment.trim() || plan.trim();
+      if (!hasContent) {
+        const sectionLabels = NOTE_FORMAT_SECTIONS[noteFormat].filter(s => s.label !== '(unused)').map(s => s.label).join(', ');
+        errors.push(`All ${noteFormat} sections (${sectionLabels}) are empty.`);
+      }
+    }
+
+    // Provider info check
+    // (signature_typed should be pre-filled if practice info exists)
+    if (!signatureTyped.trim()) {
+      warnings.push('Provider signature name is not set. Update it in Settings > Provider Information.');
+    }
+
+    return { errors, warnings };
+  };
+
+  /** Opens the sign confirmation dialog with validation results */
+  const handleSignClick = () => {
+    const { errors, warnings } = runSignValidation();
+    setSignDialogErrors(errors);
+    setSignDialogWarnings(warnings);
+    setSignDialogOpen(true);
+  };
+
+  const handleSave = async (sign: boolean) => {
+    if (!clientId) return;
 
     try {
       setSaving(true);
@@ -657,7 +773,7 @@ export default function NoteFormPage() {
         entity_id: isContractedVisit ? entityId ?? undefined : undefined,
         rate_override: isContractedVisit ? rateOverride ?? undefined : undefined,
         rate_override_reason: isContractedVisit ? rateOverrideReason : '',
-        note_type: isProgressReport ? 'progress_report' as Note['note_type'] : (isContractedVisit ? noteType as Note['note_type'] : 'soap' as Note['note_type']),
+        note_type: noteMode !== 'soap' ? noteMode as Note['note_type'] : (isContractedVisit ? noteType as Note['note_type'] : 'soap' as Note['note_type']),
         progress_report_data: isProgressReport ? JSON.stringify({
           clinical_summary: clinicalSummary,
           continued_treatment_justification: continuedTreatmentJustification,
@@ -668,8 +784,19 @@ export default function NoteFormPage() {
           report_period_end: dateOfService,
           visits_in_period: complianceData?.visits_since_last_progress || 0,
         } as ProgressReportData) : '',
+        discharge_data: isDischarge ? JSON.stringify(dischargeData) : '',
         patient_name: isContractedVisit ? patientName : '',
       };
+
+      // Standalone discharge: zero out billing fields
+      if (isStandaloneDischarge) {
+        noteData.charge_amount = 0;
+        noteData.cpt_code = '';
+        noteData.cpt_codes = '[]';
+        noteData.time_in = '';
+        noteData.time_out = '';
+        noteData.units = 0;
+      }
 
       let resultNoteId: number | null = null;
       if (isEditing && noteId) {
@@ -697,13 +824,60 @@ export default function NoteFormPage() {
         }
       }
 
+      // Save discharge goals and update goal statuses
+      if (sign && isDischarge) {
+        const noteIdForDC = resultNoteId;
+        if (noteIdForDC) {
+          await window.api.progressReportGoals.upsert(noteIdForDC, dischargeGoals as any);
+          for (const dg of dischargeGoals) {
+            const goalStatus: GoalStatus = dg.status_at_report === 'met' ? 'met' : 'discontinued';
+            const metDate = dg.status_at_report === 'met' ? dateOfService : undefined;
+            await window.api.goals.update(dg.goal_id, {
+              status: goalStatus,
+              met_date: metDate,
+            } as any);
+          }
+        }
+      }
+
       setFormSaved(true);
       if (sign && resultNoteId) {
-        setToast('Note signed and saved');
-        setSavedNoteId(resultNoteId);
-        setJustSigned(true);
-        setExistingSignedAt(new Date().toISOString());
-        // Don't navigate away — show invoice prompt
+        if (isDischarge) {
+          if (isStandaloneDischarge) {
+            // Check for unbilled notes
+            try {
+              const unbilled = await window.api.notes.getUnbilledForClient(parseInt(clientId, 10));
+              if (unbilled.length > 0) {
+                const createInvoice = window.confirm(
+                  `Discharge summary signed. There are ${unbilled.length} unbilled visit(s) for this client.\n\nWould you like to generate a final invoice?`
+                );
+                if (createInvoice) {
+                  const invoice = await window.api.invoices.generateFromNotes(
+                    parseInt(clientId, 10),
+                    unbilled.map((n: any) => n.id)
+                  );
+                  setToast('Discharge signed — final invoice created');
+                  setTimeout(() => navigate(`/clients/${clientId}`, { state: { tab: 'billing', invoiceId: invoice.id } }), 800);
+                  return;
+                }
+              }
+            } catch { /* unbilled check not critical */ }
+            setToast('Discharge summary signed — client discharged');
+            setTimeout(() => navigate(`/clients/${clientId}`), 800);
+          } else {
+            // Billed discharge — normal invoice flow
+            setToast('Discharge summary signed — client discharged');
+            setSavedNoteId(resultNoteId);
+            setJustSigned(true);
+            setExistingSignedAt(new Date().toISOString());
+          }
+        } else {
+          setToast('Note signed and saved');
+          setSavedNoteId(resultNoteId);
+          setJustSigned(true);
+          setExistingSignedAt(new Date().toISOString());
+          // Don't navigate away — show invoice prompt
+        }
       } else {
         setToast('Draft saved');
         setTimeout(() => navigate(`/clients/${clientId}`), 500);
@@ -773,6 +947,71 @@ export default function NoteFormPage() {
 
   const discipline = client.discipline as Discipline;
   const activeGoals = goals.filter((g) => g.status === 'active');
+  const allGoals = goals; // For discharge — includes met/discontinued too
+
+  // Handle note mode changes (dropdown)
+  const handleNoteModeChange = async (mode: NoteMode) => {
+    setNoteMode(mode);
+
+    if (mode === 'progress_report' && activeGoals.length > 0) {
+      setProgressReportGoals(activeGoals.map(g => ({
+        goal_id: g.id, goal_text_snapshot: g.goal_text, goal_type: g.goal_type || 'STG',
+        status_at_report: 'progressing' as ProgressReportGoalStatus,
+        performance_data: '', clinical_notes: '',
+        is_new_goal: false, is_staged_promotion: false, staged_goal_id: null,
+      })));
+    }
+
+    if (mode === 'discharge') {
+      // Initialize discharge goals from all goals (active get empty status, met/discontinued get their status)
+      const dcGoals = goals.map(g => ({
+        goal_id: g.id,
+        goal_text_snapshot: g.goal_text,
+        goal_type: g.goal_type || 'STG',
+        status_at_report: g.status === 'met' ? 'met' : g.status === 'discontinued' ? 'discontinued' : '',
+        performance_data: '',
+        clinical_notes: '',
+        is_new_goal: false,
+        is_staged_promotion: false,
+        staged_goal_id: null,
+      }));
+      setDischargeGoals(dcGoals);
+
+      // Load episode summary
+      try {
+        const cid = parseInt(clientId!, 10);
+        const summary = await window.api.notes.getEpisodeSummary(cid);
+        setDischargeData(prev => ({
+          ...prev,
+          start_of_care: summary.start_of_care || '',
+          discharge_date: dateOfService,
+          total_visits: summary.total_visits,
+          frequency_per_week: summary.frequency_per_week,
+          duration_weeks: summary.duration_weeks,
+          frequency_notes: summary.frequency_notes,
+          primary_dx: [summary.primary_dx_code, summary.primary_dx_description].filter(Boolean).join(' — '),
+          discipline: summary.discipline,
+        }));
+      } catch { /* episode summary not critical */ }
+
+      // Try to load prior level of function from eval
+      try {
+        const cid = parseInt(clientId!, 10);
+        const evals = await window.api.evaluations.listByClient(cid) as Evaluation[];
+        const sortedEvals = evals.sort((a, b) => new Date(a.eval_date).getTime() - new Date(b.eval_date).getTime());
+        const earliest = sortedEvals[0];
+        if (earliest?.content) {
+          const parsed = JSON.parse(earliest.content);
+          if (parsed.prior_level_of_function || parsed.history) {
+            setDischargeData(prev => ({
+              ...prev,
+              prior_level_of_function: parsed.prior_level_of_function || parsed.history || '',
+            }));
+          }
+        }
+      } catch { /* eval lookup not critical */ }
+    }
+  };
 
   const handleGoalStatusChange = async (goalId: number, newStatus: GoalStatus) => {
     const goal = goals.find((g) => g.id === goalId);
@@ -880,7 +1119,32 @@ export default function NoteFormPage() {
           </div>
         </div>
 
-        {/* Session Info */}
+        {/* Standalone Discharge Header */}
+        {isStandaloneDischarge && (
+          <div className="card p-4 mb-4 bg-amber-50/50 border-l-4 border-l-amber-400">
+            <div className="flex items-center gap-2 text-amber-700">
+              <LogOut className="w-5 h-5" />
+              <span className="text-base font-semibold">Administrative Discharge</span>
+              <span className="text-xs text-amber-600 ml-2">No treatment session — documentation only</span>
+            </div>
+          </div>
+        )}
+
+        {/* Session Info — hidden for standalone discharge */}
+        {isStandaloneDischarge ? (
+          <div className="card p-6 mb-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Clock className="w-5 h-5 text-[var(--color-primary)]" />
+              <h2 className="section-title mb-0">Discharge Date</h2>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="label">Discharge Date</label>
+                <input type="date" className="input" value={dateOfService} onChange={(e) => setDateOfService(e.target.value)} />
+              </div>
+            </div>
+          </div>
+        ) : (
         <div className="card p-6 mb-6">
           <div className="flex items-center gap-2 mb-4">
             <Clock className="w-5 h-5 text-[var(--color-primary)]" />
@@ -1158,14 +1422,15 @@ export default function NoteFormPage() {
             </div>
           )}
         </div>
+        )}
 
-        {/* ── Compliance Status & Progress Report Toggle ── */}
+        {/* ── Compliance Status & Note Mode Dropdown ── */}
         {complianceData && (() => {
           const isOverdue = complianceData.next_progress_due && new Date(complianceData.next_progress_due) < new Date();
           const isApproaching = complianceData.visits_since_last_progress >= (complianceData.progress_visit_threshold - 2);
           const isDue = isOverdue || isApproaching;
           return (
-            <div className={`card p-4 mb-4 ${isProgressReport ? 'border-l-4 border-l-teal-500 bg-teal-50/30' : isDue ? 'border-l-4 border-l-red-400' : ''}`}>
+            <div className={`card p-4 mb-4 ${isProgressReport ? 'border-l-4 border-l-teal-500 bg-teal-50/30' : isDischarge ? 'border-l-4 border-l-amber-500 bg-amber-50/30' : isDue ? 'border-l-4 border-l-red-400' : ''}`}>
               {/* Compliance Info — always visible */}
               <div className={`flex items-center gap-3 text-xs ${isDue ? '' : 'text-teal-700'}`}>
                 <div className="flex items-center gap-1.5">
@@ -1184,71 +1449,74 @@ export default function NoteFormPage() {
                     Last: {complianceData.last_progress_date}
                   </span>
                 )}
+                {isDue && !existingSignedAt && noteMode === 'soap' && (
+                  <button
+                    className="text-xs font-semibold text-red-600 hover:text-red-800 underline ml-auto"
+                    onClick={() => handleNoteModeChange('progress_report')}
+                  >
+                    Enable Progress Report
+                  </button>
+                )}
               </div>
 
-              {/* Toggle checkbox */}
+              {/* Note Mode dropdown */}
               {!existingSignedAt && (
-                <label className="flex items-center gap-2 cursor-pointer mt-3 pt-3 border-t border-[var(--color-border)]">
-                  <input
-                    type="checkbox"
-                    checked={isProgressReport}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setIsProgressReport(checked);
-                      if (checked && activeGoals.length > 0) {
-                        setProgressReportGoals(activeGoals.map(g => ({
-                          goal_id: g.id, goal_text_snapshot: g.goal_text, goal_type: g.goal_type || 'STG',
-                          status_at_report: 'progressing' as ProgressReportGoalStatus,
-                          performance_data: '', clinical_notes: '',
-                          is_new_goal: false, is_staged_promotion: false, staged_goal_id: null,
-                        })));
-                      }
-                    }}
-                    disabled={!!existingSignedAt}
-                    className="w-4 h-4 rounded border-gray-300 accent-teal-600"
-                  />
-                  <span className="text-sm font-semibold text-[var(--color-text)]">Include Progress Report</span>
-                </label>
+                <div className="flex items-center gap-3 mt-3 pt-3 border-t border-[var(--color-border)]">
+                  <label className="text-sm font-semibold text-[var(--color-text)]">Note Type:</label>
+                  <select
+                    className="select text-sm"
+                    value={noteMode}
+                    onChange={(e) => handleNoteModeChange(e.target.value as NoteMode)}
+                    disabled={!!existingSignedAt || isStandaloneDischarge}
+                  >
+                    <option value="soap">Standard SOAP</option>
+                    <option value="progress_report">Progress Report</option>
+                    <option value="discharge">Discharge Summary</option>
+                  </select>
+                </div>
+              )}
+              {existingSignedAt && noteMode !== 'soap' && (
+                <div className="flex items-center gap-2 mt-2">
+                  {isProgressReport && <ClipboardCheck className="w-4 h-4 text-teal-600" />}
+                  {isDischarge && <LogOut className="w-4 h-4 text-amber-600" />}
+                  <span className={`text-sm font-semibold ${isProgressReport ? 'text-teal-700' : 'text-amber-700'}`}>
+                    {isProgressReport ? 'Progress Report' : 'Discharge Summary'}
+                  </span>
+                </div>
               )}
             </div>
           );
         })()}
-        {!complianceData && !existingSignedAt && (
-          <div className={`card p-4 mb-4 ${isProgressReport ? 'border-l-4 border-l-teal-500 bg-teal-50/30' : ''}`}>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={isProgressReport}
-                onChange={(e) => {
-                  const checked = e.target.checked;
-                  setIsProgressReport(checked);
-                  if (checked && activeGoals.length > 0) {
-                    setProgressReportGoals(activeGoals.map(g => ({
-                      goal_id: g.id, goal_text_snapshot: g.goal_text, goal_type: g.goal_type || 'STG',
-                      status_at_report: 'progressing' as ProgressReportGoalStatus,
-                      performance_data: '', clinical_notes: '',
-                      is_new_goal: false, is_staged_promotion: false, staged_goal_id: null,
-                    })));
-                  }
-                }}
-                disabled={!!existingSignedAt}
-                className="w-4 h-4 rounded border-gray-300 accent-teal-600"
-              />
-              <ClipboardCheck className="w-4 h-4 text-teal-600" />
-              <span className="text-sm font-semibold text-[var(--color-text)]">Include Progress Report</span>
-            </label>
+        {!complianceData && (
+          <div className={`card p-4 mb-4 ${isProgressReport ? 'border-l-4 border-l-teal-500 bg-teal-50/30' : isDischarge ? 'border-l-4 border-l-amber-500 bg-amber-50/30' : ''}`}>
+            {!existingSignedAt ? (
+              <div className="flex items-center gap-3">
+                <label className="text-sm font-semibold text-[var(--color-text)]">Note Type:</label>
+                <select
+                  className="select text-sm"
+                  value={noteMode}
+                  onChange={(e) => handleNoteModeChange(e.target.value as NoteMode)}
+                  disabled={!!existingSignedAt || isStandaloneDischarge}
+                >
+                  <option value="soap">Standard SOAP</option>
+                  <option value="progress_report">Progress Report</option>
+                  <option value="discharge">Discharge Summary</option>
+                </select>
+              </div>
+            ) : noteMode !== 'soap' ? (
+              <div className="flex items-center gap-2">
+                {isProgressReport && <ClipboardCheck className="w-4 h-4 text-teal-600" />}
+                {isDischarge && <LogOut className="w-4 h-4 text-amber-600" />}
+                <span className={`text-sm font-semibold ${isProgressReport ? 'text-teal-700' : 'text-amber-700'}`}>
+                  {isProgressReport ? 'Progress Report' : 'Discharge Summary'}
+                </span>
+              </div>
+            ) : null}
           </div>
         )}
 
-        {existingSignedAt && isProgressReport && (
-          <div className="card p-4 mb-4 border-l-4 border-l-teal-500 bg-teal-50/30">
-            <div className="flex items-center gap-2">
-              <ClipboardCheck className="w-4 h-4 text-teal-600" />
-              <span className="text-sm font-semibold text-teal-700">Progress Report</span>
-            </div>
-          </div>
-        )}
-
+        {/* SOAP Sections — hidden for standalone discharge */}
+        {!isStandaloneDischarge && (<>
         {/* Section 1 (Subjective / Data / Behavior) */}
         <SOAPSectionCard
           title={NOTE_FORMAT_SECTIONS[noteFormat][0].label}
@@ -1571,6 +1839,249 @@ export default function NoteFormPage() {
             </div>
           </div>
         )}
+        </>)}
+
+        {/* ══════════ DISCHARGE CONTENT SECTIONS ══════════ */}
+        {isDischarge && (
+          <>
+          {/* Section 1: Discharge Reason */}
+          <div className="card p-5 mb-4 bg-amber-50/30 border-l-4 border-l-amber-400">
+            <h2 className="text-base font-semibold text-[var(--color-text)] mb-4 flex items-center gap-2">
+              <LogOut className="w-5 h-5 text-amber-600" />
+              Discharge Reason
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="label text-xs">Reason</label>
+                <select
+                  className="select text-sm w-full"
+                  value={dischargeData.discharge_reason}
+                  disabled={!!existingSignedAt}
+                  onChange={(e) => setDischargeData(prev => ({ ...prev, discharge_reason: e.target.value as DischargeReason }))}
+                >
+                  {Object.entries(DISCHARGE_REASON_LABELS).map(([val, label]) => (
+                    <option key={val} value={val}>{label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="label text-xs">Details {dischargeData.discharge_reason === 'other' && <span className="text-red-500">*</span>}</label>
+                <input
+                  className="input text-sm w-full"
+                  placeholder="Additional details..."
+                  disabled={!!existingSignedAt}
+                  value={dischargeData.discharge_reason_detail}
+                  onChange={(e) => setDischargeData(prev => ({ ...prev, discharge_reason_detail: e.target.value }))}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Section 2: Episode Summary (Auto-Populated) */}
+          <div className="card p-5 mb-4 bg-amber-50/30 border-l-4 border-l-amber-400">
+            <h2 className="text-base font-semibold text-[var(--color-text)] mb-4 flex items-center gap-2">
+              <FileText className="w-5 h-5 text-amber-600" />
+              Episode Summary
+            </h2>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              <div>
+                <label className="label text-xs">Start of Care</label>
+                <input type="date" className="input text-sm" disabled={!!existingSignedAt}
+                  value={dischargeData.start_of_care}
+                  onChange={(e) => setDischargeData(prev => ({ ...prev, start_of_care: e.target.value }))} />
+              </div>
+              <div>
+                <label className="label text-xs">Discharge Date</label>
+                <input type="date" className="input text-sm" disabled={!!existingSignedAt}
+                  value={dischargeData.discharge_date || dateOfService}
+                  onChange={(e) => setDischargeData(prev => ({ ...prev, discharge_date: e.target.value }))} />
+              </div>
+              <div>
+                <label className="label text-xs">Total Visits</label>
+                <input type="number" className="input text-sm" disabled={!!existingSignedAt}
+                  value={dischargeData.total_visits}
+                  onChange={(e) => setDischargeData(prev => ({ ...prev, total_visits: parseInt(e.target.value) || 0 }))} />
+              </div>
+              <div>
+                <label className="label text-xs">Frequency (sessions/week)</label>
+                <input type="number" className="input text-sm" min={1} max={7} disabled={!!existingSignedAt}
+                  value={dischargeData.frequency_per_week ?? ''}
+                  onChange={(e) => setDischargeData(prev => ({ ...prev, frequency_per_week: parseInt(e.target.value) || null }))} />
+              </div>
+              <div>
+                <label className="label text-xs">Duration (weeks)</label>
+                <input type="number" className="input text-sm" min={1} disabled={!!existingSignedAt}
+                  value={dischargeData.duration_weeks ?? ''}
+                  onChange={(e) => setDischargeData(prev => ({ ...prev, duration_weeks: parseInt(e.target.value) || null }))} />
+              </div>
+              <div>
+                <label className="label text-xs">Discipline</label>
+                <input className="input text-sm" disabled={!!existingSignedAt}
+                  value={dischargeData.discipline}
+                  onChange={(e) => setDischargeData(prev => ({ ...prev, discipline: e.target.value }))} />
+              </div>
+            </div>
+            <div className="mt-3">
+              <label className="label text-xs">Primary Diagnosis</label>
+              <input className="input text-sm w-full" disabled={!!existingSignedAt}
+                value={dischargeData.primary_dx}
+                onChange={(e) => setDischargeData(prev => ({ ...prev, primary_dx: e.target.value }))} />
+            </div>
+          </div>
+
+          {/* Section 3: Final Goal Status (REQUIRED) */}
+          <div className="card p-5 mb-4 bg-amber-50/30 border-l-4 border-l-amber-400">
+            <h2 className="text-base font-semibold text-[var(--color-text)] mb-4 flex items-center gap-2">
+              <Target className="w-5 h-5 text-amber-600" />
+              Final Goal Status
+            </h2>
+            {dischargeGoals.some(g => !g.status_at_report) && (
+              <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-100 rounded-lg p-2.5 mb-4">
+                <AlertTriangle className="w-4 h-4" />
+                All goals must have a final status to sign.
+              </div>
+            )}
+            <div className="space-y-4">
+              {dischargeGoals.map((dg, idx) => (
+                <div key={dg.goal_id} className="p-4 rounded-lg bg-white border border-[var(--color-border)]">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${dg.goal_type === 'LTG' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                      {dg.goal_type}
+                    </span>
+                    <p className="text-sm font-medium text-[var(--color-text)] flex-1">{dg.goal_text_snapshot}</p>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div>
+                      <label className="label text-xs">Final Status <span className="text-red-500">*</span></label>
+                      <select className="select text-sm w-full" value={dg.status_at_report}
+                        disabled={!!existingSignedAt}
+                        onChange={(e) => {
+                          const updated = [...dischargeGoals];
+                          updated[idx] = { ...updated[idx], status_at_report: e.target.value };
+                          setDischargeGoals(updated);
+                        }}>
+                        <option value="">— Select —</option>
+                        {Object.entries(DISCHARGE_GOAL_STATUS_LABELS).map(([val, label]) => (
+                          <option key={val} value={val}>{label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="label text-xs">Final Performance</label>
+                      <input className="input text-sm w-full" placeholder="e.g., 90% accuracy, independent"
+                        disabled={!!existingSignedAt}
+                        value={dg.performance_data}
+                        onChange={(e) => {
+                          const updated = [...dischargeGoals];
+                          updated[idx] = { ...updated[idx], performance_data: e.target.value };
+                          setDischargeGoals(updated);
+                        }} />
+                    </div>
+                  </div>
+                  <div className="mt-2">
+                    <label className="label text-xs">Summary</label>
+                    <textarea className="textarea text-sm" rows={2}
+                      disabled={!!existingSignedAt}
+                      placeholder="Goal-specific summary..."
+                      value={dg.clinical_notes}
+                      onChange={(e) => {
+                        const updated = [...dischargeGoals];
+                        updated[idx] = { ...updated[idx], clinical_notes: e.target.value };
+                        setDischargeGoals(updated);
+                      }} />
+                  </div>
+                </div>
+              ))}
+              {dischargeGoals.length === 0 && (
+                <p className="text-sm text-[var(--color-text-secondary)] italic">No goals found for this client.</p>
+              )}
+            </div>
+          </div>
+
+          {/* Section 4: Functional Outcomes */}
+          <div className="card p-5 mb-4 bg-amber-50/30 border-l-4 border-l-amber-400">
+            <h2 className="text-base font-semibold text-[var(--color-text)] mb-4 flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-amber-600" />
+              Functional Outcomes
+            </h2>
+            <div className="space-y-4">
+              <div>
+                <label className="label text-xs">Prior Level of Function</label>
+                <textarea className="textarea text-sm" rows={3}
+                  disabled={!!existingSignedAt}
+                  placeholder="Describe the patient's functional level prior to treatment..."
+                  value={dischargeData.prior_level_of_function}
+                  onChange={(e) => setDischargeData(prev => ({ ...prev, prior_level_of_function: e.target.value }))} />
+              </div>
+              <div>
+                <label className="label text-xs">Current Level of Function</label>
+                <textarea className="textarea text-sm" rows={3}
+                  disabled={!!existingSignedAt}
+                  placeholder="Describe the patient's current functional level at discharge..."
+                  value={dischargeData.current_level_of_function}
+                  onChange={(e) => setDischargeData(prev => ({ ...prev, current_level_of_function: e.target.value }))} />
+              </div>
+            </div>
+          </div>
+
+          {/* Section 5: Discharge Recommendations */}
+          <div className="card p-5 mb-4 bg-amber-50/30 border-l-4 border-l-amber-400">
+            <h2 className="text-base font-semibold text-[var(--color-text)] mb-4 flex items-center gap-2">
+              <ClipboardCheck className="w-5 h-5 text-amber-600" />
+              Discharge Recommendations
+            </h2>
+            <div className="space-y-3">
+              {(Object.entries(DISCHARGE_RECOMMENDATION_LABELS) as [DischargeRecommendation, string][]).map(([key, label]) => (
+                <div key={key}>
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={dischargeData.recommendations.includes(key)}
+                      disabled={!!existingSignedAt}
+                      onChange={(e) => {
+                        setDischargeData(prev => ({
+                          ...prev,
+                          recommendations: e.target.checked
+                            ? [...prev.recommendations, key]
+                            : prev.recommendations.filter(r => r !== key),
+                        }));
+                      }}
+                      className="mt-0.5 w-4 h-4 rounded border-gray-300 accent-amber-600"
+                    />
+                    <span className="text-sm text-[var(--color-text)]">{label}</span>
+                  </label>
+                  {key === 'referral' && dischargeData.recommendations.includes('referral') && (
+                    <input className="input text-sm mt-1 ml-6" placeholder="Referred to..."
+                      disabled={!!existingSignedAt}
+                      value={dischargeData.referral_to}
+                      onChange={(e) => setDischargeData(prev => ({ ...prev, referral_to: e.target.value }))} />
+                  )}
+                  {key === 'return_to_therapy' && dischargeData.recommendations.includes('return_to_therapy') && (
+                    <input className="input text-sm mt-1 ml-6" placeholder="Return to therapy if..."
+                      disabled={!!existingSignedAt}
+                      value={dischargeData.return_to_therapy_if}
+                      onChange={(e) => setDischargeData(prev => ({ ...prev, return_to_therapy_if: e.target.value }))} />
+                  )}
+                  {key === 'equipment' && dischargeData.recommendations.includes('equipment') && (
+                    <input className="input text-sm mt-1 ml-6" placeholder="Equipment details..."
+                      disabled={!!existingSignedAt}
+                      value={dischargeData.equipment_details}
+                      onChange={(e) => setDischargeData(prev => ({ ...prev, equipment_details: e.target.value }))} />
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="mt-4">
+              <label className="label text-xs">Additional Recommendations</label>
+              <textarea className="textarea text-sm" rows={3}
+                disabled={!!existingSignedAt}
+                placeholder="Any additional recommendations, home program details, or follow-up instructions..."
+                value={dischargeData.additional_recommendations}
+                onChange={(e) => setDischargeData(prev => ({ ...prev, additional_recommendations: e.target.value }))} />
+            </div>
+          </div>
+          </>
+        )}
 
         {/* Signature */}
         <div className="card p-6 mb-6">
@@ -1669,7 +2180,7 @@ export default function NoteFormPage() {
               Cancel
             </button>
             <button
-              className="btn-secondary flex items-center gap-2"
+              className="btn-primary flex items-center gap-2"
               onClick={() => handleSave(false)}
               disabled={saving}
             >
@@ -1677,12 +2188,12 @@ export default function NoteFormPage() {
               {saving ? 'Saving...' : 'Save Draft'}
             </button>
             <button
-              className="btn-primary flex items-center gap-2"
-              onClick={() => handleSave(true)}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border-2 border-amber-500 text-amber-700 bg-white hover:bg-amber-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={handleSignClick}
               disabled={saving || Boolean(existingSignedAt)}
             >
               <CheckCircle className="w-4 h-4" />
-              {saving ? 'Saving...' : 'Sign & Save'}
+              {saving ? 'Saving...' : 'Sign & Finalize'}
             </button>
             </div>
           </div>
@@ -2019,6 +2530,17 @@ export default function NoteFormPage() {
           </div>
         </div>
       )}
+      {/* Sign Confirmation Dialog */}
+      <SignConfirmDialog
+        isOpen={signDialogOpen}
+        onClose={() => setSignDialogOpen(false)}
+        onConfirm={() => {
+          setSignDialogOpen(false);
+          handleSave(true);
+        }}
+        errors={signDialogErrors}
+        warnings={signDialogWarnings}
+      />
     </div>
   );
 }

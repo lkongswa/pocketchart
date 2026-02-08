@@ -38,6 +38,7 @@ import {
   User,
   Activity,
   Flag,
+  LogOut,
 } from 'lucide-react';
 import type {
   Client,
@@ -373,7 +374,21 @@ const ClientDetailPage: React.FC = () => {
 
   const handleArchiveToggle = async () => {
     if (!client) return;
-    const newStatus: ClientStatus = client.status === 'active' ? 'discharged' : 'active';
+    if (client.status !== 'discharged') {
+      // Offer discharge summary
+      const createSummary = window.confirm(
+        'Would you like to create a discharge summary?\n\n' +
+        'A discharge summary documents final goal statuses, outcomes, and recommendations.\n\n' +
+        'Click OK to create one, or Cancel to change status without a summary.'
+      );
+      if (createSummary) {
+        navigate(`/clients/${client.id}/note/new`, {
+          state: { noteMode: 'discharge', standalone: true }
+        });
+        return;
+      }
+    }
+    const newStatus: ClientStatus = client.status === 'active' || client.status === 'hold' ? 'discharged' : 'active';
     try {
       const updated = await window.api.clients.update(client.id, { ...client, status: newStatus });
       setClient(updated);
@@ -611,6 +626,16 @@ const ClientDetailPage: React.FC = () => {
         Back to Clients
       </button>
 
+      {/* Discharged Client Banner */}
+      {client.status === 'discharged' && (
+        <div className="card p-3 bg-amber-50/50 border-l-4 border-l-amber-400">
+          <div className="flex items-center gap-2 text-sm text-amber-700">
+            <Archive size={16} />
+            <span className="font-medium">This client was discharged.</span>
+          </div>
+        </div>
+      )}
+
       {/* ══════════ HEADER CARD WITH COLLAPSIBLE SECTIONS ══════════ */}
       <div className="card p-5">
         {/* Main Header Row */}
@@ -647,8 +672,18 @@ const ClientDetailPage: React.FC = () => {
             <button className="btn-ghost btn-sm gap-1.5" onClick={handleExportPdf} disabled={exportingPdf}>
               <Download size={14} /> {exportingPdf ? 'Exporting...' : 'Export Chart'}
             </button>
+            {client.status !== 'discharged' && (
+              <button
+                className="btn-ghost btn-sm gap-1.5 text-amber-600 hover:bg-amber-50"
+                onClick={() => navigate(`/clients/${client.id}/note/new`, {
+                  state: { noteMode: 'discharge', standalone: true }
+                })}
+              >
+                <LogOut size={14} /> Discharge Client
+              </button>
+            )}
             <button className="btn-ghost btn-sm gap-1.5" onClick={handleArchiveToggle}>
-              <Archive size={14} /> {client.status === 'active' ? 'Discharge' : 'Reactivate'}
+              <Archive size={14} /> {client.status === 'discharged' ? 'Reactivate' : 'Change Status'}
             </button>
           </div>
         </div>
@@ -1604,6 +1639,9 @@ const ClientDetailPage: React.FC = () => {
         onClose={() => setEditModalOpen(false)}
         client={client}
         onSave={handleClientSaved}
+        onDischarge={() => navigate(`/clients/${client.id}/note/new`, {
+          state: { noteMode: 'discharge', standalone: true }
+        })}
       />
 
       {/* Goal Modal (for editing single goals) */}
