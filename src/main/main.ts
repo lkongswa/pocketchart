@@ -11,6 +11,7 @@ import { autoUpdater } from 'electron-updater';
 import Stripe from 'stripe';
 import { requiresReferral as checkDirectAccess, getAllRules as getDirectAccessRules } from '../shared/directAccessRules';
 import { detectCloudStorage } from './cloudDetection';
+import { generateCMS1500, assembleCMS1500Data } from './cms1500Generator';
 import type { AppTier, NoteFormat, DischargeData, DischargeGoalStatus } from '../shared/types';
 import { NOTE_FORMAT_SECTIONS, DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS } from '../shared/types';
 
@@ -1236,6 +1237,16 @@ function registerIpcHandlers() {
     return db.prepare('SELECT * FROM note_bank WHERE id = ?').get(id);
   });
 
+  safeHandle('noteBank:getCategories', (_event, discipline: string) => {
+    const rows = db.prepare(
+      `SELECT DISTINCT category FROM note_bank
+       WHERE (discipline = ? OR discipline = 'ALL')
+       AND category IS NOT NULL AND category != ''
+       ORDER BY category COLLATE NOCASE`
+    ).all(discipline) as { category: string }[];
+    return rows.map(r => r.category);
+  });
+
   // ── Goals Bank ──
   safeHandle('goalsBank:list', (_event, filters?: { discipline?: string; category?: string }) => {
     let query = 'SELECT * FROM goals_bank WHERE 1=1';
@@ -1273,6 +1284,16 @@ function registerIpcHandlers() {
   safeHandle('goalsBank:delete', (_event, id: number) => {
     db.prepare('DELETE FROM goals_bank WHERE id = ?').run(id);
     return true;
+  });
+
+  safeHandle('goalsBank:getCategories', (_event, discipline: string) => {
+    const rows = db.prepare(
+      `SELECT DISTINCT category FROM goals_bank
+       WHERE discipline = ?
+       AND category IS NOT NULL AND category != ''
+       ORDER BY category COLLATE NOCASE`
+    ).all(discipline) as { category: string }[];
+    return rows.map(r => r.category);
   });
 
   // ── Settings ──
@@ -2623,6 +2644,42 @@ function registerIpcHandlers() {
     }
 
     return buildSuperbillPdf(client, notesData, practice);
+  });
+
+  // ── CMS-1500 Claim Form ──
+  safeHandle('cms1500:generate', (_event, data: { clientId: number; noteIds: number[] }) => {
+    const client = db.prepare('SELECT * FROM clients WHERE id = ? AND deleted_at IS NULL').get(data.clientId) as any;
+    if (!client) throw new Error('Client not found');
+
+    const practice = db.prepare('SELECT * FROM practice WHERE id = 1').get() || {};
+
+    if (!data.noteIds || data.noteIds.length === 0) {
+      throw new Error('No note IDs provided');
+    }
+    const placeholders = data.noteIds.map(() => '?').join(',');
+    const notesData = db.prepare(
+      `SELECT * FROM notes WHERE id IN (${placeholders}) AND client_id = ? AND deleted_at IS NULL ORDER BY date_of_service`
+    ).all(...data.noteIds, data.clientId) as any[];
+
+    const cms1500Data = assembleCMS1500Data({ client, practice, notes: notesData });
+    const base64Pdf = generateCMS1500(cms1500Data);
+
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const filename = `CMS1500_${client.last_name}_${client.first_name}_${dateStr}.pdf`;
+
+    return { base64Pdf, filename };
+  });
+
+  safeHandle('cms1500:save', async (_event, data: { base64Pdf: string; filename: string }) => {
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      title: 'Save CMS-1500 PDF',
+      defaultPath: data.filename,
+      filters: [{ name: 'PDF Document', extensions: ['pdf'] }],
+    });
+    if (canceled || !filePath) return null;
+    const buffer = Buffer.from(data.base64Pdf, 'base64');
+    fs.writeFileSync(filePath, buffer);
+    return filePath;
   });
 
   // ── Storage Location ──
@@ -5780,13 +5837,16 @@ function buildSingleEvalPdf(client: any, evalItem: any): Buffer {
     try {
       const content = JSON.parse(evalItem.content);
       if (typeof content === 'object') {
+        const rehabLabel = evalItem.eval_type === 'reassessment'
+          ? 'Rehabilitation Potential / Justification for Continued Services'
+          : 'Rehabilitation Potential / Medical Necessity';
         const evalFieldLabels: Record<string, string> = {
           referral_source: 'Referral Source',
           medical_history: 'Medical History',
           prior_level_of_function: 'Prior Level of Function',
           current_complaints: 'Current Complaints',
           clinical_impression: 'Clinical Impression',
-          rehabilitation_potential: 'Rehabilitation Potential / Prognosis',
+          rehabilitation_potential: rehabLabel,
           precautions: 'Precautions / Contraindications',
           goals: 'Goals',
           treatment_plan: 'Treatment Plan',
@@ -6088,10 +6148,10 @@ function buildClientChartPdf(clientId: number): Buffer {
   // Evaluations in card containers
   if (evals.length > 0) {
     h.addSectionHeader(`Evaluations / Plan of Care (${evals.length})`);
-    const evalFieldLabels: Record<string, string> = {
+    const baseEvalFieldLabels: Record<string, string> = {
       referral_source: 'Referral Source', medical_history: 'Medical History',
       prior_level_of_function: 'Prior Level of Function', current_complaints: 'Current Complaints',
-      clinical_impression: 'Clinical Impression', rehabilitation_potential: 'Rehabilitation Potential / Prognosis',
+      clinical_impression: 'Clinical Impression',
       precautions: 'Precautions / Contraindications', goals: 'Goals',
       treatment_plan: 'Treatment Plan', frequency_duration: 'Frequency & Duration',
     };
@@ -6133,6 +6193,12 @@ function buildClientChartPdf(clientId: number): Buffer {
         try {
           const content = JSON.parse(evalItem.content);
           if (typeof content === 'object') {
+            const evalFieldLabels: Record<string, string> = {
+              ...baseEvalFieldLabels,
+              rehabilitation_potential: evalItem.eval_type === 'reassessment'
+                ? 'Rehabilitation Potential / Justification for Continued Services'
+                : 'Rehabilitation Potential / Medical Necessity',
+            };
             const emphasisKeys = new Set(['treatment_plan', 'frequency_duration']);
             for (const [key, val] of Object.entries(content)) {
               if (key === 'goal_entries' || key === 'created_goal_ids' || key === 'objective_assessment') continue;

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Search, Star, Plus, ChevronDown, ChevronRight } from 'lucide-react';
+import { X, Search, Star, Plus, ChevronDown, ChevronRight, Target } from 'lucide-react';
 import { useTier } from '../hooks/useTier';
 import type { Discipline, SOAPSection, NoteBankEntry } from '../../shared/types';
 
@@ -10,6 +10,7 @@ interface NoteBankPopoverProps {
   discipline: Discipline;
   section: SOAPSection;
   anchorRef?: React.RefObject<HTMLButtonElement | null>;
+  priorityCategories?: string[];
 }
 
 const SECTION_LABELS: Record<SOAPSection, string> = {
@@ -26,6 +27,7 @@ export default function NoteBankPopover({
   discipline,
   section,
   anchorRef,
+  priorityCategories = [],
 }: NoteBankPopoverProps) {
   const [phrases, setPhrases] = useState<NoteBankEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -166,9 +168,21 @@ export default function NoteBankPopover({
     return a.phrase.localeCompare(b.phrase);
   });
 
-  // Group by category
+  // Partition: priority category phrases (suggested) vs rest
+  const priorityPhrases = priorityCategories.length > 0
+    ? sorted.filter(p =>
+        priorityCategories.some(cat => p.category?.toLowerCase() === cat.toLowerCase())
+      )
+    : [];
+  const restPhrases = priorityCategories.length > 0
+    ? sorted.filter(p =>
+        !priorityCategories.some(cat => p.category?.toLowerCase() === cat.toLowerCase())
+      )
+    : sorted;
+
+  // Group rest by category
   const grouped: Record<string, NoteBankEntry[]> = {};
-  for (const phrase of sorted) {
+  for (const phrase of restPhrases) {
     const cat = phrase.category || 'general';
     if (!grouped[cat]) grouped[cat] = [];
     grouped[cat].push(phrase);
@@ -176,11 +190,15 @@ export default function NoteBankPopover({
 
   const categoryKeys = Object.keys(grouped).sort();
 
-  // Default collapse all categories on first load
+  // Default collapse all categories on first load (but NOT priority section)
   if (!initialCollapseApplied && categoryKeys.length > 0 && !loading) {
     setCollapsedCategories(new Set(categoryKeys));
     setInitialCollapseApplied(true);
   }
+
+  const priorityCategoryLabel = priorityCategories.length === 1
+    ? priorityCategories[0]
+    : priorityCategories.slice(0, 2).join(', ');
 
   return (
     <div
@@ -222,7 +240,7 @@ export default function NoteBankPopover({
           <div className="flex items-center justify-center py-8 text-sm text-[var(--color-text-secondary)]">
             Loading phrases...
           </div>
-        ) : categoryKeys.length === 0 ? (
+        ) : categoryKeys.length === 0 && priorityPhrases.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-8 text-sm text-[var(--color-text-secondary)]">
             <p>No phrases found</p>
             {searchQuery && (
@@ -230,7 +248,51 @@ export default function NoteBankPopover({
             )}
           </div>
         ) : (
-          categoryKeys.map((category) => {
+          <>
+          {/* Suggested phrases for addressed goal categories */}
+          {priorityPhrases.length > 0 && (
+            <div className="mb-2 pb-2 border-b border-[var(--color-border)]">
+              <div className="flex items-center gap-1.5 px-2 py-1.5 text-xs font-semibold text-[var(--color-primary)]">
+                <Target className="w-3.5 h-3.5" />
+                Suggested for {priorityCategoryLabel}
+                <span className="ml-auto text-[10px] font-normal text-[var(--color-text-secondary)]">
+                  {priorityPhrases.length}
+                </span>
+              </div>
+              <div className="ml-1">
+                {priorityPhrases.map((phrase) => (
+                  <button
+                    key={phrase.id}
+                    className="flex items-start gap-2 w-full text-left px-2 py-2 text-sm text-[var(--color-text)] rounded-lg hover:bg-[var(--color-primary)]/5 transition-colors group"
+                    onClick={() => {
+                      onInsert(phrase.phrase);
+                      onClose();
+                    }}
+                  >
+                    <span className="flex-1 leading-snug">
+                      {phrase.phrase}
+                    </span>
+                    {isPro && (
+                      <button
+                        onClick={(e) => handleToggleFavorite(phrase.id, e)}
+                        className="flex-shrink-0 mt-0.5 p-0.5 rounded hover:bg-gray-100"
+                        title={phrase.is_favorite ? 'Remove from favorites' : 'Add to favorites'}
+                      >
+                        <Star
+                          className={`w-3.5 h-3.5 ${
+                            phrase.is_favorite
+                              ? 'fill-amber-400 text-amber-400'
+                              : 'text-gray-300 group-hover:text-gray-400'
+                          }`}
+                        />
+                      </button>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {categoryKeys.map((category) => {
             const isCollapsed = collapsedCategories.has(category);
             const items = grouped[category];
             return (
@@ -284,7 +346,8 @@ export default function NoteBankPopover({
                 )}
               </div>
             );
-          })
+          })}
+          </>
         )}
       </div>
 

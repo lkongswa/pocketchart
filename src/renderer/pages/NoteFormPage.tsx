@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useLocation, useBlocker } from 'react-router-dom';
 import { useSectionColor } from '../hooks/useSectionColor';
 import {
@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import type { Client, Note, Goal, GoalStatus, Discipline, SOAPSection, NoteFormat, CptLine, PlaceOfService, ContractedEntity, EntityFeeSchedule, StagedGoal, ProgressReportGoalStatus, ProgressReportData, ComplianceTracking, VisitType, GoalsBankEntry, Evaluation, NoteMode, DischargeData, DischargeGoalStatus, DischargeReason, DischargeRecommendation, EpisodeSummary } from '../../shared/types';
 import { NOTE_FORMAT_SECTIONS, PROGRESS_REPORT_GOAL_STATUS_LABELS, DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS } from '../../shared/types';
+import type { ValidationIssue, ValidationFixes } from '../../shared/types/validation';
 import SignConfirmDialog from '../components/SignConfirmDialog';
 
 // Place of service options
@@ -124,8 +125,7 @@ export default function NoteFormPage() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [signDialogOpen, setSignDialogOpen] = useState(false);
-  const [signDialogErrors, setSignDialogErrors] = useState<string[]>([]);
-  const [signDialogWarnings, setSignDialogWarnings] = useState<string[]>([]);
+  const [signDialogIssues, setSignDialogIssues] = useState<ValidationIssue[]>([]);
 
   // Form state — pre-fill from appointment context if available
   const [dateOfService, setDateOfService] = useState(apptState.appointmentDate || todayISO());
@@ -213,6 +213,17 @@ export default function NoteFormPage() {
   const [noteMode, setNoteMode] = useState<NoteMode>(isStandaloneDischarge ? 'discharge' : 'soap');
   const isProgressReport = noteMode === 'progress_report';
   const isDischarge = noteMode === 'discharge';
+
+  // Addressed goal categories for Quick Chips intelligence
+  const addressedCategories = useMemo(() => {
+    if (!goals || goalsAddressed.length === 0) return [];
+    return [...new Set(
+      goals
+        .filter(g => goalsAddressed.includes(g.id))
+        .map(g => g.category)
+        .filter(Boolean)
+    )];
+  }, [goals, goalsAddressed]);
 
   // Discharge state
   const [dischargeData, setDischargeData] = useState<DischargeData>({
@@ -719,27 +730,60 @@ export default function NoteFormPage() {
   };
 
   /** Pre-sign validation: collect blocking errors and non-blocking warnings */
-  const runSignValidation = (): { errors: string[]; warnings: string[] } => {
-    const errors: string[] = [];
-    const warnings: string[] = [];
+  const runSignValidation = (): ValidationIssue[] => {
+    const issues: ValidationIssue[] = [];
 
     // Date of service
-    if (!dateOfService) errors.push('Date of service is required.');
+    if (!dateOfService) {
+      issues.push({
+        id: 'note_no_dos', message: 'Date of service is required', severity: 'error', fixable: true,
+        fieldType: 'date', target: 'document', currentValue: '',
+      });
+    }
 
-    // Discharge-specific
+    // ── Discharge-specific ──
     if (isDischarge) {
-      if (!dischargeData.discharge_reason) errors.push('Discharge reason is required.');
+      if (!dischargeData.discharge_reason) {
+        issues.push({
+          id: 'dc_no_reason', message: 'Discharge reason is required', severity: 'error', fixable: true,
+          fieldType: 'select', target: 'document', currentValue: '',
+          options: [
+            { value: 'goals_met', label: 'Goals met / max benefit reached' },
+            { value: 'patient_choice', label: 'Patient choice' },
+            { value: 'non_compliance', label: 'Non-compliance / attendance' },
+            { value: 'moved', label: 'Moved / relocated' },
+            { value: 'physician_order', label: 'Physician order to discharge' },
+            { value: 'auth_exhausted', label: 'Authorization / insurance exhausted' },
+            { value: 'referred_out', label: 'Referred to another provider' },
+            { value: 'medical_change', label: 'Medical status change' },
+            { value: 'other', label: 'Other' },
+          ],
+        });
+      }
       if (dischargeData.discharge_reason === 'other' && !dischargeData.discharge_reason_detail.trim()) {
-        errors.push('Please provide details for the discharge reason.');
+        issues.push({
+          id: 'dc_no_reason_detail', message: 'Discharge reason details required', severity: 'error', fixable: true,
+          fieldType: 'textarea', target: 'document', currentValue: '',
+          hint: 'Provide details for the "Other" discharge reason.',
+        });
       }
       const hasUnresolvedGoals = dischargeGoals.some(g => !g.status_at_report || g.status_at_report === 'progressing');
-      if (hasUnresolvedGoals) errors.push('All goals must have a final status before signing a discharge summary.');
+      if (hasUnresolvedGoals) {
+        issues.push({
+          id: 'dc_goal_no_status', message: 'All goals must have final status for discharge', severity: 'error', fixable: false,
+          fieldType: 'none', target: 'document', guidance: 'Go back and set a terminal status on all goals.',
+        });
+      }
       if (!dischargeData.current_level_of_function.trim()) {
-        warnings.push('Current Level of Function is empty — important for discharge documentation.');
+        issues.push({
+          id: 'dc_no_current_lof', message: 'Current Level of Function is empty', severity: 'error', fixable: true,
+          fieldType: 'textarea', target: 'document', currentValue: '',
+          hint: "Describe the patient's current functional status at discharge.",
+        });
       }
     }
 
-    // SOAP section content (skip for standalone discharge)
+    // ── SOAP / note section content ──
     if (!isStandaloneDischarge) {
       const sections = NOTE_FORMAT_SECTIONS[noteFormat];
       const sectionValues: Record<string, string> = {
@@ -748,79 +792,179 @@ export default function NoteFormPage() {
         assessment: assessment.trim(),
         plan: plan.trim(),
       };
-
-      // Check if ALL sections are empty (blocking)
       const activeSections = sections.filter(s => s.label !== '(unused)');
-      const allEmpty = activeSections.every(s => !sectionValues[s.field]);
-      if (allEmpty) {
-        const sectionLabels = activeSections.map(s => s.label).join(', ');
-        errors.push(`All ${noteFormat} sections (${sectionLabels}) are empty.`);
-      } else {
-        // Check individual empty sections (blocking)
-        for (const s of activeSections) {
-          if (!sectionValues[s.field]) {
-            errors.push(`The ${s.label} section is empty.`);
-          }
-        }
+      const sectionFieldMap: Record<string, string> = {
+        subjective: 'note_empty_subjective',
+        objective: 'note_empty_objective',
+        assessment: 'note_empty_assessment',
+        plan: 'note_empty_plan',
+      };
+      const shortFieldMap: Record<string, string> = {
+        subjective: 'note_short_subjective',
+        objective: 'note_short_objective',
+        assessment: 'note_short_assessment',
+        plan: 'note_short_plan',
+      };
 
-        // Check short sections < 20 chars (warning)
-        for (const s of activeSections) {
-          const val = sectionValues[s.field];
-          if (val && val.length < 20) {
-            warnings.push(`The ${s.label} section is very short (${val.length} characters) — may be incomplete.`);
-          }
+      for (const s of activeSections) {
+        const val = sectionValues[s.field];
+        if (!val) {
+          issues.push({
+            id: sectionFieldMap[s.field] || `note_empty_${s.field}`,
+            message: `${s.label} section is empty`,
+            severity: 'error', fixable: true,
+            fieldType: 'textarea', target: 'document', currentValue: '',
+            hint: s.placeholder,
+          });
+        } else if (val.length < 20) {
+          issues.push({
+            id: shortFieldMap[s.field] || `note_short_${s.field}`,
+            message: `${s.label} section appears incomplete (${val.length} chars)`,
+            severity: 'warning', fixable: true,
+            fieldType: 'textarea', target: 'document', currentValue: val,
+            hint: 'Consider adding more detail.',
+          });
         }
+      }
 
-        // Copy-paste detection: Assessment identical to or substring of Objective
-        const obj = sectionValues.objective;
-        const asmt = sectionValues.assessment;
-        if (obj && asmt && (asmt === obj || obj.includes(asmt) || asmt.includes(obj))) {
-          warnings.push('The Assessment appears identical to the Objective — consider adding clinical interpretation.');
-        }
+      // Copy-paste detection
+      const obj = sectionValues.objective;
+      const asmt = sectionValues.assessment;
+      if (obj && asmt && (asmt === obj || obj.includes(asmt) || asmt.includes(obj))) {
+        issues.push({
+          id: 'note_copypaste_warning', message: 'Assessment appears identical to Objective', severity: 'warning', fixable: false,
+          fieldType: 'none', target: 'document', guidance: 'Consider adding clinical interpretation to differentiate the Assessment.',
+        });
       }
     }
 
-    // Progress report mode: check goal statuses and performance data
+    // ── Progress report goals ──
     if (isProgressReport && progressReportGoals.length > 0) {
       const blanks = progressReportGoals.filter(g => !g.status_at_report);
       if (blanks.length > 0) {
-        errors.push(`${blanks.length} goal${blanks.length > 1 ? 's have' : ' has'} no status selected — all goals need a status for the progress report.`);
+        issues.push({
+          id: 'pr_goal_no_status',
+          message: `${blanks.length} goal(s) need a status for progress report`,
+          severity: 'error', fixable: true, fieldType: 'goal_status', target: 'document',
+          goalContext: blanks.map(g => ({
+            goalId: g.goal_id,
+            goalText: g.goal_text_snapshot.slice(0, 80),
+            goalType: g.goal_type as 'STG' | 'LTG',
+          })),
+        });
       }
 
       const noPerf = progressReportGoals.filter(g => g.status_at_report && !g.performance_data?.trim());
       if (noPerf.length > 0) {
-        warnings.push(`${noPerf.length} goal${noPerf.length > 1 ? 's have' : ' has'} no performance data entered.`);
+        issues.push({
+          id: 'pr_goal_no_perf',
+          message: `${noPerf.length} goal(s) missing performance data`,
+          severity: 'warning', fixable: true, fieldType: 'goal_perf', target: 'document',
+          goalContext: noPerf.map(g => ({
+            goalId: g.goal_id,
+            goalText: g.goal_text_snapshot.slice(0, 80),
+            goalType: g.goal_type as 'STG' | 'LTG',
+          })),
+        });
       }
     }
 
-    // Client completeness warnings
+    // Progress report: nudge for clinical justification
+    if (isProgressReport && !isStandaloneDischarge) {
+      if (!assessment.trim() || assessment.trim().length < 20) {
+        // Only add if we didn't already flag assessment as empty
+        if (!issues.some(i => i.id === 'note_empty_assessment')) {
+          issues.push({
+            id: 'note_pr_assessment_brief', message: 'Assessment is very brief for a progress report', severity: 'warning', fixable: false,
+            fieldType: 'none', target: 'document', guidance: 'Consider including clinical justification for continued services.',
+          });
+        }
+      }
+    }
+
+    // ── Client completeness ──
     if (client) {
       if (!client.dob) {
-        warnings.push('Client date of birth is missing — required on all clinical documentation and superbills.');
+        issues.push({
+          id: 'client_dob', message: 'Client date of birth is missing', severity: 'error', fixable: true,
+          fieldType: 'date', target: 'client', currentValue: '',
+        });
       }
       if (!client.primary_dx_code) {
-        warnings.push('No primary diagnosis (ICD-10) on file — required for insurance claims and compliant documentation.');
+        issues.push({
+          id: 'client_dx', message: 'Primary diagnosis missing', severity: 'error', fixable: true,
+          fieldType: 'icd10_search', target: 'client',
+        });
       }
     }
 
-    // Provider info check
-    // (signature_typed should be pre-filled if practice info exists)
+    // ── Provider info ──
     if (!signatureTyped.trim()) {
-      warnings.push('Provider signature name is not set. Update it in Settings > Provider Information.');
+      issues.push({
+        id: 'provider_signature', message: 'Provider signature name not set', severity: 'warning', fixable: false,
+        fieldType: 'none', target: 'settings', guidance: 'Update in Settings > Provider Information.',
+      });
     }
     if (!practiceInfo?.license_number?.trim()) {
-      warnings.push('Provider license number is not set. Update it in Settings > Provider Information.');
+      issues.push({
+        id: 'provider_license', message: 'Provider license number not set', severity: 'warning', fixable: false,
+        fieldType: 'none', target: 'settings', guidance: 'Update in Settings > Provider Information.',
+      });
     }
 
-    return { errors, warnings };
+    return issues;
   };
 
   /** Opens the sign confirmation dialog with validation results */
   const handleSignClick = () => {
-    const { errors, warnings } = runSignValidation();
-    setSignDialogErrors(errors);
-    setSignDialogWarnings(warnings);
+    const issues = runSignValidation();
+    setSignDialogIssues(issues);
     setSignDialogOpen(true);
+  };
+
+  /** Handle fix-it sign: apply fixes from dialog, then save+sign */
+  const handleSignWithFixes = (fixes: ValidationFixes) => {
+    // Apply document-level section fixes
+    if (fixes.documentFixes.subjective !== undefined) setSubjective(fixes.documentFixes.subjective);
+    if (fixes.documentFixes.objective !== undefined) setObjective(fixes.documentFixes.objective);
+    if (fixes.documentFixes.assessment !== undefined) setAssessment(fixes.documentFixes.assessment);
+    if (fixes.documentFixes.plan !== undefined) setPlan(fixes.documentFixes.plan);
+    if (fixes.documentFixes.date_of_service !== undefined) setDateOfService(fixes.documentFixes.date_of_service);
+
+    // Apply discharge fixes
+    if (isDischarge) {
+      const dcUpdates: Partial<DischargeData> = {};
+      if (fixes.documentFixes.discharge_reason !== undefined) dcUpdates.discharge_reason = fixes.documentFixes.discharge_reason;
+      if (fixes.documentFixes.discharge_reason_detail !== undefined) dcUpdates.discharge_reason_detail = fixes.documentFixes.discharge_reason_detail;
+      if (fixes.documentFixes.current_level_of_function !== undefined) dcUpdates.current_level_of_function = fixes.documentFixes.current_level_of_function;
+      if (Object.keys(dcUpdates).length > 0) {
+        setDischargeData(prev => ({ ...prev, ...dcUpdates }));
+      }
+    }
+
+    // Apply goal fixes (progress report goal statuses and performance data)
+    if (Object.keys(fixes.goalFixes).length > 0) {
+      setProgressReportGoals(prev => prev.map(g => {
+        const goalFix = fixes.goalFixes[g.goal_id];
+        if (!goalFix) return g;
+        return {
+          ...g,
+          ...(goalFix.status_at_report ? { status_at_report: goalFix.status_at_report as ProgressReportGoalStatus } : {}),
+          ...(goalFix.performance_data !== undefined ? { performance_data: goalFix.performance_data } : {}),
+        };
+      }));
+    }
+
+    setSignDialogOpen(false);
+    setTimeout(() => handleSave(true), 50);
+  };
+
+  /** Handle client record updates from Fix-It dialog */
+  const handleClientUpdate = async (updates: Record<string, any>) => {
+    if (!client) return;
+    await window.api.clients.update(client.id, updates);
+    const updated = await window.api.clients.get(client.id);
+    setClient(updated);
   };
 
   const handleSave = async (sign: boolean) => {
@@ -1628,6 +1772,7 @@ export default function NoteFormPage() {
           anchorRef={getNoteBankButtonRef('S')}
           placeholder={NOTE_FORMAT_SECTIONS[noteFormat][0].placeholder}
           disabled={!!existingSignedAt}
+          priorityCategories={addressedCategories}
         />
 
         {/* Section 2 (Objective / Assessment / Intervention) */}
@@ -1645,6 +1790,7 @@ export default function NoteFormPage() {
           anchorRef={getNoteBankButtonRef('O')}
           placeholder={NOTE_FORMAT_SECTIONS[noteFormat][1].placeholder}
           disabled={!!existingSignedAt}
+          priorityCategories={addressedCategories}
         />
 
         {/* ── Goal Progress (Progress Report only) ── */}
@@ -1799,6 +1945,7 @@ export default function NoteFormPage() {
                 discipline={discipline}
                 section="A"
                 anchorRef={assessmentBtnRef}
+                priorityCategories={addressedCategories}
               />
             </div>
           </div>
@@ -1811,6 +1958,7 @@ export default function NoteFormPage() {
               onInsert={getNoteBankInsertHandler('A')}
               maxChips={6}
               onOpenFullBank={() => setNoteBankOpen('A')}
+              priorityCategories={addressedCategories}
             />
           </div>
 
@@ -1898,6 +2046,7 @@ export default function NoteFormPage() {
             anchorRef={getNoteBankButtonRef('P')}
             placeholder={NOTE_FORMAT_SECTIONS[noteFormat][3].placeholder}
             disabled={!!existingSignedAt}
+            priorityCategories={addressedCategories}
           />
         )}
 
@@ -2662,12 +2811,9 @@ export default function NoteFormPage() {
       <SignConfirmDialog
         isOpen={signDialogOpen}
         onClose={() => setSignDialogOpen(false)}
-        onConfirm={() => {
-          setSignDialogOpen(false);
-          handleSave(true);
-        }}
-        errors={signDialogErrors}
-        warnings={signDialogWarnings}
+        onConfirm={handleSignWithFixes}
+        issues={signDialogIssues}
+        onClientUpdate={handleClientUpdate}
       />
     </div>
   );
@@ -2689,6 +2835,7 @@ interface SOAPSectionCardProps {
   anchorRef: React.RefObject<HTMLButtonElement | null>;
   placeholder?: string;
   disabled?: boolean;
+  priorityCategories?: string[];
 }
 
 const soapSectionTint: Record<SOAPSection, string> = {
@@ -2712,6 +2859,7 @@ function SOAPSectionCard({
   anchorRef,
   placeholder: customPlaceholder,
   disabled,
+  priorityCategories = [],
 }: SOAPSectionCardProps) {
   return (
     <div className={`card p-6 mb-6 ${soapSectionTint[sectionCode]}`}>
@@ -2735,6 +2883,7 @@ function SOAPSectionCard({
             discipline={discipline}
             section={sectionCode}
             anchorRef={anchorRef}
+            priorityCategories={priorityCategories}
           />
         </div>
       </div>
@@ -2747,6 +2896,7 @@ function SOAPSectionCard({
           onInsert={onInsert}
           maxChips={6}
           onOpenFullBank={() => setNoteBankOpen(sectionCode)}
+          priorityCategories={priorityCategories}
         />
       </div>
 

@@ -54,6 +54,7 @@ import type {
   InvoiceStatus,
   Payment,
   PaymentMethod,
+  Practice,
 } from '../../shared/types';
 import { CLIENT_DOCUMENT_CATEGORY_LABELS } from '../../shared/types';
 import ClientFormModal from '../components/ClientFormModal';
@@ -65,9 +66,11 @@ import ComplianceSection from '../components/ComplianceSection';
 import CommunicationLogSection from '../components/CommunicationLogSection';
 import ProFeatureGate from '../components/ProFeatureGate';
 import ChartCompleteness from '../components/ChartCompleteness';
+import ClaimReadinessDialog from '../components/ClaimReadinessDialog';
 import TrialExpiredModal from '../components/TrialExpiredModal';
 import { useTrialGuard } from '../hooks/useTrialGuard';
 import { useChartCompleteness } from '../hooks/useChartCompleteness';
+import { useClaimReadiness } from '../hooks/useClaimReadiness';
 
 // --- Badge helpers ---
 
@@ -266,6 +269,12 @@ const ClientDetailPage: React.FC = () => {
   const [activeDiscounts, setActiveDiscounts] = useState<ClientDiscount[]>([]);
   const [showDiscountModal, setShowDiscountModal] = useState(false);
 
+  // Practice + CMS-1500 state
+  const [practice, setPractice] = useState<Practice | null>(null);
+  const [showReadinessDialog, setShowReadinessDialog] = useState(false);
+  const [generatingCMS1500, setGeneratingCMS1500] = useState(false);
+  const [cms1500Preview, setCms1500Preview] = useState<{ base64Pdf: string; filename: string } | null>(null);
+
   // Document upload form state
   const [uploadCategory, setUploadCategory] = useState<ClientDocumentCategory>('other');
   const [uploadCertStart, setUploadCertStart] = useState('');
@@ -285,6 +294,10 @@ const ClientDetailPage: React.FC = () => {
   // Chart completeness — must be called before any early returns
   const chartCompleteness = useChartCompleteness(client);
 
+  // CMS-1500 readiness
+  const signedNotes = notes.filter(n => n.signed_at);
+  const claimReadiness = useClaimReadiness(client, practice, signedNotes);
+
   const handleCompleteChart = () => {
     const sections = [...new Set(chartCompleteness.missing.map(m => m.section))];
     setHighlightSections(sections);
@@ -297,7 +310,7 @@ const ClientDetailPage: React.FC = () => {
     if (!clientId) return;
     setLoading(true);
     try {
-      const [clientData, notesData, evalsData, goalsData, docsData, invoicesData, paymentsData, discountsData, activeDiscountsData] = await Promise.all([
+      const [clientData, notesData, evalsData, goalsData, docsData, invoicesData, paymentsData, discountsData, activeDiscountsData, practiceData] = await Promise.all([
         window.api.clients.get(clientId),
         window.api.notes.listByClient(clientId),
         window.api.evaluations.listByClient(clientId),
@@ -307,8 +320,10 @@ const ClientDetailPage: React.FC = () => {
         window.api.payments.list({ clientId }),
         window.api.clientDiscounts.listByClient(clientId).catch(() => []),
         window.api.clientDiscounts.getActive(clientId).catch(() => []),
+        window.api.practice.get().catch(() => null),
       ]);
       setClient(clientData);
+      setPractice(practiceData);
       setNotes(notesData || []);
       setEvaluations(evalsData || []);
       setGoals(goalsData || []);
@@ -534,6 +549,37 @@ const ClientDetailPage: React.FC = () => {
     }
   };
 
+  // --- CMS-1500 Handlers ---
+
+  const handleGenerateCMS1500 = async () => {
+    if (!client || signedNotes.length === 0) return;
+    setGeneratingCMS1500(true);
+    setShowReadinessDialog(false);
+    try {
+      const noteIds = signedNotes.map(n => n.id);
+      const result = await window.api.cms1500.generate({ clientId: client.id, noteIds });
+      setCms1500Preview(result);
+    } catch (err: any) {
+      console.error('Failed to generate CMS-1500:', err);
+      setBillingToast(err.message || 'Failed to generate CMS-1500');
+    } finally {
+      setGeneratingCMS1500(false);
+    }
+  };
+
+  const handleSaveCMS1500 = async () => {
+    if (!cms1500Preview) return;
+    try {
+      const savedPath = await window.api.cms1500.save(cms1500Preview);
+      if (savedPath) {
+        setBillingToast('CMS-1500 saved successfully');
+      }
+    } catch (err: any) {
+      console.error('Failed to save CMS-1500:', err);
+      setBillingToast(err.message || 'Failed to save CMS-1500');
+    }
+  };
+
   // --- Loading / Not Found ---
 
   if (loading) {
@@ -577,6 +623,7 @@ const ClientDetailPage: React.FC = () => {
   const insuranceComplete = Boolean(client.insurance_payer && client.insurance_member_id);
   const diagnosisComplete = Boolean(client.primary_dx_code);
   const referringComplete = Boolean(client.referring_physician);
+  const claimInfoComplete = Boolean(client.onset_date && client.patient_signature_source);
 
   // --- Render ---
 
@@ -663,8 +710,8 @@ const ClientDetailPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Collapsible Info Sections Row */}
-        <div className="grid grid-cols-6 gap-3">
+        {/* Collapsible Info Sections — Clinical Row */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <CollapsibleInfo
             icon={<User size={14} />}
             title="Demographics"
@@ -680,6 +727,58 @@ const ClientDetailPage: React.FC = () => {
           </CollapsibleInfo>
 
           <CollapsibleInfo
+            icon={<Stethoscope size={14} />}
+            title="Diagnosis"
+            isComplete={diagnosisComplete}
+            onEdit={() => setEditModalOpen(true)}
+            color="violet"
+          >
+            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Primary Dx</span><span>{client.primary_dx_code || '--'}</span></div>
+            {client.primary_dx_description && <p className="text-xs text-[var(--color-text-secondary)] italic">{client.primary_dx_description}</p>}
+            {(() => {
+              try {
+                const secDx = JSON.parse(client.secondary_dx || '[]');
+                if (Array.isArray(secDx) && secDx.length > 0) {
+                  return secDx.map((dx: any, i: number) => (
+                    <div key={i} className="flex justify-between">
+                      <span className="text-[var(--color-text-secondary)]">Dx {String.fromCharCode(66 + i)}</span>
+                      <span>{dx.code}</span>
+                    </div>
+                  ));
+                }
+              } catch {}
+              return null;
+            })()}
+            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Default CPT</span><span>{client.default_cpt_code || '--'}</span></div>
+          </CollapsibleInfo>
+
+          <CollapsibleInfo
+            icon={<Activity size={14} />}
+            title="Referral"
+            isComplete={referringComplete}
+            onEdit={() => setEditModalOpen(true)}
+            color="amber"
+          >
+            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Physician</span><span>{client.referring_physician || '--'}</span></div>
+            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">NPI</span><span>{client.referring_npi || '--'}</span></div>
+          </CollapsibleInfo>
+
+          <CollapsibleInfo
+            icon={<Shield size={14} />}
+            title="Compliance"
+            isComplete={true}
+            color="teal"
+          >
+            <p className="text-xs text-[var(--color-text-secondary)]">Medicare tracking and progress report alerts</p>
+            <button className="mt-2 text-xs text-[var(--color-primary)] hover:underline" onClick={() => setShowCompliance(true)}>
+              View Details
+            </button>
+          </CollapsibleInfo>
+        </div>
+
+        {/* Collapsible Info Sections — Business Row */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <CollapsibleInfo
             icon={<Shield size={14} />}
             title="Insurance"
             isComplete={insuranceComplete}
@@ -689,29 +788,6 @@ const ClientDetailPage: React.FC = () => {
             <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Payer</span><span>{client.insurance_payer || '--'}</span></div>
             <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Member ID</span><span>{client.insurance_member_id || '--'}</span></div>
             <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Group</span><span>{client.insurance_group || '--'}</span></div>
-          </CollapsibleInfo>
-
-          <CollapsibleInfo
-            icon={<Stethoscope size={14} />}
-            title="Diagnosis"
-            isComplete={diagnosisComplete}
-            onEdit={() => setEditModalOpen(true)}
-            color="violet"
-          >
-            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Primary Dx</span><span>{client.primary_dx_code || '--'}</span></div>
-            {client.primary_dx_description && <p className="text-xs text-[var(--color-text-secondary)] italic">{client.primary_dx_description}</p>}
-            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Default CPT</span><span>{client.default_cpt_code || '--'}</span></div>
-          </CollapsibleInfo>
-
-          <CollapsibleInfo
-            icon={<Activity size={14} />}
-            title="Referring"
-            isComplete={referringComplete}
-            onEdit={() => setEditModalOpen(true)}
-            color="amber"
-          >
-            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Physician</span><span>{client.referring_physician || '--'}</span></div>
-            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">NPI</span><span>{client.referring_npi || '--'}</span></div>
           </CollapsibleInfo>
 
           <CollapsibleInfo
@@ -736,15 +812,16 @@ const ClientDetailPage: React.FC = () => {
           </CollapsibleInfo>
 
           <CollapsibleInfo
-            icon={<Shield size={14} />}
-            title="Compliance"
-            isComplete={true}
-            color="teal"
+            icon={<FileText size={14} />}
+            title="Claim Info"
+            isComplete={claimInfoComplete}
+            onEdit={() => setEditModalOpen(true)}
+            color="violet"
           >
-            <p className="text-xs text-[var(--color-text-secondary)]">Medicare tracking and progress report alerts</p>
-            <button className="mt-2 text-xs text-[var(--color-primary)] hover:underline" onClick={() => setShowCompliance(true)}>
-              View Details
-            </button>
+            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Onset</span><span>{client.onset_date ? formatDate(client.onset_date) : '--'}</span></div>
+            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Assignment</span><span>{client.claim_accept_assignment === 'Y' ? 'Yes' : client.claim_accept_assignment === 'N' ? 'No' : '--'}</span></div>
+            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Prior Auth</span><span>{client.prior_auth_number || '--'}</span></div>
+            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Patient Sig</span><span>{client.patient_signature_source || '--'}</span></div>
           </CollapsibleInfo>
         </div>
       </div>
@@ -1331,6 +1408,24 @@ const ClientDetailPage: React.FC = () => {
             >
               <FileText size={14} /> Superbill
             </button>
+            <button
+              className="btn-secondary btn-sm gap-1.5"
+              onClick={() => setShowReadinessDialog(true)}
+              disabled={generatingCMS1500}
+            >
+              {generatingCMS1500 ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <ClipboardList size={14} />
+              )}
+              CMS-1500
+              {claimReadiness.ready && signedNotes.length > 0 && (
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+              )}
+              {!claimReadiness.ready && (
+                <span className="w-2 h-2 rounded-full bg-red-400" />
+              )}
+            </button>
           </div>
         </div>
 
@@ -1576,6 +1671,39 @@ const ClientDetailPage: React.FC = () => {
         </div>
       </div>
 
+      {/* ══════════ CMS-1500 PREVIEW ══════════ */}
+      {cms1500Preview && (
+        <div className="card">
+          <div className="flex items-center justify-between p-5 border-b border-[var(--color-border)]">
+            <h2 className="text-lg font-semibold text-[var(--color-text)] flex items-center gap-2">
+              <FileText size={20} className="text-indigo-500" />
+              CMS-1500 Preview
+            </h2>
+            <div className="flex items-center gap-2">
+              <button
+                className="btn-primary btn-sm gap-1.5"
+                onClick={handleSaveCMS1500}
+              >
+                <Download size={14} /> Save PDF
+              </button>
+              <button
+                className="btn-secondary btn-sm gap-1.5"
+                onClick={() => setCms1500Preview(null)}
+              >
+                <XCircle size={14} /> Close
+              </button>
+            </div>
+          </div>
+          <div className="p-5 flex justify-center bg-gray-100">
+            <iframe
+              src={`data:application/pdf;base64,${cms1500Preview.base64Pdf}`}
+              className="w-full max-w-[850px] h-[1100px] border border-[var(--color-border)] rounded-lg shadow-inner bg-white"
+              title="CMS-1500 Preview"
+            />
+          </div>
+        </div>
+      )}
+
       {/* ══════════ DISCOUNT MODAL ══════════ */}
       {showDiscountModal && (
         <ClientDiscountModal
@@ -1782,6 +1910,15 @@ const ClientDetailPage: React.FC = () => {
         onGoalsSaved={() => {
           window.api.goals.listByClient(clientId).then(setGoals).catch(console.error);
         }}
+      />
+
+      {/* CMS-1500 Readiness Dialog */}
+      <ClaimReadinessDialog
+        isOpen={showReadinessDialog}
+        onClose={() => setShowReadinessDialog(false)}
+        readiness={claimReadiness}
+        onGenerate={handleGenerateCMS1500}
+        generating={generatingCMS1500}
       />
 
       {/* Trial Expired Modal */}

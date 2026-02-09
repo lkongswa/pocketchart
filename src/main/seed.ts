@@ -385,6 +385,142 @@ export function seedMFTData(db: Database.Database): void {
   seedTransaction();
 }
 
+// Seed goal-category-aligned note bank phrases for Quick Chips intelligence
+// Runs separately so existing users get these phrases on update
+export function seedCategoryAlignedPhrases(db: Database.Database): void {
+  // Check if we already seeded these (use a sentinel phrase)
+  const sentinel = db.prepare(
+    "SELECT id FROM note_bank WHERE discipline = 'ST' AND category = 'Articulation' AND section = 'O' AND phrase LIKE 'Produced target phonemes%'"
+  ).get();
+  if (sentinel) return;
+
+  const ins = db.prepare(
+    'INSERT INTO note_bank (discipline, category, section, phrase, is_default, is_favorite) VALUES (?, ?, ?, ?, 1, 0)'
+  );
+
+  const safeInsert = (discipline: string, category: string, section: string, phrase: string) => {
+    const exists = db.prepare(
+      'SELECT id FROM note_bank WHERE discipline = ? AND section = ? AND phrase = ?'
+    ).get(discipline, section, phrase);
+    if (!exists) {
+      ins.run(discipline, category, section, phrase);
+    }
+  };
+
+  const tx = db.transaction(() => {
+    // ── ST Objective by goal category ──
+    safeInsert('ST', 'Articulation', 'O', 'Produced target phonemes in ___ position with ___% accuracy.');
+    safeInsert('ST', 'Articulation', 'O', 'Demonstrated improved intelligibility at ___ level.');
+    safeInsert('ST', 'Articulation', 'O', 'Self-corrected articulatory errors with ___ cueing.');
+    safeInsert('ST', 'Articulation', 'O', 'Required phonetic placement cues for target sounds.');
+    safeInsert('ST', 'Articulation', 'O', 'Imitated target sounds with visual model.');
+
+    safeInsert('ST', 'Language Comprehension', 'O', 'Followed ___-step directions with ___% accuracy.');
+    safeInsert('ST', 'Language Comprehension', 'O', 'Identified ___ in presented material with ___% accuracy.');
+    safeInsert('ST', 'Language Comprehension', 'O', 'Answered ___-questions about presented material with ___% accuracy.');
+    safeInsert('ST', 'Language Comprehension', 'O', 'Required repetition/rephrasing of instructions.');
+    safeInsert('ST', 'Language Comprehension', 'O', 'Demonstrated understanding of ___ concepts.');
+
+    safeInsert('ST', 'Language Expression', 'O', 'Produced ___ sentences in structured tasks.');
+    safeInsert('ST', 'Language Expression', 'O', 'Used targeted vocabulary in structured tasks with ___% accuracy.');
+    safeInsert('ST', 'Language Expression', 'O', 'Self-corrected grammatical errors with ___ cueing.');
+    safeInsert('ST', 'Language Expression', 'O', 'Named items in categories with ___ cueing.');
+    safeInsert('ST', 'Language Expression', 'O', 'Demonstrated improved word retrieval with ___ cues.');
+
+    safeInsert('ST', 'Fluency', 'O', 'Used ___ fluency strategy during structured tasks.');
+    safeInsert('ST', 'Fluency', 'O', 'Demonstrated ___ disfluencies during ___ tasks.');
+    safeInsert('ST', 'Fluency', 'O', 'Self-monitored speech rate during structured tasks.');
+    safeInsert('ST', 'Fluency', 'O', 'Transferred fluency strategies to ___ context.');
+
+    safeInsert('ST', 'Voice', 'O', 'Maintained appropriate vocal quality during sustained phonation.');
+    safeInsert('ST', 'Voice', 'O', 'Demonstrated improved breath support for connected speech.');
+    safeInsert('ST', 'Voice', 'O', 'Used resonant voice techniques during ___ tasks.');
+
+    safeInsert('ST', 'Feeding/Swallowing', 'O', 'Tolerated ___ diet consistency without s/s aspiration.');
+    safeInsert('ST', 'Feeding/Swallowing', 'O', 'Demonstrated safe swallow with ___ strategy.');
+    safeInsert('ST', 'Feeding/Swallowing', 'O', 'No overt signs/symptoms of aspiration observed.');
+
+    safeInsert('ST', 'Cognitive-Communication', 'O', 'Recalled ___/___ items after ___ presentation.');
+    safeInsert('ST', 'Cognitive-Communication', 'O', 'Sustained attention for ___ minutes on ___ task.');
+    safeInsert('ST', 'Cognitive-Communication', 'O', 'Demonstrated improved problem-solving with ___ cues.');
+    safeInsert('ST', 'Cognitive-Communication', 'O', 'Used compensatory memory strategies with ___ prompting.');
+
+    safeInsert('ST', 'Pragmatics', 'O', 'Maintained ___ during structured interaction.');
+    safeInsert('ST', 'Pragmatics', 'O', 'Used appropriate communicative functions in context.');
+    safeInsert('ST', 'Pragmatics', 'O', 'Demonstrated improved social inference skills.');
+
+    // ── ST Assessment by goal category ──
+    safeInsert('ST', 'Articulation', 'A', 'Performance reflects ___ from baseline articulatory accuracy.');
+    safeInsert('ST', 'Articulation', 'A', 'Skilled intervention required for phoneme-specific error patterns.');
+    safeInsert('ST', 'Articulation', 'A', 'Articulatory placement therapy yielding measurable gains.');
+
+    safeInsert('ST', 'Language Comprehension', 'A', 'Receptive language gains support continued skilled intervention.');
+    safeInsert('ST', 'Language Comprehension', 'A', 'Performance suggests ___ comprehension skills.');
+
+    safeInsert('ST', 'Language Expression', 'A', 'Expressive language skills demonstrate response to skilled intervention.');
+    safeInsert('ST', 'Language Expression', 'A', 'Continued deficits in ___ warrant ongoing treatment.');
+
+    safeInsert('ST', 'general', 'A', 'Patient demonstrates motivation and active participation.');
+    safeInsert('ST', 'general', 'A', 'Skilled therapeutic intervention continues to be medically necessary.');
+    safeInsert('ST', 'general', 'A', 'Progress toward goals supports continuation of current POC.');
+    safeInsert('ST', 'general', 'A', 'Performance variability indicates need for continued skilled intervention.');
+    safeInsert('ST', 'general', 'A', 'Cueing level has ___, indicating ___ progress.');
+
+    // ── PT Objective by goal category ──
+    safeInsert('PT', 'Mobility', 'O', 'Ambulated ___ with ___ and ___ assist.');
+    safeInsert('PT', 'Mobility', 'O', 'Negotiated stairs ___ steps with ___ and ___ assist.');
+    safeInsert('PT', 'Mobility', 'O', 'Demonstrated improved gait pattern with ___ deviation.');
+
+    safeInsert('PT', 'Strength', 'O', 'Demonstrated ___/5 MMT for ___.');
+    safeInsert('PT', 'Strength', 'O', 'Completed ___ reps of ___ with ___ resistance.');
+    safeInsert('PT', 'Strength', 'O', 'Maintained form throughout strengthening protocol.');
+
+    safeInsert('PT', 'Balance', 'O', 'Maintained ___ standing balance for ___ seconds.');
+    safeInsert('PT', 'Balance', 'O', 'Completed ___ with score of ___.');
+    safeInsert('PT', 'Balance', 'O', 'Demonstrated improved weight shifting in ___ direction.');
+
+    safeInsert('PT', 'ROM', 'O', 'Achieved ___° ___ at ___ for ___.');
+    safeInsert('PT', 'ROM', 'O', 'Demonstrated improved flexibility with sustained stretching.');
+
+    safeInsert('PT', 'Gait', 'O', 'Gait speed measured at ___ m/s.');
+    safeInsert('PT', 'Gait', 'O', 'Reduced compensatory movement pattern during ambulation.');
+    safeInsert('PT', 'Gait', 'O', 'Demonstrated improved heel strike and push-off mechanics.');
+
+    safeInsert('PT', 'Transfers', 'O', 'Completed ___ transfer with ___ assist.');
+    safeInsert('PT', 'Transfers', 'O', 'Required ___ cueing for safe body mechanics.');
+
+    // ── OT Objective by goal category ──
+    safeInsert('OT', 'ADLs', 'O', 'Completed ___ with ___ assist.');
+    safeInsert('OT', 'ADLs', 'O', 'Demonstrated improved sequencing for ___ task.');
+    safeInsert('OT', 'ADLs', 'O', 'Used adaptive equipment for ___ with ___ independence.');
+
+    safeInsert('OT', 'Fine Motor', 'O', 'Demonstrated ___ grasp pattern for functional task.');
+    safeInsert('OT', 'Fine Motor', 'O', 'Completed ___ task in ___ seconds.');
+    safeInsert('OT', 'Fine Motor', 'O', 'Improved bilateral coordination during ___ task.');
+
+    safeInsert('OT', 'Sensory Processing', 'O', 'Tolerated ___ input for ___ without behavioral response.');
+    safeInsert('OT', 'Sensory Processing', 'O', 'Demonstrated improved self-regulation after sensory diet activities.');
+
+    safeInsert('OT', 'Cognitive', 'O', 'Completed ___ with ___ cueing level.');
+    safeInsert('OT', 'Cognitive', 'O', 'Demonstrated improved safety awareness during ___ task.');
+
+    // ── MFT Assessment by goal category ──
+    safeInsert('MFT', 'Depression', 'A', 'Patient reports ___ in depressive symptoms since last session.');
+    safeInsert('MFT', 'Depression', 'A', 'PHQ-9 score: ___, indicating ___ severity.');
+
+    safeInsert('MFT', 'Anxiety', 'A', 'GAD-7 score: ___, indicating ___ severity.');
+    safeInsert('MFT', 'Anxiety', 'A', 'Client demonstrated use of ___ techniques during session.');
+
+    safeInsert('MFT', 'Coping Skills', 'A', 'Client identified ___ new coping strategies during session.');
+    safeInsert('MFT', 'Coping Skills', 'A', 'Demonstrated improved distress tolerance using ___ skill.');
+
+    safeInsert('MFT', 'Trauma', 'A', 'Client engaged in trauma processing using ___ approach.');
+    safeInsert('MFT', 'Trauma', 'A', 'Window of tolerance ___ during session.');
+  });
+
+  tx();
+}
+
 // Discipline-specific CPT code sets
 function getCPTCodesForDiscipline(discipline: string): Array<{ cpt_code: string; description: string; default_units: number; amount: number }> {
   const ptOtShared = [

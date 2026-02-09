@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import CategoryCombobox from '../components/CategoryCombobox';
 import {
   Target,
   Search,
@@ -238,14 +239,12 @@ export default function GoalsBankPage({ embedded }: GoalsBankPageProps = {}) {
             </div>
             <div>
               <label className="label">Category</label>
-              <input
-                type="text"
-                className="input"
-                placeholder="e.g. Mobility, ADLs, Articulation"
+              <CategoryCombobox
                 value={newGoal.category}
-                onChange={(e) =>
-                  setNewGoal((prev) => ({ ...prev, category: e.target.value }))
-                }
+                onChange={(val) => setNewGoal((prev) => ({ ...prev, category: val }))}
+                discipline={newGoal.discipline}
+                source="goals_bank"
+                placeholder="e.g. Mobility, ADLs, Articulation"
               />
             </div>
           </div>
@@ -373,7 +372,7 @@ export default function GoalsBankPage({ embedded }: GoalsBankPageProps = {}) {
                             <option value="ST">ST</option>
                             <option value="MFT">MFT</option>
                           </select>
-                          <input type="text" className="input text-sm" placeholder="Category" value={editForm.category} onChange={(e) => setEditForm((p) => ({ ...p, category: e.target.value }))} />
+                          <CategoryCombobox value={editForm.category} onChange={(val) => setEditForm((p) => ({ ...p, category: val }))} discipline={editForm.discipline} source="goals_bank" placeholder="Category" className="text-sm" />
                         </div>
                         <textarea className="textarea text-sm" rows={3} value={editForm.goal_template} onChange={(e) => setEditForm((p) => ({ ...p, goal_template: e.target.value }))} />
                         <div className="flex items-center gap-2">

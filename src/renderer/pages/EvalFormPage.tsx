@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate, useLocation, useBlocker } from 'react-router-dom';
 import { useSectionColor } from '../hooks/useSectionColor';
 import {
@@ -20,6 +20,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import type { Client, Evaluation, Discipline, GoalType, EvalGoalEntry, GoalsBankEntry } from '../../shared/types';
+import type { ValidationIssue, ValidationFixes } from '../../shared/types/validation';
 
 import SignConfirmDialog from '../components/SignConfirmDialog';
 
@@ -289,9 +290,11 @@ function parseActiveReasons(text: string): string[] {
 function RehabPotentialSection({
   value,
   onChange,
+  evalType = 'initial',
 }: {
   value: string;
   onChange: (val: string) => void;
+  evalType?: 'initial' | 'reassessment' | 'discharge';
 }) {
   // Parse current rating from value
   const currentRating = REHAB_RATINGS.find((r) =>
@@ -328,7 +331,16 @@ function RehabPotentialSection({
 
   return (
     <div className="card p-6 mb-6">
-      <h2 className="section-title">Rehabilitation Potential / Prognosis</h2>
+      <h2 className="section-title">
+        {evalType === 'reassessment'
+          ? 'Rehabilitation Potential / Justification for Continued Services'
+          : 'Rehabilitation Potential / Medical Necessity'}
+      </h2>
+      <p className="text-xs text-[var(--color-text-secondary)] -mt-1 mb-3">
+        {evalType === 'reassessment'
+          ? 'Document why this patient continues to require skilled therapy services for the upcoming certification period.'
+          : 'This section serves as your statement of medical necessity for skilled services.'}
+      </p>
 
       {/* Rating chips */}
       <div className="flex items-center gap-2 mb-3">
@@ -407,8 +419,7 @@ export default function EvalFormPage() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [signDialogOpen, setSignDialogOpen] = useState(false);
-  const [signDialogErrors, setSignDialogErrors] = useState<string[]>([]);
-  const [signDialogWarnings, setSignDialogWarnings] = useState<string[]>([]);
+  const [signDialogIssues, setSignDialogIssues] = useState<ValidationIssue[]>([]);
 
   const [evalDate, setEvalDate] = useState(todayISO());
   const [content, setContent] = useState<EvalContent | null>(null);
@@ -696,17 +707,27 @@ export default function EvalFormPage() {
 
   // ── Reload goals bank when category changes ──
 
+  // Track which categories have been used in current goal entries
+  const usedCategories = useMemo(() => {
+    return [...new Set(goalEntries.map(g => g.category).filter(Boolean))];
+  }, [goalEntries]);
+
   const loadGoalsBankForCategory = useCallback(async (category: string) => {
     if (!client) return;
     try {
       const filters: any = { discipline: client.discipline };
-      if (category) filters.category = category;
+      // If no specific category requested, default to most recently used
+      if (!category && usedCategories.length > 0) {
+        filters.category = usedCategories[usedCategories.length - 1];
+      } else if (category) {
+        filters.category = category;
+      }
       const entries = await window.api.goalsBank.list(filters);
       setGoalsBankEntries(entries);
     } catch (err) {
       console.error('Failed to load goals bank:', err);
     }
-  }, [client]);
+  }, [client, usedCategories]);
 
   // ── Auto-Save ──
 
@@ -939,79 +960,164 @@ export default function EvalFormPage() {
 
   // ── Save ──
 
-  /** Pre-sign validation for evaluations (includes Medicare requirements) */
-  const runSignValidation = (): { errors: string[]; warnings: string[] } => {
-    const errors: string[] = [];
-    const warnings: string[] = [];
+  /** Pre-sign validation for evaluations — returns structured ValidationIssue[] for Fix-It dialog */
+  const runSignValidation = (): ValidationIssue[] => {
+    const issues: ValidationIssue[] = [];
 
     if (!content) {
-      errors.push('Evaluation content is empty.');
-      return { errors, warnings };
+      issues.push({ id: 'eval_empty', message: 'Evaluation content is empty', severity: 'error', fixable: false, fieldType: 'none', target: 'document', guidance: 'Go back and fill in the evaluation form.' });
+      return issues;
     }
 
-    // ── Medicare-required fields (block signing) ──
+    // ── Non-fixable goal issues ──
 
-    // Must have at least one goal
     if (goalEntries.length === 0 && !content.goals?.trim()) {
-      errors.push('At least one goal is required before signing.');
+      issues.push({ id: 'eval_no_goals', message: 'At least one goal is required before signing', severity: 'error', fixable: false, fieldType: 'none', target: 'document', guidance: 'Go back and add goals in the Goals section.' });
     }
 
-    // Must have at least one LTG (Medicare requires long-term goals)
     if (goalEntries.length > 0) {
       const hasLTG = goalEntries.some(g => g.goal_type === 'LTG' && g.goal_text.trim());
       if (!hasLTG) {
-        errors.push('At least one Long-Term Goal (LTG) is required for Medicare compliance.');
+        issues.push({ id: 'eval_no_ltg', message: 'At least one Long-Term Goal (LTG) required', severity: 'error', fixable: false, fieldType: 'none', target: 'document', guidance: 'Change at least one goal to LTG type.' });
       }
     }
 
-    // All goals must have target dates (Medicare requires measurable timeframes)
     const goalsWithoutDates = goalEntries.filter(g => g.goal_text.trim() && !g.target_date);
     if (goalsWithoutDates.length > 0) {
-      errors.push(`${goalsWithoutDates.length} goal(s) missing target dates. Medicare requires target dates for all goals.`);
+      issues.push({ id: 'eval_goal_no_date', message: `${goalsWithoutDates.length} goal(s) missing target dates`, severity: 'error', fixable: false, fieldType: 'none', target: 'document', guidance: 'Set target dates on all goals.' });
     }
 
-    // Check for unfilled template blanks in goals
     const hasUnfilledBlanks = goalEntries.some(g => g.goal_text.includes('___'));
     if (hasUnfilledBlanks) {
-      errors.push('Some goals have unfilled template blanks (___). Please complete all goals before signing.');
+      issues.push({ id: 'eval_goal_blanks', message: 'Goals have unfilled template blanks (___)', severity: 'error', fixable: false, fieldType: 'none', target: 'document', guidance: 'Complete all ___ placeholders in your goals.' });
     }
 
-    // Treatment plan is required
-    if (!content.treatment_plan?.trim()) {
-      errors.push('Treatment Plan is required before signing.');
+    // ── Fixable document fields ──
+
+    if (!content.rehabilitation_potential?.trim()) {
+      issues.push({
+        id: 'eval_rehab_potential', message: 'Rehabilitation Potential is empty', severity: 'error', fixable: true,
+        fieldType: 'composed', target: 'document', currentValue: content.rehabilitation_potential || '',
+        composedSelectOptions: [
+          { value: 'Good', label: 'Good' }, { value: 'Fair', label: 'Fair' }, { value: 'Poor', label: 'Poor' },
+        ],
+        chipOptions: [
+          { value: 'patient demonstrates motivation', label: 'Patient motivated' },
+          { value: 'family/caregiver support available', label: 'Family support' },
+          { value: 'prior functional level consistent with expected recovery', label: 'Prior level supports recovery' },
+          { value: 'good cognitive awareness', label: 'Good cognition' },
+          { value: 'active participation in treatment', label: 'Active participation' },
+          { value: 'responds well to therapeutic interventions', label: 'Responds to treatment' },
+          { value: 'medical complexity limits progress', label: 'Medical complexity' },
+          { value: 'limited support system', label: 'Limited support' },
+          { value: 'cognitive deficits may slow progress', label: 'Cognitive deficits' },
+          { value: 'multiple comorbidities present', label: 'Multiple comorbidities' },
+        ],
+        hint: 'Select a rating and tap reasons — PocketChart will compose the narrative.',
+      });
     }
 
-    // Frequency & Duration is required (Medicare POC requirement)
-    if (!content.frequency_duration?.trim()) {
-      errors.push('Frequency & Duration is required for Medicare compliance.');
+    if (!content.prior_level_of_function?.trim()) {
+      issues.push({
+        id: 'eval_prior_lof', message: 'Prior Level of Function is empty', severity: 'error', fixable: true,
+        fieldType: 'textarea', target: 'document', currentValue: '',
+        hint: "Describe the patient's functional status before the onset of the current condition.",
+      });
     }
 
-    // Clinical impression is required
     if (!content.clinical_impression?.trim()) {
-      errors.push('Clinical Impression is required before signing.');
+      issues.push({
+        id: 'eval_clinical_impression', message: 'Clinical Impression is required', severity: 'error', fixable: true,
+        fieldType: 'textarea', target: 'document', currentValue: '',
+        hint: 'Summarize the clinical presentation and your professional assessment.',
+      });
+    }
+
+    if (!content.treatment_plan?.trim()) {
+      issues.push({
+        id: 'eval_treatment_plan', message: 'Treatment Plan is required', severity: 'error', fixable: true,
+        fieldType: 'textarea', target: 'document', currentValue: '',
+        hint: 'Outline the planned therapeutic approach, modalities, and interventions.',
+      });
+    }
+
+    if (!content.frequency_duration?.trim()) {
+      issues.push({
+        id: 'eval_freq_duration', message: 'Frequency & Duration is required', severity: 'error', fixable: true,
+        fieldType: 'freq_duration', target: 'document', currentValue: '',
+      });
+    }
+
+    // ── Client-level fixes ──
+
+    if (!client?.primary_dx_code) {
+      issues.push({
+        id: 'client_dx', message: 'Primary diagnosis missing', severity: 'error', fixable: true,
+        fieldType: 'icd10_search', target: 'client',
+      });
     }
 
     // ── Non-blocking warnings ──
 
-    if (!content.medical_history?.trim()) warnings.push('Medical History is empty.');
-    if (!content.prior_level_of_function?.trim()) warnings.push('Prior Level of Function is empty.');
-    if (!content.rehabilitation_potential?.trim()) warnings.push('Rehabilitation Potential is empty.');
+    if (!content.medical_history?.trim()) {
+      issues.push({
+        id: 'eval_medical_history', message: 'Medical History is empty', severity: 'warning', fixable: true,
+        fieldType: 'textarea', target: 'document', currentValue: '',
+        hint: 'Enter relevant medical history, surgeries, or medications.',
+      });
+    }
+
+    if (!client?.gender) {
+      issues.push({
+        id: 'client_gender', message: 'Client gender is missing', severity: 'warning', fixable: true,
+        fieldType: 'select_gender', target: 'client', currentValue: '',
+        options: [{ value: 'M', label: 'Male' }, { value: 'F', label: 'Female' }, { value: 'U', label: 'Unknown' }],
+      });
+    }
 
     if (!signatureTyped.trim()) {
-      warnings.push('Provider signature name is not set. Update it in Settings > Provider Information.');
-    }
-    if (!practiceInfo?.license_number?.trim()) {
-      warnings.push('Provider license number is not set. Update it in Settings > Provider Information.');
+      issues.push({
+        id: 'provider_signature', message: 'Provider signature name not set', severity: 'warning', fixable: false,
+        fieldType: 'none', target: 'settings', guidance: 'Update in Settings > Provider Information.',
+      });
     }
 
-    return { errors, warnings };
+    if (!practiceInfo?.license_number?.trim()) {
+      issues.push({
+        id: 'provider_license', message: 'Provider license number not set', severity: 'warning', fixable: false,
+        fieldType: 'none', target: 'settings', guidance: 'Update in Settings > Provider Information.',
+      });
+    }
+
+    return issues;
   };
 
   const handleSignClick = () => {
-    const { errors, warnings } = runSignValidation();
-    setSignDialogErrors(errors);
-    setSignDialogWarnings(warnings);
+    const issues = runSignValidation();
+    setSignDialogIssues(issues);
     setSignDialogOpen(true);
+  };
+
+  /** Handle fix-it sign: apply fixes from dialog, then save+sign */
+  const handleSignWithFixes = (fixes: ValidationFixes) => {
+    // Apply document fixes to eval content state
+    if (Object.keys(fixes.documentFixes).length > 0) {
+      setContent(prev => {
+        if (!prev) return prev;
+        return { ...prev, ...fixes.documentFixes };
+      });
+    }
+
+    setSignDialogOpen(false);
+    setTimeout(() => handleSave(true), 50);
+  };
+
+  /** Handle client record updates from Fix-It dialog */
+  const handleClientUpdate = async (updates: Record<string, any>) => {
+    if (!client) return;
+    await window.api.clients.update(client.id, updates);
+    const updated = await window.api.clients.get(client.id);
+    setClient(updated);
   };
 
   const handleSave = async (sign: boolean) => {
@@ -1357,10 +1463,11 @@ export default function EvalFormPage() {
           />
         </div>
 
-        {/* Rehabilitation Potential / Prognosis */}
+        {/* Rehabilitation Potential / Medical Necessity */}
         <RehabPotentialSection
           value={content.rehabilitation_potential}
           onChange={(val) => updateField('rehabilitation_potential', val)}
+          evalType={evalType}
         />
 
         {/* Precautions / Contraindications */}
@@ -1549,9 +1656,20 @@ export default function EvalFormPage() {
                         }}
                       >
                         <option value="">Select</option>
-                        {(CATEGORY_OPTIONS[discipline] || []).map(cat => (
-                          <option key={cat} value={cat}>{cat}</option>
-                        ))}
+                        {usedCategories.length > 0 && (
+                          <optgroup label="Current Goals">
+                            {usedCategories.map(cat => (
+                              <option key={`used-${cat}`} value={cat}>{cat}</option>
+                            ))}
+                          </optgroup>
+                        )}
+                        <optgroup label={usedCategories.length > 0 ? 'All Categories' : ''}>
+                          {(CATEGORY_OPTIONS[discipline] || [])
+                            .filter(cat => !usedCategories.includes(cat))
+                            .map(cat => (
+                              <option key={cat} value={cat}>{cat}</option>
+                            ))}
+                        </optgroup>
                       </select>
                     </div>
                     <div>
@@ -1910,12 +2028,9 @@ export default function EvalFormPage() {
       <SignConfirmDialog
         isOpen={signDialogOpen}
         onClose={() => setSignDialogOpen(false)}
-        onConfirm={() => {
-          setSignDialogOpen(false);
-          handleSave(true);
-        }}
-        errors={signDialogErrors}
-        warnings={signDialogWarnings}
+        onConfirm={handleSignWithFixes}
+        issues={signDialogIssues}
+        onClientUpdate={handleClientUpdate}
       />
     </div>
   );

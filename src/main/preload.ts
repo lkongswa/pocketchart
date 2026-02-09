@@ -85,6 +85,7 @@ const api = {
     update: (id: number, data: any) => ipcRenderer.invoke('noteBank:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('noteBank:delete', id),
     toggleFavorite: (id: number) => ipcRenderer.invoke('noteBank:toggleFavorite', id),
+    getCategories: (discipline: string) => ipcRenderer.invoke('noteBank:getCategories', discipline),
   },
 
   // Goals Bank
@@ -93,6 +94,7 @@ const api = {
     create: (data: any) => ipcRenderer.invoke('goalsBank:create', data),
     update: (id: number, data: any) => ipcRenderer.invoke('goalsBank:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('goalsBank:delete', id),
+    getCategories: (discipline: string) => ipcRenderer.invoke('goalsBank:getCategories', discipline),
   },
 
   // Settings
@@ -106,6 +108,12 @@ const api = {
     generate: (data: any) => ipcRenderer.invoke('superbill:generate', data),
     save: (data: any) => ipcRenderer.invoke('superbill:save', data),
     generateBulk: (data: any) => ipcRenderer.invoke('superbill:generateBulk', data),
+  },
+
+  // CMS-1500 Claim Form
+  cms1500: {
+    generate: (data: { clientId: number; noteIds: number[] }) => ipcRenderer.invoke('cms1500:generate', data),
+    save: (data: { base64Pdf: string; filename: string }) => ipcRenderer.invoke('cms1500:save', data),
   },
 
   // Backup & Export

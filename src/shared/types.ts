@@ -80,6 +80,47 @@ export type SubscriberRelationship =
   | 'G8' // Other
   | '';
 
+// CMS-1500 Y/N fields
+export type YesNo = 'Y' | 'N';
+
+// CMS-1500 onset qualifier codes (Box 14)
+export type OnsetQualifier =
+  | '431' // Onset of current symptoms or illness
+  | '484' // Last menstrual period
+  | '304' // Latest visit or consultation
+  | '453' // Acute manifestation of chronic condition
+  | '439' // Accident
+  | '455' // Last X-ray
+  | '471' // Prescription
+  | '';
+
+export const ONSET_QUALIFIER_LABELS: Record<string, string> = {
+  '431': 'Onset of Current Symptoms',
+  '484': 'Last Menstrual Period',
+  '304': 'Latest Visit/Consultation',
+  '453': 'Acute Manifestation',
+  '439': 'Accident',
+  '455': 'Last X-Ray',
+  '471': 'Prescription',
+};
+
+// CMS-1500 signature source
+export type SignatureSource = 'SOF' | 'P' | '';
+
+export const SIGNATURE_SOURCE_LABELS: Record<string, string> = {
+  'SOF': 'Signature On File',
+  'P': 'Patient Present',
+};
+
+// CMS-1500 referring provider qualifier (Box 17a)
+export type ReferringQualifier = 'DN' | 'DK' | 'DQ' | '';
+
+export const REFERRING_QUALIFIER_LABELS: Record<string, string> = {
+  'DN': 'Referring Provider',
+  'DK': 'Ordering Provider',
+  'DQ': 'Supervising Provider',
+};
+
 // Place of service codes
 export type PlaceOfService =
   | '02' // Telehealth (other than home)
@@ -183,8 +224,23 @@ export interface Client {
   subscriber_dob: string;                    // V2/V3: EDI-ready
   referring_physician: string;
   referring_npi: string;
+  referring_physician_qualifier: ReferringQualifier; // CMS-1500 Box 17a
   referral_source: string;                   // V2/V3: Tracking
   stripe_customer_id: string;                // V2: Stripe integration
+  // CMS-1500 claim fields
+  onset_date: string;                        // CMS-1500 Box 14
+  onset_qualifier: OnsetQualifier;           // CMS-1500 Box 14 qualifier
+  employment_related: YesNo;                 // CMS-1500 Box 10a
+  auto_accident: YesNo;                      // CMS-1500 Box 10b
+  auto_accident_state: string;               // CMS-1500 Box 10b state
+  other_accident: YesNo;                     // CMS-1500 Box 10c
+  claim_accept_assignment: YesNo;            // CMS-1500 Box 27
+  patient_signature_source: SignatureSource;  // CMS-1500 Box 12
+  insured_signature_source: SignatureSource;  // CMS-1500 Box 13
+  prior_auth_number: string;                 // CMS-1500 Box 23
+  additional_claim_info: string;             // CMS-1500 Box 19
+  service_facility_name: string;             // CMS-1500 Box 32
+  service_facility_npi: string;              // CMS-1500 Box 32a
   status: ClientStatus;
   discipline: Discipline;
   assigned_user_id: number | null;           // V4: Multi-provider
@@ -688,6 +744,23 @@ export interface MileageEntry {
   entity_name?: string;
 }
 
+// ── CMS-1500 Readiness Types ──
+
+export interface CMS1500ReadinessCheck {
+  field: string;
+  label: string;
+  status: 'pass' | 'fail' | 'warn';
+  message?: string;
+}
+
+export interface CMS1500Readiness {
+  ready: boolean;
+  checks: CMS1500ReadinessCheck[];
+  passCount: number;
+  failCount: number;
+  warnCount: number;
+}
+
 // ── Communication Log Types ──
 
 export type CommunicationType = 'phone' | 'email' | 'fax' | 'in_person' | 'other';
@@ -1042,12 +1115,14 @@ export interface PocketChartAPI {
     update: (id: number, data: Partial<NoteBankEntry>) => Promise<NoteBankEntry>;
     delete: (id: number) => Promise<boolean>;
     toggleFavorite: (id: number) => Promise<NoteBankEntry>;
+    getCategories: (discipline: string) => Promise<string[]>;
   };
   goalsBank: {
     list: (filters?: { discipline?: string; category?: string }) => Promise<GoalsBankEntry[]>;
     create: (data: Partial<GoalsBankEntry>) => Promise<GoalsBankEntry>;
     update: (id: number, data: Partial<GoalsBankEntry>) => Promise<GoalsBankEntry>;
     delete: (id: number) => Promise<boolean>;
+    getCategories: (discipline: string) => Promise<string[]>;
   };
   settings: {
     get: (key: string) => Promise<string | null>;
@@ -1316,6 +1391,11 @@ export interface PocketChartAPI {
     create: (data: Partial<DiscountTemplate>) => Promise<DiscountTemplate>;
     update: (id: number, data: Partial<DiscountTemplate>) => Promise<DiscountTemplate>;
     delete: (id: number) => Promise<boolean>;
+  };
+  // ── CMS-1500 Claim Form Generator ──
+  cms1500: {
+    generate: (data: { clientId: number; noteIds: number[] }) => Promise<{ base64Pdf: string; filename: string }>;
+    save: (data: { base64Pdf: string; filename: string }) => Promise<string | null>;
   };
 }
 

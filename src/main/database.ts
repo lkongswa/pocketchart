@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import { app } from 'electron';
 import Store from 'electron-store';
-import { seedDefaultData, seedDefaultQuickChips, seedPayers, seedFeeSchedule, seedMFTData, autoFixFeeSchedule } from './seed';
+import { seedDefaultData, seedDefaultQuickChips, seedPayers, seedFeeSchedule, seedMFTData, seedCategoryAlignedPhrases, autoFixFeeSchedule } from './seed';
 
 let db: Database.Database;
 
@@ -80,6 +80,7 @@ export function initDatabase(): void {
   seedDefaultData(db);
   seedDefaultQuickChips(db);
   seedMFTData(db);
+  seedCategoryAlignedPhrases(db);
   // V2/V3 billing seed data (run after migrations create tables)
   seedPayers(db);
   seedFeeSchedule(db);
@@ -981,6 +982,61 @@ function runMigrations(): void {
             deleted_at DATETIME DEFAULT NULL
           )
         `);
+      },
+    },
+    {
+      version: 24,
+      description: 'Add CMS-1500 claim form fields to clients table',
+      up: () => {
+        // Onset/illness info (Box 14, 15)
+        if (!columnExists('clients', 'onset_date')) {
+          db.exec("ALTER TABLE clients ADD COLUMN onset_date TEXT DEFAULT ''");
+        }
+        if (!columnExists('clients', 'onset_qualifier')) {
+          db.exec("ALTER TABLE clients ADD COLUMN onset_qualifier TEXT DEFAULT '431'"); // 431=Onset of current symptoms
+        }
+        // Condition related to (Box 10a, 10b, 10c)
+        if (!columnExists('clients', 'employment_related')) {
+          db.exec("ALTER TABLE clients ADD COLUMN employment_related TEXT DEFAULT 'N'");
+        }
+        if (!columnExists('clients', 'auto_accident')) {
+          db.exec("ALTER TABLE clients ADD COLUMN auto_accident TEXT DEFAULT 'N'");
+        }
+        if (!columnExists('clients', 'auto_accident_state')) {
+          db.exec("ALTER TABLE clients ADD COLUMN auto_accident_state TEXT DEFAULT ''");
+        }
+        if (!columnExists('clients', 'other_accident')) {
+          db.exec("ALTER TABLE clients ADD COLUMN other_accident TEXT DEFAULT 'N'");
+        }
+        // Assignment / signatures (Box 12, 13, 27)
+        if (!columnExists('clients', 'claim_accept_assignment')) {
+          db.exec("ALTER TABLE clients ADD COLUMN claim_accept_assignment TEXT DEFAULT 'Y'");
+        }
+        if (!columnExists('clients', 'patient_signature_source')) {
+          db.exec("ALTER TABLE clients ADD COLUMN patient_signature_source TEXT DEFAULT 'SOF'"); // Signature On File
+        }
+        if (!columnExists('clients', 'insured_signature_source')) {
+          db.exec("ALTER TABLE clients ADD COLUMN insured_signature_source TEXT DEFAULT 'SOF'");
+        }
+        // Prior authorization (Box 23)
+        if (!columnExists('clients', 'prior_auth_number')) {
+          db.exec("ALTER TABLE clients ADD COLUMN prior_auth_number TEXT DEFAULT ''");
+        }
+        // Referring provider qualifier (Box 17a)
+        if (!columnExists('clients', 'referring_physician_qualifier')) {
+          db.exec("ALTER TABLE clients ADD COLUMN referring_physician_qualifier TEXT DEFAULT 'DN'"); // DN = Referring Provider
+        }
+        // Additional claim info (Box 19)
+        if (!columnExists('clients', 'additional_claim_info')) {
+          db.exec("ALTER TABLE clients ADD COLUMN additional_claim_info TEXT DEFAULT ''");
+        }
+        // Service facility (Box 32)
+        if (!columnExists('clients', 'service_facility_name')) {
+          db.exec("ALTER TABLE clients ADD COLUMN service_facility_name TEXT DEFAULT ''");
+        }
+        if (!columnExists('clients', 'service_facility_npi')) {
+          db.exec("ALTER TABLE clients ADD COLUMN service_facility_npi TEXT DEFAULT ''");
+        }
       },
     },
   ];

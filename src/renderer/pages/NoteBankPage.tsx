@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import CategoryCombobox from '../components/CategoryCombobox';
 import {
   FileText,
   Search,
@@ -252,14 +253,12 @@ export default function NoteBankPage({ embedded }: NoteBankPageProps = {}) {
             </div>
             <div>
               <label className="label">Category</label>
-              <input
-                type="text"
-                className="input"
-                placeholder="e.g. Pain, ROM, Functional"
+              <CategoryCombobox
                 value={newPhrase.category}
-                onChange={(e) =>
-                  setNewPhrase((prev) => ({ ...prev, category: e.target.value }))
-                }
+                onChange={(val) => setNewPhrase((prev) => ({ ...prev, category: val }))}
+                discipline={newPhrase.discipline}
+                source="note_bank"
+                placeholder="e.g. Pain, ROM, Functional"
               />
             </div>
           </div>
@@ -401,7 +400,7 @@ export default function NoteBankPage({ embedded }: NoteBankPageProps = {}) {
                             <option value="A">Assessment</option>
                             <option value="P">Plan</option>
                           </select>
-                          <input type="text" className="input text-sm" placeholder="Category" value={editForm.category} onChange={(e) => setEditForm((p) => ({ ...p, category: e.target.value }))} />
+                          <CategoryCombobox value={editForm.category} onChange={(val) => setEditForm((p) => ({ ...p, category: val }))} discipline={editForm.discipline} source="note_bank" placeholder="Category" className="text-sm" />
                         </div>
                         <textarea className="textarea text-sm" rows={2} value={editForm.phrase} onChange={(e) => setEditForm((p) => ({ ...p, phrase: e.target.value }))} />
                         <div className="flex items-center gap-2">

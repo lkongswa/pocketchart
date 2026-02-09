@@ -9,6 +9,7 @@ interface QuickChipsProps {
   onInsert: (phrase: string) => void;
   maxChips?: number;
   onOpenFullBank?: () => void;
+  priorityCategories?: string[];
 }
 
 /**
@@ -23,6 +24,7 @@ export default function QuickChips({
   onInsert,
   maxChips = 8,
   onOpenFullBank,
+  priorityCategories = [],
 }: QuickChipsProps) {
   const { isPro } = useTier();
   const [chips, setChips] = useState<NoteBankEntry[]>([]);
@@ -60,16 +62,22 @@ export default function QuickChips({
       setAllPhrases(unique);
 
       // Filter to favorites only for chips display
-      // Sort: favorites first, then by usage (could track in future)
+      // Sort: favorites matching priority categories first, then remaining alphabetically
       const favorites = unique.filter(p => p.is_favorite);
-      const sorted = favorites.sort((a, b) => a.phrase.localeCompare(b.phrase));
+      const sorted = favorites.sort((a, b) => {
+        const aMatch = priorityCategories.some(cat => a.category?.toLowerCase() === cat.toLowerCase());
+        const bMatch = priorityCategories.some(cat => b.category?.toLowerCase() === cat.toLowerCase());
+        if (aMatch && !bMatch) return -1;
+        if (!aMatch && bMatch) return 1;
+        return a.phrase.localeCompare(b.phrase);
+      });
       setChips(sorted.slice(0, maxChips));
     } catch (err) {
       console.error('Failed to load quick chips:', err);
     } finally {
       setLoading(false);
     }
-  }, [discipline, section, maxChips]);
+  }, [discipline, section, maxChips, priorityCategories]);
 
   useEffect(() => {
     loadChips();

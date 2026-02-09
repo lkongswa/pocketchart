@@ -1,6 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Search } from 'lucide-react';
-import type { Client, Discipline, ClientStatus, Gender, SubscriberRelationship } from '../../shared/types';
+import { X, Search, Plus, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
+import type {
+  Client,
+  Discipline,
+  ClientStatus,
+  Gender,
+  SubscriberRelationship,
+  YesNo,
+  OnsetQualifier,
+  SignatureSource,
+  ReferringQualifier,
+} from '../../shared/types';
+import {
+  ONSET_QUALIFIER_LABELS,
+  SIGNATURE_SOURCE_LABELS,
+  REFERRING_QUALIFIER_LABELS,
+} from '../../shared/types';
 import { searchICD10, lookupICD10, type ICD10Entry } from '../../shared/icd10Data';
 
 // US States for dropdown
@@ -60,6 +75,11 @@ interface ClientFormModalProps {
   highlightSections?: string[];
 }
 
+interface SecondaryDxEntry {
+  code: string;
+  description: string;
+}
+
 interface FormData {
   first_name: string;
   last_name: string;
@@ -74,8 +94,7 @@ interface FormData {
   discipline: Discipline;
   primary_dx_code: string;
   primary_dx_description: string;
-  secondary_dx_code: string;
-  secondary_dx_description: string;
+  secondary_dx_entries: SecondaryDxEntry[];
   default_cpt_code: string;
   insurance_payer: string;
   insurance_member_id: string;
@@ -87,7 +106,22 @@ interface FormData {
   subscriber_dob: string;
   referring_physician: string;
   referring_npi: string;
+  referring_physician_qualifier: ReferringQualifier;
   referral_source: string;
+  // CMS-1500 claim fields
+  onset_date: string;
+  onset_qualifier: OnsetQualifier;
+  employment_related: YesNo;
+  auto_accident: YesNo;
+  auto_accident_state: string;
+  other_accident: YesNo;
+  claim_accept_assignment: YesNo;
+  patient_signature_source: SignatureSource;
+  insured_signature_source: SignatureSource;
+  prior_auth_number: string;
+  additional_claim_info: string;
+  service_facility_name: string;
+  service_facility_npi: string;
   status: ClientStatus;
 }
 
@@ -105,8 +139,7 @@ const emptyForm: FormData = {
   discipline: 'PT',
   primary_dx_code: '',
   primary_dx_description: '',
-  secondary_dx_code: '',
-  secondary_dx_description: '',
+  secondary_dx_entries: [],
   default_cpt_code: '',
   insurance_payer: '',
   insurance_member_id: '',
@@ -118,18 +151,32 @@ const emptyForm: FormData = {
   subscriber_dob: '',
   referring_physician: '',
   referring_npi: '',
+  referring_physician_qualifier: 'DN',
   referral_source: '',
+  onset_date: '',
+  onset_qualifier: '431',
+  employment_related: 'N',
+  auto_accident: 'N',
+  auto_accident_state: '',
+  other_accident: 'N',
+  claim_accept_assignment: 'Y',
+  patient_signature_source: 'SOF',
+  insured_signature_source: 'SOF',
+  prior_auth_number: '',
+  additional_claim_info: '',
+  service_facility_name: '',
+  service_facility_npi: '',
   status: 'active',
 };
 
-function parseSecondaryDx(raw: string): { code: string; description: string } {
+function parseSecondaryDx(raw: string): SecondaryDxEntry[] {
   try {
     const parsed = JSON.parse(raw || '[]');
-    if (Array.isArray(parsed) && parsed.length > 0) {
-      return { code: parsed[0].code || '', description: parsed[0].description || '' };
+    if (Array.isArray(parsed)) {
+      return parsed.map((p: any) => ({ code: p.code || '', description: p.description || '' })).filter((e: SecondaryDxEntry) => e.code);
     }
   } catch {}
-  return { code: '', description: '' };
+  return [];
 }
 
 const ClientFormModal: React.FC<ClientFormModalProps> = ({
@@ -150,10 +197,11 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
   // ICD-10 search state
   const [dxSuggestions, setDxSuggestions] = useState<ICD10Entry[]>([]);
   const [showDxSuggestions, setShowDxSuggestions] = useState(false);
+  const [activeSecDxIndex, setActiveSecDxIndex] = useState<number | null>(null);
   const [secDxSuggestions, setSecDxSuggestions] = useState<ICD10Entry[]>([]);
   const [showSecDxSuggestions, setShowSecDxSuggestions] = useState(false);
+  const [showClaimInfo, setShowClaimInfo] = useState(false);
   const dxInputRef = useRef<HTMLInputElement>(null);
-  const secDxInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (client) {
@@ -172,8 +220,7 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
         discipline: client.discipline,
         primary_dx_code: client.primary_dx_code,
         primary_dx_description: client.primary_dx_description,
-        secondary_dx_code: secDx.code,
-        secondary_dx_description: secDx.description,
+        secondary_dx_entries: secDx,
         default_cpt_code: client.default_cpt_code,
         insurance_payer: client.insurance_payer,
         insurance_member_id: client.insurance_member_id,
@@ -185,7 +232,21 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
         subscriber_dob: client.subscriber_dob || '',
         referring_physician: client.referring_physician,
         referring_npi: client.referring_npi,
+        referring_physician_qualifier: (client.referring_physician_qualifier as ReferringQualifier) || 'DN',
         referral_source: client.referral_source || '',
+        onset_date: client.onset_date || '',
+        onset_qualifier: (client.onset_qualifier as OnsetQualifier) || '431',
+        employment_related: (client.employment_related as YesNo) || 'N',
+        auto_accident: (client.auto_accident as YesNo) || 'N',
+        auto_accident_state: client.auto_accident_state || '',
+        other_accident: (client.other_accident as YesNo) || 'N',
+        claim_accept_assignment: (client.claim_accept_assignment as YesNo) || 'Y',
+        patient_signature_source: (client.patient_signature_source as SignatureSource) || 'SOF',
+        insured_signature_source: (client.insured_signature_source as SignatureSource) || 'SOF',
+        prior_auth_number: client.prior_auth_number || '',
+        additional_claim_info: client.additional_claim_info || '',
+        service_facility_name: client.service_facility_name || '',
+        service_facility_npi: client.service_facility_npi || '',
         status: client.status,
       });
     } else {
@@ -243,31 +304,69 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
         setForm((prev) => ({ ...prev, primary_dx_description: match.description }));
       }
     }
+  };
 
-    if (name === 'secondary_dx_code') {
-      if (value.length >= 2) {
-        const results = searchICD10(value, 8);
-        setSecDxSuggestions(results);
-        setShowSecDxSuggestions(results.length > 0);
-      } else {
-        setSecDxSuggestions([]);
-        setShowSecDxSuggestions(false);
-      }
+  // --- Secondary Dx helpers ---
+  const handleSecDxCodeChange = (index: number, value: string) => {
+    setForm((prev) => {
+      const entries = [...prev.secondary_dx_entries];
+      entries[index] = { ...entries[index], code: value };
+      // Auto-fill description on exact match
       const match = lookupICD10(value);
       if (match) {
-        setForm((prev) => ({ ...prev, secondary_dx_description: match.description }));
+        entries[index].description = match.description;
       }
+      return { ...prev, secondary_dx_entries: entries };
+    });
+    // Show suggestions
+    if (value.length >= 2) {
+      const results = searchICD10(value, 8);
+      setSecDxSuggestions(results);
+      setShowSecDxSuggestions(results.length > 0);
+      setActiveSecDxIndex(index);
+    } else {
+      setSecDxSuggestions([]);
+      setShowSecDxSuggestions(false);
+      setActiveSecDxIndex(null);
     }
   };
 
-  const selectDxCode = (entry: ICD10Entry, field: 'primary' | 'secondary') => {
-    if (field === 'primary') {
-      setForm((prev) => ({ ...prev, primary_dx_code: entry.code, primary_dx_description: entry.description }));
-      setShowDxSuggestions(false);
-    } else {
-      setForm((prev) => ({ ...prev, secondary_dx_code: entry.code, secondary_dx_description: entry.description }));
-      setShowSecDxSuggestions(false);
-    }
+  const handleSecDxDescChange = (index: number, value: string) => {
+    setForm((prev) => {
+      const entries = [...prev.secondary_dx_entries];
+      entries[index] = { ...entries[index], description: value };
+      return { ...prev, secondary_dx_entries: entries };
+    });
+  };
+
+  const addSecondaryDx = () => {
+    if (form.secondary_dx_entries.length >= 11) return; // Max 11 secondary (12 total including primary)
+    setForm((prev) => ({
+      ...prev,
+      secondary_dx_entries: [...prev.secondary_dx_entries, { code: '', description: '' }],
+    }));
+  };
+
+  const removeSecondaryDx = (index: number) => {
+    setForm((prev) => ({
+      ...prev,
+      secondary_dx_entries: prev.secondary_dx_entries.filter((_, i) => i !== index),
+    }));
+  };
+
+  const selectSecDxCode = (entry: ICD10Entry, index: number) => {
+    setForm((prev) => {
+      const entries = [...prev.secondary_dx_entries];
+      entries[index] = { code: entry.code, description: entry.description };
+      return { ...prev, secondary_dx_entries: entries };
+    });
+    setShowSecDxSuggestions(false);
+    setActiveSecDxIndex(null);
+  };
+
+  const selectDxCode = (entry: ICD10Entry) => {
+    setForm((prev) => ({ ...prev, primary_dx_code: entry.code, primary_dx_description: entry.description }));
+    setShowDxSuggestions(false);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -276,11 +375,10 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
 
     setSaving(true);
     try {
-      const secondaryDxArr = form.secondary_dx_code.trim()
-        ? [{ code: form.secondary_dx_code, description: form.secondary_dx_description }]
-        : [];
+      const secondaryDxArr = form.secondary_dx_entries.filter(e => e.code.trim());
+      const { secondary_dx_entries, ...rest } = form;
       const submitData = {
-        ...form,
+        ...rest,
         secondary_dx: JSON.stringify(secondaryDxArr),
       };
       let saved: Client;
@@ -520,7 +618,7 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
                         key={entry.code}
                         type="button"
                         className="w-full text-left px-3 py-2 hover:bg-blue-50 flex items-center gap-2 text-sm transition-colors"
-                        onMouseDown={(e) => { e.preventDefault(); selectDxCode(entry, 'primary'); }}
+                        onMouseDown={(e) => { e.preventDefault(); selectDxCode(entry); }}
                       >
                         <span className="font-mono font-semibold text-blue-600 shrink-0">{entry.code}</span>
                         <span className="text-[var(--color-text-secondary)] truncate">{entry.description}</span>
@@ -541,50 +639,92 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
                   readOnly={Boolean(form.primary_dx_code && lookupICD10(form.primary_dx_code))}
                 />
               </div>
-              <div className="relative">
-                <label className="label" htmlFor="secondary_dx_code">Secondary Dx Code</label>
-                <div className="relative">
-                  <input
-                    ref={secDxInputRef}
-                    id="secondary_dx_code"
-                    name="secondary_dx_code"
-                    className="input pr-8"
-                    value={form.secondary_dx_code}
-                    onChange={handleChange}
-                    onFocus={() => { if (secDxSuggestions.length > 0) setShowSecDxSuggestions(true); }}
-                    onBlur={() => { setTimeout(() => setShowSecDxSuggestions(false), 200); }}
-                    placeholder="e.g. G89.29"
-                    autoComplete="off"
-                  />
-                  <Search size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]" />
+              {/* Secondary Diagnoses (multiple) */}
+              <div className="col-span-2">
+                <div className="flex items-center justify-between mb-1">
+                  <label className="label mb-0">Secondary Diagnoses</label>
+                  {form.secondary_dx_entries.length < 11 && (
+                    <button
+                      type="button"
+                      className="text-xs text-[var(--color-primary)] hover:underline flex items-center gap-1"
+                      onClick={addSecondaryDx}
+                    >
+                      <Plus size={12} /> Add Dx
+                    </button>
+                  )}
                 </div>
-                {showSecDxSuggestions && secDxSuggestions.length > 0 && (
-                  <div className="absolute z-20 left-0 right-0 mt-1 bg-white border border-[var(--color-border)] rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                    {secDxSuggestions.map((entry) => (
-                      <button
-                        key={entry.code}
-                        type="button"
-                        className="w-full text-left px-3 py-2 hover:bg-blue-50 flex items-center gap-2 text-sm transition-colors"
-                        onMouseDown={(e) => { e.preventDefault(); selectDxCode(entry, 'secondary'); }}
-                      >
-                        <span className="font-mono font-semibold text-blue-600 shrink-0">{entry.code}</span>
-                        <span className="text-[var(--color-text-secondary)] truncate">{entry.description}</span>
-                      </button>
+                {form.secondary_dx_entries.length === 0 ? (
+                  <button
+                    type="button"
+                    className="w-full p-2 rounded-lg border border-dashed border-[var(--color-border)] text-sm text-[var(--color-text-secondary)] hover:bg-gray-50 transition-colors flex items-center justify-center gap-1"
+                    onClick={addSecondaryDx}
+                  >
+                    <Plus size={14} /> Add secondary diagnosis
+                  </button>
+                ) : (
+                  <div className="space-y-2">
+                    {form.secondary_dx_entries.map((entry, idx) => (
+                      <div key={idx} className="flex items-start gap-2">
+                        <span className="text-xs font-mono text-[var(--color-text-secondary)] mt-2.5 w-4 shrink-0">
+                          {String.fromCharCode(66 + idx)}
+                        </span>
+                        <div className="flex-1 relative">
+                          <div className="relative">
+                            <input
+                              type="text"
+                              className="input pr-8 text-sm"
+                              value={entry.code}
+                              onChange={(e) => handleSecDxCodeChange(idx, e.target.value)}
+                              onFocus={() => {
+                                if (secDxSuggestions.length > 0 && activeSecDxIndex === idx) {
+                                  setShowSecDxSuggestions(true);
+                                }
+                              }}
+                              onBlur={() => setTimeout(() => setShowSecDxSuggestions(false), 200)}
+                              placeholder={`Dx code ${idx + 2}`}
+                              autoComplete="off"
+                            />
+                            <Search size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-tertiary)]" />
+                          </div>
+                          {showSecDxSuggestions && activeSecDxIndex === idx && secDxSuggestions.length > 0 && (
+                            <div className="absolute z-20 left-0 right-0 mt-1 bg-white border border-[var(--color-border)] rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                              {secDxSuggestions.map((suggestion) => (
+                                <button
+                                  key={suggestion.code}
+                                  type="button"
+                                  className="w-full text-left px-3 py-2 hover:bg-blue-50 flex items-center gap-2 text-sm transition-colors"
+                                  onMouseDown={(e) => { e.preventDefault(); selectSecDxCode(suggestion, idx); }}
+                                >
+                                  <span className="font-mono font-semibold text-blue-600 shrink-0">{suggestion.code}</span>
+                                  <span className="text-[var(--color-text-secondary)] truncate">{suggestion.description}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <input
+                          type="text"
+                          className="input text-sm flex-1"
+                          value={entry.description}
+                          onChange={(e) => handleSecDxDescChange(idx, e.target.value)}
+                          placeholder="Description"
+                          readOnly={Boolean(entry.code && lookupICD10(entry.code))}
+                        />
+                        <button
+                          type="button"
+                          className="p-1.5 mt-1 rounded hover:bg-red-50 text-red-400 hover:text-red-600 transition-colors"
+                          onClick={() => removeSecondaryDx(idx)}
+                          title="Remove diagnosis"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     ))}
                   </div>
                 )}
-              </div>
-              <div>
-                <label className="label" htmlFor="secondary_dx_description">Secondary Dx Description</label>
-                <input
-                  id="secondary_dx_description"
-                  name="secondary_dx_description"
-                  className="input"
-                  value={form.secondary_dx_description}
-                  onChange={handleChange}
-                  placeholder="Auto-fills from code"
-                  readOnly={Boolean(form.secondary_dx_code && lookupICD10(form.secondary_dx_code))}
-                />
+                <p className="text-xs text-[var(--color-text-tertiary)] mt-1">
+                  CMS-1500 supports up to 12 diagnoses (A-L). Primary = A.
+                </p>
               </div>
             </div>
           </div>
@@ -732,7 +872,167 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
                   placeholder="NPI number"
                 />
               </div>
+              <div>
+                <label className="label" htmlFor="referring_physician_qualifier">Provider Qualifier</label>
+                <select
+                  id="referring_physician_qualifier"
+                  name="referring_physician_qualifier"
+                  className="select"
+                  value={form.referring_physician_qualifier}
+                  onChange={handleChange}
+                >
+                  {Object.entries(REFERRING_QUALIFIER_LABELS).map(([val, label]) => (
+                    <option key={val} value={val}>{label}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-[var(--color-text-tertiary)] mt-1">CMS-1500 Box 17a</p>
+              </div>
             </div>
+          </div>
+
+          {/* CMS-1500 Claim Information (collapsible) */}
+          <div className="rounded-lg border-l-4 border-indigo-400 bg-indigo-50/30 p-4">
+            <button
+              type="button"
+              className="flex items-center gap-2 w-full text-left"
+              onClick={() => setShowClaimInfo(!showClaimInfo)}
+            >
+              {showClaimInfo ? (
+                <ChevronDown className="w-4 h-4 text-indigo-600" />
+              ) : (
+                <ChevronRight className="w-4 h-4 text-indigo-600" />
+              )}
+              <h3 className="section-title text-indigo-700 mb-0">
+                CMS-1500 Claim Information
+              </h3>
+              <span className="text-xs text-[var(--color-text-secondary)] ml-auto">
+                {showClaimInfo ? 'Collapse' : 'Expand for insurance claim fields'}
+              </span>
+            </button>
+            {showClaimInfo && (
+              <div className="grid grid-cols-2 gap-4 mt-4">
+                {/* Onset / Illness (Box 14) */}
+                <div>
+                  <label className="label" htmlFor="onset_date">Date of Onset (Box 14)</label>
+                  <input
+                    id="onset_date"
+                    name="onset_date"
+                    type="date"
+                    className="input"
+                    value={form.onset_date}
+                    onChange={handleChange}
+                  />
+                </div>
+                <div>
+                  <label className="label" htmlFor="onset_qualifier">Onset Qualifier</label>
+                  <select
+                    id="onset_qualifier"
+                    name="onset_qualifier"
+                    className="select"
+                    value={form.onset_qualifier}
+                    onChange={handleChange}
+                  >
+                    <option value="">Select...</option>
+                    {Object.entries(ONSET_QUALIFIER_LABELS).map(([val, label]) => (
+                      <option key={val} value={val}>{label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Condition Related To (Box 10) */}
+                <div>
+                  <label className="label" htmlFor="employment_related">Employment Related? (Box 10a)</label>
+                  <select id="employment_related" name="employment_related" className="select" value={form.employment_related} onChange={handleChange}>
+                    <option value="N">No</option>
+                    <option value="Y">Yes</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="label" htmlFor="auto_accident">Auto Accident? (Box 10b)</label>
+                  <select id="auto_accident" name="auto_accident" className="select" value={form.auto_accident} onChange={handleChange}>
+                    <option value="N">No</option>
+                    <option value="Y">Yes</option>
+                  </select>
+                </div>
+                {form.auto_accident === 'Y' && (
+                  <div>
+                    <label className="label" htmlFor="auto_accident_state">Auto Accident State</label>
+                    <select id="auto_accident_state" name="auto_accident_state" className="select" value={form.auto_accident_state} onChange={handleChange}>
+                      {US_STATES.map((st) => (
+                        <option key={st.value} value={st.value}>{st.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <div>
+                  <label className="label" htmlFor="other_accident">Other Accident? (Box 10c)</label>
+                  <select id="other_accident" name="other_accident" className="select" value={form.other_accident} onChange={handleChange}>
+                    <option value="N">No</option>
+                    <option value="Y">Yes</option>
+                  </select>
+                </div>
+
+                {/* Signatures (Box 12, 13) */}
+                <div>
+                  <label className="label" htmlFor="patient_signature_source">Patient Signature (Box 12)</label>
+                  <select id="patient_signature_source" name="patient_signature_source" className="select" value={form.patient_signature_source} onChange={handleChange}>
+                    <option value="">Select...</option>
+                    {Object.entries(SIGNATURE_SOURCE_LABELS).map(([val, label]) => (
+                      <option key={val} value={val}>{label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="label" htmlFor="insured_signature_source">Insured Signature (Box 13)</label>
+                  <select id="insured_signature_source" name="insured_signature_source" className="select" value={form.insured_signature_source} onChange={handleChange}>
+                    <option value="">Select...</option>
+                    {Object.entries(SIGNATURE_SOURCE_LABELS).map(([val, label]) => (
+                      <option key={val} value={val}>{label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Prior Auth (Box 23) */}
+                <div>
+                  <label className="label" htmlFor="prior_auth_number">Prior Auth Number (Box 23)</label>
+                  <input id="prior_auth_number" name="prior_auth_number" className="input" value={form.prior_auth_number} onChange={handleChange} placeholder="Authorization number" />
+                </div>
+
+                {/* Accept Assignment (Box 27) */}
+                <div>
+                  <label className="label" htmlFor="claim_accept_assignment">Accept Assignment? (Box 27)</label>
+                  <select id="claim_accept_assignment" name="claim_accept_assignment" className="select" value={form.claim_accept_assignment} onChange={handleChange}>
+                    <option value="Y">Yes</option>
+                    <option value="N">No</option>
+                  </select>
+                </div>
+
+                {/* Service Facility (Box 32) */}
+                <div>
+                  <label className="label" htmlFor="service_facility_name">Service Facility (Box 32)</label>
+                  <input id="service_facility_name" name="service_facility_name" className="input" value={form.service_facility_name} onChange={handleChange} placeholder="Leave blank to use practice" />
+                  <p className="text-xs text-[var(--color-text-tertiary)] mt-1">If different from billing provider</p>
+                </div>
+                <div>
+                  <label className="label" htmlFor="service_facility_npi">Facility NPI (Box 32a)</label>
+                  <input id="service_facility_npi" name="service_facility_npi" className="input" value={form.service_facility_npi} onChange={handleChange} placeholder="Facility NPI" />
+                </div>
+
+                {/* Additional Info (Box 19) */}
+                <div className="col-span-2">
+                  <label className="label" htmlFor="additional_claim_info">Additional Claim Info (Box 19)</label>
+                  <textarea
+                    id="additional_claim_info"
+                    name="additional_claim_info"
+                    className="textarea text-sm"
+                    value={form.additional_claim_info}
+                    onChange={handleChange}
+                    placeholder="Optional notes for Box 19"
+                    rows={2}
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Status */}
