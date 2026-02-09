@@ -377,9 +377,23 @@ export default function NoteFormPage() {
         } catch {
           setGoalsAddressed([]);
         }
-        setSignatureImage(note.signature_image || '');
-        setSignatureTyped(note.signature_typed || '');
         setExistingSignedAt(note.signed_at || '');
+        // For unsigned drafts with no saved signature, pre-fill from settings
+        if (note.signature_image) {
+          setSignatureImage(note.signature_image);
+          setSignatureTyped(note.signature_typed || '');
+        } else if (!note.signed_at) {
+          const [sigNameEdit, sigCredsEdit, sigImageEdit] = await Promise.all([
+            window.api.settings.get('signature_name'),
+            window.api.settings.get('signature_credentials'),
+            window.api.settings.get('signature_image'),
+          ]);
+          const typedEdit = [sigNameEdit, sigCredsEdit].filter(Boolean).join(', ');
+          setSignatureTyped(note.signature_typed || typedEdit);
+          if (sigImageEdit) setSignatureImage(sigImageEdit);
+        } else {
+          setSignatureTyped(note.signature_typed || '');
+        }
         // V2/V3 Billing fields
         setPlaceOfService((note.place_of_service as PlaceOfService) || '11');
         setChargeAmount(note.charge_amount || 0);
@@ -811,6 +825,12 @@ export default function NoteFormPage() {
 
   const handleSave = async (sign: boolean) => {
     if (!clientId) return;
+
+    // Cancel any pending auto-save to prevent it from overwriting signed_at
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
 
     try {
       setSaving(true);
@@ -1607,6 +1627,7 @@ export default function NoteFormPage() {
           onInsert={getNoteBankInsertHandler('S')}
           anchorRef={getNoteBankButtonRef('S')}
           placeholder={NOTE_FORMAT_SECTIONS[noteFormat][0].placeholder}
+          disabled={!!existingSignedAt}
         />
 
         {/* Section 2 (Objective / Assessment / Intervention) */}
@@ -1623,6 +1644,7 @@ export default function NoteFormPage() {
           onInsert={getNoteBankInsertHandler('O')}
           anchorRef={getNoteBankButtonRef('O')}
           placeholder={NOTE_FORMAT_SECTIONS[noteFormat][1].placeholder}
+          disabled={!!existingSignedAt}
         />
 
         {/* ── Goal Progress (Progress Report only) ── */}
@@ -1801,6 +1823,7 @@ export default function NoteFormPage() {
             onChange={setAssessment}
             discipline={discipline}
             section="A"
+            disabled={!!existingSignedAt}
           />
 
           {/* Goals Addressed */}
@@ -1874,6 +1897,7 @@ export default function NoteFormPage() {
             onInsert={getNoteBankInsertHandler('P')}
             anchorRef={getNoteBankButtonRef('P')}
             placeholder={NOTE_FORMAT_SECTIONS[noteFormat][3].placeholder}
+            disabled={!!existingSignedAt}
           />
         )}
 
@@ -2664,6 +2688,7 @@ interface SOAPSectionCardProps {
   onInsert: (phrase: string) => void;
   anchorRef: React.RefObject<HTMLButtonElement | null>;
   placeholder?: string;
+  disabled?: boolean;
 }
 
 const soapSectionTint: Record<SOAPSection, string> = {
@@ -2686,6 +2711,7 @@ function SOAPSectionCard({
   onInsert,
   anchorRef,
   placeholder: customPlaceholder,
+  disabled,
 }: SOAPSectionCardProps) {
   return (
     <div className={`card p-6 mb-6 ${soapSectionTint[sectionCode]}`}>
@@ -2733,6 +2759,7 @@ function SOAPSectionCard({
         onChange={onChange}
         discipline={discipline}
         section={sectionCode}
+        disabled={disabled}
       />
     </div>
   );

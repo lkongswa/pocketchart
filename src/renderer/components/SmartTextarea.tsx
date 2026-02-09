@@ -10,6 +10,7 @@ interface SmartTextareaProps {
   className?: string;
   discipline: Discipline;
   section: SOAPSection;
+  disabled?: boolean;
 }
 
 interface Suggestion {
@@ -20,7 +21,7 @@ interface Suggestion {
 }
 
 const SmartTextarea = forwardRef<HTMLTextAreaElement, SmartTextareaProps>(
-  ({ value, onChange, placeholder, rows = 4, className = 'textarea', discipline, section }, ref) => {
+  ({ value, onChange, placeholder, rows = 4, className = 'textarea', discipline, section, disabled }, ref) => {
     const internalRef = useRef<HTMLTextAreaElement>(null);
     useImperativeHandle(ref, () => internalRef.current!);
 
@@ -233,6 +234,7 @@ const SmartTextarea = forwardRef<HTMLTextAreaElement, SmartTextareaProps>(
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={handleKeyDown}
+          disabled={disabled}
           onBlur={() => {
             // Delay hiding to allow click on suggestion
             setTimeout(() => setShowSuggestions(false), 150);

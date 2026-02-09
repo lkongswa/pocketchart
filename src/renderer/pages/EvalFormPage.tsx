@@ -423,6 +423,7 @@ export default function EvalFormPage() {
   // Goal bank state
   const [goalsBankEntries, setGoalsBankEntries] = useState<GoalsBankEntry[]>([]);
   const [showGoalBank, setShowGoalBank] = useState<number | null>(null); // index of goal entry showing bank
+  const goalTextareaRefs = useRef<Map<number, HTMLTextAreaElement>>(new Map());
 
   // Frequency & Duration state
   const [freqValue, setFreqValue] = useState<number>(0);
@@ -461,9 +462,24 @@ export default function EvalFormPage() {
       if (evalId) {
         const evaluation = await window.api.evaluations.get(parseInt(evalId, 10));
         setEvalDate(evaluation.eval_date || todayISO());
-        setSignatureImage(evaluation.signature_image || '');
-        setSignatureTyped(evaluation.signature_typed || '');
         setExistingSignedAt(evaluation.signed_at || '');
+
+        // For unsigned drafts with no saved signature, pre-fill from settings
+        if (evaluation.signature_image) {
+          setSignatureImage(evaluation.signature_image);
+          setSignatureTyped(evaluation.signature_typed || '');
+        } else if (!evaluation.signed_at) {
+          const [sigName, sigCreds, sigImage] = await Promise.all([
+            window.api.settings.get('signature_name'),
+            window.api.settings.get('signature_credentials'),
+            window.api.settings.get('signature_image'),
+          ]);
+          const typed = [sigName, sigCreds].filter(Boolean).join(', ');
+          setSignatureTyped(evaluation.signature_typed || typed);
+          if (sigImage) setSignatureImage(sigImage);
+        } else {
+          setSignatureTyped(evaluation.signature_typed || '');
+        }
         if ((evaluation as any).eval_type) {
           setEvalType((evaluation as any).eval_type);
         }
@@ -886,6 +902,18 @@ export default function EvalFormPage() {
       prev.map((g, i) => i === goalIdx ? { ...g, goal_text: template, category } : g)
     );
     setShowGoalBank(null);
+
+    // After render, focus the textarea and select the first ___ placeholder
+    setTimeout(() => {
+      const textarea = goalTextareaRefs.current.get(goalIdx);
+      if (textarea) {
+        textarea.focus();
+        const blankIdx = template.indexOf('___');
+        if (blankIdx !== -1) {
+          textarea.setSelectionRange(blankIdx, blankIdx + 3);
+        }
+      }
+    }, 50);
   };
 
   // Wrapper to mark dirty when goal entries change inline
@@ -894,9 +922,24 @@ export default function EvalFormPage() {
     setGoalEntries(updater);
   };
 
+  /** Handle Tab key in goal textarea to jump to next ___ placeholder */
+  const handleGoalTextKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, goalIdx: number) => {
+    if (e.key === 'Tab') {
+      const textarea = e.currentTarget;
+      const text = textarea.value;
+      const cursorPos = textarea.selectionEnd;
+      // Search for next ___ after current cursor position
+      const nextBlank = text.indexOf('___', cursorPos);
+      if (nextBlank !== -1) {
+        e.preventDefault();
+        textarea.setSelectionRange(nextBlank, nextBlank + 3);
+      }
+    }
+  };
+
   // ── Save ──
 
-  /** Pre-sign validation for evaluations */
+  /** Pre-sign validation for evaluations (includes Medicare requirements) */
   const runSignValidation = (): { errors: string[]; warnings: string[] } => {
     const errors: string[] = [];
     const warnings: string[] = [];
@@ -906,9 +949,25 @@ export default function EvalFormPage() {
       return { errors, warnings };
     }
 
-    // Required fields that block signing
+    // ── Medicare-required fields (block signing) ──
+
+    // Must have at least one goal
     if (goalEntries.length === 0 && !content.goals?.trim()) {
       errors.push('At least one goal is required before signing.');
+    }
+
+    // Must have at least one LTG (Medicare requires long-term goals)
+    if (goalEntries.length > 0) {
+      const hasLTG = goalEntries.some(g => g.goal_type === 'LTG' && g.goal_text.trim());
+      if (!hasLTG) {
+        errors.push('At least one Long-Term Goal (LTG) is required for Medicare compliance.');
+      }
+    }
+
+    // All goals must have target dates (Medicare requires measurable timeframes)
+    const goalsWithoutDates = goalEntries.filter(g => g.goal_text.trim() && !g.target_date);
+    if (goalsWithoutDates.length > 0) {
+      errors.push(`${goalsWithoutDates.length} goal(s) missing target dates. Medicare requires target dates for all goals.`);
     }
 
     // Check for unfilled template blanks in goals
@@ -917,9 +976,26 @@ export default function EvalFormPage() {
       errors.push('Some goals have unfilled template blanks (___). Please complete all goals before signing.');
     }
 
-    // Non-blocking warnings
-    if (!content.clinical_impression?.trim()) warnings.push('Clinical Impression is empty.');
-    if (!content.frequency_duration?.trim()) warnings.push('Frequency & Duration is empty.');
+    // Treatment plan is required
+    if (!content.treatment_plan?.trim()) {
+      errors.push('Treatment Plan is required before signing.');
+    }
+
+    // Frequency & Duration is required (Medicare POC requirement)
+    if (!content.frequency_duration?.trim()) {
+      errors.push('Frequency & Duration is required for Medicare compliance.');
+    }
+
+    // Clinical impression is required
+    if (!content.clinical_impression?.trim()) {
+      errors.push('Clinical Impression is required before signing.');
+    }
+
+    // ── Non-blocking warnings ──
+
+    if (!content.medical_history?.trim()) warnings.push('Medical History is empty.');
+    if (!content.prior_level_of_function?.trim()) warnings.push('Prior Level of Function is empty.');
+    if (!content.rehabilitation_potential?.trim()) warnings.push('Rehabilitation Potential is empty.');
 
     if (!signatureTyped.trim()) {
       warnings.push('Provider signature name is not set. Update it in Settings > Provider Information.');
@@ -940,6 +1016,12 @@ export default function EvalFormPage() {
 
   const handleSave = async (sign: boolean) => {
     if (!clientId || !client || !content) return;
+
+    // Cancel any pending auto-save to prevent it from overwriting signed_at
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
 
     try {
       setSaving(true);
@@ -1018,6 +1100,11 @@ export default function EvalFormPage() {
         if (created?.id) setSavedEvalId(created.id);
       }
 
+      // Mark form clean to prevent blocker/autosave from overwriting signed_at
+      isDirty.current = false;
+      if (sign) {
+        setExistingSignedAt(new Date().toISOString());
+      }
       setToast(sign ? 'Evaluation signed and saved' : 'Draft saved');
       setTimeout(() => navigate(`/clients/${clientId}`), 500);
     } catch (err) {
@@ -1469,21 +1556,54 @@ export default function EvalFormPage() {
                     </div>
                     <div>
                       <label className="label text-xs">Target Date</label>
-                      <input
-                        type="date"
-                        className="input text-sm"
-                        value={entry.target_date}
-                        onChange={(e) =>
-                          updateGoalEntries(prev =>
-                            prev.map((g, i) => i === idx ? { ...g, target_date: e.target.value } : g)
-                          )
-                        }
-                      />
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {[
+                          { label: '1 wk', days: 7 },
+                          { label: '2 wk', days: 14 },
+                          { label: '30 d', days: 30 },
+                          { label: '60 d', days: 60 },
+                          { label: '90 d', days: 90 },
+                          { label: '6 mo', days: 180 },
+                        ].map(({ label, days }) => {
+                          const d = new Date();
+                          d.setDate(d.getDate() + days);
+                          const iso = d.toISOString().slice(0, 10);
+                          return (
+                            <button
+                              key={label}
+                              type="button"
+                              className={`px-2 py-0.5 text-[10px] rounded-full border transition-colors cursor-pointer ${
+                                entry.target_date === iso
+                                  ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
+                                  : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]'
+                              }`}
+                              onClick={() =>
+                                updateGoalEntries(prev =>
+                                  prev.map((g, i) => i === idx ? { ...g, target_date: iso } : g)
+                                )
+                              }
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                        <input
+                          type="date"
+                          className="input text-xs px-1.5 py-0.5 w-[130px]"
+                          value={entry.target_date}
+                          onChange={(e) =>
+                            updateGoalEntries(prev =>
+                              prev.map((g, i) => i === idx ? { ...g, target_date: e.target.value } : g)
+                            )
+                          }
+                        />
+                      </div>
                     </div>
                   </div>
                   <div>
                     <label className="label text-xs">Goal Text</label>
                     <textarea
+                      ref={(el) => { if (el) goalTextareaRefs.current.set(idx, el); else goalTextareaRefs.current.delete(idx); }}
                       className="textarea text-sm"
                       rows={2}
                       placeholder="Enter goal text or select from Goal Bank above..."
@@ -1493,6 +1613,21 @@ export default function EvalFormPage() {
                           prev.map((g, i) => i === idx ? { ...g, goal_text: e.target.value } : g)
                         )
                       }
+                      onKeyDown={(e) => handleGoalTextKeyDown(e, idx)}
+                      onClick={(e) => {
+                        // When clicking into the textarea for the first time after bank insert,
+                        // auto-select the first ___ if cursor lands near one
+                        const textarea = e.currentTarget;
+                        const text = textarea.value;
+                        const blankIdx = text.indexOf('___');
+                        if (blankIdx !== -1 && textarea.selectionStart === textarea.selectionEnd) {
+                          // Only auto-select if user clicked near a blank or at the end
+                          const clickPos = textarea.selectionStart;
+                          if (clickPos === 0 || clickPos === text.length) {
+                            setTimeout(() => textarea.setSelectionRange(blankIdx, blankIdx + 3), 0);
+                          }
+                        }
+                      }}
                     />
                   </div>
                 </div>

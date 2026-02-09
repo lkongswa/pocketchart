@@ -202,10 +202,10 @@ function CollapsibleInfo({ icon, title, isComplete, children, onEdit, color = 'b
       onClick={() => setIsOpen(!isOpen)}
     >
       <div className="w-full flex items-center gap-2 px-3 py-2">
-        <span className={scheme.icon}>{icon}</span>
-        <span className="text-xs font-medium text-[var(--color-text)] flex-1">{title}</span>
-        <span className={`w-2 h-2 rounded-full ${isComplete ? 'bg-emerald-400' : 'bg-amber-400'}`} title={isComplete ? 'Complete' : 'Incomplete'} />
-        <ChevronDown className={`w-3.5 h-3.5 text-[var(--color-text-secondary)] transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        <span className={`shrink-0 ${scheme.icon}`}>{icon}</span>
+        <span className="text-xs font-medium text-[var(--color-text)] flex-1 truncate">{title}</span>
+        <span className={`w-2 h-2 shrink-0 rounded-full ${isComplete ? 'bg-emerald-400' : 'bg-amber-400'}`} title={isComplete ? 'Complete' : 'Incomplete'} />
+        <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-[var(--color-text-secondary)] transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </div>
       {isOpen && (
         <div className="px-3 pb-3 border-t border-[var(--color-border)]/30" onClick={(e) => e.stopPropagation()}>
@@ -252,6 +252,7 @@ const ClientDetailPage: React.FC = () => {
   const [showAllNotes, setShowAllNotes] = useState(false);
   const [showAllGoals, setShowAllGoals] = useState(false);
   const [showInactiveGoals, setShowInactiveGoals] = useState(false);
+  const [goalStatusMenuId, setGoalStatusMenuId] = useState<number | null>(null);
   const [showDocuments, setShowDocuments] = useState(false);
   const [showCompliance, setShowCompliance] = useState(false);
 
@@ -345,6 +346,14 @@ const ClientDetailPage: React.FC = () => {
       return () => clearTimeout(timer);
     }
   }, [billingToast]);
+
+  // Close goal status menu on outside click
+  useEffect(() => {
+    if (!goalStatusMenuId) return;
+    const handleClick = () => setGoalStatusMenuId(null);
+    document.addEventListener('click', handleClick);
+    return () => document.removeEventListener('click', handleClick);
+  }, [goalStatusMenuId]);
 
   // --- Handlers ---
 
@@ -563,8 +572,8 @@ const ClientDetailPage: React.FC = () => {
   const inactiveGoals = goals.filter((g) => g.status !== 'active');
   const displayActiveGoals = showAllGoals ? sortedActiveGoals : sortedActiveGoals.slice(0, 4);
 
-  // Completeness checks (legacy — used by collapsible section badges)
-  const demographicsComplete = Boolean(client.dob && client.phone);
+  // Completeness checks — used by collapsible section badges
+  const demographicsComplete = Boolean(client.dob && client.phone && client.gender && client.address);
   const insuranceComplete = Boolean(client.insurance_payer && client.insurance_member_id);
   const diagnosisComplete = Boolean(client.primary_dx_code);
   const referringComplete = Boolean(client.referring_physician);
@@ -664,6 +673,7 @@ const ClientDetailPage: React.FC = () => {
             color="blue"
           >
             <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">DOB</span><span>{formatDate(client.dob)}</span></div>
+            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Sex</span><span>{client.gender ? client.gender.charAt(0).toUpperCase() + client.gender.slice(1) : '--'}</span></div>
             <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Phone</span><span>{client.phone || '--'}</span></div>
             <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Email</span><span className="truncate ml-2">{client.email || '--'}</span></div>
             <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Address</span><span className="truncate ml-2">{client.address || '--'}</span></div>
@@ -852,9 +862,49 @@ const ClientDetailPage: React.FC = () => {
                               {goal.category && (
                                 <span className="badge bg-blue-50 text-blue-600 text-xs">{formatCategory(goal.category)}</span>
                               )}
-                              <span className={`badge text-xs ${config.className}`}>
-                                <StatusIcon size={10} className="mr-0.5" /> {config.label}
-                              </span>
+                              <div className="relative inline-block">
+                                <button
+                                  className={`badge text-xs cursor-pointer hover:opacity-80 transition-opacity ${config.className}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setGoalStatusMenuId(goalStatusMenuId === goal.id ? null : goal.id);
+                                  }}
+                                >
+                                  <StatusIcon size={10} className="mr-0.5" /> {config.label}
+                                  <ChevronDown size={10} className="ml-0.5 opacity-60" />
+                                </button>
+                                {goalStatusMenuId === goal.id && (
+                                  <div className="absolute left-0 top-full mt-1 z-50 bg-white rounded-lg shadow-lg border border-[var(--color-border)] py-1 min-w-[140px]">
+                                    {(Object.entries(goalStatusConfig) as [GoalStatus, typeof config][]).map(([status, cfg]) => {
+                                      const Icon = cfg.icon;
+                                      return (
+                                        <button
+                                          key={status}
+                                          className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors ${goal.status === status ? 'font-semibold bg-gray-50' : ''}`}
+                                          onClick={async (e) => {
+                                            e.stopPropagation();
+                                            setGoalStatusMenuId(null);
+                                            if (status === goal.status) return;
+                                            try {
+                                              await window.api.goals.update(goal.id, {
+                                                ...goal,
+                                                status,
+                                                met_date: status === 'met' ? new Date().toISOString().slice(0, 10) : goal.met_date,
+                                              });
+                                              const updatedGoals = await window.api.goals.listByClient(clientId);
+                                              setGoals(updatedGoals);
+                                            } catch (err) {
+                                              console.error('Failed to update goal status:', err);
+                                            }
+                                          }}
+                                        >
+                                          <Icon size={12} /> {cfg.label}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
                             </div>
                             <p className="text-sm text-[var(--color-text)]">{goal.goal_text}</p>
                             {goal.target_date && (
@@ -864,30 +914,6 @@ const ClientDetailPage: React.FC = () => {
                             )}
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
-                            <select
-                              className="text-xs border border-[var(--color-border)] rounded px-1.5 py-0.5 bg-white cursor-pointer"
-                              value={goal.status}
-                              onClick={(e) => e.stopPropagation()}
-                              onChange={async (e) => {
-                                const newStatus = e.target.value as GoalStatus;
-                                try {
-                                  await window.api.goals.update(goal.id, {
-                                    ...goal,
-                                    status: newStatus,
-                                    met_date: newStatus === 'met' ? new Date().toISOString().slice(0, 10) : goal.met_date,
-                                  });
-                                  const updatedGoals = await window.api.goals.listByClient(clientId);
-                                  setGoals(updatedGoals);
-                                } catch (err) {
-                                  console.error('Failed to update goal status:', err);
-                                }
-                              }}
-                            >
-                              <option value="active">Active</option>
-                              <option value="met">Met</option>
-                              <option value="discontinued">Discontinued</option>
-                              <option value="modified">Modified</option>
-                            </select>
                             <button className="btn-ghost p-1" onClick={() => openEditGoal(goal)}>
                               <Edit size={12} />
                             </button>
@@ -974,9 +1000,49 @@ const ClientDetailPage: React.FC = () => {
                                     {goal.category && (
                                       <span className="badge bg-blue-50/60 text-blue-500 text-[10px]">{formatCategory(goal.category)}</span>
                                     )}
-                                    <span className={`badge text-[10px] ${config.className}`}>
-                                      <StatusIcon size={9} className="mr-0.5" /> {config.label}
-                                    </span>
+                                    <div className="relative inline-block">
+                                      <button
+                                        className={`badge text-[10px] cursor-pointer hover:opacity-80 transition-opacity ${config.className}`}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setGoalStatusMenuId(goalStatusMenuId === goal.id ? null : goal.id);
+                                        }}
+                                      >
+                                        <StatusIcon size={9} className="mr-0.5" /> {config.label}
+                                        <ChevronDown size={9} className="ml-0.5 opacity-60" />
+                                      </button>
+                                      {goalStatusMenuId === goal.id && (
+                                        <div className="absolute left-0 top-full mt-1 z-50 bg-white rounded-lg shadow-lg border border-[var(--color-border)] py-1 min-w-[140px]">
+                                          {(Object.entries(goalStatusConfig) as [GoalStatus, typeof config][]).map(([status, cfg]) => {
+                                            const Icon = cfg.icon;
+                                            return (
+                                              <button
+                                                key={status}
+                                                className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors ${goal.status === status ? 'font-semibold bg-gray-50' : ''}`}
+                                                onClick={async (e) => {
+                                                  e.stopPropagation();
+                                                  setGoalStatusMenuId(null);
+                                                  if (status === goal.status) return;
+                                                  try {
+                                                    await window.api.goals.update(goal.id, {
+                                                      ...goal,
+                                                      status,
+                                                      met_date: status === 'met' ? new Date().toISOString().slice(0, 10) : goal.met_date,
+                                                    });
+                                                    const updatedGoals = await window.api.goals.listByClient(clientId);
+                                                    setGoals(updatedGoals);
+                                                  } catch (err) {
+                                                    console.error('Failed to update goal status:', err);
+                                                  }
+                                                }}
+                                              >
+                                                <Icon size={12} /> {cfg.label}
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                    </div>
                                   </div>
                                   <p className="text-xs text-[var(--color-text-secondary)]">{goal.goal_text}</p>
                                   {(goal.target_date || goal.met_date) && (
@@ -987,30 +1053,6 @@ const ClientDetailPage: React.FC = () => {
                                   )}
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
-                                  <select
-                                    className="text-[10px] border border-[var(--color-border)] rounded px-1 py-0.5 bg-white cursor-pointer"
-                                    value={goal.status}
-                                    onClick={(e) => e.stopPropagation()}
-                                    onChange={async (e) => {
-                                      const newStatus = e.target.value as GoalStatus;
-                                      try {
-                                        await window.api.goals.update(goal.id, {
-                                          ...goal,
-                                          status: newStatus,
-                                          met_date: newStatus === 'met' ? new Date().toISOString().slice(0, 10) : goal.met_date,
-                                        });
-                                        const updatedGoals = await window.api.goals.listByClient(clientId);
-                                        setGoals(updatedGoals);
-                                      } catch (err) {
-                                        console.error('Failed to update goal status:', err);
-                                      }
-                                    }}
-                                  >
-                                    <option value="active">Active</option>
-                                    <option value="met">Met</option>
-                                    <option value="discontinued">Discontinued</option>
-                                    <option value="modified">Modified</option>
-                                  </select>
                                   <button className="btn-ghost p-1" onClick={() => openEditGoal(goal)}>
                                     <Edit size={11} />
                                   </button>

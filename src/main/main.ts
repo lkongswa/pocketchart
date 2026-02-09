@@ -822,6 +822,12 @@ function registerIpcHandlers() {
     const existingNote = db.prepare('SELECT signed_at, client_id FROM notes WHERE id = ?').get(id) as any;
     const isNewlySignedNote = !existingNote?.signed_at && data.signed_at;
 
+    // Block draft-save overwrites on already-signed notes (race condition protection)
+    if (existingNote?.signed_at && !data.signed_at) {
+      // An auto-save with no signed_at is trying to overwrite a signed note — skip it
+      return db.prepare('SELECT * FROM notes WHERE id = ?').get(id);
+    }
+
     db.prepare(`
       UPDATE notes SET date_of_service=?, time_in=?, time_out=?, units=?, cpt_code=?,
         subjective=?, objective=?, assessment=?, plan=?, goals_addressed=?, signed_at=?,
@@ -1012,6 +1018,11 @@ function registerIpcHandlers() {
   safeHandle('evaluations:update', (_event, id: number, data) => {
     const existingEval = db.prepare('SELECT signed_at, client_id FROM evaluations WHERE id = ?').get(id) as any;
     const isNewlySigned = !existingEval?.signed_at && data.signed_at;
+
+    // Block draft-save overwrites on already-signed evaluations (race condition protection)
+    if (existingEval?.signed_at && !data.signed_at) {
+      return db.prepare('SELECT * FROM evaluations WHERE id = ?').get(id);
+    }
 
     db.prepare(`
       UPDATE evaluations SET eval_date=?, discipline=?, content=?, signed_at=?,
@@ -2253,34 +2264,51 @@ function registerIpcHandlers() {
       }
     };
 
-    // ── Header: Practice Info ──
-    doc.setFontSize(16);
+    // ── Header: Practice Info with Logo ──
+    let textStartX = marginLeft;
+    const logoData = getLogoBase64();
+    if (logoData) {
+      try {
+        const logoFormat = logoData.includes('image/png') ? 'PNG' : 'JPEG';
+        doc.addImage(logoData, logoFormat, marginLeft, y - 6, 48, 48);
+        textStartX = marginLeft + 56;
+      } catch { /* skip logo */ }
+    }
+
+    doc.setFontSize(14);
     doc.setFont('helvetica', 'bold');
-    doc.text(practice?.name || 'Practice Name', marginLeft, y);
-    y += 16;
-    doc.setFontSize(9);
+    doc.setTextColor(PDF_COLORS.heading[0], PDF_COLORS.heading[1], PDF_COLORS.heading[2]);
+    doc.text(practice?.name || 'Practice Name', textStartX, y);
+    y += 14;
+    doc.setFontSize(8.5);
     doc.setFont('helvetica', 'normal');
+    doc.setTextColor(PDF_COLORS.label[0], PDF_COLORS.label[1], PDF_COLORS.label[2]);
     if (practice?.address) {
-      doc.text(practice.address, marginLeft, y);
-      y += 12;
+      const addrLine = [practice.address, practice.city, practice.state, practice.zip].filter(Boolean).join(', ');
+      doc.text(addrLine, textStartX, y);
+      y += 11;
     }
     if (practice?.phone) {
-      doc.text(`Phone: ${practice.phone}`, marginLeft, y);
-      y += 12;
+      doc.text(`Phone: ${practice.phone}`, textStartX, y);
+      y += 11;
     }
 
     const npiTaxParts: string[] = [];
     if (practice?.npi) npiTaxParts.push(`NPI: ${practice.npi}`);
     if (practice?.tax_id) npiTaxParts.push(`Tax ID: ${practice.tax_id}`);
     if (npiTaxParts.length > 0) {
-      doc.text(npiTaxParts.join('    '), marginLeft, y);
-      y += 12;
+      doc.text(npiTaxParts.join('  |  '), textStartX, y);
+      y += 11;
     }
 
-    y += 6;
-    doc.setDrawColor(0, 0, 0);
-    doc.setLineWidth(1);
+    // Make sure y is past the logo
+    if (logoData) y = Math.max(y, 90);
+    y += 4;
+    doc.setLineWidth(1.5);
+    doc.setDrawColor(PDF_COLORS.accent[0], PDF_COLORS.accent[1], PDF_COLORS.accent[2]);
     doc.line(marginLeft, y, pageWidth - marginRight, y);
+    doc.setDrawColor(0, 0, 0);
+    doc.setTextColor(PDF_COLORS.body[0], PDF_COLORS.body[1], PDF_COLORS.body[2]);
     y += 16;
     doc.setFontSize(14);
     doc.setFont('helvetica', 'bold');
@@ -4853,52 +4881,72 @@ function buildInvoicePdf(invoice: any, items: any[], client: any, practice: any)
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
   };
 
-  // ── Header: Practice Info ──
-  doc.setFontSize(18);
-  doc.setFont('helvetica', 'bold');
-  doc.text(practice?.name || 'Practice Name', marginLeft, y);
-  y += 20;
+  // ── Header: Practice Info with Logo ──
+  let textStartX = marginLeft;
+  const logoData = getLogoBase64();
+  if (logoData) {
+    try {
+      const logoFormat = logoData.includes('image/png') ? 'PNG' : 'JPEG';
+      doc.addImage(logoData, logoFormat, marginLeft, y - 6, 48, 48);
+      textStartX = marginLeft + 56;
+    } catch { /* skip logo */ }
+  }
 
-  doc.setFontSize(10);
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(PDF_COLORS.heading[0], PDF_COLORS.heading[1], PDF_COLORS.heading[2]);
+  doc.text(practice?.name || 'Practice Name', textStartX, y);
+  y += 14;
+
+  doc.setFontSize(8.5);
   doc.setFont('helvetica', 'normal');
+  doc.setTextColor(PDF_COLORS.label[0], PDF_COLORS.label[1], PDF_COLORS.label[2]);
   if (practice?.address) {
-    doc.text(practice.address, marginLeft, y);
-    y += 14;
+    doc.text(practice.address, textStartX, y);
+    y += 11;
   }
   const cityStateZip = [practice?.city, practice?.state, practice?.zip].filter(Boolean).join(', ');
   if (cityStateZip) {
-    doc.text(cityStateZip, marginLeft, y);
-    y += 14;
+    doc.text(cityStateZip, textStartX, y);
+    y += 11;
   }
   if (practice?.phone) {
-    doc.text(`Phone: ${practice.phone}`, marginLeft, y);
-    y += 14;
+    doc.text(`Phone: ${practice.phone}`, textStartX, y);
+    y += 11;
   }
   if (practice?.npi) {
-    doc.text(`NPI: ${practice.npi}`, marginLeft, y);
-    y += 14;
+    doc.text(`NPI: ${practice.npi}`, textStartX, y);
+    y += 11;
   }
+  doc.setTextColor(PDF_COLORS.body[0], PDF_COLORS.body[1], PDF_COLORS.body[2]);
 
   // ── Invoice Title & Number (right aligned) ──
   const invoiceRightX = pageWidth - marginRight;
-  doc.setFontSize(24);
+  doc.setFontSize(22);
   doc.setFont('helvetica', 'bold');
-  doc.text('INVOICE', invoiceRightX, 60, { align: 'right' });
+  doc.setTextColor(PDF_COLORS.accent[0], PDF_COLORS.accent[1], PDF_COLORS.accent[2]);
+  doc.text('INVOICE', invoiceRightX, 56, { align: 'right' });
+  doc.setTextColor(PDF_COLORS.body[0], PDF_COLORS.body[1], PDF_COLORS.body[2]);
 
-  doc.setFontSize(11);
+  doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Invoice #: ${invoice.invoice_number}`, invoiceRightX, 80, { align: 'right' });
-  doc.text(`Date: ${invoice.invoice_date}`, invoiceRightX, 95, { align: 'right' });
+  doc.setTextColor(PDF_COLORS.label[0], PDF_COLORS.label[1], PDF_COLORS.label[2]);
+  doc.text(`Invoice #: ${invoice.invoice_number}`, invoiceRightX, 72, { align: 'right' });
+  doc.text(`Date: ${invoice.invoice_date}`, invoiceRightX, 84, { align: 'right' });
   if (invoice.due_date) {
-    doc.text(`Due: ${invoice.due_date}`, invoiceRightX, 110, { align: 'right' });
+    doc.text(`Due: ${invoice.due_date}`, invoiceRightX, 96, { align: 'right' });
   }
+  doc.setTextColor(PDF_COLORS.body[0], PDF_COLORS.body[1], PDF_COLORS.body[2]);
 
-  y = Math.max(y, 130);
+  // Make sure y is past the logo
+  if (logoData) y = Math.max(y, 96);
+  y = Math.max(y, 110);
 
   // ── Divider ──
-  doc.setDrawColor(200, 200, 200);
-  doc.setLineWidth(1);
+  doc.setLineWidth(1.5);
+  doc.setDrawColor(PDF_COLORS.accent[0], PDF_COLORS.accent[1], PDF_COLORS.accent[2]);
   doc.line(marginLeft, y, pageWidth - marginRight, y);
+  doc.setDrawColor(0, 0, 0);
   y += 20;
 
   // ── Bill To Section ──
@@ -5046,18 +5094,95 @@ function buildInvoicePdf(invoice: any, items: any[], client: any, practice: any)
 // ── Per-Document PDF Builders (for bulk export) ──
 
 /** Shared PDF utilities for per-document exports with professional styling */
+// ── PDF Styling Constants ──
+const PDF_COLORS = {
+  heading:      [35, 55, 75] as [number, number, number],
+  body:         [51, 51, 51] as [number, number, number],
+  label:        [100, 110, 120] as [number, number, number],
+  light:        [140, 150, 160] as [number, number, number],
+  accent:       [44, 82, 130] as [number, number, number],
+  accentLight:  [235, 242, 250] as [number, number, number],
+  cardBg:       [248, 249, 251] as [number, number, number],
+  cardBorder:   [218, 225, 232] as [number, number, number],
+  divider:      [210, 216, 224] as [number, number, number],
+  activeGreen:  [21, 128, 61] as [number, number, number],
+  activeBg:     [220, 252, 231] as [number, number, number],
+  metBlue:      [29, 78, 216] as [number, number, number],
+  metBg:        [219, 234, 254] as [number, number, number],
+  dcGray:       [75, 85, 99] as [number, number, number],
+  dcBg:         [229, 231, 235] as [number, number, number],
+  signedGreen:  [21, 128, 61] as [number, number, number],
+  footer:       [100, 110, 120] as [number, number, number],
+  confidential: [180, 50, 50] as [number, number, number],
+  // SOAP section left-border colors
+  soapS:        [59, 130, 246] as [number, number, number],
+  soapO:        [16, 185, 129] as [number, number, number],
+  soapA:        [245, 158, 11] as [number, number, number],
+  soapP:        [139, 92, 246] as [number, number, number],
+  // Goal type badges
+  stgBg:        [254, 243, 199] as [number, number, number],
+  stgText:      [146, 64, 14] as [number, number, number],
+  notMetBg:     [254, 226, 226] as [number, number, number],
+  notMetText:   [153, 27, 27] as [number, number, number],
+};
+
+const PDF_FONTS = {
+  sectionHeader: 13,
+  subsectionHeader: 11,
+  fieldLabel: 9,
+  fieldValue: 10,
+  body: 10,
+  metadata: 8,
+  footerText: 7.5,
+  documentType: 11,
+};
+
+const DISCIPLINE_DOCUMENT_LABELS: Record<string, string> = {
+  PT: 'Physical Therapy Medical Record',
+  OT: 'Occupational Therapy Medical Record',
+  ST: 'Speech-Language Pathology Medical Record',
+  MFT: 'Marriage & Family Therapy Clinical Record',
+};
+
+/** SOAP section color map by label initial */
+const SOAP_COLORS: Record<string, [number, number, number]> = {
+  'Subjective': PDF_COLORS.soapS, 'S': PDF_COLORS.soapS,
+  'Objective': PDF_COLORS.soapO, 'O': PDF_COLORS.soapO,
+  'Assessment': PDF_COLORS.soapA, 'A': PDF_COLORS.soapA,
+  'Plan': PDF_COLORS.soapP, 'P': PDF_COLORS.soapP,
+  // DAP format
+  'Data': PDF_COLORS.soapS, 'D': PDF_COLORS.soapS,
+  'Response': PDF_COLORS.soapO, 'R': PDF_COLORS.soapO,
+  // BIRP
+  'Behavior': PDF_COLORS.soapS, 'B': PDF_COLORS.soapS,
+  'Intervention': PDF_COLORS.soapO, 'I': PDF_COLORS.soapO,
+};
+
+/** Format date nicely for PDFs */
+function formatPdfDate(dateStr: string): string {
+  if (!dateStr) return '';
+  try {
+    const d = new Date(dateStr + (dateStr.length === 10 ? 'T12:00:00' : ''));
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch { return dateStr; }
+}
+
 function createPdfHelpers(doc: any, options?: { client?: any; practice?: any }) {
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
-  const marginLeft = 72;  // 1 inch
-  const marginRight = 72; // 1 inch
+  const marginLeft = 72;
+  const marginRight = 72;
   const maxWidth = pageWidth - marginLeft - marginRight;
-  const headerHeight = 70; // Reserve space for practice header
-  const footerHeight = 40; // Reserve space for footer
+  const headerHeight = 72;
+  const footerHeight = 40;
   let y = headerHeight;
 
   const practice = options?.practice || null;
   const client = options?.client || null;
+
+  const setColor = (c: [number, number, number]) => doc.setTextColor(c[0], c[1], c[2]);
+  const setFill = (c: [number, number, number]) => doc.setFillColor(c[0], c[1], c[2]);
+  const setDraw = (c: [number, number, number]) => doc.setDrawColor(c[0], c[1], c[2]);
 
   const checkPageBreak = (needed: number) => {
     if (y + needed > pageHeight - footerHeight) {
@@ -5066,40 +5191,81 @@ function createPdfHelpers(doc: any, options?: { client?: any; practice?: any }) 
     }
   };
 
-  const addSectionHeader = (text: string) => {
-    checkPageBreak(34);
-    y += 12; // spacing above
-    doc.setFontSize(12);
+  /** Draw a small rounded-rect pill badge */
+  const drawBadge = (text: string, x: number, badgeY: number, bgColor: [number, number, number], textColor: [number, number, number]): number => {
+    doc.setFontSize(7.5);
     doc.setFont('helvetica', 'bold');
-    doc.setTextColor(0, 0, 0);
-    doc.text(text, marginLeft, y);
-    y += 6;
-    doc.setLineWidth(0.3);
-    doc.setDrawColor(180, 180, 180);
-    doc.line(marginLeft, y, pageWidth - marginRight, y);
-    doc.setDrawColor(0, 0, 0);
-    y += 10;
+    const tw = doc.getTextWidth(text);
+    const pw = tw + 8;
+    const ph = 12;
+    setFill(bgColor);
+    doc.roundedRect(x, badgeY - 9, pw, ph, 2, 2, 'F');
+    setColor(textColor);
+    doc.text(text, x + 4, badgeY - 1);
+    setColor(PDF_COLORS.body);
+    return pw;
   };
 
+  /** Section header with accent bar and light background */
+  const addSectionHeader = (text: string) => {
+    checkPageBreak(40);
+    y += 16;
+    const barH = 20;
+    // Background fill
+    setFill(PDF_COLORS.accentLight);
+    doc.roundedRect(marginLeft, y - 14, maxWidth, barH, 2, 2, 'F');
+    // Left accent bar
+    setFill(PDF_COLORS.accent);
+    doc.rect(marginLeft, y - 14, 3, barH, 'F');
+    // Title text centered in bar
+    doc.setFontSize(PDF_FONTS.sectionHeader);
+    doc.setFont('helvetica', 'bold');
+    setColor(PDF_COLORS.heading);
+    doc.text(text, marginLeft + 10, y - 1);
+    setColor(PDF_COLORS.body);
+    y += 14;
+  };
+
+  /** Field with muted label and body-color value */
   const addField = (label: string, value: string) => {
     if (!value || value === '--' || value.trim() === '' || value.trim() === '-') return;
     checkPageBreak(18);
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(PDF_FONTS.fieldLabel);
+    doc.setFont('helvetica', 'normal');
+    setColor(PDF_COLORS.label);
     doc.text(`${label}: `, marginLeft, y);
     const labelWidth = doc.getTextWidth(`${label}: `);
+    doc.setFontSize(PDF_FONTS.fieldValue);
     doc.setFont('helvetica', 'normal');
+    setColor(PDF_COLORS.body);
     const lines = doc.splitTextToSize(value, maxWidth - labelWidth);
     doc.text(lines, marginLeft + labelWidth, y);
     y += lines.length * 14;
   };
 
+  /** Field with emphasized (accent-color bold) label */
+  const addEmphasisField = (label: string, value: string) => {
+    if (!value || value.trim() === '') return;
+    checkPageBreak(18);
+    doc.setFontSize(PDF_FONTS.fieldLabel);
+    doc.setFont('helvetica', 'bold');
+    setColor(PDF_COLORS.accent);
+    doc.text(`${label}: `, marginLeft, y);
+    const labelWidth = doc.getTextWidth(`${label}: `);
+    doc.setFontSize(PDF_FONTS.fieldValue);
+    doc.setFont('helvetica', 'bold');
+    setColor(PDF_COLORS.body);
+    const lines = doc.splitTextToSize(value, maxWidth - labelWidth);
+    doc.text(lines, marginLeft + labelWidth, y);
+    y += lines.length * 14;
+  };
+
+  /** Wrapped body text */
   const addWrappedText = (text: string, indent = 0) => {
     if (!text) return;
-    doc.setFontSize(10);
+    doc.setFontSize(PDF_FONTS.body);
     doc.setFont('helvetica', 'normal');
-    doc.setTextColor(0, 0, 0);
+    setColor(PDF_COLORS.body);
     const lines = doc.splitTextToSize(text, maxWidth - indent);
     for (const line of lines) {
       checkPageBreak(15);
@@ -5108,33 +5274,335 @@ function createPdfHelpers(doc: any, options?: { client?: any; practice?: any }) 
     }
   };
 
-  /** Add practice header and client footer to every page */
+  /** Render a SOAP-style section with colored left border */
+  const addSOAPSection = (label: string, content: string) => {
+    if (!content) return;
+    checkPageBreak(30);
+    const color = SOAP_COLORS[label] || PDF_COLORS.accent;
+    y += 4;
+    const startY = y;
+    // Label
+    doc.setFontSize(PDF_FONTS.fieldLabel);
+    doc.setFont('helvetica', 'bold');
+    setColor(color);
+    doc.text(`${label}:`, marginLeft + 8, y);
+    y += 13;
+    // Content
+    doc.setFontSize(PDF_FONTS.body);
+    doc.setFont('helvetica', 'normal');
+    setColor(PDF_COLORS.body);
+    const lines = doc.splitTextToSize(content, maxWidth - 16);
+    for (const line of lines) {
+      checkPageBreak(15);
+      doc.text(line, marginLeft + 10, y);
+      y += 14;
+    }
+    // Draw left border bar from startY to current y
+    setFill(color);
+    const barLen = y - startY + 2;
+    doc.rect(marginLeft, startY - 12, 2.5, barLen, 'F');
+    y += 4;
+    setColor(PDF_COLORS.body);
+  };
+
+  /** Two-column client info card */
+  const addClientInfoCard = (clientData: any) => {
+    if (!clientData) return;
+    checkPageBreak(70);
+    const cardX = marginLeft;
+    const cardW = maxWidth;
+    const innerPad = 10;
+    const colMid = marginLeft + maxWidth / 2;
+    const startY = y;
+
+    // Prepare data
+    const name = `${clientData.first_name || ''} ${clientData.last_name || ''}`.trim();
+    const dob = clientData.dob || '';
+    const status = clientData.status || '';
+    const discipline = clientData.discipline || '';
+    const dxParts = [clientData.primary_dx_code, clientData.primary_dx_description].filter(Boolean).join(' — ');
+
+    // Calculate card height
+    let rows = 2; // name+status, dob+discipline
+    if (dxParts) rows++;
+    const cardH = rows * 16 + innerPad * 2 + 2;
+
+    // Card background + border
+    setFill(PDF_COLORS.cardBg);
+    setDraw(PDF_COLORS.cardBorder);
+    doc.setLineWidth(0.75);
+    doc.roundedRect(cardX, startY - 2, cardW, cardH, 3, 3, 'FD');
+    doc.setLineWidth(0.3);
+
+    let iy = startY + innerPad + 6;
+    // Row 1: Name + Status
+    doc.setFontSize(PDF_FONTS.fieldLabel);
+    doc.setFont('helvetica', 'normal');
+    setColor(PDF_COLORS.label);
+    doc.text('Name:', cardX + innerPad, iy);
+    doc.setFontSize(PDF_FONTS.fieldValue);
+    doc.setFont('helvetica', 'bold');
+    setColor(PDF_COLORS.body);
+    doc.text(name, cardX + innerPad + doc.getTextWidth('Name: '), iy);
+
+    // Status badge
+    if (status) {
+      doc.setFontSize(PDF_FONTS.fieldLabel);
+      doc.setFont('helvetica', 'normal');
+      setColor(PDF_COLORS.label);
+      doc.text('Status:', colMid, iy);
+      const statusX = colMid + doc.getTextWidth('Status: ');
+      const sUpper = status.charAt(0).toUpperCase() + status.slice(1);
+      if (status.toLowerCase() === 'active') {
+        drawBadge(sUpper, statusX, iy, PDF_COLORS.activeBg, PDF_COLORS.activeGreen);
+      } else {
+        drawBadge(sUpper, statusX, iy, PDF_COLORS.dcBg, PDF_COLORS.dcGray);
+      }
+    }
+    iy += 16;
+
+    // Row 2: DOB + Discipline
+    if (dob) {
+      doc.setFontSize(PDF_FONTS.fieldLabel);
+      doc.setFont('helvetica', 'normal');
+      setColor(PDF_COLORS.label);
+      doc.text('DOB:', cardX + innerPad, iy);
+      doc.setFontSize(PDF_FONTS.fieldValue);
+      doc.setFont('helvetica', 'bold');
+      setColor(PDF_COLORS.body);
+      doc.text(dob, cardX + innerPad + doc.getTextWidth('DOB: '), iy);
+    }
+    if (discipline) {
+      doc.setFontSize(PDF_FONTS.fieldLabel);
+      doc.setFont('helvetica', 'normal');
+      setColor(PDF_COLORS.label);
+      doc.text('Discipline:', colMid, iy);
+      doc.setFontSize(PDF_FONTS.fieldValue);
+      doc.setFont('helvetica', 'bold');
+      setColor(PDF_COLORS.body);
+      doc.text(discipline, colMid + doc.getTextWidth('Discipline: '), iy);
+    }
+    iy += 16;
+
+    // Row 3: Primary Dx (full width)
+    if (dxParts) {
+      doc.setFontSize(PDF_FONTS.fieldLabel);
+      doc.setFont('helvetica', 'normal');
+      setColor(PDF_COLORS.label);
+      doc.text('Primary Dx:', cardX + innerPad, iy);
+      doc.setFontSize(PDF_FONTS.fieldValue);
+      doc.setFont('helvetica', 'normal');
+      setColor(PDF_COLORS.body);
+      const dxLabelW = doc.getTextWidth('Primary Dx: ');
+      const dxLines = doc.splitTextToSize(dxParts, cardW - innerPad * 2 - dxLabelW);
+      doc.text(dxLines, cardX + innerPad + dxLabelW, iy);
+    }
+
+    y = startY + cardH + 8;
+    setColor(PDF_COLORS.body);
+    setDraw([0, 0, 0]);
+  };
+
+  /** Render a goal row with type + status badges */
+  const addGoalRow = (goal: any) => {
+    checkPageBreak(30);
+    let bx = marginLeft;
+    // Type badge
+    const gType = (goal.goal_type || 'STG').toUpperCase();
+    const typeBg = gType === 'LTG' ? PDF_COLORS.accentLight : PDF_COLORS.stgBg;
+    const typeText = gType === 'LTG' ? PDF_COLORS.accent : PDF_COLORS.stgText;
+    const tw = drawBadge(gType, bx, y, typeBg, typeText);
+    bx += tw + 6;
+    // Status badge
+    const st = (goal.status || 'active').toLowerCase();
+    const stLabel = st.charAt(0).toUpperCase() + st.slice(1);
+    let stBg = PDF_COLORS.activeBg;
+    let stText = PDF_COLORS.activeGreen;
+    if (st === 'met') { stBg = PDF_COLORS.metBg; stText = PDF_COLORS.metBlue; }
+    else if (st === 'discontinued') { stBg = PDF_COLORS.dcBg; stText = PDF_COLORS.dcGray; }
+    else if (st === 'not met' || st === 'not_met') { stBg = PDF_COLORS.notMetBg; stText = PDF_COLORS.notMetText; }
+    const sw = drawBadge(stLabel, bx, y, stBg, stText);
+    bx += sw + 8;
+    // Goal text
+    doc.setFontSize(PDF_FONTS.body);
+    doc.setFont('helvetica', 'normal');
+    setColor(PDF_COLORS.body);
+    const goalTextW = pageWidth - marginRight - bx;
+    const gLines = doc.splitTextToSize(goal.goal_text || '', goalTextW);
+    if (gLines.length > 0) {
+      doc.text(gLines[0], bx, y - 1);
+      // Continuation lines at full width below badges
+      for (let li = 1; li < gLines.length; li++) {
+        y += 13;
+        checkPageBreak(14);
+        doc.text(gLines[li], marginLeft + 10, y);
+      }
+    }
+    y += 6;
+    // Target/Met dates
+    if (goal.target_date) {
+      doc.setFontSize(PDF_FONTS.metadata);
+      doc.setFont('helvetica', 'normal');
+      setColor(PDF_COLORS.light);
+      doc.text(`Target: ${goal.target_date}${goal.met_date ? '   Met: ' + goal.met_date : ''}`, marginLeft + 10, y);
+      y += 10;
+    }
+    y += 4;
+    setColor(PDF_COLORS.body);
+  };
+
+  /** Note header bar for individual note PDFs */
+  const addNoteHeader = (note: any) => {
+    checkPageBreak(42);
+    // Background bar
+    setFill(PDF_COLORS.cardBg);
+    doc.roundedRect(marginLeft, y - 4, maxWidth, 32, 2, 2, 'F');
+
+    // Date left
+    const dateFormatted = formatPdfDate(note.date_of_service);
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    setColor(PDF_COLORS.heading);
+    doc.text(dateFormatted, marginLeft + 8, y + 10);
+
+    // CPT right-aligned
+    let cptStr = '';
+    try {
+      const cptLines = JSON.parse(note.cpt_codes || '[]');
+      if (Array.isArray(cptLines) && cptLines.length > 0) {
+        cptStr = cptLines.map((l: any) => `${l.code} (${l.units} unit${l.units !== 1 ? 's' : ''})`).join(', ');
+      }
+    } catch {}
+    if (!cptStr && note.cpt_code) cptStr = `${note.cpt_code} (${note.units || 1} unit${(note.units || 1) !== 1 ? 's' : ''})`;
+
+    const isStandaloneDC = note.note_type === 'discharge' && (!note.cpt_code || note.charge_amount === 0);
+    if (cptStr && !isStandaloneDC) {
+      doc.setFontSize(PDF_FONTS.body);
+      doc.setFont('helvetica', 'normal');
+      setColor(PDF_COLORS.label);
+      const cptWidth = doc.getTextWidth(cptStr);
+      let rightX = pageWidth - marginRight - 8;
+      // Signed badge
+      if (note.signed_at) {
+        const bw = drawBadge('\u2713 Signed', rightX - 50, y + 10, PDF_COLORS.activeBg, PDF_COLORS.signedGreen);
+        rightX -= (bw + 10);
+      } else {
+        const bw = drawBadge('Draft', rightX - 34, y + 10, PDF_COLORS.dcBg, PDF_COLORS.dcGray);
+        rightX -= (bw + 10);
+      }
+      doc.setFontSize(PDF_FONTS.body);
+      doc.setFont('helvetica', 'normal');
+      setColor(PDF_COLORS.label);
+      doc.text(cptStr, rightX - cptWidth, y + 10);
+    } else {
+      // Just signed badge
+      if (note.signed_at) {
+        drawBadge('\u2713 Signed', pageWidth - marginRight - 58, y + 10, PDF_COLORS.activeBg, PDF_COLORS.signedGreen);
+      } else {
+        drawBadge('Draft', pageWidth - marginRight - 42, y + 10, PDF_COLORS.dcBg, PDF_COLORS.dcGray);
+      }
+    }
+
+    y += 30;
+    // Time range
+    if (note.time_in || note.time_out) {
+      doc.setFontSize(PDF_FONTS.fieldLabel);
+      doc.setFont('helvetica', 'normal');
+      setColor(PDF_COLORS.label);
+      const timeStr = (note.time_in && note.time_out) ? `${note.time_in} \u2014 ${note.time_out}` :
+        note.time_in ? `Time in: ${note.time_in}` : `Time out: ${note.time_out}`;
+      doc.text(timeStr, marginLeft + 8, y);
+      y += 12;
+    }
+    // Divider below header bar
+    setDraw(PDF_COLORS.divider);
+    doc.setLineWidth(0.75);
+    doc.line(marginLeft, y, pageWidth - marginRight, y);
+    doc.setLineWidth(0.3);
+    setDraw([0, 0, 0]);
+    y += 10;
+    setColor(PDF_COLORS.body);
+  };
+
+  /** Start a card container (returns startY for endCard) */
+  const startCard = (): number => {
+    checkPageBreak(30);
+    return y;
+  };
+
+  /** End a card container — draws the border around content from startY to current y */
+  const endCard = (cardStartY: number) => {
+    const cardH = y - cardStartY + 6;
+    setDraw(PDF_COLORS.cardBorder);
+    doc.setLineWidth(0.75);
+    doc.roundedRect(marginLeft - 4, cardStartY - 6, maxWidth + 8, cardH, 3, 3, 'S');
+    doc.setLineWidth(0.3);
+    setDraw([0, 0, 0]);
+    y += 8;
+  };
+
+  /** Note separator for chart export */
+  const addNoteSeparator = () => {
+    y += 8;
+    setDraw(PDF_COLORS.divider);
+    doc.setLineWidth(0.3);
+    const sepStart = marginLeft + maxWidth * 0.2;
+    const sepEnd = pageWidth - marginRight - maxWidth * 0.2;
+    // Dashed effect via short segments
+    for (let sx = sepStart; sx < sepEnd; sx += 8) {
+      doc.line(sx, y, Math.min(sx + 4, sepEnd), y);
+    }
+    setDraw([0, 0, 0]);
+    y += 8;
+  };
+
+  /** Practice header + client footer on every page */
   const addHeaderFooter = () => {
     const totalPages = doc.getNumberOfPages();
+    const logoData = getLogoBase64();
+    const genDate = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
     for (let i = 1; i <= totalPages; i++) {
       doc.setPage(i);
 
-      // ── Practice Header ──
+      // ── Header Band ──
+      // Subtle background
+      setFill(PDF_COLORS.cardBg);
+      doc.rect(0, 0, pageWidth, 62, 'F');
+
       if (practice) {
-        let hy = 30;
-        doc.setTextColor(68, 68, 68); // #444
-        if (practice.name) {
-          doc.setFontSize(10);
-          doc.setFont('helvetica', 'bold');
-          doc.text(practice.name, marginLeft, hy);
-          hy += 13;
+        let hy = 22;
+        let textStartX = marginLeft;
+
+        // Logo
+        if (logoData) {
+          try {
+            const logoFormat = logoData.includes('image/png') ? 'PNG' : 'JPEG';
+            doc.addImage(logoData, logoFormat, marginLeft, 10, 36, 36);
+            textStartX = marginLeft + 44;
+          } catch {}
         }
-        doc.setFontSize(9);
+
+        // Practice name
+        if (practice.name) {
+          doc.setFontSize(PDF_FONTS.sectionHeader);
+          doc.setFont('helvetica', 'bold');
+          setColor(PDF_COLORS.heading);
+          doc.text(practice.name, textStartX, hy);
+          hy += 12;
+        }
+        // Provider line
+        doc.setFontSize(PDF_FONTS.fieldLabel);
         doc.setFont('helvetica', 'normal');
-        // Provider line: signature_name, credentials | NPI
+        setColor(PDF_COLORS.label);
         const sigName = getSetting('signature_name');
         const sigCreds = getSetting('signature_credentials');
         const providerParts: string[] = [];
         if (sigName) providerParts.push(sigCreds ? `${sigName}, ${sigCreds}` : sigName);
         if (practice.npi) providerParts.push(`NPI: ${practice.npi}`);
         if (providerParts.length > 0) {
-          doc.text(providerParts.join(' | '), marginLeft, hy);
-          hy += 12;
+          doc.text(providerParts.join('  |  '), textStartX, hy);
+          hy += 11;
         }
         // Address line
         const addrParts: string[] = [];
@@ -5143,38 +5611,111 @@ function createPdfHelpers(doc: any, options?: { client?: any; practice?: any }) 
         if (cityStateZip) addrParts.push(cityStateZip);
         if (practice.phone) addrParts.push(practice.phone);
         if (addrParts.length > 0) {
-          doc.text(addrParts.join(' | '), marginLeft, hy);
-          hy += 10;
+          doc.text(addrParts.join('  |  '), textStartX, hy);
         }
-        // Thin rule below header
-        doc.setLineWidth(0.5);
-        doc.setDrawColor(68, 68, 68);
-        doc.line(marginLeft, hy, pageWidth - marginRight, hy);
-        doc.setDrawColor(0, 0, 0);
+
+        // Generated date right-aligned on first text line
+        doc.setFontSize(PDF_FONTS.metadata);
+        doc.setFont('helvetica', 'normal');
+        setColor(PDF_COLORS.light);
+        doc.text(`Generated: ${genDate}`, pageWidth - marginRight, 22, { align: 'right' });
       }
 
-      // ── Client Footer ──
-      doc.setFontSize(8);
-      doc.setTextColor(68, 68, 68);
-      const footerParts: string[] = [];
-      footerParts.push(`Page ${i} of ${totalPages}`);
+      // Accent rule at bottom of header band
+      doc.setLineWidth(1.5);
+      setDraw(PDF_COLORS.accent);
+      doc.line(marginLeft, 60, pageWidth - marginRight, 60);
+      doc.setLineWidth(0.3);
+
+      // ── Three-column Footer ──
+      // Hairline rule
+      doc.setLineWidth(0.5);
+      setDraw(PDF_COLORS.divider);
+      doc.line(marginLeft, pageHeight - 32, pageWidth - marginRight, pageHeight - 32);
+      doc.setLineWidth(0.3);
+
+      // Left: page number
+      doc.setFontSize(PDF_FONTS.footerText);
+      doc.setFont('helvetica', 'normal');
+      setColor(PDF_COLORS.footer);
+      doc.text(`Page ${i} of ${totalPages}`, marginLeft, pageHeight - 20);
+
+      // Center: client info
       if (client) {
+        const centerParts: string[] = [];
         if (client.last_name || client.first_name) {
-          footerParts.push(`${client.last_name || ''}, ${client.first_name || ''}`);
+          centerParts.push(`${client.last_name || ''}, ${client.first_name || ''}`);
         }
-        if (client.dob) footerParts.push(`DOB: ${client.dob}`);
+        if (client.dob) centerParts.push(`DOB: ${client.dob}`);
+        if (centerParts.length > 0) {
+          doc.text(centerParts.join('  |  '), pageWidth / 2, pageHeight - 20, { align: 'center' });
+        }
       }
-      footerParts.push('CONFIDENTIAL');
-      doc.text(footerParts.join('  |  '), pageWidth / 2, pageHeight - 20, { align: 'center' });
-      doc.setTextColor(0, 0, 0);
+
+      // Right: CONFIDENTIAL
+      doc.setFont('helvetica', 'bold');
+      setColor(PDF_COLORS.confidential);
+      doc.text('CONFIDENTIAL', pageWidth - marginRight, pageHeight - 20, { align: 'right' });
+
+      // Reset
+      setColor(PDF_COLORS.body);
+      setDraw([0, 0, 0]);
     }
   };
 
+  /** Signature block */
+  const addSignatureBlock = (signatureTyped: string, signatureImage?: string, signedAt?: string) => {
+    if (!signatureTyped && !signatureImage) return;
+    checkPageBreak(80);
+    y += 14;
+
+    // Drawn signature image
+    if (signatureImage) {
+      try {
+        const sigFormat = signatureImage.includes('image/png') ? 'PNG' : 'JPEG';
+        doc.addImage(signatureImage, sigFormat, marginLeft, y, 150, 45);
+        y += 50;
+      } catch {}
+    } else {
+      // Signature line if no drawn signature
+      setDraw(PDF_COLORS.divider);
+      doc.setLineWidth(0.5);
+      doc.line(marginLeft, y + 2, marginLeft + 150, y + 2);
+      doc.setLineWidth(0.3);
+      setDraw([0, 0, 0]);
+      y += 8;
+    }
+
+    // Typed name
+    if (signatureTyped) {
+      doc.setFontSize(PDF_FONTS.fieldLabel);
+      doc.setFont('helvetica', 'oblique');
+      setColor(PDF_COLORS.heading);
+      doc.text(signatureTyped, marginLeft, y);
+      y += 12;
+    }
+
+    // Signed date
+    if (signedAt) {
+      doc.setFontSize(PDF_FONTS.footerText);
+      doc.setFont('helvetica', 'normal');
+      setColor(PDF_COLORS.light);
+      doc.text(`Signed: ${new Date(signedAt).toLocaleString()}`, marginLeft, y);
+      y += 10;
+    }
+    setColor(PDF_COLORS.body);
+    doc.setFont('helvetica', 'normal');
+  };
+
   return {
-    pageWidth, marginLeft, marginRight, maxWidth,
+    pageWidth, pageHeight, marginLeft, marginRight, maxWidth,
     get y() { return y; },
     set y(val: number) { y = val; },
-    checkPageBreak, addSectionHeader, addField, addWrappedText, addHeaderFooter,
+    checkPageBreak, addSectionHeader, addField, addEmphasisField, addWrappedText,
+    addSOAPSection, addClientInfoCard, addGoalRow, addNoteHeader,
+    startCard, endCard, addNoteSeparator,
+    addHeaderFooter, addSignatureBlock,
+    setColor, setFill, setDraw, drawBadge, formatPdfDate: formatPdfDate,
   };
 }
 
@@ -5189,6 +5730,22 @@ function getSetting(key: string): string {
   }
 }
 
+/** Get practice logo as base64 data URL (or null) */
+function getLogoBase64(): string | null {
+  try {
+    const dataDir = getDataPath();
+    const files = fs.readdirSync(dataDir).filter(f => f.startsWith('practice_logo.'));
+    if (files.length === 0) return null;
+    const filePath = path.join(dataDir, files[0]);
+    const ext = path.extname(files[0]).toLowerCase().replace('.', '');
+    const mimeType = ext === 'png' ? 'image/png' : 'image/jpeg';
+    const fileBuffer = fs.readFileSync(filePath);
+    return `data:${mimeType};base64,${fileBuffer.toString('base64')}`;
+  } catch {
+    return null;
+  }
+}
+
 /** Build a PDF for a single evaluation */
 function buildSingleEvalPdf(client: any, evalItem: any): Buffer {
   const db = getDatabase();
@@ -5196,32 +5753,29 @@ function buildSingleEvalPdf(client: any, evalItem: any): Buffer {
   const doc = new jsPDF({ unit: 'pt', format: 'letter' });
   const h = createPdfHelpers(doc, { client, practice });
 
-  // Title
+  // Understated document type line
   const evalTypeLabel = evalItem.eval_type === 'reassessment' ? 'Reassessment' : 'Initial Evaluation';
-  doc.setFontSize(17);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(0, 0, 0);
-  doc.text(evalTypeLabel, h.marginLeft, h.y);
-  h.y += 10;
-  doc.setFontSize(10);
+  const dateFormatted = formatPdfDate(evalItem.eval_date);
+  doc.setFontSize(PDF_FONTS.documentType);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Generated: ${new Date().toLocaleDateString()}`, h.marginLeft, h.y + 10);
-  h.y += 30;
+  h.setColor(PDF_COLORS.label);
+  doc.text(`${evalTypeLabel} \u2014 ${dateFormatted}`, h.marginLeft, h.y);
+  // Signed badge
+  if (evalItem.signed_at) {
+    const labelW = doc.getTextWidth(`${evalTypeLabel} \u2014 ${dateFormatted}  `);
+    h.drawBadge('\u2713 Signed', h.marginLeft + labelW, h.y, PDF_COLORS.activeBg, PDF_COLORS.signedGreen);
+  }
+  h.setColor(PDF_COLORS.body);
+  h.y += 16;
 
-  // Client info header
-  h.addSectionHeader('Client Information');
-  h.addField('Name', `${client.first_name} ${client.last_name}`);
-  h.addField('DOB', client.dob);
-  h.addField('Discipline', client.discipline);
-  const dxParts = [client.primary_dx_code, client.primary_dx_description].filter(Boolean).join(' - ');
-  if (dxParts) h.addField('Primary Dx', dxParts);
-  h.y += 6;
+  // Client info card
+  h.addClientInfoCard(client);
 
-  // Eval details
-  h.addSectionHeader(`Evaluation — ${evalItem.eval_date || 'Undated'}`);
+  // Eval content
+  h.addSectionHeader(`Evaluation Details`);
   h.addField('Discipline', evalItem.discipline);
-  if (evalItem.signed_at) h.addField('Status', 'Signed');
 
+  const emphasisKeys = new Set(['treatment_plan', 'frequency_duration']);
   if (evalItem.content) {
     try {
       const content = JSON.parse(evalItem.content);
@@ -5242,10 +5796,15 @@ function buildSingleEvalPdf(client: any, evalItem: any): Buffer {
           if (key === 'goal_entries' || key === 'created_goal_ids' || key === 'objective_assessment') continue;
           if (!val || (typeof val === 'string' && !val.trim())) continue;
           const label = evalFieldLabels[key] || key;
-          h.addField(label, String(val));
+          if (emphasisKeys.has(key)) {
+            h.addEmphasisField(label, String(val));
+          } else {
+            h.addField(label, String(val));
+          }
         }
         if (content.objective_assessment && typeof content.objective_assessment === 'object') {
           h.addSectionHeader('Objective Assessment');
+          // Clinical measures inset box
           const objFields: Record<string, string> = {
             rom: 'ROM', strength_mmt: 'Strength / MMT', posture: 'Posture',
             gait_analysis: 'Gait Analysis', balance: 'Balance',
@@ -5259,11 +5818,33 @@ function buildSingleEvalPdf(client: any, evalItem: any): Buffer {
             fluency: 'Fluency', swallowing_dysphagia: 'Swallowing / Dysphagia',
             cognition_communication: 'Cognition-Communication',
           };
-          for (const [oKey, oVal] of Object.entries(content.objective_assessment as Record<string, string>)) {
-            if (oVal && oVal.trim()) {
+          // Collect populated fields
+          const populatedFields = Object.entries(content.objective_assessment as Record<string, string>)
+            .filter(([_, v]) => v && v.trim());
+          if (populatedFields.length > 0) {
+            // Inset box with left accent border
+            const boxStartY = h.y;
+            h.setFill(PDF_COLORS.cardBg);
+            // We'll draw the box after we know the height
+            h.y += 4;
+            for (const [oKey, oVal] of populatedFields) {
               const oLabel = objFields[oKey] || oKey;
               h.addField(oLabel, String(oVal));
             }
+            const boxH = h.y - boxStartY + 4;
+            // Draw inset background
+            h.setFill(PDF_COLORS.cardBg);
+            doc.roundedRect(h.marginLeft - 2, boxStartY - 2, h.maxWidth + 4, boxH, 2, 2, 'F');
+            h.setFill(PDF_COLORS.accent);
+            doc.rect(h.marginLeft - 2, boxStartY - 2, 2.5, boxH, 'F');
+            // Re-render text on top of the filled rect (jsPDF draws in order)
+            // Since jsPDF doesn't support z-order, we need to draw the box first, so let's reset and redraw
+            h.y = boxStartY + 4;
+            for (const [oKey, oVal] of populatedFields) {
+              const oLabel = objFields[oKey] || oKey;
+              h.addField(oLabel, String(oVal));
+            }
+            h.y += 4;
           }
         }
       } else {
@@ -5274,10 +5855,7 @@ function buildSingleEvalPdf(client: any, evalItem: any): Buffer {
     }
   }
 
-  if (evalItem.signature_typed) {
-    h.y += 6;
-    h.addField('Signed by', evalItem.signature_typed);
-  }
+  h.addSignatureBlock(evalItem.signature_typed, evalItem.signature_image, evalItem.signed_at);
 
   h.addHeaderFooter();
   const pdfOutput = doc.output('arraybuffer');
@@ -5294,68 +5872,29 @@ function buildSingleNotePdf(client: any, note: any, pdfSections: any[]): Buffer 
   const isProgressReport = note.note_type === 'progress_report';
   const isDischargeNote = note.note_type === 'discharge';
 
-  // Title — include date for context
-  let docTitle = 'SOAP Note';
-  if (isProgressReport) docTitle = 'Progress Report';
-  else if (isDischargeNote) docTitle = 'Discharge Summary';
-  const dateStr = note.date_of_service ? ` — ${note.date_of_service}` : '';
-
-  doc.setFontSize(17);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(0, 0, 0);
-  doc.text(`${docTitle}${dateStr}`, h.marginLeft, h.y);
-  h.y += 10;
-  doc.setFontSize(10);
+  // Understated document type line
+  let docTypeLabel = 'Treatment Note';
+  if (isProgressReport) docTypeLabel = 'Progress Report';
+  else if (isDischargeNote) docTypeLabel = 'Discharge Summary';
+  const dateFormatted = formatPdfDate(note.date_of_service);
+  doc.setFontSize(PDF_FONTS.documentType);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Generated: ${new Date().toLocaleDateString()}`, h.marginLeft, h.y + 10);
-  h.y += 30;
+  h.setColor(PDF_COLORS.label);
+  doc.text(`${docTypeLabel} \u2014 ${dateFormatted}`, h.marginLeft, h.y);
+  h.setColor(PDF_COLORS.body);
+  h.y += 16;
 
-  // Client info header
-  h.addSectionHeader('Client Information');
-  h.addField('Name', `${client.first_name} ${client.last_name}`);
-  h.addField('DOB', client.dob);
-  h.addField('Discipline', client.discipline);
-  h.y += 6;
+  // Client info card
+  h.addClientInfoCard(client);
 
-  // Note header
-  h.addSectionHeader(`${note.date_of_service || 'Undated'}`);
+  // Note header bar (date, CPT, signed badge, time)
+  h.addNoteHeader(note);
 
-  // CPT / units
-  let cptDisplay = note.cpt_code || '--';
-  let unitsDisplay = String(note.units || '--');
-  try {
-    const cptLines = JSON.parse(note.cpt_codes || '[]');
-    if (Array.isArray(cptLines) && cptLines.length > 0) {
-      cptDisplay = cptLines.map((l: any) => `${l.code} (${l.units}u)`).join(', ');
-      unitsDisplay = String(cptLines.reduce((s: number, l: any) => s + (l.units || 0), 0));
-    }
-  } catch { /* use legacy fields */ }
-
-  const isStandaloneDC = isDischargeNote && (!note.cpt_code || note.charge_amount === 0);
-  if (!isStandaloneDC) {
-    h.addField('CPT', cptDisplay);
-    h.addField('Units', unitsDisplay);
-  }
-  if (note.signed_at) h.addField('Status', 'Signed');
-
-  if (note.time_in && note.time_out) {
-    h.addField('Time', `${note.time_in} to ${note.time_out}`);
-  } else if (note.time_in) {
-    h.addField('Time In', note.time_in);
-  } else if (note.time_out) {
-    h.addField('Time Out', note.time_out);
-  }
-
-  // Note sections (S/O/A/P or DAP/BIRP etc.)
+  // Note sections with SOAP color coding
   for (const sec of pdfSections) {
     const value = (note as any)[sec.field];
     if (value) {
-      h.checkPageBreak(14);
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(9);
-      doc.text(`${sec.label}:`, h.marginLeft, h.y);
-      h.y += 13;
-      h.addWrappedText(value, 10);
+      h.addSOAPSection(sec.label, value);
     }
   }
 
@@ -5367,18 +5906,27 @@ function buildSingleNotePdf(client: any, note: any, pdfSections: any[]): Buffer 
       for (const prGoal of prGoals) {
         h.checkPageBreak(40);
         const statusLabel = prGoal.status_at_report ? prGoal.status_at_report.charAt(0).toUpperCase() + prGoal.status_at_report.slice(1) : 'N/A';
-        doc.setFontSize(9);
-        doc.setFont('helvetica', 'bold');
-        doc.text(`[${statusLabel}]`, h.marginLeft, h.y);
-        const statusWidth = doc.getTextWidth(`[${statusLabel}] `);
+        let stBg = PDF_COLORS.activeBg;
+        let stText = PDF_COLORS.activeGreen;
+        const stLower = (prGoal.status_at_report || '').toLowerCase();
+        if (stLower === 'met') { stBg = PDF_COLORS.metBg; stText = PDF_COLORS.metBlue; }
+        else if (stLower === 'discontinued') { stBg = PDF_COLORS.dcBg; stText = PDF_COLORS.dcGray; }
+        else if (stLower === 'not met' || stLower === 'not_met') { stBg = PDF_COLORS.notMetBg; stText = PDF_COLORS.notMetText; }
+        const bw = h.drawBadge(statusLabel, h.marginLeft, h.y, stBg, stText);
+        doc.setFontSize(PDF_FONTS.body);
         doc.setFont('helvetica', 'normal');
+        h.setColor(PDF_COLORS.body);
         if (prGoal.goal_text_snapshot) {
-          const goalLines = doc.splitTextToSize(prGoal.goal_text_snapshot, h.maxWidth - statusWidth - 10);
-          doc.text(goalLines, h.marginLeft + statusWidth, h.y);
-          h.y += goalLines.length * 13;
-        } else {
-          h.y += 13;
+          const goalTextX = h.marginLeft + bw + 8;
+          const goalLines = doc.splitTextToSize(prGoal.goal_text_snapshot, h.maxWidth - bw - 12);
+          doc.text(goalLines[0] || '', goalTextX, h.y - 1);
+          for (let li = 1; li < goalLines.length; li++) {
+            h.y += 13;
+            h.checkPageBreak(14);
+            doc.text(goalLines[li], h.marginLeft + 10, h.y);
+          }
         }
+        h.y += 6;
         if (prGoal.performance_data) h.addField('  Performance', prGoal.performance_data);
         if (prGoal.clinical_notes) h.addField('  Clinical Notes', prGoal.clinical_notes);
         h.y += 4;
@@ -5403,7 +5951,7 @@ function buildSingleNotePdf(client: any, note: any, pdfSections: any[]): Buffer 
         const freqParts: string[] = [];
         if (prData.frequency_per_week) freqParts.push(`${prData.frequency_per_week}x/week`);
         if (prData.duration_weeks) freqParts.push(`for ${prData.duration_weeks} weeks`);
-        if (freqParts.length > 0) h.addField('Frequency/Duration', freqParts.join(' '));
+        if (freqParts.length > 0) h.addEmphasisField('Frequency/Duration', freqParts.join(' '));
         if (prData.report_period_start || prData.report_period_end) {
           h.addField('Report Period', [prData.report_period_start, prData.report_period_end].filter(Boolean).join(' to '));
         }
@@ -5427,7 +5975,6 @@ function buildSingleNotePdf(client: any, note: any, pdfSections: any[]): Buffer 
       h.addField('Total Visits', String(dcData.total_visits));
       if (dcData.primary_dx) h.addField('Primary Diagnosis', dcData.primary_dx);
 
-      // Final Goal Status
       const dcGoals = db.prepare('SELECT * FROM progress_report_goals WHERE note_id = ? AND deleted_at IS NULL').all(note.id) as any[];
       if (dcGoals.length > 0) {
         h.addSectionHeader('Final Goal Status');
@@ -5435,32 +5982,38 @@ function buildSingleNotePdf(client: any, note: any, pdfSections: any[]): Buffer 
           h.checkPageBreak(40);
           const statusLabel = DISCHARGE_GOAL_STATUS_LABELS[goal.status_at_report as DischargeGoalStatus]
             || goal.status_at_report || 'N/A';
-          doc.setFontSize(9);
-          doc.setFont('helvetica', 'bold');
-          doc.text(`[${statusLabel}]`, h.marginLeft, h.y);
-          const statusWidth = doc.getTextWidth(`[${statusLabel}] `);
+          const stLower = (goal.status_at_report || '').toLowerCase();
+          let gBg = PDF_COLORS.activeBg; let gText = PDF_COLORS.activeGreen;
+          if (stLower === 'met' || stLower === 'fully_met') { gBg = PDF_COLORS.metBg; gText = PDF_COLORS.metBlue; }
+          else if (stLower === 'discontinued' || stLower === 'deferred') { gBg = PDF_COLORS.dcBg; gText = PDF_COLORS.dcGray; }
+          else if (stLower === 'not_met' || stLower === 'not met') { gBg = PDF_COLORS.notMetBg; gText = PDF_COLORS.notMetText; }
+          else if (stLower === 'partially_met') { gBg = PDF_COLORS.stgBg; gText = PDF_COLORS.stgText; }
+          const bw = h.drawBadge(statusLabel, h.marginLeft, h.y, gBg, gText);
+          doc.setFontSize(PDF_FONTS.body);
           doc.setFont('helvetica', 'normal');
+          h.setColor(PDF_COLORS.body);
           if (goal.goal_text_snapshot) {
-            const goalLines = doc.splitTextToSize(goal.goal_text_snapshot, h.maxWidth - statusWidth - 10);
-            doc.text(goalLines, h.marginLeft + statusWidth, h.y);
-            h.y += goalLines.length * 13;
-          } else {
-            h.y += 13;
+            const goalLines = doc.splitTextToSize(goal.goal_text_snapshot, h.maxWidth - bw - 12);
+            doc.text(goalLines[0] || '', h.marginLeft + bw + 8, h.y - 1);
+            for (let li = 1; li < goalLines.length; li++) {
+              h.y += 13;
+              h.checkPageBreak(14);
+              doc.text(goalLines[li], h.marginLeft + 10, h.y);
+            }
           }
+          h.y += 6;
           if (goal.performance_data) h.addField('  Final Performance', goal.performance_data);
           if (goal.clinical_notes) h.addField('  Summary', goal.clinical_notes);
           h.y += 4;
         }
       }
 
-      // Functional Outcomes
       if (dcData.prior_level_of_function || dcData.current_level_of_function) {
         h.addSectionHeader('Functional Outcomes');
         if (dcData.prior_level_of_function) h.addField('Prior Level of Function', dcData.prior_level_of_function);
         if (dcData.current_level_of_function) h.addField('Current Level of Function', dcData.current_level_of_function);
       }
 
-      // Recommendations
       const hasRecs = (dcData.recommendations && dcData.recommendations.length > 0) || dcData.additional_recommendations;
       if (hasRecs) {
         h.addSectionHeader('Discharge Recommendations');
@@ -5476,10 +6029,7 @@ function buildSingleNotePdf(client: any, note: any, pdfSections: any[]): Buffer 
     } catch { /* skip invalid JSON */ }
   }
 
-  if (note.signature_typed) {
-    h.y += 6;
-    h.addField('Signed by', note.signature_typed);
-  }
+  h.addSignatureBlock(note.signature_typed, note.signature_image, note.signed_at);
 
   h.addHeaderFooter();
   const pdfOutput = doc.output('arraybuffer');
@@ -5495,466 +6045,292 @@ function buildClientChartPdf(clientId: number): Buffer {
   const evals = db.prepare('SELECT * FROM evaluations WHERE client_id = ? AND deleted_at IS NULL ORDER BY eval_date DESC').all(clientId) as any[];
   const notes = db.prepare('SELECT * FROM notes WHERE client_id = ? AND deleted_at IS NULL ORDER BY date_of_service DESC').all(clientId) as any[];
   const goals = db.prepare('SELECT * FROM goals WHERE client_id = ? AND deleted_at IS NULL ORDER BY created_at DESC').all(clientId) as any[];
+  const practice = db.prepare('SELECT * FROM practice WHERE id = 1').get() as any;
 
   const doc = new jsPDF({ unit: 'pt', format: 'letter' });
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const marginLeft = 40;
-  const marginRight = 40;
-  const maxWidth = pageWidth - marginLeft - marginRight;
-  let y = 50;
+  const h = createPdfHelpers(doc, { client, practice });
 
-  const checkPageBreak = (needed: number) => {
-    if (y + needed > doc.internal.pageSize.getHeight() - 50) {
-      doc.addPage();
-      y = 50;
-    }
-  };
-
-  const addSectionHeader = (text: string) => {
-    checkPageBreak(30);
-    doc.setFontSize(14);
-    doc.setFont('helvetica', 'bold');
-    doc.text(text, marginLeft, y);
-    y += 8;
-    doc.setLineWidth(0.5);
-    doc.line(marginLeft, y, pageWidth - marginRight, y);
-    y += 14;
-  };
-
-  const addField = (label: string, value: string) => {
-    if (!value || value === '--' || value.trim() === '' || value.trim() === '-') return;
-    checkPageBreak(18);
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'bold');
-    doc.text(`${label}: `, marginLeft, y);
-    const labelWidth = doc.getTextWidth(`${label}: `);
-    doc.setFont('helvetica', 'normal');
-    const lines = doc.splitTextToSize(value, maxWidth - labelWidth);
-    doc.text(lines, marginLeft + labelWidth, y);
-    y += lines.length * 13;
-  };
-
-  const addWrappedText = (text: string, indent = 0) => {
-    if (!text) return;
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'normal');
-    const lines = doc.splitTextToSize(text, maxWidth - indent);
-    for (const line of lines) {
-      checkPageBreak(14);
-      doc.text(line, marginLeft + indent, y);
-      y += 13;
-    }
-  };
-
-  // Title
-  doc.setFontSize(20);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Client Chart', marginLeft, y);
-  y += 10;
-  doc.setFontSize(10);
+  // Understated discipline label instead of big "Client Chart" title
+  const discLabel = DISCIPLINE_DOCUMENT_LABELS[client.discipline] || 'Clinical Medical Record';
+  doc.setFontSize(PDF_FONTS.documentType);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Generated: ${new Date().toLocaleDateString()}`, marginLeft, y + 10);
-  y += 30;
+  h.setColor(PDF_COLORS.label);
+  doc.text(discLabel, h.marginLeft, h.y);
+  h.setColor(PDF_COLORS.body);
+  h.y += 16;
 
-  // Client Info
-  addSectionHeader('Client Information');
-  addField('Name', `${client.first_name} ${client.last_name}`);
-  addField('DOB', client.dob);
-  addField('Phone', client.phone);
-  addField('Email', client.email);
+  // Client info card (two-column)
+  h.addClientInfoCard(client);
+
+  // Additional client fields
   const clientAddr = [client.address, client.city, client.state, client.zip].filter(Boolean).join(', ');
-  addField('Address', clientAddr);
-  addField('Status', client.status);
-  addField('Discipline', client.discipline);
-  const dxParts = [client.primary_dx_code, client.primary_dx_description].filter(Boolean).join(' - ');
-  if (dxParts) addField('Primary Dx', dxParts);
-  y += 6;
+  if (clientAddr) h.addField('Address', clientAddr);
+  if (client.phone) h.addField('Phone', client.phone);
+  if (client.email) h.addField('Email', client.email);
+  h.y += 4;
 
   // Insurance
   if (client.insurance_payer || client.insurance_member_id) {
-    addSectionHeader('Insurance');
-    addField('Payer', client.insurance_payer);
-    addField('Member ID', client.insurance_member_id);
-    addField('Group #', client.insurance_group_number);
-    y += 6;
+    h.addSectionHeader('Insurance');
+    h.addField('Payer', client.insurance_payer);
+    h.addField('Member ID', client.insurance_member_id);
+    h.addField('Group #', client.insurance_group_number);
   }
 
-  // Goals
+  // Goals with badge rendering
   if (goals.length > 0) {
-    addSectionHeader(`Goals (${goals.length})`);
+    h.addSectionHeader(`Goals (${goals.length})`);
     for (const goal of goals) {
-      checkPageBreak(40);
-      doc.setFontSize(9);
-      doc.setFont('helvetica', 'bold');
-      doc.text(`[${goal.goal_type}] ${goal.status.toUpperCase()}`, marginLeft, y);
-      y += 13;
-      doc.setFont('helvetica', 'normal');
-      addWrappedText(goal.goal_text, 10);
-      if (goal.target_date) {
-        addField('  Target', goal.target_date);
-      }
-      if (goal.met_date) {
-        addField('  Met', goal.met_date);
-      }
-      y += 6;
+      h.addGoalRow(goal);
     }
   }
 
-  // Evaluations
+  // Evaluations in card containers
   if (evals.length > 0) {
-    addSectionHeader(`Evaluations / Plan of Care (${evals.length})`);
+    h.addSectionHeader(`Evaluations / Plan of Care (${evals.length})`);
+    const evalFieldLabels: Record<string, string> = {
+      referral_source: 'Referral Source', medical_history: 'Medical History',
+      prior_level_of_function: 'Prior Level of Function', current_complaints: 'Current Complaints',
+      clinical_impression: 'Clinical Impression', rehabilitation_potential: 'Rehabilitation Potential / Prognosis',
+      precautions: 'Precautions / Contraindications', goals: 'Goals',
+      treatment_plan: 'Treatment Plan', frequency_duration: 'Frequency & Duration',
+    };
+    const objFields: Record<string, string> = {
+      rom: 'ROM', strength_mmt: 'Strength / MMT', posture: 'Posture',
+      gait_analysis: 'Gait Analysis', balance: 'Balance',
+      functional_mobility: 'Functional Mobility', pain_assessment: 'Pain Assessment',
+      adl_assessment: 'ADL Assessment', hand_function: 'Hand Function',
+      cognition_screening: 'Cognition Screening', sensory: 'Sensory',
+      visual_perceptual: 'Visual-Perceptual', home_safety: 'Home Safety',
+      speech_intelligibility: 'Speech Intelligibility', language_comprehension: 'Language Comprehension',
+      language_expression: 'Language Expression', voice: 'Voice',
+      fluency: 'Fluency', swallowing_dysphagia: 'Swallowing / Dysphagia',
+      cognition_communication: 'Cognition-Communication',
+    };
+
     for (const evalItem of evals) {
-      checkPageBreak(40);
-      doc.setFontSize(10);
+      const cardStart = h.startCard();
+      // Eval header
+      const evalTypeLabel = evalItem.eval_type === 'reassessment' ? 'Reassessment' : 'Initial Evaluation';
+      doc.setFontSize(PDF_FONTS.subsectionHeader);
       doc.setFont('helvetica', 'bold');
-      const evalHeaderLabel = 'Initial Evaluation / Plan of Care';
-      doc.text(`${evalItem.eval_date} - ${evalItem.discipline} — ${evalHeaderLabel}`, marginLeft, y);
+      h.setColor(PDF_COLORS.heading);
+      doc.text(formatPdfDate(evalItem.eval_date), h.marginLeft + 4, h.y);
+      const dateW = doc.getTextWidth(formatPdfDate(evalItem.eval_date) + '  ');
+      doc.setFontSize(PDF_FONTS.body);
+      doc.setFont('helvetica', 'normal');
+      h.setColor(PDF_COLORS.label);
+      doc.text(`${evalItem.discipline} \u2014 ${evalTypeLabel}`, h.marginLeft + 4 + dateW, h.y);
+      // Signed badge
       if (evalItem.signed_at) {
-        doc.setFontSize(8);
-        doc.setFont('helvetica', 'normal');
-        const headerText = `${evalItem.eval_date} - ${evalItem.discipline} — ${evalHeaderLabel}`;
-        doc.text('  (Signed)', marginLeft + doc.getTextWidth(headerText), y);
+        const lineW = dateW + doc.getTextWidth(`${evalItem.discipline} \u2014 ${evalTypeLabel}  `);
+        h.drawBadge('\u2713 Signed', h.marginLeft + 4 + lineW, h.y, PDF_COLORS.activeBg, PDF_COLORS.signedGreen);
       }
-      y += 14;
+      h.setColor(PDF_COLORS.body);
+      h.y += 14;
+
       if (evalItem.content) {
         try {
           const content = JSON.parse(evalItem.content);
           if (typeof content === 'object') {
-            // Pretty field labels for eval content
-            const evalFieldLabels: Record<string, string> = {
-              referral_source: 'Referral Source',
-              medical_history: 'Medical History',
-              prior_level_of_function: 'Prior Level of Function',
-              current_complaints: 'Current Complaints',
-              clinical_impression: 'Clinical Impression',
-              rehabilitation_potential: 'Rehabilitation Potential / Prognosis',
-              precautions: 'Precautions / Contraindications',
-              goals: 'Goals',
-              treatment_plan: 'Treatment Plan',
-              frequency_duration: 'Frequency & Duration',
-            };
+            const emphasisKeys = new Set(['treatment_plan', 'frequency_duration']);
             for (const [key, val] of Object.entries(content)) {
               if (key === 'goal_entries' || key === 'created_goal_ids' || key === 'objective_assessment') continue;
               if (!val || (typeof val === 'string' && !val.trim())) continue;
               const label = evalFieldLabels[key] || key;
-              addField(`  ${label}`, String(val));
+              if (emphasisKeys.has(key)) {
+                h.addEmphasisField(label, String(val));
+              } else {
+                h.addField(label, String(val));
+              }
             }
             if (content.objective_assessment && typeof content.objective_assessment === 'object') {
-              const objFields: Record<string, string> = {
-                rom: 'ROM', strength_mmt: 'Strength / MMT', posture: 'Posture',
-                gait_analysis: 'Gait Analysis', balance: 'Balance',
-                functional_mobility: 'Functional Mobility', pain_assessment: 'Pain Assessment',
-                adl_assessment: 'ADL Assessment', hand_function: 'Hand Function',
-                cognition_screening: 'Cognition Screening', sensory: 'Sensory',
-                visual_perceptual: 'Visual-Perceptual', home_safety: 'Home Safety',
-                speech_intelligibility: 'Speech Intelligibility',
-                language_comprehension: 'Language Comprehension',
-                language_expression: 'Language Expression', voice: 'Voice',
-                fluency: 'Fluency', swallowing_dysphagia: 'Swallowing / Dysphagia',
-                cognition_communication: 'Cognition-Communication',
-              };
-              for (const [oKey, oVal] of Object.entries(content.objective_assessment as Record<string, string>)) {
-                if (oVal && oVal.trim()) {
-                  const oLabel = objFields[oKey] || oKey;
-                  addField(`    ${oLabel}`, String(oVal));
+              const populated = Object.entries(content.objective_assessment as Record<string, string>)
+                .filter(([_, v]) => v && v.trim());
+              if (populated.length > 0) {
+                doc.setFontSize(PDF_FONTS.fieldLabel);
+                doc.setFont('helvetica', 'bold');
+                h.setColor(PDF_COLORS.accent);
+                h.checkPageBreak(14);
+                doc.text('Objective Assessment:', h.marginLeft, h.y);
+                h.y += 13;
+                h.setColor(PDF_COLORS.body);
+                for (const [oKey, oVal] of populated) {
+                  h.addField(objFields[oKey] || oKey, String(oVal));
                 }
               }
             }
           } else {
-            addWrappedText(evalItem.content, 10);
+            h.addWrappedText(evalItem.content, 10);
           }
         } catch {
-          addWrappedText(evalItem.content, 10);
+          h.addWrappedText(evalItem.content, 10);
         }
       }
       if (evalItem.signature_typed) {
-        addField('  Signed by', evalItem.signature_typed);
+        h.addSignatureBlock(evalItem.signature_typed, evalItem.signature_image, evalItem.signed_at);
       }
-      y += 8;
+      h.endCard(cardStart);
     }
   }
 
-  // Notes
+  // Notes in card containers
   if (notes.length > 0) {
     const noteFormatVal = (db.prepare("SELECT value FROM settings WHERE key = 'note_format'").get() as any)?.value || 'SOAP';
     const pdfSections = NOTE_FORMAT_SECTIONS[noteFormatVal as NoteFormat].filter((s: any) => s.label !== '(unused)');
-    addSectionHeader(`${noteFormatVal} Notes (${notes.length})`);
-    for (const note of notes) {
-      checkPageBreak(60);
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'bold');
+    h.addSectionHeader(`${noteFormatVal} Notes (${notes.length})`);
 
-      let cptDisplay = note.cpt_code || '--';
-      let unitsDisplay = String(note.units || '--');
-      try {
-        const cptLines = JSON.parse(note.cpt_codes || '[]');
-        if (Array.isArray(cptLines) && cptLines.length > 0) {
-          cptDisplay = cptLines.map((l: any) => `${l.code} (${l.units}u)`).join(', ');
-          unitsDisplay = String(cptLines.reduce((s: number, l: any) => s + (l.units || 0), 0));
-        }
-      } catch { /* use legacy fields */ }
+    for (let ni = 0; ni < notes.length; ni++) {
+      const note = notes[ni];
+      const cardStart = h.startCard();
 
-      const isProgressReport = note.note_type === 'progress_report';
-      const isDischargeNote = note.note_type === 'discharge';
-      const isStandaloneDC = isDischargeNote && (!note.cpt_code || note.charge_amount === 0);
+      // Note header bar
+      h.addNoteHeader(note);
 
-      // Header line: standalone discharge shows just date, otherwise full CPT/units
-      const noteHeader = isStandaloneDC
-        ? `${note.date_of_service} | Discharge Summary (Administrative)`
-        : `${note.date_of_service} | CPT: ${cptDisplay} | Units: ${unitsDisplay}`;
-      doc.text(noteHeader, marginLeft, y);
-      let headerOffset = doc.getTextWidth(noteHeader);
-      if (isProgressReport) {
-        doc.setFontSize(8);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(0, 128, 128);
-        doc.text('  [PROGRESS REPORT]', marginLeft + headerOffset, y);
-        headerOffset += doc.getTextWidth('  [PROGRESS REPORT]');
-        doc.setTextColor(0, 0, 0);
-      }
-      if (isDischargeNote) {
-        doc.setFontSize(8);
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(180, 83, 9); // amber-700
-        doc.text('  [DISCHARGE SUMMARY]', marginLeft + headerOffset, y);
-        headerOffset += doc.getTextWidth('  [DISCHARGE SUMMARY]');
-        doc.setTextColor(0, 0, 0);
-      }
-      if (note.signed_at) {
-        doc.setFontSize(8);
-        doc.setFont('helvetica', 'normal');
-        doc.text('  (Signed)', marginLeft + headerOffset, y);
-      }
-      y += 14;
-
-      if (note.time_in && note.time_out) {
-        addField('  Time', `${note.time_in} to ${note.time_out}`);
-      } else if (note.time_in) {
-        addField('  Time In', note.time_in);
-      } else if (note.time_out) {
-        addField('  Time Out', note.time_out);
-      }
+      // SOAP sections with color coding
       for (const sec of pdfSections) {
         const value = (note as any)[sec.field];
         if (value) {
-          doc.setFont('helvetica', 'bold');
-          doc.setFontSize(9);
-          checkPageBreak(14);
-          doc.text(`  ${sec.label}:`, marginLeft, y);
-          y += 13;
-          addWrappedText(value, 20);
+          h.addSOAPSection(sec.label, value);
         }
       }
 
-      // Progress Report additional sections
-      if (isProgressReport) {
-        // Goal Progress
+      // Progress Report sections
+      if (note.note_type === 'progress_report') {
         const prGoals = db.prepare('SELECT * FROM progress_report_goals WHERE note_id = ? AND deleted_at IS NULL').all(note.id) as any[];
         if (prGoals.length > 0) {
-          checkPageBreak(30);
-          doc.setFontSize(10);
+          doc.setFontSize(PDF_FONTS.fieldLabel);
           doc.setFont('helvetica', 'bold');
-          doc.text('  Goal Progress:', marginLeft, y);
-          y += 14;
+          h.setColor(PDF_COLORS.accent);
+          h.checkPageBreak(14);
+          doc.text('Goal Progress:', h.marginLeft, h.y);
+          h.y += 13;
+          h.setColor(PDF_COLORS.body);
           for (const prGoal of prGoals) {
-            checkPageBreak(40);
-            const statusLabel = prGoal.status_at_report ? prGoal.status_at_report.charAt(0).toUpperCase() + prGoal.status_at_report.slice(1) : 'N/A';
-            doc.setFontSize(9);
-            doc.setFont('helvetica', 'bold');
-            doc.text(`    [${statusLabel}]`, marginLeft, y);
-            const statusWidth = doc.getTextWidth(`    [${statusLabel}] `);
+            h.checkPageBreak(30);
+            const stLabel = prGoal.status_at_report ? prGoal.status_at_report.charAt(0).toUpperCase() + prGoal.status_at_report.slice(1) : 'N/A';
+            const stLower = (prGoal.status_at_report || '').toLowerCase();
+            let gBg = PDF_COLORS.activeBg; let gText = PDF_COLORS.activeGreen;
+            if (stLower === 'met') { gBg = PDF_COLORS.metBg; gText = PDF_COLORS.metBlue; }
+            else if (stLower === 'discontinued') { gBg = PDF_COLORS.dcBg; gText = PDF_COLORS.dcGray; }
+            const bw = h.drawBadge(stLabel, h.marginLeft, h.y, gBg, gText);
+            doc.setFontSize(PDF_FONTS.body);
             doc.setFont('helvetica', 'normal');
+            h.setColor(PDF_COLORS.body);
             if (prGoal.goal_text_snapshot) {
-              const goalLines = doc.splitTextToSize(prGoal.goal_text_snapshot, maxWidth - statusWidth - 20);
-              doc.text(goalLines, marginLeft + statusWidth, y);
-              y += goalLines.length * 13;
-            } else {
-              y += 13;
+              const gl = doc.splitTextToSize(prGoal.goal_text_snapshot, h.maxWidth - bw - 12);
+              doc.text(gl[0] || '', h.marginLeft + bw + 8, h.y - 1);
+              for (let li = 1; li < gl.length; li++) { h.y += 13; h.checkPageBreak(14); doc.text(gl[li], h.marginLeft + 10, h.y); }
             }
-            if (prGoal.performance_data) {
-              addField('      Performance', prGoal.performance_data);
-            }
-            if (prGoal.clinical_notes) {
-              addField('      Clinical Notes', prGoal.clinical_notes);
-            }
-            y += 4;
+            h.y += 6;
+            if (prGoal.performance_data) h.addField('  Performance', prGoal.performance_data);
+            if (prGoal.clinical_notes) h.addField('  Clinical Notes', prGoal.clinical_notes);
+            h.y += 4;
           }
         }
-
-        // Progress Report Data (clinical summary, POC update, etc.)
         if (note.progress_report_data) {
           try {
             const prData = JSON.parse(note.progress_report_data);
-            if (prData.clinical_summary) {
-              checkPageBreak(30);
-              doc.setFontSize(10);
-              doc.setFont('helvetica', 'bold');
-              doc.text('  Clinical Summary:', marginLeft, y);
-              y += 14;
-              addWrappedText(prData.clinical_summary, 20);
-            }
-            if (prData.continued_treatment_justification) {
-              checkPageBreak(30);
-              doc.setFontSize(10);
-              doc.setFont('helvetica', 'bold');
-              doc.text('  Continued Treatment Justification:', marginLeft, y);
-              y += 14;
-              addWrappedText(prData.continued_treatment_justification, 20);
-            }
-            if (prData.plan_of_care_update) {
-              checkPageBreak(30);
-              doc.setFontSize(10);
-              doc.setFont('helvetica', 'bold');
-              doc.text('  Plan of Care Update:', marginLeft, y);
-              y += 14;
-              addWrappedText(prData.plan_of_care_update, 20);
-            }
-            const freqParts: string[] = [];
-            if (prData.frequency_per_week) freqParts.push(`${prData.frequency_per_week}x/week`);
-            if (prData.duration_weeks) freqParts.push(`for ${prData.duration_weeks} weeks`);
-            if (freqParts.length > 0) {
-              addField('  Frequency/Duration', freqParts.join(' '));
-            }
-            if (prData.report_period_start || prData.report_period_end) {
-              const period = [prData.report_period_start, prData.report_period_end].filter(Boolean).join(' to ');
-              addField('  Report Period', period);
-            }
-            if (prData.visits_in_period) {
-              addField('  Visits in Period', String(prData.visits_in_period));
-            }
-          } catch {
-            // Invalid JSON, skip progress report data
-          }
+            if (prData.clinical_summary) { h.addField('Clinical Summary', prData.clinical_summary); }
+            if (prData.continued_treatment_justification) { h.addField('Continued Treatment Justification', prData.continued_treatment_justification); }
+            if (prData.plan_of_care_update) { h.addField('Plan of Care Update', prData.plan_of_care_update); }
+            const fp: string[] = [];
+            if (prData.frequency_per_week) fp.push(`${prData.frequency_per_week}x/week`);
+            if (prData.duration_weeks) fp.push(`for ${prData.duration_weeks} weeks`);
+            if (fp.length > 0) h.addEmphasisField('Frequency/Duration', fp.join(' '));
+          } catch {}
         }
       }
 
-      // Discharge Summary sections
-      if (isDischargeNote && note.discharge_data) {
+      // Discharge sections
+      if (note.note_type === 'discharge' && note.discharge_data) {
         try {
           const dcData = JSON.parse(note.discharge_data) as DischargeData;
-
-          // Discharge Reason
-          checkPageBreak(30);
-          doc.setFontSize(10);
-          doc.setFont('helvetica', 'bold');
-          doc.text('  Discharge Reason:', marginLeft, y);
-          y += 14;
           const reasonLabel = DISCHARGE_REASON_LABELS[dcData.discharge_reason] || dcData.discharge_reason;
-          addField('    Reason', reasonLabel);
-          if (dcData.discharge_reason_detail) {
-            addField('    Details', dcData.discharge_reason_detail);
-          }
+          h.addField('Discharge Reason', reasonLabel);
+          if (dcData.discharge_reason_detail) h.addField('Details', dcData.discharge_reason_detail);
+          if (dcData.start_of_care) h.addField('Start of Care', dcData.start_of_care);
+          h.addField('Discharge Date', dcData.discharge_date || note.date_of_service);
+          h.addField('Total Visits', String(dcData.total_visits));
+          if (dcData.primary_dx) h.addField('Primary Diagnosis', dcData.primary_dx);
 
-          // Episode Summary
-          checkPageBreak(30);
-          doc.setFontSize(10);
-          doc.setFont('helvetica', 'bold');
-          doc.text('  Episode Summary:', marginLeft, y);
-          y += 14;
-          if (dcData.start_of_care) addField('    Start of Care', dcData.start_of_care);
-          addField('    Discharge Date', dcData.discharge_date || note.date_of_service);
-          addField('    Total Visits', String(dcData.total_visits));
-          const freqPartsDC: string[] = [];
-          if (dcData.frequency_per_week) freqPartsDC.push(`${dcData.frequency_per_week}x/week`);
-          if (dcData.duration_weeks) freqPartsDC.push(`for ${dcData.duration_weeks} weeks`);
-          if (freqPartsDC.length > 0) addField('    Frequency/Duration', freqPartsDC.join(' '));
-          if (dcData.primary_dx) addField('    Primary Diagnosis', dcData.primary_dx);
-
-          // Final Goal Status (from progress_report_goals table — reused)
-          const dcGoals = db.prepare(
-            'SELECT * FROM progress_report_goals WHERE note_id = ? AND deleted_at IS NULL'
-          ).all(note.id) as any[];
+          const dcGoals = db.prepare('SELECT * FROM progress_report_goals WHERE note_id = ? AND deleted_at IS NULL').all(note.id) as any[];
           if (dcGoals.length > 0) {
-            checkPageBreak(30);
-            doc.setFontSize(10);
+            doc.setFontSize(PDF_FONTS.fieldLabel);
             doc.setFont('helvetica', 'bold');
-            doc.text('  Final Goal Status:', marginLeft, y);
-            y += 14;
+            h.setColor(PDF_COLORS.accent);
+            h.checkPageBreak(14);
+            doc.text('Final Goal Status:', h.marginLeft, h.y);
+            h.y += 13;
+            h.setColor(PDF_COLORS.body);
             for (const goal of dcGoals) {
-              checkPageBreak(40);
-              const statusLabel = DISCHARGE_GOAL_STATUS_LABELS[goal.status_at_report as DischargeGoalStatus]
-                || goal.status_at_report || 'N/A';
-              doc.setFontSize(9);
-              doc.setFont('helvetica', 'bold');
-              doc.text(`    [${statusLabel}]`, marginLeft, y);
-              const statusWidth = doc.getTextWidth(`    [${statusLabel}] `);
+              h.checkPageBreak(30);
+              const sLabel = DISCHARGE_GOAL_STATUS_LABELS[goal.status_at_report as DischargeGoalStatus] || goal.status_at_report || 'N/A';
+              const stLower = (goal.status_at_report || '').toLowerCase();
+              let gBg = PDF_COLORS.activeBg; let gText = PDF_COLORS.activeGreen;
+              if (stLower === 'met' || stLower === 'fully_met') { gBg = PDF_COLORS.metBg; gText = PDF_COLORS.metBlue; }
+              else if (stLower === 'discontinued' || stLower === 'deferred') { gBg = PDF_COLORS.dcBg; gText = PDF_COLORS.dcGray; }
+              else if (stLower === 'not_met' || stLower === 'not met') { gBg = PDF_COLORS.notMetBg; gText = PDF_COLORS.notMetText; }
+              else if (stLower === 'partially_met') { gBg = PDF_COLORS.stgBg; gText = PDF_COLORS.stgText; }
+              const bw = h.drawBadge(sLabel, h.marginLeft, h.y, gBg, gText);
+              doc.setFontSize(PDF_FONTS.body);
               doc.setFont('helvetica', 'normal');
+              h.setColor(PDF_COLORS.body);
               if (goal.goal_text_snapshot) {
-                const goalLines = doc.splitTextToSize(goal.goal_text_snapshot, maxWidth - statusWidth - 20);
-                doc.text(goalLines, marginLeft + statusWidth, y);
-                y += goalLines.length * 13;
-              } else {
-                y += 13;
+                const gl = doc.splitTextToSize(goal.goal_text_snapshot, h.maxWidth - bw - 12);
+                doc.text(gl[0] || '', h.marginLeft + bw + 8, h.y - 1);
+                for (let li = 1; li < gl.length; li++) { h.y += 13; h.checkPageBreak(14); doc.text(gl[li], h.marginLeft + 10, h.y); }
               }
-              if (goal.performance_data) addField('      Final Performance', goal.performance_data);
-              if (goal.clinical_notes) addField('      Summary', goal.clinical_notes);
-              y += 4;
+              h.y += 6;
+              if (goal.performance_data) h.addField('  Final Performance', goal.performance_data);
+              if (goal.clinical_notes) h.addField('  Summary', goal.clinical_notes);
+              h.y += 4;
             }
           }
 
-          // Functional Outcomes
           if (dcData.prior_level_of_function || dcData.current_level_of_function) {
-            checkPageBreak(30);
-            doc.setFontSize(10);
+            doc.setFontSize(PDF_FONTS.fieldLabel);
             doc.setFont('helvetica', 'bold');
-            doc.text('  Functional Outcomes:', marginLeft, y);
-            y += 14;
-            if (dcData.prior_level_of_function) addField('    Prior Level of Function', dcData.prior_level_of_function);
-            if (dcData.current_level_of_function) addField('    Current Level of Function', dcData.current_level_of_function);
+            h.setColor(PDF_COLORS.accent);
+            h.checkPageBreak(14);
+            doc.text('Functional Outcomes:', h.marginLeft, h.y);
+            h.y += 13;
+            h.setColor(PDF_COLORS.body);
+            if (dcData.prior_level_of_function) h.addField('Prior Level of Function', dcData.prior_level_of_function);
+            if (dcData.current_level_of_function) h.addField('Current Level of Function', dcData.current_level_of_function);
           }
 
-          // Recommendations
           const hasRecs = (dcData.recommendations && dcData.recommendations.length > 0) || dcData.additional_recommendations;
           if (hasRecs) {
-            checkPageBreak(30);
-            doc.setFontSize(10);
+            doc.setFontSize(PDF_FONTS.fieldLabel);
             doc.setFont('helvetica', 'bold');
-            doc.text('  Discharge Recommendations:', marginLeft, y);
-            y += 14;
+            h.setColor(PDF_COLORS.accent);
+            h.checkPageBreak(14);
+            doc.text('Discharge Recommendations:', h.marginLeft, h.y);
+            h.y += 13;
+            h.setColor(PDF_COLORS.body);
             for (const rec of dcData.recommendations || []) {
               const recLabel = DISCHARGE_RECOMMENDATION_LABELS[rec] || rec;
-              addField('    \u2713', recLabel);
-              if (rec === 'referral' && dcData.referral_to) addField('      Referred to', dcData.referral_to);
-              if (rec === 'return_to_therapy' && dcData.return_to_therapy_if) addField('      Return if', dcData.return_to_therapy_if);
-              if (rec === 'equipment' && dcData.equipment_details) addField('      Equipment', dcData.equipment_details);
+              h.addField('\u2713', recLabel);
             }
-            if (dcData.additional_recommendations) {
-              addWrappedText(dcData.additional_recommendations, 20);
-            }
+            if (dcData.additional_recommendations) h.addWrappedText(dcData.additional_recommendations, 10);
           }
-        } catch {
-          // Invalid JSON, skip discharge data
-        }
+        } catch {}
       }
 
       if (note.signature_typed) {
-        addField('  Signed by', note.signature_typed);
+        h.addSignatureBlock(note.signature_typed, note.signature_image, note.signed_at);
       }
-      y += 10;
-      doc.setLineWidth(0.25);
-      doc.setDrawColor(200, 200, 200);
-      doc.line(marginLeft + 20, y, pageWidth - marginRight - 20, y);
-      y += 10;
+      h.endCard(cardStart);
+
+      // Note separator between notes
+      if (ni < notes.length - 1) {
+        h.addNoteSeparator();
+      }
     }
   }
 
-  // Add professional footer to all pages
-  const totalPages = doc.getNumberOfPages();
-  const pgHeight = doc.internal.pageSize.getHeight();
-  for (let i = 1; i <= totalPages; i++) {
-    doc.setPage(i);
-    doc.setFontSize(8);
-    doc.setTextColor(68, 68, 68);
-    const footerParts: string[] = [`Page ${i} of ${totalPages}`];
-    if (client.last_name || client.first_name) {
-      footerParts.push(`${client.last_name || ''}, ${client.first_name || ''}`);
-    }
-    if (client.dob) footerParts.push(`DOB: ${client.dob}`);
-    footerParts.push('CONFIDENTIAL');
-    doc.text(footerParts.join('  |  '), pageWidth / 2, pgHeight - 20, { align: 'center' });
-    doc.setTextColor(0, 0, 0);
-  }
-
+  h.addHeaderFooter();
   const pdfOutput = doc.output('arraybuffer');
   return Buffer.from(pdfOutput);
 }
