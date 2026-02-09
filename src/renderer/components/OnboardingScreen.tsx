@@ -136,6 +136,46 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
     }
   };
 
+  const handleSavePartial = async () => {
+    // Validate NPI if provided
+    if (npi && !validateNpi(npi)) {
+      setNpiError('Invalid NPI. Must be 10 digits with valid check digit.');
+      return;
+    }
+    setNpiError('');
+    setSaving(true);
+
+    try {
+      const hasAnyData = discipline || practiceState || npi || taxonomyCode || licenseNumber;
+
+      if (hasAnyData) {
+        await window.api.practice.save({
+          discipline: discipline || undefined,
+          state: practiceState || undefined,
+          npi: npi || undefined,
+          taxonomy_code: taxonomyCode || undefined,
+          license_number: licenseNumber || undefined,
+        } as any);
+
+        if (discipline) await window.api.settings.set('provider_discipline', discipline);
+        if (practiceState) await window.api.settings.set('provider_state', practiceState);
+
+        if (discipline) {
+          const defaultFormat = discipline === 'MFT' ? 'DAP' : 'SOAP';
+          await window.api.settings.set('note_format', defaultFormat);
+          try { await window.api.feeSchedule.reset(discipline); } catch { /* ignore */ }
+        }
+      }
+
+      await window.api.settings.set('onboarding_complete', 'true');
+      onComplete();
+    } catch (err) {
+      console.error('Failed to save partial practice info:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleSkip = async () => {
     await window.api.settings.set('onboarding_complete', 'true');
     onComplete();
@@ -181,7 +221,10 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
               (e) ensuring continuity of access to your clinical records, including
               maintaining current backups in a secure location known to a designated
               trusted person (spouse, attorney, or practice successor) in case you
-              become unable to access your practice.
+              become unable to access your practice;
+              (f) maintaining the integrity of your clinical records and audit trail, including
+              refraining from directly modifying the PocketChart database outside of the
+              application interface.
             </p>
 
             <p className="font-medium text-[var(--color-text)]">3. No Warranty of Data Preservation</p>
@@ -208,12 +251,19 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
               PocketChart does not provide clinical advice.
             </p>
 
-            <p className="font-medium text-[var(--color-text)]">6. Record Retention</p>
+            <p className="font-medium text-[var(--color-text)]">6. Record Retention & Preservation</p>
             <p>
               PocketChart uses soft-delete technology so that deleted records are hidden but not
               permanently erased, in support of HIPAA record-retention guidelines. However, it is
               your responsibility to maintain records for the duration required by applicable law
               and to ensure backup copies exist in case of hardware failure.
+            </p>
+            <p>
+              You acknowledge that intentional destruction of clinical records, audit trails,
+              or database files may violate federal and state record retention laws, including
+              HIPAA (45 CFR §164.530(j)) and Medicare Conditions of Participation. PocketChart
+              is not responsible for any legal consequences arising from the intentional
+              destruction of records by the user.
             </p>
 
             <p className="font-medium text-[var(--color-text)]">7. Regulatory Compliance & Direct Access</p>
@@ -232,6 +282,35 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
             <p>
               These terms may be updated with new versions of PocketChart. Continued use after an
               update constitutes acceptance of the revised terms.
+            </p>
+
+            <p className="font-medium text-[var(--color-text)]">9. Data Integrity & Audit Trail</p>
+            <p>
+              PocketChart maintains an audit trail that records clinical document creation, signing,
+              modification, and deletion events. This audit trail is a critical component of
+              regulatory compliance and medical record integrity.
+            </p>
+            <p>
+              You agree not to: (a) directly modify, delete, or tamper with the PocketChart database
+              file or its contents outside of the PocketChart application interface;
+              (b) delete, alter, or attempt to circumvent audit trail records;
+              (c) modify the content of signed clinical documents by any means other than
+              PocketChart's built-in amendment process;
+              (d) use external tools, scripts, or database editors to alter clinical records,
+              billing data, or compliance tracking information; or
+              (e) destroy, relocate, or render inaccessible the PocketChart database or audit trail
+              during any period in which you are required by law to retain clinical records.
+            </p>
+            <p>
+              PocketChart's signed document protections (including content hashing and immutability
+              controls) are designed to preserve the integrity of your medical records. Circumventing
+              these protections may violate HIPAA, Medicare conditions of participation, state
+              practice act regulations, and applicable fraud statutes.
+            </p>
+            <p>
+              <strong>PocketChart is not responsible for data integrity failures resulting from
+              direct database modification, use of external tools to alter records, or any action
+              that bypasses the application's built-in safeguards.</strong>
             </p>
           </div>
 
@@ -324,6 +403,9 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
             </h2>
             <p className="text-sm text-[var(--color-text-secondary)]">
               This info auto-populates on every note and evaluation. You can update it later in Settings.
+            </p>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+              * Required for full setup. You can save partial info and complete later in Settings.
             </p>
           </div>
 
@@ -423,6 +505,14 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
           >
             {saving ? 'Saving...' : 'Continue to PIN Setup'}
             <ArrowRight className="w-4 h-4" />
+          </button>
+
+          <button
+            className="btn-secondary w-full justify-center gap-2 py-3"
+            onClick={handleSavePartial}
+            disabled={saving || (!discipline && !practiceState && !npi && !licenseNumber)}
+          >
+            {saving ? 'Saving...' : 'Save & Continue Later'}
           </button>
 
           <button

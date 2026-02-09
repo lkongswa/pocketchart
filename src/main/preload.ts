@@ -27,6 +27,7 @@ const api = {
     create: (data: any) => ipcRenderer.invoke('goals:create', data),
     update: (id: number, data: any) => ipcRenderer.invoke('goals:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('goals:delete', id),
+    tagSource: (goalId: number, docId: number, docType: string) => ipcRenderer.invoke('goals:tagSource', goalId, docId, docType),
   },
 
   // Staged Goals
@@ -370,6 +371,12 @@ const api = {
     getBasicAlerts: () => ipcRenderer.invoke('dashboard:getBasicAlerts'),
     getOverview: () => ipcRenderer.invoke('dashboard:getOverview'),
     getAnalytics: (filters?: { startDate?: string; endDate?: string; monthsBack?: number }) => ipcRenderer.invoke('dashboard:getAnalytics', filters),
+  },
+
+  // ── Data Integrity ──
+  integrity: {
+    runCheck: () => ipcRenderer.invoke('integrity:runCheck'),
+    verifyAuditChain: () => ipcRenderer.invoke('integrity:verifyAuditChain'),
   },
 
   // ── Reports (Pro) ──

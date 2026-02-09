@@ -33,6 +33,7 @@ import type { Client, Note, Goal, GoalStatus, Discipline, SOAPSection, NoteForma
 import { NOTE_FORMAT_SECTIONS, PROGRESS_REPORT_GOAL_STATUS_LABELS, DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS } from '../../shared/types';
 import type { ValidationIssue, ValidationFixes } from '../../shared/types/validation';
 import SignConfirmDialog from '../components/SignConfirmDialog';
+import CptCombobox from '../components/CptCombobox';
 
 // Place of service options
 const PLACE_OF_SERVICE_OPTIONS = [
@@ -912,12 +913,51 @@ export default function NoteFormPage() {
       });
     }
 
+    // ── Backdated note warning ──
+    if (dateOfService) {
+      const dosDate = new Date(dateOfService + 'T00:00:00');
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const diffDays = Math.floor((today.getTime() - dosDate.getTime()) / (1000 * 60 * 60 * 24));
+      if (diffDays > 7) {
+        issues.push({
+          id: 'note_backdated', message: `Date of service is ${diffDays} days ago`, severity: 'warning', fixable: false,
+          fieldType: 'none', target: 'document',
+          guidance: 'Medicare requires timely documentation. If this is intentional, proceed.',
+        });
+      }
+    }
+
     return issues;
   };
 
   /** Opens the sign confirmation dialog with validation results */
-  const handleSignClick = () => {
+  const handleSignClick = async () => {
+    // Fetch authorization data for exceeded warning
+    let authExceeded = false;
+    let authDetail = { units_used: 0, units_approved: 0 };
+    if (client) {
+      try {
+        const auths: any[] = await window.api.authorizations.listByClient(client.id);
+        const active = auths.find((a: any) => a.status === 'active');
+        if (active && active.units_used >= active.units_approved && active.units_approved > 0) {
+          authExceeded = true;
+          authDetail = { units_used: active.units_used, units_approved: active.units_approved };
+        }
+      } catch (_) { /* ignore — auth check is advisory */ }
+    }
+
     const issues = runSignValidation();
+
+    if (authExceeded) {
+      issues.push({
+        id: 'auth_exceeded',
+        message: `This visit may exceed authorization (${authDetail.units_used}/${authDetail.units_approved} visits used)`,
+        severity: 'warning', fixable: false, fieldType: 'none', target: 'document',
+        guidance: 'Ensure a new authorization has been obtained before billing.',
+      });
+    }
+
     setSignDialogIssues(issues);
     setSignDialogOpen(true);
   };
@@ -957,6 +997,44 @@ export default function NoteFormPage() {
 
     setSignDialogOpen(false);
     setTimeout(() => handleSave(true), 50);
+  };
+
+  /** Save fixes from the Sign dialog WITHOUT signing — just apply and close */
+  const handleSaveFixesOnly = (fixes: ValidationFixes) => {
+    // Apply document-level section fixes
+    if (fixes.documentFixes.subjective !== undefined) setSubjective(fixes.documentFixes.subjective);
+    if (fixes.documentFixes.objective !== undefined) setObjective(fixes.documentFixes.objective);
+    if (fixes.documentFixes.assessment !== undefined) setAssessment(fixes.documentFixes.assessment);
+    if (fixes.documentFixes.plan !== undefined) setPlan(fixes.documentFixes.plan);
+    if (fixes.documentFixes.date_of_service !== undefined) setDateOfService(fixes.documentFixes.date_of_service);
+
+    // Apply discharge fixes
+    if (isDischarge) {
+      const dcUpdates: Partial<DischargeData> = {};
+      if (fixes.documentFixes.discharge_reason !== undefined) dcUpdates.discharge_reason = fixes.documentFixes.discharge_reason;
+      if (fixes.documentFixes.discharge_reason_detail !== undefined) dcUpdates.discharge_reason_detail = fixes.documentFixes.discharge_reason_detail;
+      if (fixes.documentFixes.current_level_of_function !== undefined) dcUpdates.current_level_of_function = fixes.documentFixes.current_level_of_function;
+      if (Object.keys(dcUpdates).length > 0) {
+        setDischargeData(prev => ({ ...prev, ...dcUpdates }));
+      }
+    }
+
+    // Apply goal fixes (progress report goal statuses and performance data)
+    if (Object.keys(fixes.goalFixes).length > 0) {
+      setProgressReportGoals(prev => prev.map(g => {
+        const goalFix = fixes.goalFixes[g.goal_id];
+        if (!goalFix) return g;
+        return {
+          ...g,
+          ...(goalFix.status_at_report ? { status_at_report: goalFix.status_at_report as ProgressReportGoalStatus } : {}),
+          ...(goalFix.performance_data !== undefined ? { performance_data: goalFix.performance_data } : {}),
+        };
+      }));
+    }
+
+    setSignDialogOpen(false);
+    // Trigger a non-signing draft save so fixes are persisted
+    setTimeout(() => handleSave(false), 50);
   };
 
   /** Handle client record updates from Fix-It dialog */
@@ -1043,6 +1121,8 @@ export default function NoteFormPage() {
         if (noteIdForPR) {
           await window.api.progressReportGoals.upsert(noteIdForPR, progressReportGoals);
           for (const prg of progressReportGoals) {
+            // Tag goal as established by this progress report (graduates pending → established)
+            try { await window.api.goals.tagSource(prg.goal_id, noteIdForPR, 'progress_report'); } catch (_) { /* ignore */ }
             if (prg.status_at_report === 'met') {
               await window.api.goals.update(prg.goal_id, { status: 'met', met_date: dateOfService } as any);
             } else if (prg.status_at_report === 'discontinued') {
@@ -1060,6 +1140,8 @@ export default function NoteFormPage() {
         if (noteIdForDC) {
           await window.api.progressReportGoals.upsert(noteIdForDC, dischargeGoals as any);
           for (const dg of dischargeGoals) {
+            // Tag goal as established by this discharge
+            try { await window.api.goals.tagSource(dg.goal_id, noteIdForDC, 'progress_report'); } catch (_) { /* ignore */ }
             const goalStatus: GoalStatus = dg.status_at_report === 'met' ? 'met' : 'discontinued';
             const metDate = dg.status_at_report === 'met' ? dateOfService : undefined;
             await window.api.goals.update(dg.goal_id, {
@@ -1436,12 +1518,11 @@ export default function NoteFormPage() {
             <div className="space-y-2">
               {cptLines.map((line, idx) => (
                 <div key={idx} className="flex items-center gap-3">
-                  <input
-                    type="text"
-                    className="input flex-1"
-                    placeholder="CPT Code (e.g. 92507)"
+                  <CptCombobox
                     value={line.code}
-                    onChange={(e) => setCptLines(prev => prev.map((l, i) => i === idx ? { ...l, code: e.target.value } : l))}
+                    onChange={(code) => setCptLines(prev => prev.map((l, i) => i === idx ? { ...l, code } : l))}
+                    placeholder="Search CPT code..."
+                    className="flex-1"
                   />
                   <div className="w-24">
                     <input
@@ -2816,8 +2897,10 @@ export default function NoteFormPage() {
         isOpen={signDialogOpen}
         onClose={() => setSignDialogOpen(false)}
         onConfirm={handleSignWithFixes}
+        onSaveAndClose={handleSaveFixesOnly}
         issues={signDialogIssues}
         onClientUpdate={handleClientUpdate}
+        clientName={client ? `${client.first_name} ${client.last_name}`.trim() : undefined}
       />
     </div>
   );

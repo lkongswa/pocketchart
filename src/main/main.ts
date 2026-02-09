@@ -88,7 +88,9 @@ function safeHandle(
 }
 
 function createSplashWindow() {
-  const iconPath = path.join(__dirname, '../../build/icon.ico');
+  const iconPath = app.isPackaged
+    ? path.join(path.dirname(app.getPath('exe')), 'icon.ico')
+    : path.join(__dirname, '../../build/icon.ico');
 
   splashWindow = new BrowserWindow({
     width: 340,
@@ -215,7 +217,9 @@ function createSplashWindow() {
 }
 
 function createWindow() {
-  const iconPath = path.join(__dirname, '../../build/icon.ico');
+  const iconPath = app.isPackaged
+    ? path.join(path.dirname(app.getPath('exe')), 'icon.ico')
+    : path.join(__dirname, '../../build/icon.ico');
 
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -353,10 +357,27 @@ function registerIpcHandlers() {
     contentHash?: string | null;
   }) {
     try {
+      // Build hash chain: each entry includes a hash linking to the previous entry
+      const previousEntry = db.prepare(
+        'SELECT id, entry_hash FROM audit_log WHERE entry_hash IS NOT NULL ORDER BY id DESC LIMIT 1'
+      ).get() as { id: number; entry_hash: string } | undefined;
+      const previousHash = previousEntry?.entry_hash || 'GENESIS';
+      const now = new Date().toISOString();
+      const entryContent = JSON.stringify({
+        actionType: params.actionType,
+        entityType: params.entityType,
+        entityId: params.entityId ?? null,
+        clientId: params.clientId ?? null,
+        timestamp: now,
+      });
+      const entryHash = crypto.createHash('sha256')
+        .update(previousHash + entryContent)
+        .digest('hex');
+
       db.prepare(`
         INSERT INTO audit_log (timestamp, user_id, user_role, session_id, action_type,
-          entity_type, entity_id, client_id, detail, content_hash, device_identifier)
-        VALUES (datetime('now'), 1, 'owner', ?, ?, ?, ?, ?, ?, ?, ?)
+          entity_type, entity_id, client_id, detail, content_hash, device_identifier, entry_hash)
+        VALUES (datetime('now'), 1, 'owner', ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         sessionId,
         params.actionType,
@@ -365,7 +386,8 @@ function registerIpcHandlers() {
         params.clientId ?? null,
         params.detail ? JSON.stringify(params.detail) : null,
         params.contentHash ?? null,
-        deviceIdentifier
+        deviceIdentifier,
+        entryHash
       );
     } catch (err) {
       console.error('Audit log write failed:', err);
@@ -435,22 +457,31 @@ function registerIpcHandlers() {
   });
 
   safeHandle('practice:save', (_event, data) => {
-    const existing = db.prepare('SELECT id FROM practice WHERE id = 1').get();
+    const existing = db.prepare('SELECT * FROM practice WHERE id = 1').get() as any;
     if (existing) {
+      // Merge: only overwrite fields that are actually provided in `data`
       db.prepare(`
         UPDATE practice SET name=?, address=?, city=?, state=?, zip=?, phone=?, npi=?, tax_id=?,
         license_number=?, license_state=?, discipline=?, taxonomy_code=? WHERE id=1
-      `).run(data.name, data.address, data.city || '', data.state || '', data.zip || '',
-        data.phone, data.npi, data.tax_id,
-        data.license_number, data.license_state, data.discipline, data.taxonomy_code || '');
+      `).run(
+        data.name ?? existing.name ?? '', data.address ?? existing.address ?? '',
+        data.city ?? existing.city ?? '', data.state ?? existing.state ?? '',
+        data.zip ?? existing.zip ?? '', data.phone ?? existing.phone ?? '',
+        data.npi ?? existing.npi ?? '', data.tax_id ?? existing.tax_id ?? '',
+        data.license_number ?? existing.license_number ?? '', data.license_state ?? existing.license_state ?? '',
+        data.discipline ?? existing.discipline ?? 'PT', data.taxonomy_code ?? existing.taxonomy_code ?? ''
+      );
     } else {
       db.prepare(`
         INSERT INTO practice (id, name, address, city, state, zip, phone, npi, tax_id,
         license_number, license_state, discipline, taxonomy_code)
         VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(data.name, data.address, data.city || '', data.state || '', data.zip || '',
-        data.phone, data.npi, data.tax_id,
-        data.license_number, data.license_state, data.discipline, data.taxonomy_code || '');
+      `).run(
+        data.name || '', data.address || '', data.city || '', data.state || '',
+        data.zip || '', data.phone || '', data.npi || '', data.tax_id || '',
+        data.license_number || '', data.license_state || '', data.discipline || 'PT',
+        data.taxonomy_code || ''
+      );
     }
     return db.prepare('SELECT * FROM practice WHERE id = 1').get();
   });
@@ -483,16 +514,32 @@ function registerIpcHandlers() {
 
   safeHandle('clients:create', (_event, data) => {
     const result = db.prepare(`
-      INSERT INTO clients (first_name, last_name, dob, phone, email, address,
+      INSERT INTO clients (first_name, last_name, dob, phone, email, address, city, state, zip, gender,
         primary_dx_code, primary_dx_description, secondary_dx, default_cpt_code,
-        insurance_payer, insurance_member_id, insurance_group,
-        referring_physician, referring_npi, status, discipline)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        insurance_payer, insurance_member_id, insurance_group, insurance_payer_id,
+        subscriber_relationship, subscriber_first_name, subscriber_last_name, subscriber_dob,
+        referring_physician, referring_npi, referring_physician_qualifier, referral_source,
+        onset_date, onset_qualifier, employment_related, auto_accident, auto_accident_state,
+        other_accident, claim_accept_assignment, patient_signature_source, insured_signature_source,
+        prior_auth_number, additional_claim_info, service_facility_name, service_facility_npi,
+        status, discipline)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.first_name, data.last_name, data.dob, data.phone, data.email, data.address,
+      data.city || '', data.state || '', data.zip || '', data.gender || '',
       data.primary_dx_code, data.primary_dx_description, data.secondary_dx || '[]',
       data.default_cpt_code, data.insurance_payer, data.insurance_member_id,
-      data.insurance_group, data.referring_physician, data.referring_npi,
+      data.insurance_group, data.insurance_payer_id || '',
+      data.subscriber_relationship || '18', data.subscriber_first_name || '',
+      data.subscriber_last_name || '', data.subscriber_dob || '',
+      data.referring_physician, data.referring_npi,
+      data.referring_physician_qualifier || 'DN', data.referral_source || '',
+      data.onset_date || '', data.onset_qualifier || '431',
+      data.employment_related || 'N', data.auto_accident || 'N', data.auto_accident_state || '',
+      data.other_accident || 'N', data.claim_accept_assignment || 'Y',
+      data.patient_signature_source || 'SOF', data.insured_signature_source || 'SOF',
+      data.prior_auth_number || '', data.additional_claim_info || '',
+      data.service_facility_name || '', data.service_facility_npi || '',
       data.status || 'active', data.discipline
     );
     const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(result.lastInsertRowid) as any;
@@ -503,30 +550,61 @@ function registerIpcHandlers() {
   safeHandle('clients:update', (_event, id: number, data) => {
     // Track which fields changed for audit trail
     const before = db.prepare('SELECT * FROM clients WHERE id = ?').get(id) as any;
+    const auditKeys = ['first_name','last_name','dob','phone','email','address','city','state','zip','gender',
+      'primary_dx_code','primary_dx_description','default_cpt_code','insurance_payer','insurance_member_id',
+      'insurance_group','insurance_payer_id','subscriber_relationship','subscriber_first_name','subscriber_last_name',
+      'subscriber_dob','referring_physician','referring_npi','referring_physician_qualifier','referral_source',
+      'onset_date','onset_qualifier','employment_related','auto_accident','auto_accident_state','other_accident',
+      'claim_accept_assignment','patient_signature_source','insured_signature_source','prior_auth_number',
+      'additional_claim_info','service_facility_name','service_facility_npi','status','discipline'];
     const changedFields: string[] = [];
     if (before) {
-      for (const key of ['first_name','last_name','dob','phone','email','address','primary_dx_code','primary_dx_description','status','discipline']) {
+      for (const key of auditKeys) {
         if (before[key] !== data[key]) changedFields.push(key);
       }
     }
 
     db.prepare(`
       UPDATE clients SET first_name=?, last_name=?, dob=?, phone=?, email=?, address=?,
+        city=?, state=?, zip=?, gender=?,
         primary_dx_code=?, primary_dx_description=?, secondary_dx=?, default_cpt_code=?,
-        insurance_payer=?, insurance_member_id=?, insurance_group=?,
-        referring_physician=?, referring_npi=?, status=?, discipline=?,
+        insurance_payer=?, insurance_member_id=?, insurance_group=?, insurance_payer_id=?,
+        subscriber_relationship=?, subscriber_first_name=?, subscriber_last_name=?, subscriber_dob=?,
+        referring_physician=?, referring_npi=?, referring_physician_qualifier=?, referral_source=?,
+        onset_date=?, onset_qualifier=?, employment_related=?, auto_accident=?, auto_accident_state=?,
+        other_accident=?, claim_accept_assignment=?, patient_signature_source=?, insured_signature_source=?,
+        prior_auth_number=?, additional_claim_info=?, service_facility_name=?, service_facility_npi=?,
+        status=?, discipline=?,
         updated_at=CURRENT_TIMESTAMP
       WHERE id=? AND deleted_at IS NULL
     `).run(
       data.first_name, data.last_name, data.dob, data.phone, data.email, data.address,
+      data.city || '', data.state || '', data.zip || '', data.gender || '',
       data.primary_dx_code, data.primary_dx_description, data.secondary_dx || '[]',
       data.default_cpt_code, data.insurance_payer, data.insurance_member_id,
-      data.insurance_group, data.referring_physician, data.referring_npi,
+      data.insurance_group, data.insurance_payer_id || '',
+      data.subscriber_relationship || '18', data.subscriber_first_name || '',
+      data.subscriber_last_name || '', data.subscriber_dob || '',
+      data.referring_physician, data.referring_npi,
+      data.referring_physician_qualifier || 'DN', data.referral_source || '',
+      data.onset_date || '', data.onset_qualifier || '431',
+      data.employment_related || 'N', data.auto_accident || 'N', data.auto_accident_state || '',
+      data.other_accident || 'N', data.claim_accept_assignment || 'Y',
+      data.patient_signature_source || 'SOF', data.insured_signature_source || 'SOF',
+      data.prior_auth_number || '', data.additional_claim_info || '',
+      data.service_facility_name || '', data.service_facility_npi || '',
       data.status, data.discipline, id
     );
 
     if (changedFields.length > 0) {
       auditLog({ actionType: 'client_modified', entityType: 'client', entityId: id, clientId: id, detail: { fields_changed: changedFields } });
+    }
+
+    // ── Audit: specific event when diagnosis changes (critical for clinical audit trail) ──
+    if (before && before.primary_dx_code !== data.primary_dx_code) {
+      auditLog({ actionType: 'diagnosis_changed', entityType: 'client', entityId: id, clientId: id,
+        detail: { old_code: before.primary_dx_code || '', old_description: before.primary_dx_description || '',
+                  new_code: data.primary_dx_code || '', new_description: data.primary_dx_description || '' } });
     }
 
     return db.prepare('SELECT * FROM clients WHERE id = ?').get(id);
@@ -556,22 +634,34 @@ function registerIpcHandlers() {
 
   safeHandle('goals:create', (_event, data) => {
     const result = db.prepare(`
-      INSERT INTO goals (client_id, goal_text, goal_type, category, status, target_date)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO goals (client_id, goal_text, goal_type, category, status, target_date, baseline, target)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(data.client_id, data.goal_text, data.goal_type, data.category,
-      data.status || 'active', data.target_date);
+      data.status || 'active', data.target_date, data.baseline || 0, data.target || 0);
     const goal = db.prepare('SELECT * FROM goals WHERE id = ?').get(result.lastInsertRowid) as any;
     auditLog({ actionType: 'goal_created', entityType: 'goal', entityId: goal.id, clientId: data.client_id });
     return goal;
   });
 
   safeHandle('goals:update', (_event, id: number, data) => {
-    const before = db.prepare('SELECT status, client_id FROM goals WHERE id = ?').get(id) as any;
-    db.prepare(`
-      UPDATE goals SET goal_text=?, goal_type=?, category=?, status=?, target_date=?, met_date=?
-      WHERE id=? AND deleted_at IS NULL
-    `).run(data.goal_text, data.goal_type, data.category, data.status,
-      data.target_date, data.met_date, id);
+    const before = db.prepare('SELECT * FROM goals WHERE id = ?').get(id) as any;
+    const isEstablished = before?.source_document_id != null;
+
+    if (isEstablished) {
+      // Established goals: only allow status and met_date changes
+      db.prepare(`
+        UPDATE goals SET status=?, met_date=?
+        WHERE id=? AND deleted_at IS NULL
+      `).run(data.status, data.met_date, id);
+    } else {
+      // Pending goals: allow full updates
+      db.prepare(`
+        UPDATE goals SET goal_text=?, goal_type=?, category=?, status=?, target_date=?, met_date=?
+        WHERE id=? AND deleted_at IS NULL
+      `).run(data.goal_text, data.goal_type, data.category, data.status,
+        data.target_date, data.met_date, id);
+    }
+
     const goal = db.prepare('SELECT * FROM goals WHERE id = ?').get(id) as any;
 
     // Determine specific audit action
@@ -586,11 +676,22 @@ function registerIpcHandlers() {
     return goal;
   });
 
-  // Soft delete
+  // Soft delete — blocked for established goals
   safeHandle('goals:delete', (_event, id: number) => {
-    const goal = db.prepare('SELECT client_id FROM goals WHERE id = ?').get(id) as any;
+    const goal = db.prepare('SELECT client_id, source_document_id FROM goals WHERE id = ?').get(id) as any;
+    if (goal?.source_document_id != null) {
+      throw new Error('Cannot delete an established goal. Change its status to discontinued instead.');
+    }
     db.prepare('UPDATE goals SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL').run(id);
     auditLog({ actionType: 'goal_discontinued', entityType: 'goal', entityId: id, clientId: goal?.client_id });
+    return true;
+  });
+
+  // Tag a goal as established by a signed document
+  safeHandle('goals:tagSource', (_event, goalId: number, docId: number, docType: string) => {
+    db.prepare(
+      'UPDATE goals SET source_document_id = ?, source_document_type = ? WHERE id = ? AND source_document_id IS NULL'
+    ).run(docId, docType, goalId);
     return true;
   });
 
@@ -761,6 +862,19 @@ function registerIpcHandlers() {
       try {
         const compliance = db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(data.client_id) as any;
         if (compliance?.tracking_enabled) {
+          // ── Audit: log compliance override if signing while overdue ──
+          const todayStr = new Date().toISOString().slice(0, 10);
+          if (data.note_type !== 'progress_report' && data.note_type !== 'discharge') {
+            if (compliance.visits_since_last_progress >= compliance.progress_visit_threshold && compliance.progress_visit_threshold > 0) {
+              auditLog({ actionType: 'compliance_override', entityType: 'note', entityId: note.id, clientId: data.client_id,
+                detail: { reason: 'progress_report_overdue', visits: compliance.visits_since_last_progress, threshold: compliance.progress_visit_threshold, note_type: data.note_type || 'soap' } });
+            }
+            if (compliance.next_recert_due && compliance.next_recert_due <= todayStr) {
+              auditLog({ actionType: 'compliance_override', entityType: 'note', entityId: note.id, clientId: data.client_id,
+                detail: { reason: 'recert_overdue', recert_due: compliance.next_recert_due, note_type: data.note_type || 'soap' } });
+            }
+          }
+
           if (data.note_type === 'progress_report') {
             // Progress report: reset counter and update dates
             const now = new Date().toISOString().slice(0, 10);
@@ -813,6 +927,28 @@ function registerIpcHandlers() {
           } catch { /* graceful */ }
         }
       } catch { /* compliance tracking may not exist yet */ }
+
+      // ── Audit: authorization exceeded check ──
+      try {
+        const activeAuth = db.prepare(`SELECT * FROM authorizations WHERE client_id = ? AND status = 'active' AND deleted_at IS NULL ORDER BY end_date DESC LIMIT 1`).get(data.client_id) as any;
+        if (activeAuth && activeAuth.units_used >= activeAuth.units_approved && activeAuth.units_approved > 0) {
+          auditLog({ actionType: 'authorization_exceeded', entityType: 'note', entityId: note.id, clientId: data.client_id,
+            detail: { units_used: activeAuth.units_used, units_approved: activeAuth.units_approved, auth_number: activeAuth.auth_number } });
+        }
+      } catch { /* graceful */ }
+
+      // ── Audit: late documentation check ──
+      try {
+        if (data.date_of_service) {
+          const dos = new Date(data.date_of_service);
+          const signedAt = new Date();
+          const diffDays = Math.floor((signedAt.getTime() - dos.getTime()) / (1000 * 60 * 60 * 24));
+          if (diffDays > 7) {
+            auditLog({ actionType: 'late_documentation', entityType: 'note', entityId: note.id, clientId: data.client_id,
+              detail: { date_of_service: data.date_of_service, signed_date: signedAt.toISOString().slice(0, 10), days_late: diffDays } });
+          }
+        }
+      } catch { /* graceful */ }
     }
 
     return note;
@@ -870,6 +1006,19 @@ function registerIpcHandlers() {
       try {
         const compliance = db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(existingNote.client_id) as any;
         if (compliance?.tracking_enabled) {
+          // ── Audit: log compliance override if signing while overdue ──
+          const todayStr = new Date().toISOString().slice(0, 10);
+          if (data.note_type !== 'progress_report' && data.note_type !== 'discharge') {
+            if (compliance.visits_since_last_progress >= compliance.progress_visit_threshold && compliance.progress_visit_threshold > 0) {
+              auditLog({ actionType: 'compliance_override', entityType: 'note', entityId: id, clientId: existingNote.client_id,
+                detail: { reason: 'progress_report_overdue', visits: compliance.visits_since_last_progress, threshold: compliance.progress_visit_threshold, note_type: data.note_type || 'soap' } });
+            }
+            if (compliance.next_recert_due && compliance.next_recert_due <= todayStr) {
+              auditLog({ actionType: 'compliance_override', entityType: 'note', entityId: id, clientId: existingNote.client_id,
+                detail: { reason: 'recert_overdue', recert_due: compliance.next_recert_due, note_type: data.note_type || 'soap' } });
+            }
+          }
+
           if (data.note_type === 'progress_report') {
             // Progress report: reset counter and update dates
             const now = new Date().toISOString().slice(0, 10);
@@ -922,6 +1071,28 @@ function registerIpcHandlers() {
           } catch { /* graceful */ }
         }
       } catch { /* compliance tracking may not exist yet */ }
+
+      // ── Audit: authorization exceeded check ──
+      try {
+        const activeAuth = db.prepare(`SELECT * FROM authorizations WHERE client_id = ? AND status = 'active' AND deleted_at IS NULL ORDER BY end_date DESC LIMIT 1`).get(existingNote.client_id) as any;
+        if (activeAuth && activeAuth.units_used >= activeAuth.units_approved && activeAuth.units_approved > 0) {
+          auditLog({ actionType: 'authorization_exceeded', entityType: 'note', entityId: id, clientId: existingNote.client_id,
+            detail: { units_used: activeAuth.units_used, units_approved: activeAuth.units_approved, auth_number: activeAuth.auth_number } });
+        }
+      } catch { /* graceful */ }
+
+      // ── Audit: late documentation check ──
+      try {
+        if (data.date_of_service) {
+          const dos = new Date(data.date_of_service);
+          const signedAt = new Date();
+          const diffDays = Math.floor((signedAt.getTime() - dos.getTime()) / (1000 * 60 * 60 * 24));
+          if (diffDays > 7) {
+            auditLog({ actionType: 'late_documentation', entityType: 'note', entityId: id, clientId: existingNote.client_id,
+              detail: { date_of_service: data.date_of_service, signed_date: signedAt.toISOString().slice(0, 10), days_late: diffDays } });
+          }
+        }
+      } catch { /* graceful */ }
     }
 
     return db.prepare('SELECT * FROM notes WHERE id = ?').get(id);
@@ -3680,6 +3851,97 @@ function registerIpcHandlers() {
   });
 
   // ══════════════════════════════════════════════════════════════════════
+  // ── Data Integrity Checks ──
+  // ══════════════════════════════════════════════════════════════════════
+
+  safeHandle('integrity:runCheck', () => {
+    const results = {
+      notes: 0,
+      evaluations: 0,
+      tamperedNotes: [] as number[],
+      tamperedEvals: [] as number[],
+    };
+
+    // Check signed notes
+    const signedNotes = db.prepare(
+      'SELECT id, content_hash, subjective, objective, assessment, plan FROM notes WHERE signed_at IS NOT NULL AND content_hash IS NOT NULL AND deleted_at IS NULL'
+    ).all() as any[];
+    for (const note of signedNotes) {
+      const expected = computeContentHash({
+        subjective: note.subjective,
+        objective: note.objective,
+        assessment: note.assessment,
+        plan: note.plan,
+      });
+      if (expected !== note.content_hash) {
+        results.tamperedNotes.push(note.id);
+        auditLog({
+          actionType: 'integrity_violation_detected',
+          entityType: 'note',
+          entityId: note.id,
+          detail: { expected_hash: note.content_hash, actual_hash: expected },
+        });
+      }
+      results.notes++;
+    }
+
+    // Check signed evaluations
+    const signedEvals = db.prepare(
+      'SELECT id, content_hash, content FROM evaluations WHERE signed_at IS NOT NULL AND content_hash IS NOT NULL AND deleted_at IS NULL'
+    ).all() as any[];
+    for (const ev of signedEvals) {
+      const expected = computeContentHash(JSON.parse(ev.content || '{}'));
+      if (expected !== ev.content_hash) {
+        results.tamperedEvals.push(ev.id);
+        auditLog({
+          actionType: 'integrity_violation_detected',
+          entityType: 'evaluation',
+          entityId: ev.id,
+          detail: { expected_hash: ev.content_hash, actual_hash: expected },
+        });
+      }
+      results.evaluations++;
+    }
+
+    return results;
+  });
+
+  safeHandle('integrity:verifyAuditChain', () => {
+    const entries = db.prepare(
+      'SELECT id, entry_hash, action_type, entity_type, entity_id, client_id, timestamp FROM audit_log WHERE entry_hash IS NOT NULL ORDER BY id ASC'
+    ).all() as any[];
+
+    if (entries.length === 0) return { intact: true, checked: 0 };
+
+    let previousHash = 'GENESIS';
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      const entryContent = JSON.stringify({
+        actionType: entry.action_type,
+        entityType: entry.entity_type,
+        entityId: entry.entity_id ?? null,
+        clientId: entry.client_id ?? null,
+        timestamp: entry.timestamp,
+      });
+      const expectedHash = crypto.createHash('sha256')
+        .update(previousHash + entryContent)
+        .digest('hex');
+
+      if (expectedHash !== entry.entry_hash) {
+        return {
+          intact: false,
+          checked: entries.length,
+          breakAtId: entry.id,
+          breakAtIndex: i,
+        };
+      }
+      previousHash = entry.entry_hash;
+    }
+
+    return { intact: true, checked: entries.length };
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
   // ── Contracted Entities (Pro Only) ──
   // ══════════════════════════════════════════════════════════════════════
 
@@ -3963,10 +4225,11 @@ function registerIpcHandlers() {
 
   safeHandle('compliance:updateSettings', (_event, clientId: number, data: any) => {
     requireTier('basic');
-    // Ensure record exists
+    // Ensure record exists and capture before-state for audit
     let record = db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(clientId) as any;
     if (!record) {
       db.prepare('INSERT INTO compliance_tracking (client_id) VALUES (?)').run(clientId);
+      record = db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(clientId) as any;
     }
 
     const fields: string[] = [];
@@ -3985,6 +4248,13 @@ function registerIpcHandlers() {
       values.push(clientId);
       db.prepare(`UPDATE compliance_tracking SET ${fields.join(', ')} WHERE client_id = ?`).run(...values);
     }
+
+    // ── Audit: log when compliance tracking is disabled ──
+    if (record?.tracking_enabled && data.tracking_enabled === 0) {
+      auditLog({ actionType: 'compliance_tracking_disabled', entityType: 'compliance', clientId,
+        detail: { previous_preset: record.compliance_preset || 'unknown' } });
+    }
+
     return db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(clientId);
   });
 

@@ -43,10 +43,12 @@ const DashboardPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [showBackupReminder, setShowBackupReminder] = useState(false);
   const [daysSinceBackup, setDaysSinceBackup] = useState<number | null>(null);
+  const [integrityIssues, setIntegrityIssues] = useState<{ tamperedNotes: number[]; tamperedEvals: number[] } | null>(null);
 
   useEffect(() => {
     loadDashboardData();
     checkBackupReminder();
+    runIntegrityCheck();
   }, []);
 
   const checkBackupReminder = async () => {
@@ -79,6 +81,17 @@ const DashboardPage: React.FC = () => {
       }
     } catch (err) {
       // Silently fail — don't break the dashboard over a reminder
+    }
+  };
+
+  const runIntegrityCheck = async () => {
+    try {
+      const results = await (window as any).api.integrity.runCheck();
+      if (results.tamperedNotes.length > 0 || results.tamperedEvals.length > 0) {
+        setIntegrityIssues({ tamperedNotes: results.tamperedNotes, tamperedEvals: results.tamperedEvals });
+      }
+    } catch (err) {
+      // Silently fail — don't break the dashboard over an integrity check
     }
   };
 
@@ -247,6 +260,21 @@ const DashboardPage: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Integrity Warning Banner */}
+      {integrityIssues && (
+        <div className="mb-6 flex items-start gap-3 p-4 rounded-lg border border-red-300 bg-red-50 text-sm">
+          <ShieldAlert size={20} className="text-red-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="font-medium text-red-800">
+              {integrityIssues.tamperedNotes.length + integrityIssues.tamperedEvals.length} signed document(s) have been modified outside of PocketChart.
+            </p>
+            <p className="text-red-700 mt-1">
+              This may indicate database tampering. Signed documents should only be changed through PocketChart's amendment process. Contact support if you did not make these changes.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Backup Reminder Banner */}
       {showBackupReminder && (

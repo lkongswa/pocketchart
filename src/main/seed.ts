@@ -153,60 +153,64 @@ export function seedDefaultData(db: Database.Database): void {
     insertNoteBank.run('ST', 'discharge', 'P', 'Continue ST ___ x/week for ___ weeks. Reassess at that time.');
 
     // ── Goals Bank ──
+    // Format: No subject prefix (GoalBuilder adds "Patient/Client will"), no trailing timeframe (GoalBuilder adds it).
+    // Use {target} / {baseline} for percentage fields that map to the CLOF/Target sliders.
+    // Use ___ for free-text placeholders that QuickChips or manual entry can fill.
+
     // PT Goals
-    insertGoalsBank.run('PT', 'Mobility', 'Pt will ambulate ___ ft with ___ device and ___ assist in ___ weeks.');
-    insertGoalsBank.run('PT', 'Mobility', 'Pt will ambulate on level surfaces with normalized gait pattern, no device, within ___ weeks.');
-    insertGoalsBank.run('PT', 'Mobility', 'Pt will navigate stairs with ___ assist and ___ railing in ___ weeks.');
-    insertGoalsBank.run('PT', 'Mobility', 'Pt will perform sit-to-stand from standard height chair with ___ assist in ___ weeks.');
-    insertGoalsBank.run('PT', 'Strength', 'Pt will demonstrate ___ strength of ___/5 in ___ within ___ weeks.');
-    insertGoalsBank.run('PT', 'Strength', 'Pt will improve grip strength to ___lbs bilaterally within ___ weeks.');
-    insertGoalsBank.run('PT', 'ROM', 'Pt will achieve ___ AROM of ___ degrees within ___ weeks.');
-    insertGoalsBank.run('PT', 'ROM', 'Pt will demonstrate functional ROM for ___ within ___ weeks.');
-    insertGoalsBank.run('PT', 'Balance', 'Pt will maintain static standing balance for ___ seconds without LOB within ___ weeks.');
-    insertGoalsBank.run('PT', 'Balance', 'Pt will achieve Berg Balance Scale score of ___/56 within ___ weeks.');
-    insertGoalsBank.run('PT', 'Balance', 'Pt will perform dynamic balance activities with ___ LOB in ___ weeks.');
-    insertGoalsBank.run('PT', 'Pain Management', 'Pt will report pain reduction to ___/10 with functional activities within ___ weeks.');
-    insertGoalsBank.run('PT', 'Functional Activity', 'Pt will independently perform HEP with correct form within ___ weeks.');
-    insertGoalsBank.run('PT', 'Functional Activity', 'Pt will return to ___ (work/sport/activity) without limitations within ___ weeks.');
-    insertGoalsBank.run('PT', 'Transfers', 'Pt will complete bed mobility with ___ assist within ___ weeks.');
-    insertGoalsBank.run('PT', 'Transfers', 'Pt will perform all transfers with ___ assist within ___ weeks.');
+    insertGoalsBank.run('PT', 'Mobility', 'ambulate ___ ft with ___ device and ___ assist');
+    insertGoalsBank.run('PT', 'Mobility', 'ambulate on level surfaces with normalized gait pattern, no device');
+    insertGoalsBank.run('PT', 'Mobility', 'navigate stairs with ___ assist and ___ railing');
+    insertGoalsBank.run('PT', 'Mobility', 'perform sit-to-stand from standard height chair with ___ assist');
+    insertGoalsBank.run('PT', 'Strength', 'demonstrate ___ strength of ___/5 in ___');
+    insertGoalsBank.run('PT', 'Strength', 'improve grip strength to ___ lbs bilaterally');
+    insertGoalsBank.run('PT', 'ROM', 'achieve ___ AROM of ___ degrees');
+    insertGoalsBank.run('PT', 'ROM', 'demonstrate functional ROM for ___');
+    insertGoalsBank.run('PT', 'Balance', 'maintain static standing balance for ___ seconds without LOB');
+    insertGoalsBank.run('PT', 'Balance', 'achieve Berg Balance Scale score of ___/56');
+    insertGoalsBank.run('PT', 'Balance', 'perform dynamic balance activities with ___ LOB');
+    insertGoalsBank.run('PT', 'Pain Management', 'report pain reduction to ___/10 with functional activities');
+    insertGoalsBank.run('PT', 'Functional Activity', 'independently perform HEP with correct form');
+    insertGoalsBank.run('PT', 'Functional Activity', 'return to ___ (work/sport/activity) without limitations');
+    insertGoalsBank.run('PT', 'Transfers', 'complete bed mobility with ___ assist');
+    insertGoalsBank.run('PT', 'Transfers', 'perform all transfers with ___ assist');
 
     // OT Goals
-    insertGoalsBank.run('OT', 'ADLs', 'Pt will complete upper body dressing with ___ assist within ___ weeks.');
-    insertGoalsBank.run('OT', 'ADLs', 'Pt will complete lower body dressing with ___ assist within ___ weeks.');
-    insertGoalsBank.run('OT', 'ADLs', 'Pt will complete grooming tasks with ___ assist within ___ weeks.');
-    insertGoalsBank.run('OT', 'ADLs', 'Pt will complete bathing with ___ assist within ___ weeks.');
-    insertGoalsBank.run('OT', 'ADLs', 'Pt will independently feed self with ___ setup within ___ weeks.');
-    insertGoalsBank.run('OT', 'ADLs', 'Pt will prepare a simple meal with ___ assist within ___ weeks.');
-    insertGoalsBank.run('OT', 'ADLs', 'Pt will manage medications with ___ assist within ___ weeks.');
-    insertGoalsBank.run('OT', 'ADLs', 'Pt will perform light housekeeping with ___ assist within ___ weeks.');
-    insertGoalsBank.run('OT', 'Fine Motor', 'Pt will demonstrate functional grasp/release for ___ tasks within ___ weeks.');
-    insertGoalsBank.run('OT', 'Fine Motor', 'Pt will improve fine motor coordination for ___ within ___ weeks.');
-    insertGoalsBank.run('OT', 'Fine Motor', 'Pt will achieve grip strength of ___lbs for functional tasks within ___ weeks.');
-    insertGoalsBank.run('OT', 'Cognitive', 'Pt will follow ___-step commands with ___ cues within ___ weeks.');
-    insertGoalsBank.run('OT', 'Cognitive', 'Pt will demonstrate improved sequencing for ___-step tasks within ___ weeks.');
-    insertGoalsBank.run('OT', 'Cognitive', 'Pt will utilize compensatory strategies for ___ with ___ cues within ___ weeks.');
-    insertGoalsBank.run('OT', 'Upper Extremity', 'Pt will achieve functional AROM of ___ for ___ within ___ weeks.');
-    insertGoalsBank.run('OT', 'Self-Care', 'Pt will demonstrate safe ___ techniques with ___ cues within ___ weeks.');
+    insertGoalsBank.run('OT', 'ADLs', 'complete upper body dressing with ___ assist');
+    insertGoalsBank.run('OT', 'ADLs', 'complete lower body dressing with ___ assist');
+    insertGoalsBank.run('OT', 'ADLs', 'complete grooming tasks with ___ assist');
+    insertGoalsBank.run('OT', 'ADLs', 'complete bathing with ___ assist');
+    insertGoalsBank.run('OT', 'ADLs', 'independently feed self with ___ setup');
+    insertGoalsBank.run('OT', 'ADLs', 'prepare a simple meal with ___ assist');
+    insertGoalsBank.run('OT', 'ADLs', 'manage medications with ___ assist');
+    insertGoalsBank.run('OT', 'ADLs', 'perform light housekeeping with ___ assist');
+    insertGoalsBank.run('OT', 'Fine Motor', 'demonstrate functional grasp/release for ___ tasks');
+    insertGoalsBank.run('OT', 'Fine Motor', 'improve fine motor coordination for ___');
+    insertGoalsBank.run('OT', 'Fine Motor', 'achieve grip strength of ___ lbs for functional tasks');
+    insertGoalsBank.run('OT', 'Cognitive', 'follow ___-step commands with ___ cues');
+    insertGoalsBank.run('OT', 'Cognitive', 'demonstrate improved sequencing for ___-step tasks');
+    insertGoalsBank.run('OT', 'Cognitive', 'utilize compensatory strategies for ___ with ___ cues');
+    insertGoalsBank.run('OT', 'Upper Extremity', 'achieve functional AROM of ___ for ___');
+    insertGoalsBank.run('OT', 'Self-Care', 'demonstrate safe ___ techniques with ___ cues');
 
     // ST Goals
-    insertGoalsBank.run('ST', 'Articulation', 'Pt will produce target sounds in ___ position with ___% accuracy at ___ level within ___ weeks.');
-    insertGoalsBank.run('ST', 'Articulation', 'Pt will produce ___% intelligible speech in ___ context within ___ weeks.');
-    insertGoalsBank.run('ST', 'Language Expression', 'Pt will name ___ items in ___ categories with ___% accuracy within ___ weeks.');
-    insertGoalsBank.run('ST', 'Language Expression', 'Pt will produce grammatically correct sentences of ___+ words within ___ weeks.');
-    insertGoalsBank.run('ST', 'Language Expression', 'Pt will use ___ word retrieval strategies with ___ cues within ___ weeks.');
-    insertGoalsBank.run('ST', 'Language Comprehension', 'Pt will follow ___-step commands with ___% accuracy within ___ weeks.');
-    insertGoalsBank.run('ST', 'Language Comprehension', 'Pt will answer ___ questions about ___ with ___% accuracy within ___ weeks.');
-    insertGoalsBank.run('ST', 'Language Comprehension', 'Pt will identify main idea in ___ with ___% accuracy within ___ weeks.');
-    insertGoalsBank.run('ST', 'Voice', 'Pt will demonstrate appropriate vocal quality during ___ tasks within ___ weeks.');
-    insertGoalsBank.run('ST', 'Voice', 'Pt will maintain adequate breath support for ___ within ___ weeks.');
-    insertGoalsBank.run('ST', 'Fluency', 'Pt will use ___ fluency strategy with ___% success in ___ context within ___ weeks.');
-    insertGoalsBank.run('ST', 'Fluency', 'Pt will demonstrate ___% fluent speech in ___ speaking tasks within ___ weeks.');
-    insertGoalsBank.run('ST', 'Feeding/Swallowing', 'Pt will safely tolerate ___ consistency with ___ strategy within ___ weeks.');
-    insertGoalsBank.run('ST', 'Feeding/Swallowing', 'Pt will demonstrate safe swallow with ___ diet with no s/s aspiration within ___ weeks.');
-    insertGoalsBank.run('ST', 'Cognitive-Communication', 'Pt will recall ___/5 items after ___ delay with ___ cues within ___ weeks.');
-    insertGoalsBank.run('ST', 'Cognitive-Communication', 'Pt will sustain attention for ___ min on ___ task within ___ weeks.');
-    insertGoalsBank.run('ST', 'Cognitive-Communication', 'Pt will identify ___/5 safety concerns in functional scenarios within ___ weeks.');
+    insertGoalsBank.run('ST', 'Articulation', 'produce target sounds in ___ position with {target} accuracy at ___ level');
+    insertGoalsBank.run('ST', 'Articulation', 'produce {target} intelligible speech in ___ context');
+    insertGoalsBank.run('ST', 'Language Expression', 'name ___ items in ___ categories with {target} accuracy');
+    insertGoalsBank.run('ST', 'Language Expression', 'produce grammatically correct sentences of ___+ words');
+    insertGoalsBank.run('ST', 'Language Expression', 'use ___ word retrieval strategies with ___ cues');
+    insertGoalsBank.run('ST', 'Language Comprehension', 'follow ___-step commands with {target} accuracy');
+    insertGoalsBank.run('ST', 'Language Comprehension', 'answer ___ questions about ___ with {target} accuracy');
+    insertGoalsBank.run('ST', 'Language Comprehension', 'identify main idea in ___ with {target} accuracy');
+    insertGoalsBank.run('ST', 'Voice', 'demonstrate appropriate vocal quality during ___ tasks');
+    insertGoalsBank.run('ST', 'Voice', 'maintain adequate breath support for ___');
+    insertGoalsBank.run('ST', 'Fluency', 'use ___ fluency strategy with {target} success in ___ context');
+    insertGoalsBank.run('ST', 'Fluency', 'demonstrate {target} fluent speech in ___ speaking tasks');
+    insertGoalsBank.run('ST', 'Feeding/Swallowing', 'safely tolerate ___ consistency with ___ strategy');
+    insertGoalsBank.run('ST', 'Feeding/Swallowing', 'demonstrate safe swallow with ___ diet with no s/s aspiration');
+    insertGoalsBank.run('ST', 'Cognitive-Communication', 'recall ___/5 items after ___ delay with ___ cues');
+    insertGoalsBank.run('ST', 'Cognitive-Communication', 'sustain attention for ___ min on ___ task');
+    insertGoalsBank.run('ST', 'Cognitive-Communication', 'identify ___/5 safety concerns in functional scenarios');
   });
 
   seedTransaction();
@@ -345,41 +349,43 @@ export function seedMFTData(db: Database.Database): void {
     insertNoteBank.run('MFT', 'discharge', 'P', 'Recommend step-down to ___ frequency as goals are met.');
 
     // ── MFT Goals Bank ──
-    insertGoalsBank.run('MFT', 'Depression', 'Client will report reduction in depressive symptoms to a PHQ-9 score of ___ or below within ___ weeks.');
-    insertGoalsBank.run('MFT', 'Depression', 'Client will identify ___ positive coping strategies for managing depressive episodes within ___ weeks.');
-    insertGoalsBank.run('MFT', 'Depression', 'Client will engage in ___ pleasurable activities per week as reported in session within ___ weeks.');
+    // Format: No "Client will" prefix (GoalBuilder adds discipline-appropriate subject).
+    // No trailing "within ___ weeks" (GoalBuilder adds timeframe from slider).
+    insertGoalsBank.run('MFT', 'Depression', 'report reduction in depressive symptoms to a PHQ-9 score of ___ or below');
+    insertGoalsBank.run('MFT', 'Depression', 'identify ___ positive coping strategies for managing depressive episodes');
+    insertGoalsBank.run('MFT', 'Depression', 'engage in ___ pleasurable activities per week as reported in session');
 
-    insertGoalsBank.run('MFT', 'Anxiety', 'Client will report reduction in anxiety symptoms to a GAD-7 score of ___ or below within ___ weeks.');
-    insertGoalsBank.run('MFT', 'Anxiety', 'Client will demonstrate use of ___ anxiety management techniques in daily life within ___ weeks.');
-    insertGoalsBank.run('MFT', 'Anxiety', 'Client will reduce avoidance behaviors related to ___ as evidenced by ___ within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Anxiety', 'report reduction in anxiety symptoms to a GAD-7 score of ___ or below');
+    insertGoalsBank.run('MFT', 'Anxiety', 'demonstrate use of ___ anxiety management techniques in daily life');
+    insertGoalsBank.run('MFT', 'Anxiety', 'reduce avoidance behaviors related to ___ as evidenced by ___');
 
-    insertGoalsBank.run('MFT', 'Trauma', 'Client will demonstrate reduction in trauma-related symptoms as measured by ___ within ___ weeks.');
-    insertGoalsBank.run('MFT', 'Trauma', 'Client will develop and utilize a safety plan for managing trauma triggers within ___ weeks.');
-    insertGoalsBank.run('MFT', 'Trauma', 'Client will process traumatic experiences as evidenced by decreased avoidance and intrusive symptoms within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Trauma', 'demonstrate reduction in trauma-related symptoms as measured by ___');
+    insertGoalsBank.run('MFT', 'Trauma', 'develop and utilize a safety plan for managing trauma triggers');
+    insertGoalsBank.run('MFT', 'Trauma', 'process traumatic experiences as evidenced by decreased avoidance and intrusive symptoms');
 
-    insertGoalsBank.run('MFT', 'Relationship', 'Client/couple will demonstrate improved communication skills as evidenced by ___ within ___ weeks.');
-    insertGoalsBank.run('MFT', 'Relationship', 'Client/couple will reduce frequency of escalated conflicts from ___ to ___ per week within ___ weeks.');
-    insertGoalsBank.run('MFT', 'Relationship', 'Client/couple will identify and modify ___ negative interaction patterns within ___ weeks.');
-    insertGoalsBank.run('MFT', 'Relationship', 'Client/couple will report improved relationship satisfaction as measured by ___ within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Relationship', 'demonstrate improved communication skills as evidenced by ___');
+    insertGoalsBank.run('MFT', 'Relationship', 'reduce frequency of escalated conflicts from ___ to ___ per week');
+    insertGoalsBank.run('MFT', 'Relationship', 'identify and modify ___ negative interaction patterns');
+    insertGoalsBank.run('MFT', 'Relationship', 'report improved relationship satisfaction as measured by ___');
 
-    insertGoalsBank.run('MFT', 'Family Systems', 'Family will establish and maintain ___ healthy boundaries as evidenced by ___ within ___ weeks.');
-    insertGoalsBank.run('MFT', 'Family Systems', 'Family members will demonstrate improved conflict resolution skills within ___ weeks.');
-    insertGoalsBank.run('MFT', 'Family Systems', 'Family will increase frequency of positive interactions to ___ per week within ___ weeks.');
-    insertGoalsBank.run('MFT', 'Family Systems', 'Parent(s) will implement ___ consistent parenting strategies as discussed in session within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Family Systems', 'establish and maintain ___ healthy boundaries as evidenced by ___');
+    insertGoalsBank.run('MFT', 'Family Systems', 'demonstrate improved conflict resolution skills');
+    insertGoalsBank.run('MFT', 'Family Systems', 'increase frequency of positive interactions to ___ per week');
+    insertGoalsBank.run('MFT', 'Family Systems', 'implement ___ consistent parenting strategies as discussed in session');
 
-    insertGoalsBank.run('MFT', 'Coping Skills', 'Client will identify and practice ___ healthy coping mechanisms for managing ___ within ___ weeks.');
-    insertGoalsBank.run('MFT', 'Coping Skills', 'Client will demonstrate ability to use grounding techniques when experiencing ___ within ___ weeks.');
-    insertGoalsBank.run('MFT', 'Coping Skills', 'Client will develop a personalized wellness plan including ___ self-care activities within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Coping Skills', 'identify and practice ___ healthy coping mechanisms for managing ___');
+    insertGoalsBank.run('MFT', 'Coping Skills', 'demonstrate ability to use grounding techniques when experiencing ___');
+    insertGoalsBank.run('MFT', 'Coping Skills', 'develop a personalized wellness plan including ___ self-care activities');
 
-    insertGoalsBank.run('MFT', 'Self-Esteem', 'Client will identify ___ personal strengths and report improved self-perception within ___ weeks.');
-    insertGoalsBank.run('MFT', 'Self-Esteem', 'Client will challenge ___ negative self-beliefs per session as evidenced by cognitive restructuring within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Self-Esteem', 'identify ___ personal strengths and report improved self-perception');
+    insertGoalsBank.run('MFT', 'Self-Esteem', 'challenge ___ negative self-beliefs per session as evidenced by cognitive restructuring');
 
-    insertGoalsBank.run('MFT', 'Grief', 'Client will process grief related to ___ as evidenced by decreased emotional distress within ___ weeks.');
-    insertGoalsBank.run('MFT', 'Grief', 'Client will identify ___ healthy ways to honor/memorialize their loss within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Grief', 'process grief related to ___ as evidenced by decreased emotional distress');
+    insertGoalsBank.run('MFT', 'Grief', 'identify ___ healthy ways to honor/memorialize their loss');
 
-    insertGoalsBank.run('MFT', 'Behavioral', 'Client will reduce frequency of ___ (target behavior) from ___ to ___ per week within ___ weeks.');
-    insertGoalsBank.run('MFT', 'Behavioral', 'Client will increase frequency of ___ (replacement behavior) to ___ per week within ___ weeks.');
-    insertGoalsBank.run('MFT', 'Behavioral', 'Client will identify ___ triggers for maladaptive behaviors and develop alternative responses within ___ weeks.');
+    insertGoalsBank.run('MFT', 'Behavioral', 'reduce frequency of ___ (target behavior) from ___ to ___ per week');
+    insertGoalsBank.run('MFT', 'Behavioral', 'increase frequency of ___ (replacement behavior) to ___ per week');
+    insertGoalsBank.run('MFT', 'Behavioral', 'identify ___ triggers for maladaptive behaviors and develop alternative responses');
   });
 
   seedTransaction();

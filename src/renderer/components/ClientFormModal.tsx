@@ -17,6 +17,18 @@ import {
   REFERRING_QUALIFIER_LABELS,
 } from '../../shared/types';
 import { searchICD10, lookupICD10, type ICD10Entry } from '../../shared/icd10Data';
+import CptCombobox from './CptCombobox';
+
+// Auto-capitalize names: "john doe" → "John Doe", handles hyphens/apostrophes
+const titleCase = (str: string): string =>
+  str.replace(/\b\w/g, (c) => c.toUpperCase());
+
+// Fields that should be auto-capitalized on blur
+const AUTO_CAP_FIELDS = new Set([
+  'first_name', 'last_name', 'city',
+  'subscriber_first_name', 'subscriber_last_name',
+  'referring_physician', 'service_facility_name',
+]);
 
 // US States for dropdown
 const US_STATES = [
@@ -306,6 +318,14 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
     }
   };
 
+  // Auto-capitalize name/city fields on blur
+  const handleBlurAutoCapitalize = (e: React.FocusEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    if (AUTO_CAP_FIELDS.has(name) && value.trim()) {
+      setForm((prev) => ({ ...prev, [name]: titleCase(value) }));
+    }
+  };
+
   // --- Secondary Dx helpers ---
   const handleSecDxCodeChange = (index: number, value: string) => {
     setForm((prev) => {
@@ -435,6 +455,7 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
                   className={`input ${errors.first_name ? 'ring-2 ring-red-400' : ''}`}
                   value={form.first_name}
                   onChange={handleChange}
+                  onBlur={handleBlurAutoCapitalize}
                   placeholder="First name"
                 />
                 {errors.first_name && (
@@ -449,6 +470,7 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
                   className={`input ${errors.last_name ? 'ring-2 ring-red-400' : ''}`}
                   value={form.last_name}
                   onChange={handleChange}
+                  onBlur={handleBlurAutoCapitalize}
                   placeholder="Last name"
                 />
                 {errors.last_name && (
@@ -530,6 +552,7 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
                   className="input"
                   value={form.city}
                   onChange={handleChange}
+                  onBlur={handleBlurAutoCapitalize}
                   placeholder="City"
                 />
               </div>
@@ -584,14 +607,11 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
                 )}
               </div>
               <div>
-                <label className="label" htmlFor="default_cpt_code">Default CPT Code</label>
-                <input
-                  id="default_cpt_code"
-                  name="default_cpt_code"
-                  className="input"
+                <label className="label">Default CPT Code</label>
+                <CptCombobox
                   value={form.default_cpt_code}
-                  onChange={handleChange}
-                  placeholder="e.g. 97110"
+                  onChange={(code) => setForm(prev => ({ ...prev, default_cpt_code: code }))}
+                  placeholder="Search CPT code..."
                 />
               </div>
               <div className="relative">
@@ -802,6 +822,7 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
                       className="input"
                       value={form.subscriber_first_name}
                       onChange={handleChange}
+                      onBlur={handleBlurAutoCapitalize}
                       placeholder="Subscriber first name"
                     />
                   </div>
@@ -813,6 +834,7 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
                       className="input"
                       value={form.subscriber_last_name}
                       onChange={handleChange}
+                      onBlur={handleBlurAutoCapitalize}
                       placeholder="Subscriber last name"
                     />
                   </div>
@@ -858,6 +880,7 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
                   className="input"
                   value={form.referring_physician}
                   onChange={handleChange}
+                  onBlur={handleBlurAutoCapitalize}
                   placeholder="Dr. Smith"
                 />
               </div>
@@ -866,11 +889,13 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
                 <input
                   id="referring_npi"
                   name="referring_npi"
-                  className="input"
+                  className={`input ${form.referring_npi && !/^\d{10}$/.test(form.referring_npi) ? 'border-red-300' : ''}`}
                   value={form.referring_npi}
-                  onChange={handleChange}
-                  placeholder="NPI number"
+                  maxLength={10}
+                  onChange={(e) => { const v = e.target.value.replace(/\D/g, '').slice(0, 10); setForm(prev => ({ ...prev, referring_npi: v })); }}
+                  placeholder="10-digit NPI"
                 />
+                {form.referring_npi && !/^\d{10}$/.test(form.referring_npi) && <p className="text-xs text-red-500 mt-1">NPI must be exactly 10 digits</p>}
               </div>
               <div>
                 <label className="label" htmlFor="referring_physician_qualifier">Provider Qualifier</label>
@@ -1010,12 +1035,13 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
                 {/* Service Facility (Box 32) */}
                 <div>
                   <label className="label" htmlFor="service_facility_name">Service Facility (Box 32)</label>
-                  <input id="service_facility_name" name="service_facility_name" className="input" value={form.service_facility_name} onChange={handleChange} placeholder="Leave blank to use practice" />
+                  <input id="service_facility_name" name="service_facility_name" className="input" value={form.service_facility_name} onChange={handleChange} onBlur={handleBlurAutoCapitalize} placeholder="Leave blank to use practice" />
                   <p className="text-xs text-[var(--color-text-tertiary)] mt-1">If different from billing provider</p>
                 </div>
                 <div>
                   <label className="label" htmlFor="service_facility_npi">Facility NPI (Box 32a)</label>
-                  <input id="service_facility_npi" name="service_facility_npi" className="input" value={form.service_facility_npi} onChange={handleChange} placeholder="Facility NPI" />
+                  <input id="service_facility_npi" name="service_facility_npi" className={`input ${form.service_facility_npi && !/^\d{10}$/.test(form.service_facility_npi) ? 'border-red-300' : ''}`} maxLength={10} value={form.service_facility_npi} onChange={(e) => { const v = e.target.value.replace(/\D/g, '').slice(0, 10); setForm(prev => ({ ...prev, service_facility_npi: v })); }} placeholder="10-digit NPI" />
+                  {form.service_facility_npi && !/^\d{10}$/.test(form.service_facility_npi) && <p className="text-xs text-red-500 mt-1">NPI must be exactly 10 digits</p>}
                 </div>
 
                 {/* Additional Info (Box 19) */}

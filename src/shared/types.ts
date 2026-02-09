@@ -180,6 +180,8 @@ export interface EvalGoalEntry {
   goal_type: GoalType;
   category: string;
   target_date: string;
+  baseline: number;   // Current level 0-100%
+  target: number;     // Goal level 0-100%
 }
 
 export interface Practice {
@@ -258,7 +260,11 @@ export interface Goal {
   status: GoalStatus;
   target_date: string;
   met_date: string;
+  baseline: number;                          // Current level 0-100%
+  target: number;                            // Goal level 0-100%
   created_by_user_id: number | null;         // V4: Multi-provider
+  source_document_id: number | null;         // eval ID or note ID that established this goal
+  source_document_type: string | null;       // 'eval' | 'progress_report' | null (null = pending)
   created_at: string;
   deleted_at: string | null;
 }
@@ -1069,6 +1075,7 @@ export interface PocketChartAPI {
     create: (data: Partial<Goal>) => Promise<Goal>;
     update: (id: number, data: Partial<Goal>) => Promise<Goal>;
     delete: (id: number) => Promise<boolean>;
+    tagSource: (goalId: number, docId: number, docType: string) => Promise<boolean>;
   };
   stagedGoals: {
     listByClient: (clientId: number) => Promise<StagedGoal[]>;
@@ -1396,6 +1403,11 @@ export interface PocketChartAPI {
   cms1500: {
     generate: (data: { clientId: number; noteIds: number[] }) => Promise<{ base64Pdf: string; filename: string }>;
     save: (data: { base64Pdf: string; filename: string }) => Promise<string | null>;
+  };
+  // ── Data Integrity ──
+  integrity: {
+    runCheck: () => Promise<{ tamperedDocuments: Array<{ type: string; id: number; clientId: number; date: string }>; totalChecked: number }>;
+    verifyAuditChain: () => Promise<{ intact: boolean; breakPoint?: number; totalEntries: number }>;
   };
 }
 

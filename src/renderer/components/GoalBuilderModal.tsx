@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { X, Plus, Trash2, ChevronRight, Target, TrendingUp } from 'lucide-react';
 import type { Goal, GoalType, Discipline, GoalsBankEntry } from '../../shared/types';
+import GoalBuilderChips from './GoalBuilderChips';
 
 interface GoalBuilderModalProps {
   isOpen: boolean;
@@ -32,20 +33,70 @@ const CATEGORY_OPTIONS: Record<Discipline, string[]> = {
   MFT: ['Depression', 'Anxiety', 'Trauma', 'Relationship', 'Family Systems', 'Coping Skills', 'Self-Esteem', 'Grief', 'Behavioral'],
 };
 
-function generateGoalText(draft: DraftGoal): string {
+const GOAL_SUBJECT: Record<Discipline, string> = {
+  PT: 'Patient', OT: 'Patient', ST: 'Patient', MFT: 'Client',
+};
+
+function generateGoalText(draft: DraftGoal, discipline: Discipline): string {
   if (draft.useCustomText) return draft.customText;
 
-  const baseText = draft.baseTemplate || 'achieve functional goal';
-  const timeframe = draft.targetDays === 30 ? '30 days' :
-                    draft.targetDays === 60 ? '60 days' :
-                    draft.targetDays === 90 ? '90 days' :
-                    `${draft.targetDays} days`;
+  let baseText = draft.baseTemplate || 'achieve functional goal';
 
-  return `Patient will ${baseText.toLowerCase()}, improving from ${draft.baseline}% to ${draft.target}% accuracy/independence within ${timeframe}.`;
+  // Strip any existing subject prefix to avoid "Patient will pt will..."
+  baseText = baseText.replace(/^(Pt|Patient|Client(?:\/couple)?|Family(?:\s+members)?|Parent\(s\))\s+will\s+/i, '');
+
+  const timeframe = `${draft.targetDays} days`;
+  const subject = GOAL_SUBJECT[discipline] || 'Patient';
+
+  // Substitute inline {target} and {baseline} placeholders if present
+  const hasTarget = baseText.includes('{target}');
+  const hasBaseline = baseText.includes('{baseline}');
+
+  if (hasTarget) baseText = baseText.replace(/\{target\}/g, `${draft.target}%`);
+  if (hasBaseline) baseText = baseText.replace(/\{baseline\}/g, `${draft.baseline}%`);
+
+  let goalText = `${subject} will ${baseText.charAt(0).toLowerCase()}${baseText.slice(1)}`;
+
+  // Only append performance suffix if template didn't have inline placeholders
+  if (!hasTarget && !hasBaseline) {
+    goalText += `, improving from ${draft.baseline}% to ${draft.target}% accuracy/independence`;
+  }
+
+  goalText += ` within ${timeframe}.`;
+  return goalText;
 }
 
 function generateId(): string {
   return Math.random().toString(36).substring(2, 9);
+}
+
+/** Render template text with highlighted placeholders (___, {target}, {baseline}) */
+function renderTemplateText(text: string): React.ReactNode {
+  const parts = text.split(/(___+|\{target\}|\{baseline\})/g);
+  return parts.map((part, i) => {
+    if (/^___+$/.test(part)) {
+      return (
+        <span key={i} className="inline-block bg-amber-100 text-amber-700 px-1 py-0.5 rounded text-xs font-mono mx-0.5">
+          {part}
+        </span>
+      );
+    }
+    if (part === '{target}') {
+      return (
+        <span key={i} className="inline-block bg-emerald-100 text-emerald-700 px-1 py-0.5 rounded text-xs font-mono mx-0.5">
+          target%
+        </span>
+      );
+    }
+    if (part === '{baseline}') {
+      return (
+        <span key={i} className="inline-block bg-amber-100 text-amber-700 px-1 py-0.5 rounded text-xs font-mono mx-0.5">
+          baseline%
+        </span>
+      );
+    }
+    return <span key={i}>{part}</span>;
+  });
 }
 
 const GoalBuilderModal: React.FC<GoalBuilderModalProps> = ({
@@ -159,7 +210,7 @@ const GoalBuilderModal: React.FC<GoalBuilderModalProps> = ({
 
         await window.api.goals.create({
           client_id: clientId,
-          goal_text: generateGoalText(draft),
+          goal_text: generateGoalText(draft, discipline),
           goal_type: draft.goal_type,
           category: draft.category,
           status: 'active',
@@ -217,9 +268,24 @@ const GoalBuilderModal: React.FC<GoalBuilderModalProps> = ({
             onChange={(e) => updateDraft(draft.id, { customText: e.target.value }, goalType)}
           />
         ) : (
-          <p className="text-sm text-[var(--color-text)] mb-3 italic">
-            "{draft.baseTemplate}"
-          </p>
+          <>
+            <p className="text-sm text-[var(--color-text)] mb-1 italic">
+              "{renderTemplateText(draft.baseTemplate)}"
+            </p>
+            {draft.baseTemplate.includes('___') && (
+              <p className="text-[10px] text-amber-600 mb-1">
+                {(draft.baseTemplate.match(/___/g) || []).length} placeholder(s) remaining — tap chips to fill
+              </p>
+            )}
+            <GoalBuilderChips
+              discipline={discipline}
+              category={draft.category}
+              onInsert={(value) => {
+                const updated = draft.baseTemplate.replace('___', value);
+                updateDraft(draft.id, { baseTemplate: updated }, goalType);
+              }}
+            />
+          </>
         )}
 
         {/* CLOF and Target Row */}
@@ -281,7 +347,7 @@ const GoalBuilderModal: React.FC<GoalBuilderModalProps> = ({
             Goal Preview
           </p>
           <p className="text-sm text-[var(--color-text)]">
-            {generateGoalText(draft)}
+            {generateGoalText(draft, discipline)}
           </p>
         </div>
 
@@ -289,7 +355,7 @@ const GoalBuilderModal: React.FC<GoalBuilderModalProps> = ({
         {!draft.useCustomText && (
           <button
             className="text-xs text-[var(--color-primary)] mt-2 hover:underline"
-            onClick={() => updateDraft(draft.id, { useCustomText: true, customText: generateGoalText(draft) }, goalType)}
+            onClick={() => updateDraft(draft.id, { useCustomText: true, customText: generateGoalText(draft, discipline) }, goalType)}
           >
             Edit goal text manually
           </button>
@@ -356,7 +422,7 @@ const GoalBuilderModal: React.FC<GoalBuilderModalProps> = ({
                     className="p-2.5 rounded-lg bg-white border border-[var(--color-border)] hover:border-[var(--color-primary)]/50 transition-colors group"
                   >
                     <p className="text-sm text-[var(--color-text)] mb-2 leading-snug">
-                      {entry.goal_template}
+                      {renderTemplateText(entry.goal_template)}
                     </p>
                     <div className="flex items-center gap-1.5">
                       <button

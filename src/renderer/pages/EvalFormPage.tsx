@@ -18,11 +18,16 @@ import {
   BookOpen,
   ChevronDown,
   ChevronRight,
+  Receipt,
 } from 'lucide-react';
-import type { Client, Evaluation, Discipline, GoalType, EvalGoalEntry, GoalsBankEntry } from '../../shared/types';
+import type { Client, Evaluation, Discipline, GoalType, EvalGoalEntry, GoalsBankEntry, CptLine, PlaceOfService } from '../../shared/types';
 import type { ValidationIssue, ValidationFixes } from '../../shared/types/validation';
 
 import SignConfirmDialog from '../components/SignConfirmDialog';
+import EvalSectionWrapper from '../components/EvalSectionWrapper';
+import EvalOutlineNav from '../components/EvalOutlineNav';
+import CptCombobox from '../components/CptCombobox';
+import { useEvalSections } from '../hooks/useEvalSections';
 
 // ── Types ──
 
@@ -66,6 +71,18 @@ interface MFTObjectiveAssessment {
 
 type ObjectiveAssessment = PTObjectiveAssessment | OTObjectiveAssessment | STObjectiveAssessment | MFTObjectiveAssessment;
 
+interface SessionNoteData {
+  date_of_service: string;
+  time_in: string;
+  time_out: string;
+  cpt_codes: CptLine[];
+  place_of_service: string;
+  subjective: string;
+  objective: string;
+  assessment: string;
+  plan: string;
+}
+
 interface EvalContent {
   referral_source: string;
   medical_history: string;
@@ -80,6 +97,7 @@ interface EvalContent {
   created_goal_ids?: number[]; // IDs of created Goal records
   treatment_plan: string;
   frequency_duration: string;
+  session_note?: SessionNoteData;
 }
 
 const CATEGORY_OPTIONS: Record<Discipline, string[]> = {
@@ -116,6 +134,27 @@ const TREATMENT_PLAN_CHIPS: Record<Discipline, string[]> = {
     'Play therapy', 'Art/expressive therapy', 'Crisis intervention',
     'Psychoeducation', 'Mindfulness/relaxation training',
   ],
+};
+
+const PLACE_OF_SERVICE_OPTIONS = [
+  { value: '11', label: 'Office' },
+  { value: '12', label: 'Home' },
+  { value: '02', label: 'Telehealth' },
+  { value: '10', label: 'Telehealth (Patient Home)' },
+  { value: '22', label: 'Outpatient Hospital' },
+  { value: '31', label: 'Skilled Nursing Facility' },
+];
+
+const EMPTY_SESSION_NOTE: SessionNoteData = {
+  date_of_service: '',
+  time_in: '',
+  time_out: '',
+  cpt_codes: [{ code: '', units: 1 }],
+  place_of_service: '11',
+  subjective: '',
+  objective: '',
+  assessment: '',
+  plan: '',
 };
 
 // ── Helpers ──
@@ -291,10 +330,12 @@ function RehabPotentialSection({
   value,
   onChange,
   evalType = 'initial',
+  hideHeader = false,
 }: {
   value: string;
   onChange: (val: string) => void;
   evalType?: 'initial' | 'reassessment' | 'discharge';
+  hideHeader?: boolean;
 }) {
   // Parse current rating from value
   const currentRating = REHAB_RATINGS.find((r) =>
@@ -329,14 +370,9 @@ function RehabPotentialSection({
     Poor: { active: 'bg-red-500 text-white border-red-500', inactive: 'bg-white text-red-700 border-red-300 hover:bg-red-50' },
   };
 
-  return (
-    <div className="card p-6 mb-6">
-      <h2 className="section-title">
-        {evalType === 'reassessment'
-          ? 'Rehabilitation Potential / Justification for Continued Services'
-          : 'Rehabilitation Potential / Medical Necessity'}
-      </h2>
-      <p className="text-xs text-[var(--color-text-secondary)] -mt-1 mb-3">
+  const innerContent = (
+    <>
+      <p className="text-xs text-[var(--color-text-secondary)] mb-3">
         {evalType === 'reassessment'
           ? 'Document why this patient continues to require skilled therapy services for the upcoming certification period.'
           : 'This section serves as your statement of medical necessity for skilled services.'}
@@ -393,6 +429,19 @@ function RehabPotentialSection({
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />
+    </>
+  );
+
+  if (hideHeader) return innerContent;
+
+  return (
+    <div className="card p-6 mb-6">
+      <h2 className="section-title">
+        {evalType === 'reassessment'
+          ? 'Rehabilitation Potential / Justification for Continued Services'
+          : 'Rehabilitation Potential / Medical Necessity'}
+      </h2>
+      {innerContent}
     </div>
   );
 }
@@ -436,6 +485,9 @@ export default function EvalFormPage() {
   const [showGoalBank, setShowGoalBank] = useState<number | null>(null); // index of goal entry showing bank
   const goalTextareaRefs = useRef<Map<number, HTMLTextAreaElement>>(new Map());
 
+  // Session Note & Billing state
+  const [sessionNote, setSessionNote] = useState<SessionNoteData>({ ...EMPTY_SESSION_NOTE });
+
   // Frequency & Duration state
   const [freqValue, setFreqValue] = useState<number>(0);
   const [durValue, setDurValue] = useState<number>(0);
@@ -445,6 +497,32 @@ export default function EvalFormPage() {
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [lastAutoSaved, setLastAutoSaved] = useState<string | null>(null);
   const isDirty = useRef(false); // true once user edits any field
+
+  // ── Section collapsing & outline nav ──
+  const {
+    sections: evalSections,
+    expandedSections,
+    toggleSection,
+    expandAll,
+    collapseAll,
+    allExpanded,
+    activeSectionId,
+    sectionRefs,
+    scrollToSection,
+    scrollContainerRef,
+  } = useEvalSections({
+    content: content as any,
+    evalDate,
+    goalEntries,
+    completedGoals,
+    signatureImage,
+    signatureTyped,
+    evalType,
+    sessionNote,
+  });
+
+  // Helper to get section status by id
+  const getSectionStatus = (id: string) => evalSections.find(s => s.id === id)?.status ?? 'optional-empty';
 
   // ── Data Loading ──
 
@@ -510,7 +588,11 @@ export default function EvalFormPage() {
           let loadedEntries: EvalGoalEntry[] = [];
           let alreadyCreatedIds: number[] = [];
           if (parsed.goal_entries && Array.isArray(parsed.goal_entries)) {
-            loadedEntries = parsed.goal_entries;
+            loadedEntries = parsed.goal_entries.map((g: any) => ({
+              ...g,
+              baseline: g.baseline ?? 0,
+              target: g.target ?? 80,
+            }));
             if (parsed.created_goal_ids && parsed.created_goal_ids.length > 0) {
               alreadyCreatedIds = parsed.created_goal_ids;
               setGoalsAlreadyCreated(true);
@@ -538,6 +620,8 @@ export default function EvalFormPage() {
                   goal_type: cg.goal_type || 'STG',
                   category: cg.category || '',
                   target_date: cg.target_date || '',
+                  baseline: cg.baseline ?? 0,
+                  target: cg.target ?? 80,
                 });
                 alreadyCreatedIds.push(cg.id);
               }
@@ -561,6 +645,17 @@ export default function EvalFormPage() {
             const durMatch = parsed.frequency_duration.match(/(\d+)\s*weeks/i);
             if (freqMatch) setFreqValue(parseInt(freqMatch[1], 10));
             if (durMatch) setDurValue(parseInt(durMatch[1], 10));
+          }
+
+          // Load session note data if present
+          if (parsed.session_note) {
+            setSessionNote({
+              ...EMPTY_SESSION_NOTE,
+              ...parsed.session_note,
+              cpt_codes: parsed.session_note.cpt_codes?.length > 0
+                ? parsed.session_note.cpt_codes
+                : [{ code: '', units: 1 }],
+            });
           }
         } catch {
           setContent(emptyContent(discipline));
@@ -618,11 +713,13 @@ export default function EvalFormPage() {
 
             // Load active goals if present — link them to existing Goal records
             if (prior.activeGoals && Array.isArray(prior.activeGoals) && prior.activeGoals.length > 0) {
-              const entries = prior.activeGoals.map((g: any) => ({
+              const entries: EvalGoalEntry[] = prior.activeGoals.map((g: any) => ({
                 goal_text: g.goal_text || '',
                 goal_type: g.goal_type || 'STG',
                 category: g.category || '',
                 target_date: g.target_date || '',
+                baseline: g.baseline ?? 0,
+                target: g.target ?? 80,
               }));
               const linkedIds = prior.activeGoals.map((g: any) => g.id).filter(Boolean);
               setGoalEntries(entries);
@@ -667,6 +764,8 @@ export default function EvalFormPage() {
               goal_type: cg.goal_type || 'STG',
               category: cg.category || '',
               target_date: cg.target_date || '',
+              baseline: cg.baseline ?? 0,
+              target: cg.target ?? 80,
             }));
             const linkedIds = activeClientGoals.map((cg: any) => cg.id);
             setGoalEntries(entries);
@@ -778,6 +877,8 @@ export default function EvalFormPage() {
               goal_type: entry.goal_type,
               category: entry.category,
               target_date: entry.target_date,
+              baseline: entry.baseline || 0,
+              target: entry.target || 0,
               status: 'active',
             });
             while (updatedGoalIds.length <= i) updatedGoalIds.push(0);
@@ -797,6 +898,7 @@ export default function EvalFormPage() {
         ...content,
         goal_entries: goalEntries,
         created_goal_ids: updatedGoalIds,
+        session_note: sessionNote,
       };
 
       const evalData: any = {
@@ -1089,6 +1191,21 @@ export default function EvalFormPage() {
       });
     }
 
+    // ── Backdated note warning ──
+    if (evalDate) {
+      const evalDateObj = new Date(evalDate + 'T00:00:00');
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const diffDays = Math.floor((today.getTime() - evalDateObj.getTime()) / (1000 * 60 * 60 * 24));
+      if (diffDays > 7) {
+        issues.push({
+          id: 'eval_backdated', message: `Evaluation date is ${diffDays} days ago`, severity: 'warning', fixable: false,
+          fieldType: 'none', target: 'document',
+          guidance: 'Medicare requires timely documentation. If this is intentional, proceed.',
+        });
+      }
+    }
+
     return issues;
   };
 
@@ -1110,6 +1227,21 @@ export default function EvalFormPage() {
 
     setSignDialogOpen(false);
     setTimeout(() => handleSave(true), 50);
+  };
+
+  /** Save fixes from the Sign dialog WITHOUT signing — just apply and close */
+  const handleSaveFixesOnly = (fixes: ValidationFixes) => {
+    // Apply document fixes to eval content state
+    if (Object.keys(fixes.documentFixes).length > 0) {
+      setContent(prev => {
+        if (!prev) return prev;
+        return { ...prev, ...fixes.documentFixes };
+      });
+    }
+
+    setSignDialogOpen(false);
+    // Trigger a non-signing draft save so fixes are persisted
+    setTimeout(() => handleSave(false), 50);
   };
 
   /** Handle client record updates from Fix-It dialog */
@@ -1173,6 +1305,8 @@ export default function EvalFormPage() {
             goal_type: entry.goal_type,
             category: entry.category,
             target_date: entry.target_date,
+            baseline: entry.baseline || 0,
+            target: entry.target || 0,
             status: 'active',
           });
           // Ensure createdGoalIds array is long enough
@@ -1181,11 +1315,12 @@ export default function EvalFormPage() {
         }
       }
 
-      // Store goal_entries and created_goal_ids in content
+      // Store goal_entries, created_goal_ids, and session_note in content
       const contentToSave = {
         ...content,
         goal_entries: goalEntries,
         created_goal_ids: createdGoalIds,
+        session_note: sessionNote,
       };
 
       const evalData: any = {
@@ -1199,11 +1334,53 @@ export default function EvalFormPage() {
         eval_type: evalType,
       };
 
+      let finalEvalId = savedEvalId;
       if (savedEvalId) {
         await window.api.evaluations.update(savedEvalId, evalData);
       } else {
         const created = await window.api.evaluations.create(evalData);
-        if (created?.id) setSavedEvalId(created.id);
+        if (created?.id) {
+          setSavedEvalId(created.id);
+          finalEvalId = created.id;
+        }
+      }
+
+      // Tag goals as established by this signed eval
+      if (sign && finalEvalId) {
+        for (const gid of createdGoalIds) {
+          if (gid) {
+            try { await window.api.goals.tagSource(gid, finalEvalId, 'eval'); } catch (_) { /* ignore */ }
+          }
+        }
+      }
+
+      // Auto-create a billable note if session_note has SOAP content
+      if (sign && (sessionNote.subjective?.trim() || sessionNote.objective?.trim() || sessionNote.assessment?.trim() || sessionNote.plan?.trim())) {
+        try {
+          const filteredCptLines = sessionNote.cpt_codes.filter(l => l.code.trim());
+          await window.api.notes.create({
+            client_id: cid,
+            date_of_service: sessionNote.date_of_service || evalDate,
+            time_in: sessionNote.time_in || '',
+            time_out: sessionNote.time_out || '',
+            units: filteredCptLines.reduce((sum, l) => sum + (l.units || 0), 0) || 1,
+            cpt_code: filteredCptLines[0]?.code || '',
+            cpt_codes: JSON.stringify(filteredCptLines),
+            place_of_service: (sessionNote.place_of_service || '11') as PlaceOfService,
+            subjective: sessionNote.subjective || '',
+            objective: sessionNote.objective || '',
+            assessment: sessionNote.assessment || '',
+            plan: sessionNote.plan || '',
+            goals_addressed: JSON.stringify(createdGoalIds.filter(Boolean)),
+            signature_image: signatureImage,
+            signature_typed: signatureTyped,
+            signed_at: new Date().toISOString(),
+            note_type: 'soap',
+            patient_name: client ? `${client.first_name} ${client.last_name}`.trim() : '',
+          });
+        } catch (err) {
+          console.error('Failed to auto-create session note from eval:', err);
+        }
       }
 
       // Mark form clean to prevent blocker/autosave from overwriting signed_at
@@ -1269,7 +1446,7 @@ export default function EvalFormPage() {
   };
 
   return (
-    <div className="overflow-y-auto h-full p-6">
+    <div className="overflow-y-auto h-full p-6" ref={scrollContainerRef}>
       {/* Toast */}
       {toast && (
         <div className="fixed top-4 right-4 z-50 flex items-center gap-2 bg-emerald-600 text-white px-4 py-3 rounded-lg shadow-lg">
@@ -1278,7 +1455,16 @@ export default function EvalFormPage() {
         </div>
       )}
 
-      <div className="max-w-4xl mx-auto">
+      {/* Sticky Outline Nav */}
+      <EvalOutlineNav
+        sections={evalSections}
+        activeSectionId={activeSectionId}
+        onSectionClick={scrollToSection}
+        allExpanded={allExpanded}
+        onToggleAll={() => allExpanded ? collapseAll() : expandAll()}
+      />
+
+      <div className="max-w-4xl mx-auto mr-48">
         {/* Header */}
         <div className="flex items-center justify-between mb-6 bg-violet-50/60 -mx-6 -mt-6 px-6 pt-6 pb-4 rounded-t-lg border-b-2 border-violet-200">
           <div className="flex items-center gap-3">
@@ -1339,12 +1525,31 @@ export default function EvalFormPage() {
           </div>
         </div>
 
+        {/* Collapse All / Expand All */}
+        <div className="flex justify-end mb-3">
+          <button
+            type="button"
+            className="btn-ghost btn-sm gap-1 text-xs"
+            onClick={() => allExpanded ? collapseAll() : expandAll()}
+          >
+            {allExpanded ? (
+              <><ChevronRight className="w-3.5 h-3.5" /> Collapse All</>
+            ) : (
+              <><ChevronDown className="w-3.5 h-3.5" /> Expand All</>
+            )}
+          </button>
+        </div>
+
         {/* Eval Date */}
-        <div className="card p-6 mb-6">
-          <div className="flex items-center gap-2 mb-4">
-            <CalendarDays className="w-5 h-5 text-[var(--color-primary)]" />
-            <h2 className="section-title mb-0">Evaluation Date</h2>
-          </div>
+        <EvalSectionWrapper
+          id="evalDate"
+          title="Evaluation Date"
+          icon={<CalendarDays className="w-5 h-5" />}
+          status={getSectionStatus('evalDate')}
+          isExpanded={expandedSections['evalDate'] ?? true}
+          onToggle={() => toggleSection('evalDate')}
+          sectionRef={(el) => { sectionRefs.current['evalDate'] = el; }}
+        >
           <div className="max-w-xs">
             <input
               type="date"
@@ -1353,14 +1558,18 @@ export default function EvalFormPage() {
               onChange={(e) => { isDirty.current = true; setEvalDate(e.target.value); }}
             />
           </div>
-        </div>
+        </EvalSectionWrapper>
 
         {/* Referral Source */}
-        <div className="card p-6 mb-6">
-          <div className="flex items-center gap-2 mb-4">
-            <User className="w-5 h-5 text-[var(--color-primary)]" />
-            <h2 className="section-title mb-0">Referral Source</h2>
-          </div>
+        <EvalSectionWrapper
+          id="referralSource"
+          title="Referral Source"
+          icon={<User className="w-5 h-5" />}
+          status={getSectionStatus('referralSource')}
+          isExpanded={expandedSections['referralSource'] ?? true}
+          onToggle={() => toggleSection('referralSource')}
+          sectionRef={(el) => { sectionRefs.current['referralSource'] = el; }}
+        >
           <input
             type="text"
             className="input"
@@ -1368,18 +1577,22 @@ export default function EvalFormPage() {
             value={content.referral_source}
             onChange={(e) => updateField('referral_source', e.target.value)}
           />
-        </div>
+        </EvalSectionWrapper>
 
         {/* Medical History */}
-        <div className="card p-6 mb-6">
-          <div className="flex items-center gap-2">
-            <h2 className="section-title">Medical History</h2>
-            {priorFieldKeys.has('medical_history') && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-700 mb-2">
-                UPDATE
-              </span>
-            )}
-          </div>
+        <EvalSectionWrapper
+          id="medicalHistory"
+          title="Medical History"
+          status={getSectionStatus('medicalHistory')}
+          isExpanded={expandedSections['medicalHistory'] ?? true}
+          onToggle={() => toggleSection('medicalHistory')}
+          sectionRef={(el) => { sectionRefs.current['medicalHistory'] = el; }}
+          badge={priorFieldKeys.has('medical_history') ? (
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-700">
+              UPDATE
+            </span>
+          ) : undefined}
+        >
           <textarea
             className="textarea"
             rows={4}
@@ -1387,13 +1600,17 @@ export default function EvalFormPage() {
             value={content.medical_history}
             onChange={(e) => updateField('medical_history', e.target.value)}
           />
-        </div>
+        </EvalSectionWrapper>
 
         {/* Prior / Current Level of Function */}
-        <div className="card p-6 mb-6">
-          <h2 className="section-title">
-            {evalType === 'reassessment' ? 'Current Level of Function' : 'Prior Level of Function'}
-          </h2>
+        <EvalSectionWrapper
+          id="priorLevelOfFunction"
+          title={evalType === 'reassessment' ? 'Current Level of Function' : 'Prior Level of Function'}
+          status={getSectionStatus('priorLevelOfFunction')}
+          isExpanded={expandedSections['priorLevelOfFunction'] ?? true}
+          onToggle={() => toggleSection('priorLevelOfFunction')}
+          sectionRef={(el) => { sectionRefs.current['priorLevelOfFunction'] = el; }}
+        >
           <textarea
             className="textarea"
             rows={3}
@@ -1404,11 +1621,17 @@ export default function EvalFormPage() {
             value={content.prior_level_of_function}
             onChange={(e) => updateField('prior_level_of_function', e.target.value)}
           />
-        </div>
+        </EvalSectionWrapper>
 
         {/* Current Complaints */}
-        <div className="card p-6 mb-6">
-          <h2 className="section-title">Current Complaints</h2>
+        <EvalSectionWrapper
+          id="currentComplaints"
+          title="Current Complaints"
+          status={getSectionStatus('currentComplaints')}
+          isExpanded={expandedSections['currentComplaints'] ?? true}
+          onToggle={() => toggleSection('currentComplaints')}
+          sectionRef={(el) => { sectionRefs.current['currentComplaints'] = el; }}
+        >
           <textarea
             className="textarea"
             rows={3}
@@ -1416,17 +1639,19 @@ export default function EvalFormPage() {
             value={content.current_complaints}
             onChange={(e) => updateField('current_complaints', e.target.value)}
           />
-        </div>
+        </EvalSectionWrapper>
 
         {/* Objective Assessment - discipline-specific */}
-        <div className="card p-6 mb-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Stethoscope className="w-5 h-5 text-[var(--color-primary)]" />
-            <h2 className="section-title mb-0">Objective Assessment</h2>
-            <span className={`badge badge-${discipline.toLowerCase()} ml-2`}>
-              {discipline}
-            </span>
-          </div>
+        <EvalSectionWrapper
+          id="objectiveAssessment"
+          title="Objective Assessment"
+          icon={<Stethoscope className="w-5 h-5" />}
+          status={getSectionStatus('objectiveAssessment')}
+          isExpanded={expandedSections['objectiveAssessment'] ?? true}
+          onToggle={() => toggleSection('objectiveAssessment')}
+          sectionRef={(el) => { sectionRefs.current['objectiveAssessment'] = el; }}
+          badge={<span className={`badge badge-${discipline.toLowerCase()} ml-1`}>{discipline}</span>}
+        >
           <div className="space-y-4">
             {objectiveFields.map((field) => (
               <div key={field.key}>
@@ -1441,19 +1666,23 @@ export default function EvalFormPage() {
               </div>
             ))}
           </div>
-        </div>
+        </EvalSectionWrapper>
 
         {/* Clinical Impression */}
-        <div className="card p-6 mb-6">
-          <div className="flex items-center gap-2 mb-4">
-            <FileText className="w-5 h-5 text-[var(--color-primary)]" />
-            <h2 className="section-title mb-0">Clinical Impression</h2>
-            {priorFieldKeys.has('clinical_impression') && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-700">
-                UPDATE
-              </span>
-            )}
-          </div>
+        <EvalSectionWrapper
+          id="clinicalImpression"
+          title="Clinical Impression"
+          icon={<FileText className="w-5 h-5" />}
+          status={getSectionStatus('clinicalImpression')}
+          isExpanded={expandedSections['clinicalImpression'] ?? true}
+          onToggle={() => toggleSection('clinicalImpression')}
+          sectionRef={(el) => { sectionRefs.current['clinicalImpression'] = el; }}
+          badge={priorFieldKeys.has('clinical_impression') ? (
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-700">
+              UPDATE
+            </span>
+          ) : undefined}
+        >
           <textarea
             className="textarea"
             rows={4}
@@ -1461,18 +1690,36 @@ export default function EvalFormPage() {
             value={content.clinical_impression}
             onChange={(e) => updateField('clinical_impression', e.target.value)}
           />
-        </div>
+        </EvalSectionWrapper>
 
         {/* Rehabilitation Potential / Medical Necessity */}
-        <RehabPotentialSection
-          value={content.rehabilitation_potential}
-          onChange={(val) => updateField('rehabilitation_potential', val)}
-          evalType={evalType}
-        />
+        <EvalSectionWrapper
+          id="rehabPotential"
+          title={evalType === 'reassessment'
+            ? 'Rehabilitation Potential / Justification for Continued Services'
+            : 'Rehabilitation Potential / Medical Necessity'}
+          status={getSectionStatus('rehabPotential')}
+          isExpanded={expandedSections['rehabPotential'] ?? true}
+          onToggle={() => toggleSection('rehabPotential')}
+          sectionRef={(el) => { sectionRefs.current['rehabPotential'] = el; }}
+        >
+          <RehabPotentialSection
+            value={content.rehabilitation_potential}
+            onChange={(val) => updateField('rehabilitation_potential', val)}
+            evalType={evalType}
+            hideHeader
+          />
+        </EvalSectionWrapper>
 
         {/* Precautions / Contraindications */}
-        <div className="card p-6 mb-6">
-          <h2 className="section-title">Precautions / Contraindications</h2>
+        <EvalSectionWrapper
+          id="precautions"
+          title="Precautions / Contraindications"
+          status={getSectionStatus('precautions')}
+          isExpanded={expandedSections['precautions'] ?? true}
+          onToggle={() => toggleSection('precautions')}
+          sectionRef={(el) => { sectionRefs.current['precautions'] = el; }}
+        >
           <textarea
             className="textarea"
             rows={3}
@@ -1480,32 +1727,34 @@ export default function EvalFormPage() {
             value={content.precautions}
             onChange={(e) => updateField('precautions', e.target.value)}
           />
-        </div>
+        </EvalSectionWrapper>
 
         {/* Goals */}
-        <div className="card p-6 mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <Target className="w-5 h-5 text-[var(--color-primary)]" />
-              <h2 className="section-title mb-0">Goals</h2>
-            </div>
-            {!existingSignedAt && (
-              <button
-                type="button"
-                className="btn-ghost btn-sm gap-1 text-xs"
-                onClick={() =>
-                  updateGoalEntries(prev => [
-                    ...prev,
-                    { goal_text: '', goal_type: 'STG' as GoalType, category: (CATEGORY_OPTIONS[discipline] || [])[0] || '', target_date: '' },
-                  ])
-                }
-              >
-                <Plus size={14} />
-                Add Goal
-              </button>
-            )}
-          </div>
-
+        <EvalSectionWrapper
+          id="goals"
+          title="Goals"
+          icon={<Target className="w-5 h-5" />}
+          status={getSectionStatus('goals')}
+          isExpanded={expandedSections['goals'] ?? true}
+          onToggle={() => toggleSection('goals')}
+          sectionRef={(el) => { sectionRefs.current['goals'] = el; }}
+          badge={!existingSignedAt ? (
+            <button
+              type="button"
+              className="btn-ghost btn-sm gap-1 text-xs ml-auto"
+              onClick={(e) => {
+                e.stopPropagation();
+                updateGoalEntries(prev => [
+                  ...prev,
+                  { goal_text: '', goal_type: 'STG' as GoalType, category: (CATEGORY_OPTIONS[discipline] || [])[0] || '', target_date: '', baseline: 0, target: 80 },
+                ]);
+              }}
+            >
+              <Plus size={14} />
+              Add Goal
+            </button>
+          ) : undefined}
+        >
           {/* Legacy free-text goals (backward compat) */}
           {content.goals && goalEntries.length === 0 && !goalsAlreadyCreated && (
             <div className="mb-4">
@@ -1718,6 +1967,57 @@ export default function EvalFormPage() {
                       </div>
                     </div>
                   </div>
+
+                  {/* Baseline / Target percentage chips */}
+                  <div className="grid grid-cols-2 gap-3 mb-3">
+                    <div>
+                      <label className="label text-xs">Current Level (CLOF)</label>
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map(pct => (
+                          <button
+                            key={`bl-${pct}`}
+                            type="button"
+                            className={`px-1.5 py-0.5 text-[10px] rounded-full border transition-colors cursor-pointer ${
+                              entry.baseline === pct
+                                ? 'bg-amber-500 text-white border-amber-500'
+                                : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-amber-400 hover:text-amber-600'
+                            }`}
+                            onClick={() =>
+                              updateGoalEntries(prev =>
+                                prev.map((g, i) => i === idx ? { ...g, baseline: pct } : g)
+                              )
+                            }
+                          >
+                            {pct}%
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="label text-xs">Goal Level (Target)</label>
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map(pct => (
+                          <button
+                            key={`tg-${pct}`}
+                            type="button"
+                            className={`px-1.5 py-0.5 text-[10px] rounded-full border transition-colors cursor-pointer ${
+                              entry.target === pct
+                                ? 'bg-emerald-500 text-white border-emerald-500'
+                                : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-emerald-400 hover:text-emerald-600'
+                            }`}
+                            onClick={() =>
+                              updateGoalEntries(prev =>
+                                prev.map((g, i) => i === idx ? { ...g, target: pct } : g)
+                              )
+                            }
+                          >
+                            {pct}%
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
                   <div>
                     <label className="label text-xs">Goal Text</label>
                     <textarea
@@ -1772,19 +2072,23 @@ export default function EvalFormPage() {
               </div>
             );
           })()}
-        </div>
+        </EvalSectionWrapper>
 
         {/* Goals Met / Completed */}
         {completedGoals.length > 0 && (
-          <div className="card p-5 mb-6 bg-green-50/30 border-l-4 border-l-green-400">
-            <h2 className="text-base font-semibold text-[var(--color-text)] mb-3 flex items-center gap-2">
-              <CheckCircle className="w-5 h-5 text-green-500" />
-              Goals Met / Completed
-              <span className="text-xs font-normal text-[var(--color-text-secondary)]">({completedGoals.length})</span>
-            </h2>
+          <EvalSectionWrapper
+            id="goalsMet"
+            title="Goals Met / Completed"
+            icon={<CheckCircle className="w-5 h-5 text-green-500" />}
+            status="complete"
+            isExpanded={expandedSections['goalsMet'] ?? true}
+            onToggle={() => toggleSection('goalsMet')}
+            sectionRef={(el) => { sectionRefs.current['goalsMet'] = el; }}
+            badge={<span className="text-xs font-normal text-[var(--color-text-secondary)]">({completedGoals.length})</span>}
+          >
             <div className="space-y-1.5">
               {completedGoals.map((goal) => (
-                <div key={goal.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/60 border border-green-100">
+                <div key={goal.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-50/30 border border-green-100">
                   <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
                     goal.status === 'met' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
                   }`}>
@@ -1798,19 +2102,23 @@ export default function EvalFormPage() {
                 </div>
               ))}
             </div>
-          </div>
+          </EvalSectionWrapper>
         )}
 
         {/* Treatment Plan */}
-        <div className="card p-6 mb-6">
-          <div className="flex items-center gap-2">
-            <h2 className="section-title">Treatment Plan</h2>
-            {priorFieldKeys.has('treatment_plan') && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-700 mb-2">
-                UPDATE
-              </span>
-            )}
-          </div>
+        <EvalSectionWrapper
+          id="treatmentPlan"
+          title="Treatment Plan"
+          status={getSectionStatus('treatmentPlan')}
+          isExpanded={expandedSections['treatmentPlan'] ?? true}
+          onToggle={() => toggleSection('treatmentPlan')}
+          sectionRef={(el) => { sectionRefs.current['treatmentPlan'] = el; }}
+          badge={priorFieldKeys.has('treatment_plan') ? (
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-700">
+              UPDATE
+            </span>
+          ) : undefined}
+        >
           {/* Quick chips for treatment plan */}
           <div className="flex flex-wrap gap-1.5 mb-3">
             {(TREATMENT_PLAN_CHIPS[discipline] || []).map((chip) => (
@@ -1834,19 +2142,22 @@ export default function EvalFormPage() {
             value={content.treatment_plan}
             onChange={(e) => updateField('treatment_plan', e.target.value)}
           />
-        </div>
+        </EvalSectionWrapper>
 
         {/* Frequency & Duration */}
-        <div className="card p-6 mb-6">
-          <div className="flex items-center gap-2">
-            <h2 className="section-title">Frequency & Duration</h2>
-            {priorFieldKeys.has('frequency_duration') && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-700 mb-2">
-                UPDATE
-              </span>
-            )}
-          </div>
-
+        <EvalSectionWrapper
+          id="frequencyDuration"
+          title="Frequency & Duration"
+          status={getSectionStatus('frequencyDuration')}
+          isExpanded={expandedSections['frequencyDuration'] ?? true}
+          onToggle={() => toggleSection('frequencyDuration')}
+          sectionRef={(el) => { sectionRefs.current['frequencyDuration'] = el; }}
+          badge={priorFieldKeys.has('frequency_duration') ? (
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-700">
+              UPDATE
+            </span>
+          ) : undefined}
+        >
           {/* Frequency quick taps */}
           <div className="mb-4">
             <label className="label text-xs mb-2">Frequency (times/week)</label>
@@ -1927,15 +2238,178 @@ export default function EvalFormPage() {
             value={content.frequency_duration}
             onChange={(e) => updateField('frequency_duration', e.target.value)}
           />
-        </div>
+        </EvalSectionWrapper>
 
-        {/* Signature */}
-        <div className="card p-6 mb-6">
-          <div className="flex items-center gap-2 mb-4">
-            <PenLine className="w-5 h-5 text-[var(--color-primary)]" />
-            <h2 className="section-title mb-0">Signature</h2>
+        {/* Session Note & Billing */}
+        <EvalSectionWrapper
+          id="sessionNote"
+          title="Session Note & Billing"
+          icon={<Receipt className="w-5 h-5" />}
+          status={getSectionStatus('sessionNote')}
+          isExpanded={expandedSections['sessionNote'] ?? true}
+          onToggle={() => toggleSection('sessionNote')}
+          sectionRef={(el) => { sectionRefs.current['sessionNote'] = el; }}
+        >
+          <p className="text-xs text-[var(--color-text-secondary)] mb-4 italic">
+            Optional — fill this in to auto-create a billable session note when you sign the eval.
+          </p>
+
+          {/* Date / Time row */}
+          <div className="grid grid-cols-3 gap-4 mb-4">
+            <div>
+              <label className="label">Date of Service</label>
+              <input
+                type="date"
+                className="input"
+                value={sessionNote.date_of_service || evalDate}
+                onChange={(e) => setSessionNote(prev => ({ ...prev, date_of_service: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="label">Time In</label>
+              <input
+                type="time"
+                className="input"
+                value={sessionNote.time_in}
+                onChange={(e) => setSessionNote(prev => ({ ...prev, time_in: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="label">Time Out</label>
+              <input
+                type="time"
+                className="input"
+                value={sessionNote.time_out}
+                onChange={(e) => setSessionNote(prev => ({ ...prev, time_out: e.target.value }))}
+              />
+            </div>
           </div>
 
+          {/* CPT Codes */}
+          <div className="mb-4">
+            <div className="flex items-center justify-between mb-2">
+              <label className="label mb-0">CPT Codes & Units</label>
+              <button
+                type="button"
+                className="btn-ghost btn-sm gap-1 text-xs"
+                onClick={() => setSessionNote(prev => ({ ...prev, cpt_codes: [...prev.cpt_codes, { code: '', units: 1 }] }))}
+              >
+                <Plus size={14} />
+                Add CPT Code
+              </button>
+            </div>
+            <div className="space-y-2">
+              {sessionNote.cpt_codes.map((line, idx) => (
+                <div key={idx} className="flex items-center gap-3">
+                  <CptCombobox
+                    value={line.code}
+                    onChange={(code) => setSessionNote(prev => ({
+                      ...prev,
+                      cpt_codes: prev.cpt_codes.map((l, i) => i === idx ? { ...l, code } : l),
+                    }))}
+                    placeholder="Search CPT code..."
+                    className="flex-1"
+                  />
+                  <div className="w-24">
+                    <input
+                      type="number"
+                      className="input text-center"
+                      min={1}
+                      value={line.units}
+                      onChange={(e) => setSessionNote(prev => ({
+                        ...prev,
+                        cpt_codes: prev.cpt_codes.map((l, i) => i === idx ? { ...l, units: parseInt(e.target.value, 10) || 1 } : l),
+                      }))}
+                    />
+                  </div>
+                  <span className="text-xs text-[var(--color-text-secondary)] w-10">units</span>
+                  {sessionNote.cpt_codes.length > 1 && (
+                    <button
+                      type="button"
+                      className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                      onClick={() => setSessionNote(prev => ({
+                        ...prev,
+                        cpt_codes: prev.cpt_codes.filter((_, i) => i !== idx),
+                      }))}
+                    >
+                      <X size={16} />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Place of Service */}
+          <div className="mb-4">
+            <label className="label">Place of Service</label>
+            <select
+              className="select"
+              value={sessionNote.place_of_service}
+              onChange={(e) => setSessionNote(prev => ({ ...prev, place_of_service: e.target.value }))}
+            >
+              {PLACE_OF_SERVICE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* SOAP fields — compact */}
+          <div className="border-t border-[var(--color-border)] pt-4 space-y-3">
+            <p className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">SOAP Note</p>
+            <div>
+              <label className="label text-xs">Subjective</label>
+              <textarea
+                className="input min-h-[52px]"
+                rows={2}
+                placeholder="Patient's reported symptoms, complaints, and history..."
+                value={sessionNote.subjective}
+                onChange={(e) => setSessionNote(prev => ({ ...prev, subjective: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="label text-xs">Objective</label>
+              <textarea
+                className="input min-h-[52px]"
+                rows={2}
+                placeholder="Measurable observations, test results, vitals..."
+                value={sessionNote.objective}
+                onChange={(e) => setSessionNote(prev => ({ ...prev, objective: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="label text-xs">Assessment</label>
+              <textarea
+                className="input min-h-[52px]"
+                rows={2}
+                placeholder="Clinical interpretation and progress toward goals..."
+                value={sessionNote.assessment}
+                onChange={(e) => setSessionNote(prev => ({ ...prev, assessment: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="label text-xs">Plan</label>
+              <textarea
+                className="input min-h-[52px]"
+                rows={2}
+                placeholder="Treatment plan, next steps, follow-up..."
+                value={sessionNote.plan}
+                onChange={(e) => setSessionNote(prev => ({ ...prev, plan: e.target.value }))}
+              />
+            </div>
+          </div>
+        </EvalSectionWrapper>
+
+        {/* Signature */}
+        <EvalSectionWrapper
+          id="signature"
+          title="Signature"
+          icon={<PenLine className="w-5 h-5" />}
+          status={getSectionStatus('signature')}
+          isExpanded={expandedSections['signature'] ?? true}
+          onToggle={() => toggleSection('signature')}
+          sectionRef={(el) => { sectionRefs.current['signature'] = el; }}
+        >
           {/* Typed Signature */}
           <div className="mb-4">
             <label className="label">Typed Signature</label>
@@ -1976,7 +2450,7 @@ export default function EvalFormPage() {
               </p>
             </div>
           )}
-        </div>
+        </EvalSectionWrapper>
 
         {/* Action Buttons */}
         <div className="flex items-center justify-between pb-8">
@@ -2029,8 +2503,10 @@ export default function EvalFormPage() {
         isOpen={signDialogOpen}
         onClose={() => setSignDialogOpen(false)}
         onConfirm={handleSignWithFixes}
+        onSaveAndClose={handleSaveFixesOnly}
         issues={signDialogIssues}
         onClientUpdate={handleClientUpdate}
+        clientName={client ? `${client.first_name} ${client.last_name}`.trim() : undefined}
       />
     </div>
   );

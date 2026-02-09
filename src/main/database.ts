@@ -1039,6 +1039,171 @@ function runMigrations(): void {
         }
       },
     },
+    {
+      version: 25,
+      description: 'Add entry_hash column to audit_log for hash chain integrity',
+      up: () => {
+        if (!columnExists('audit_log', 'entry_hash')) {
+          db.exec("ALTER TABLE audit_log ADD COLUMN entry_hash TEXT");
+        }
+      },
+    },
+    {
+      version: 26,
+      description: 'Add source_document_id and source_document_type to goals for established/pending tracking',
+      up: () => {
+        if (!columnExists('goals', 'source_document_id')) {
+          db.exec("ALTER TABLE goals ADD COLUMN source_document_id INTEGER DEFAULT NULL");
+        }
+        if (!columnExists('goals', 'source_document_type')) {
+          db.exec("ALTER TABLE goals ADD COLUMN source_document_type TEXT DEFAULT NULL");
+        }
+
+        // Backfill: tag goals created by signed evaluations
+        const signedEvals = db.prepare(
+          "SELECT id, content FROM evaluations WHERE signed_at IS NOT NULL AND deleted_at IS NULL"
+        ).all() as Array<{ id: number; content: string }>;
+
+        const updateGoalSource = db.prepare(
+          "UPDATE goals SET source_document_id = ?, source_document_type = 'eval' WHERE id = ? AND source_document_id IS NULL"
+        );
+
+        for (const evalRow of signedEvals) {
+          try {
+            const parsed = JSON.parse(evalRow.content || '{}');
+            const goalIds: number[] = parsed.created_goal_ids || [];
+            for (const gid of goalIds) {
+              if (gid) updateGoalSource.run(evalRow.id, gid);
+            }
+          } catch { /* skip malformed JSON */ }
+        }
+
+        // Backfill: tag goals referenced in signed progress reports
+        const signedPRNotes = db.prepare(
+          "SELECT id FROM notes WHERE note_type = 'progress_report' AND signed_at IS NOT NULL AND deleted_at IS NULL"
+        ).all() as Array<{ id: number }>;
+
+        const updateGoalSourcePR = db.prepare(
+          "UPDATE goals SET source_document_id = ?, source_document_type = 'progress_report' WHERE id = ? AND source_document_id IS NULL"
+        );
+
+        for (const note of signedPRNotes) {
+          const prGoals = db.prepare(
+            "SELECT goal_id FROM progress_report_goals WHERE note_id = ? AND deleted_at IS NULL"
+          ).all(note.id) as Array<{ goal_id: number }>;
+          for (const prg of prGoals) {
+            if (prg.goal_id) updateGoalSourcePR.run(note.id, prg.goal_id);
+          }
+        }
+
+        db.exec("CREATE INDEX IF NOT EXISTS idx_goals_source ON goals(source_document_type, source_document_id)");
+      },
+    },
+    {
+      version: 27,
+      description: 'Update default goals_bank templates to SMART format (no subject prefix, no timeframe suffix, inline {target}/{baseline})',
+      up: () => {
+        // Only update default templates (is_default = 1). Custom user templates are untouched.
+        const templateUpdates: Array<[string, string]> = [
+          // PT
+          ['Pt will ambulate ___ ft with ___ device and ___ assist in ___ weeks.', 'ambulate ___ ft with ___ device and ___ assist'],
+          ['Pt will ambulate on level surfaces with normalized gait pattern, no device, within ___ weeks.', 'ambulate on level surfaces with normalized gait pattern, no device'],
+          ['Pt will navigate stairs with ___ assist and ___ railing in ___ weeks.', 'navigate stairs with ___ assist and ___ railing'],
+          ['Pt will perform sit-to-stand from standard height chair with ___ assist in ___ weeks.', 'perform sit-to-stand from standard height chair with ___ assist'],
+          ['Pt will demonstrate ___ strength of ___/5 in ___ within ___ weeks.', 'demonstrate ___ strength of ___/5 in ___'],
+          ['Pt will improve grip strength to ___lbs bilaterally within ___ weeks.', 'improve grip strength to ___ lbs bilaterally'],
+          ['Pt will achieve ___ AROM of ___ degrees within ___ weeks.', 'achieve ___ AROM of ___ degrees'],
+          ['Pt will demonstrate functional ROM for ___ within ___ weeks.', 'demonstrate functional ROM for ___'],
+          ['Pt will maintain static standing balance for ___ seconds without LOB within ___ weeks.', 'maintain static standing balance for ___ seconds without LOB'],
+          ['Pt will achieve Berg Balance Scale score of ___/56 within ___ weeks.', 'achieve Berg Balance Scale score of ___/56'],
+          ['Pt will perform dynamic balance activities with ___ LOB in ___ weeks.', 'perform dynamic balance activities with ___ LOB'],
+          ['Pt will report pain reduction to ___/10 with functional activities within ___ weeks.', 'report pain reduction to ___/10 with functional activities'],
+          ['Pt will independently perform HEP with correct form within ___ weeks.', 'independently perform HEP with correct form'],
+          ['Pt will return to ___ (work/sport/activity) without limitations within ___ weeks.', 'return to ___ (work/sport/activity) without limitations'],
+          ['Pt will complete bed mobility with ___ assist within ___ weeks.', 'complete bed mobility with ___ assist'],
+          ['Pt will perform all transfers with ___ assist within ___ weeks.', 'perform all transfers with ___ assist'],
+          // OT
+          ['Pt will complete upper body dressing with ___ assist within ___ weeks.', 'complete upper body dressing with ___ assist'],
+          ['Pt will complete lower body dressing with ___ assist within ___ weeks.', 'complete lower body dressing with ___ assist'],
+          ['Pt will complete grooming tasks with ___ assist within ___ weeks.', 'complete grooming tasks with ___ assist'],
+          ['Pt will complete bathing with ___ assist within ___ weeks.', 'complete bathing with ___ assist'],
+          ['Pt will independently feed self with ___ setup within ___ weeks.', 'independently feed self with ___ setup'],
+          ['Pt will prepare a simple meal with ___ assist within ___ weeks.', 'prepare a simple meal with ___ assist'],
+          ['Pt will manage medications with ___ assist within ___ weeks.', 'manage medications with ___ assist'],
+          ['Pt will perform light housekeeping with ___ assist within ___ weeks.', 'perform light housekeeping with ___ assist'],
+          ['Pt will demonstrate functional grasp/release for ___ tasks within ___ weeks.', 'demonstrate functional grasp/release for ___ tasks'],
+          ['Pt will improve fine motor coordination for ___ within ___ weeks.', 'improve fine motor coordination for ___'],
+          ['Pt will achieve grip strength of ___lbs for functional tasks within ___ weeks.', 'achieve grip strength of ___ lbs for functional tasks'],
+          ['Pt will follow ___-step commands with ___ cues within ___ weeks.', 'follow ___-step commands with ___ cues'],
+          ['Pt will demonstrate improved sequencing for ___-step tasks within ___ weeks.', 'demonstrate improved sequencing for ___-step tasks'],
+          ['Pt will utilize compensatory strategies for ___ with ___ cues within ___ weeks.', 'utilize compensatory strategies for ___ with ___ cues'],
+          ['Pt will achieve functional AROM of ___ for ___ within ___ weeks.', 'achieve functional AROM of ___ for ___'],
+          ['Pt will demonstrate safe ___ techniques with ___ cues within ___ weeks.', 'demonstrate safe ___ techniques with ___ cues'],
+          // ST
+          ['Pt will produce target sounds in ___ position with ___% accuracy at ___ level within ___ weeks.', 'produce target sounds in ___ position with {target} accuracy at ___ level'],
+          ['Pt will produce ___% intelligible speech in ___ context within ___ weeks.', 'produce {target} intelligible speech in ___ context'],
+          ['Pt will name ___ items in ___ categories with ___% accuracy within ___ weeks.', 'name ___ items in ___ categories with {target} accuracy'],
+          ['Pt will produce grammatically correct sentences of ___+ words within ___ weeks.', 'produce grammatically correct sentences of ___+ words'],
+          ['Pt will use ___ word retrieval strategies with ___ cues within ___ weeks.', 'use ___ word retrieval strategies with ___ cues'],
+          ['Pt will follow ___-step commands with ___% accuracy within ___ weeks.', 'follow ___-step commands with {target} accuracy'],
+          ['Pt will answer ___ questions about ___ with ___% accuracy within ___ weeks.', 'answer ___ questions about ___ with {target} accuracy'],
+          ['Pt will identify main idea in ___ with ___% accuracy within ___ weeks.', 'identify main idea in ___ with {target} accuracy'],
+          ['Pt will demonstrate appropriate vocal quality during ___ tasks within ___ weeks.', 'demonstrate appropriate vocal quality during ___ tasks'],
+          ['Pt will maintain adequate breath support for ___ within ___ weeks.', 'maintain adequate breath support for ___'],
+          ['Pt will use ___ fluency strategy with ___% success in ___ context within ___ weeks.', 'use ___ fluency strategy with {target} success in ___ context'],
+          ['Pt will demonstrate ___% fluent speech in ___ speaking tasks within ___ weeks.', 'demonstrate {target} fluent speech in ___ speaking tasks'],
+          ['Pt will safely tolerate ___ consistency with ___ strategy within ___ weeks.', 'safely tolerate ___ consistency with ___ strategy'],
+          ['Pt will demonstrate safe swallow with ___ diet with no s/s aspiration within ___ weeks.', 'demonstrate safe swallow with ___ diet with no s/s aspiration'],
+          ['Pt will recall ___/5 items after ___ delay with ___ cues within ___ weeks.', 'recall ___/5 items after ___ delay with ___ cues'],
+          ['Pt will sustain attention for ___ min on ___ task within ___ weeks.', 'sustain attention for ___ min on ___ task'],
+          ['Pt will identify ___/5 safety concerns in functional scenarios within ___ weeks.', 'identify ___/5 safety concerns in functional scenarios'],
+          // MFT
+          ['Client will report reduction in depressive symptoms to a PHQ-9 score of ___ or below within ___ weeks.', 'report reduction in depressive symptoms to a PHQ-9 score of ___ or below'],
+          ['Client will identify ___ positive coping strategies for managing depressive episodes within ___ weeks.', 'identify ___ positive coping strategies for managing depressive episodes'],
+          ['Client will engage in ___ pleasurable activities per week as reported in session within ___ weeks.', 'engage in ___ pleasurable activities per week as reported in session'],
+          ['Client will report reduction in anxiety symptoms to a GAD-7 score of ___ or below within ___ weeks.', 'report reduction in anxiety symptoms to a GAD-7 score of ___ or below'],
+          ['Client will demonstrate use of ___ anxiety management techniques in daily life within ___ weeks.', 'demonstrate use of ___ anxiety management techniques in daily life'],
+          ['Client will reduce avoidance behaviors related to ___ as evidenced by ___ within ___ weeks.', 'reduce avoidance behaviors related to ___ as evidenced by ___'],
+          ['Client will demonstrate reduction in trauma-related symptoms as measured by ___ within ___ weeks.', 'demonstrate reduction in trauma-related symptoms as measured by ___'],
+          ['Client will develop and utilize a safety plan for managing trauma triggers within ___ weeks.', 'develop and utilize a safety plan for managing trauma triggers'],
+          ['Client will process traumatic experiences as evidenced by decreased avoidance and intrusive symptoms within ___ weeks.', 'process traumatic experiences as evidenced by decreased avoidance and intrusive symptoms'],
+          ['Client/couple will demonstrate improved communication skills as evidenced by ___ within ___ weeks.', 'demonstrate improved communication skills as evidenced by ___'],
+          ['Client/couple will reduce frequency of escalated conflicts from ___ to ___ per week within ___ weeks.', 'reduce frequency of escalated conflicts from ___ to ___ per week'],
+          ['Client/couple will identify and modify ___ negative interaction patterns within ___ weeks.', 'identify and modify ___ negative interaction patterns'],
+          ['Client/couple will report improved relationship satisfaction as measured by ___ within ___ weeks.', 'report improved relationship satisfaction as measured by ___'],
+          ['Family will establish and maintain ___ healthy boundaries as evidenced by ___ within ___ weeks.', 'establish and maintain ___ healthy boundaries as evidenced by ___'],
+          ['Family members will demonstrate improved conflict resolution skills within ___ weeks.', 'demonstrate improved conflict resolution skills'],
+          ['Family will increase frequency of positive interactions to ___ per week within ___ weeks.', 'increase frequency of positive interactions to ___ per week'],
+          ['Parent(s) will implement ___ consistent parenting strategies as discussed in session within ___ weeks.', 'implement ___ consistent parenting strategies as discussed in session'],
+          ['Client will identify and practice ___ healthy coping mechanisms for managing ___ within ___ weeks.', 'identify and practice ___ healthy coping mechanisms for managing ___'],
+          ['Client will demonstrate ability to use grounding techniques when experiencing ___ within ___ weeks.', 'demonstrate ability to use grounding techniques when experiencing ___'],
+          ['Client will develop a personalized wellness plan including ___ self-care activities within ___ weeks.', 'develop a personalized wellness plan including ___ self-care activities'],
+          ['Client will identify ___ personal strengths and report improved self-perception within ___ weeks.', 'identify ___ personal strengths and report improved self-perception'],
+          ['Client will challenge ___ negative self-beliefs per session as evidenced by cognitive restructuring within ___ weeks.', 'challenge ___ negative self-beliefs per session as evidenced by cognitive restructuring'],
+          ['Client will process grief related to ___ as evidenced by decreased emotional distress within ___ weeks.', 'process grief related to ___ as evidenced by decreased emotional distress'],
+          ['Client will identify ___ healthy ways to honor/memorialize their loss within ___ weeks.', 'identify ___ healthy ways to honor/memorialize their loss'],
+          ['Client will reduce frequency of ___ (target behavior) from ___ to ___ per week within ___ weeks.', 'reduce frequency of ___ (target behavior) from ___ to ___ per week'],
+          ['Client will increase frequency of ___ (replacement behavior) to ___ per week within ___ weeks.', 'increase frequency of ___ (replacement behavior) to ___ per week'],
+          ['Client will identify ___ triggers for maladaptive behaviors and develop alternative responses within ___ weeks.', 'identify ___ triggers for maladaptive behaviors and develop alternative responses'],
+        ];
+
+        const updateStmt = db.prepare(
+          "UPDATE goals_bank SET goal_template = ? WHERE goal_template = ? AND is_default = 1"
+        );
+
+        for (const [oldTemplate, newTemplate] of templateUpdates) {
+          updateStmt.run(newTemplate, oldTemplate);
+        }
+      },
+    },
+    {
+      version: 28,
+      description: 'Add baseline and target percentage columns to goals table',
+      up: () => {
+        db.exec(`ALTER TABLE goals ADD COLUMN baseline INTEGER DEFAULT 0`);
+        db.exec(`ALTER TABLE goals ADD COLUMN target INTEGER DEFAULT 0`);
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);

@@ -296,7 +296,18 @@ export default function SettingsPage() {
       const practice = await window.api.practice.get();
       if (practice) {
         const { id, ...rest } = practice;
+        // If discipline is empty, fall back to the settings value
+        if (!rest.discipline) {
+          const savedDiscipline = await window.api.settings.get('provider_discipline');
+          if (savedDiscipline) rest.discipline = savedDiscipline as typeof rest.discipline;
+        }
         setFormData(rest);
+      } else {
+        // No practice record yet — check if discipline was set during onboarding
+        const savedDiscipline = await window.api.settings.get('provider_discipline');
+        if (savedDiscipline) {
+          setFormData(prev => ({ ...prev, discipline: savedDiscipline as typeof prev.discipline }));
+        }
       }
     } catch (err) {
       console.error('Failed to load practice settings:', err);
@@ -843,7 +854,8 @@ export default function SettingsPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="label">NPI Number</label>
-            <input type="text" className="input" placeholder="10-digit NPI" value={formData.npi} onChange={(e) => handleChange('npi', e.target.value)} />
+            <input type="text" className={`input ${formData.npi && !/^\d{10}$/.test(formData.npi) ? 'border-red-300' : ''}`} placeholder="10-digit NPI" maxLength={10} value={formData.npi} onChange={(e) => handleChange('npi', e.target.value.replace(/\D/g, '').slice(0, 10))} />
+            {formData.npi && !/^\d{10}$/.test(formData.npi) && <p className="text-xs text-red-500 mt-1">NPI must be exactly 10 digits</p>}
           </div>
           <div>
             <label className="label">Tax ID</label>
