@@ -1,31 +1,34 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSectionColor } from '../hooks/useSectionColor';
+import { useTier } from '../hooks/useTier';
+import { useTrialGuard } from '../hooks/useTrialGuard';
+import ProFeatureGate from '../components/ProFeatureGate';
+import TrialExpiredModal from '../components/TrialExpiredModal';
 import {
   DollarSign,
   CreditCard,
   FileText,
-  Receipt,
-  Settings,
   Plus,
   Search,
   Filter,
   TrendingUp,
-  Clock,
   CheckCircle,
   AlertCircle,
-  ChevronRight,
   Download,
   Eye,
-  EyeOff,
   Trash2,
-  Edit2,
-  RefreshCw,
-  ExternalLink,
-  Zap,
   Send,
   Undo2,
   Link,
+  Unlink,
   Building2,
+  Zap,
+  ExternalLink,
+  BarChart3,
+  Users,
+  Activity,
+  CalendarRange,
+  GripVertical,
 } from 'lucide-react';
 import type {
   Invoice,
@@ -36,12 +39,12 @@ import type {
   ContractedEntity,
   InvoiceStatus,
   PaymentMethod,
+  AnalyticsData,
 } from '../../shared/types';
 import InvoiceModal from '../components/InvoiceModal';
 import PaymentModal from '../components/PaymentModal';
-import FeeScheduleModal from '../components/FeeScheduleModal';
 
-type BillingTab = 'dashboard' | 'invoices' | 'payments' | 'fee-schedule' | 'settings';
+type BillingTab = 'invoices' | 'payments' | 'analytics' | 'stripe';
 
 const STATUS_COLORS: Record<InvoiceStatus, { bg: string; text: string }> = {
   draft: { bg: 'bg-gray-100', text: 'text-gray-700' },
@@ -62,16 +65,10 @@ const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
 
 export default function BillingPage() {
   const sectionColor = useSectionColor();
-  const [activeTab, setActiveTab] = useState<BillingTab>('dashboard');
+  const { isPro } = useTier();
+  const { guardAction, showExpiredModal, dismissExpiredModal } = useTrialGuard();
+  const [activeTab, setActiveTab] = useState<BillingTab>('invoices');
   const [toast, setToast] = useState<string | null>(null);
-
-  // Dashboard stats
-  const [stats, setStats] = useState({
-    totalOutstanding: 0,
-    totalPaidThisMonth: 0,
-    invoicesDraft: 0,
-    invoicesOverdue: 0,
-  });
 
   // Data
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -80,16 +77,18 @@ export default function BillingPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [entities, setEntities] = useState<ContractedEntity[]>([]);
 
-  // Late cancel / no-show fee settings
-  const [lateCancelFee, setLateCancelFee] = useState('');
-  const [noShowFee, setNoShowFee] = useState('');
-  const [feeSaving, setFeeSaving] = useState(false);
-
   // Stripe settings
   const [stripeKeyMasked, setStripeKeyMasked] = useState<string | null>(null);
   const [stripeKeyInput, setStripeKeyInput] = useState('');
   const [showStripeSetup, setShowStripeSetup] = useState(false);
   const [secureStorageAvailable, setSecureStorageAvailable] = useState(false);
+
+  // Analytics
+  const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsTimeframe, setAnalyticsTimeframe] = useState<string>('6m');
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
 
   // Loading states
   const [loading, setLoading] = useState(true);
@@ -102,9 +101,7 @@ export default function BillingPage() {
   // Modals
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [showFeeModal, setShowFeeModal] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<(Invoice & { items: InvoiceItem[] }) | null>(null);
-  const [editingFee, setEditingFee] = useState<FeeScheduleEntry | null>(null);
 
   useEffect(() => {
     if (toast) {
@@ -124,8 +121,6 @@ export default function BillingPage() {
         entitiesData,
         secureAvailable,
         stripeMasked,
-        savedLateCancelFee,
-        savedNoShowFee,
       ] = await Promise.all([
         window.api.invoices.list(),
         window.api.payments.list(),
@@ -134,8 +129,6 @@ export default function BillingPage() {
         window.api.contractedEntities.list().catch(() => [] as ContractedEntity[]),
         window.api.secureStorage.isAvailable(),
         window.api.secureStorage.getMasked('stripe_secret_key'),
-        window.api.settings.get('late_cancel_fee').catch(() => ''),
-        window.api.settings.get('no_show_fee').catch(() => ''),
       ]);
 
       setInvoices(invoicesData);
@@ -145,30 +138,6 @@ export default function BillingPage() {
       setEntities(entitiesData);
       setSecureStorageAvailable(secureAvailable);
       setStripeKeyMasked(stripeMasked);
-      setLateCancelFee(savedLateCancelFee || '');
-      setNoShowFee(savedNoShowFee || '');
-
-      // Calculate stats
-      const now = new Date();
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-
-      const outstanding = invoicesData
-        .filter((i) => i.status !== 'paid' && i.status !== 'void')
-        .reduce((sum, i) => sum + i.total_amount, 0);
-
-      const paidThisMonth = paymentsData
-        .filter((p) => p.payment_date >= startOfMonth)
-        .reduce((sum, p) => sum + p.amount, 0);
-
-      const drafts = invoicesData.filter((i) => i.status === 'draft').length;
-      const overdue = invoicesData.filter((i) => i.status === 'overdue').length;
-
-      setStats({
-        totalOutstanding: outstanding,
-        totalPaidThisMonth: paidThisMonth,
-        invoicesDraft: drafts,
-        invoicesOverdue: overdue,
-      });
     } catch (err) {
       console.error('Failed to load billing data:', err);
       setToast('Failed to load billing data');
@@ -177,16 +146,50 @@ export default function BillingPage() {
     }
   }, []);
 
+  const getTimeframeFilters = useCallback(() => {
+    if (analyticsTimeframe === 'custom' && customStartDate && customEndDate) {
+      return { startDate: customStartDate, endDate: customEndDate };
+    }
+    const presetMap: Record<string, number> = {
+      '3m': 3, '6m': 6, '12m': 12, 'ytd': 0, '24m': 24,
+    };
+    if (analyticsTimeframe === 'ytd') {
+      const now = new Date();
+      const jan1 = `${now.getFullYear()}-01-01`;
+      return { startDate: jan1, endDate: now.toISOString().slice(0, 10) };
+    }
+    return { monthsBack: presetMap[analyticsTimeframe] || 6 };
+  }, [analyticsTimeframe, customStartDate, customEndDate]);
+
+  const loadAnalytics = useCallback(async () => {
+    if (!isPro) return;
+    setAnalyticsLoading(true);
+    try {
+      const filters = getTimeframeFilters();
+      const data = await window.api.dashboard.getAnalytics(filters);
+      setAnalytics(data);
+    } catch (err) {
+      console.error('Failed to load analytics:', err);
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  }, [isPro, getTimeframeFilters]);
+
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (activeTab === 'analytics' && isPro) {
+      loadAnalytics();
+    }
+  }, [activeTab, isPro, loadAnalytics]);
 
   const handleSaveStripeKey = async () => {
     if (!stripeKeyInput.trim()) {
       setToast('Please enter a Stripe API key');
       return;
     }
-    // Accept both restricted keys (rk_) and standard secret keys (sk_)
     if (!stripeKeyInput.startsWith('rk_') && !stripeKeyInput.startsWith('sk_')) {
       setToast('Invalid Stripe key format. Key should start with rk_ (restricted) or sk_ (secret)');
       return;
@@ -237,23 +240,6 @@ export default function BillingPage() {
     }
   };
 
-  const handleDeleteFee = async (id: number) => {
-    if (!confirm('Are you sure you want to delete this fee?')) return;
-    try {
-      await window.api.feeSchedule.delete(id);
-      setFeeSchedule(feeSchedule.filter((f) => f.id !== id));
-      setToast('Fee deleted');
-    } catch (err) {
-      console.error('Failed to delete fee:', err);
-      setToast('Failed to delete fee');
-    }
-  };
-
-  const handleEditFee = (fee: FeeScheduleEntry) => {
-    setEditingFee(fee);
-    setShowFeeModal(true);
-  };
-
   const handleMarkAsSent = async (id: number) => {
     try {
       await window.api.invoices.update(id, { status: 'sent' });
@@ -276,12 +262,38 @@ export default function BillingPage() {
     }
   };
 
+  const handleDeletePayment = async (paymentId: number) => {
+    if (!confirm('Are you sure you want to delete this payment? This cannot be undone.')) return;
+    try {
+      // If payment is matched to an invoice, recalculate invoice status
+      const payment = payments.find(p => p.id === paymentId);
+      if (payment?.invoice_id) {
+        const invoiceId = payment.invoice_id;
+        const remainingTotal = payments
+          .filter(p => p.invoice_id === invoiceId && p.id !== paymentId)
+          .reduce((sum, p) => sum + p.amount, 0);
+        const invoice = invoices.find(i => i.id === invoiceId);
+        if (invoice) {
+          const newStatus = remainingTotal >= invoice.total_amount ? 'paid' : remainingTotal > 0 ? 'partial' : 'sent';
+          if (newStatus !== invoice.status) {
+            await window.api.invoices.update(invoiceId, { status: newStatus });
+          }
+        }
+      }
+      await window.api.payments.delete(paymentId);
+      loadData();
+      setToast('Payment deleted');
+    } catch (err) {
+      console.error('Failed to delete payment:', err);
+      setToast('Failed to delete payment');
+    }
+  };
+
   const handleMatchPaymentToInvoice = async (paymentId: number, invoiceId: number) => {
     try {
       const payment = payments.find(p => p.id === paymentId);
       if (!payment) return;
       await window.api.payments.update(paymentId, { invoice_id: invoiceId, notes: payment.notes });
-      // Also update invoice status based on total payments
       const invoicePayments = payments.filter(p => p.invoice_id === invoiceId).reduce((sum, p) => sum + p.amount, 0) + payment.amount;
       const invoice = invoices.find(i => i.id === invoiceId);
       if (invoice) {
@@ -298,7 +310,31 @@ export default function BillingPage() {
     }
   };
 
-  // Drag-and-drop state for payment matching
+  const handleUnmatchPayment = async (paymentId: number) => {
+    try {
+      const payment = payments.find(p => p.id === paymentId);
+      if (!payment || !payment.invoice_id) return;
+      const invoiceId = payment.invoice_id;
+      await window.api.payments.update(paymentId, { invoice_id: null, notes: payment.notes });
+      // Recalculate invoice status after removing this payment
+      const remainingTotal = payments
+        .filter(p => p.invoice_id === invoiceId && p.id !== paymentId)
+        .reduce((sum, p) => sum + p.amount, 0);
+      const invoice = invoices.find(i => i.id === invoiceId);
+      if (invoice) {
+        const newStatus = remainingTotal >= invoice.total_amount ? 'paid' : remainingTotal > 0 ? 'partial' : 'sent';
+        if (newStatus !== invoice.status) {
+          await window.api.invoices.update(invoiceId, { status: newStatus });
+        }
+      }
+      loadData();
+      setToast('Payment unmatched from invoice');
+    } catch (err) {
+      console.error('Failed to unmatch payment:', err);
+      setToast('Failed to unmatch payment');
+    }
+  };
+
   const [draggedPaymentId, setDraggedPaymentId] = useState<number | null>(null);
 
   const handleDownloadInvoicePdf = async (id: number) => {
@@ -334,10 +370,31 @@ export default function BillingPage() {
     }).format(amount);
   };
 
+  const formatMonthLabel = (m: string) => {
+    const [y, mo] = m.split('-');
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return `${months[parseInt(mo, 10) - 1]} ${y.slice(2)}`;
+  };
+
+  const timeframeLabel = (() => {
+    const labels: Record<string, string> = {
+      '3m': 'Last 3 Months', '6m': 'Last 6 Months', '12m': 'Last 12 Months',
+      'ytd': 'Year to Date', '24m': 'Last 2 Years',
+    };
+    if (analyticsTimeframe === 'custom' && customStartDate && customEndDate) {
+      const fmt = (d: string) => {
+        const [y, mo] = d.split('-');
+        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        return `${months[parseInt(mo,10)-1]} ${y}`;
+      };
+      return `${fmt(customStartDate)} — ${fmt(customEndDate)}`;
+    }
+    return labels[analyticsTimeframe] || 'Last 6 Months';
+  })();
+
   const filteredInvoices = invoices.filter((inv) => {
     if (clientFilter !== 'all') {
       const filterVal = clientFilter as number;
-      // Positive = client, negative = entity (encoded as -entityId)
       if (filterVal > 0 && inv.client_id !== filterVal) return false;
       if (filterVal < 0 && inv.entity_id !== Math.abs(filterVal)) return false;
     }
@@ -355,16 +412,24 @@ export default function BillingPage() {
 
   const filteredPayments = payments.filter((p) => {
     if (clientFilter !== 'all' && p.client_id !== clientFilter) return false;
+    if (searchTerm) {
+      const name = getClientName(p.client_id).toLowerCase();
+      const linkedInv = p.invoice_id ? invoices.find(i => i.id === p.invoice_id) : null;
+      return (
+        name.includes(searchTerm.toLowerCase()) ||
+        (linkedInv?.invoice_number || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (p.payment_method || '').toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
     return true;
   });
 
   // Tab navigation items
-  const tabs: Array<{ id: BillingTab; label: string; icon: React.ReactNode }> = [
-    { id: 'dashboard', label: 'Dashboard', icon: <TrendingUp className="w-4 h-4" /> },
+  const tabs: Array<{ id: BillingTab; label: string; icon: React.ReactNode; pro?: boolean }> = [
     { id: 'invoices', label: 'Invoices', icon: <FileText className="w-4 h-4" /> },
     { id: 'payments', label: 'Payments', icon: <DollarSign className="w-4 h-4" /> },
-    { id: 'fee-schedule', label: 'Fee Schedule', icon: <Receipt className="w-4 h-4" /> },
-    { id: 'settings', label: 'Settings', icon: <Settings className="w-4 h-4" /> },
+    { id: 'analytics', label: 'Analytics', icon: <BarChart3 className="w-4 h-4" />, pro: true },
+    { id: 'stripe', label: 'Stripe Payments', icon: <Zap className="w-4 h-4" />, pro: true },
   ];
 
   if (loading) {
@@ -392,7 +457,7 @@ export default function BillingPage() {
           <div>
             <h1 className="page-title">Billing</h1>
             <p className="text-sm text-[var(--color-text-secondary)]">
-              Manage invoices, payments, and fee schedules
+              Manage invoices, payments, and billing analytics
             </p>
           </div>
         </div>
@@ -448,186 +513,16 @@ export default function BillingPage() {
           >
             {tab.icon}
             {tab.label}
+            {tab.pro && !isPro && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-600 font-semibold">PRO</span>
+            )}
           </button>
         ))}
       </div>
 
-      {/* Dashboard Tab */}
-      {activeTab === 'dashboard' && (
-        <div className="space-y-6">
-          {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div
-              className="card p-5 cursor-pointer hover:shadow-md hover:border-blue-300 transition-all"
-              onClick={() => { setActiveTab('invoices'); setInvoiceFilter('sent'); }}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-sm text-[var(--color-text-secondary)]">Outstanding</span>
-                <AlertCircle className="w-5 h-5 text-blue-600" />
-              </div>
-              <p className="text-2xl font-bold text-[var(--color-text)]">
-                {formatCurrency(stats.totalOutstanding)}
-              </p>
-              <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                Unpaid invoices &middot; Click to view
-              </p>
-            </div>
-
-            <div
-              className="card p-5 cursor-pointer hover:shadow-md hover:border-blue-300 transition-all"
-              onClick={() => setActiveTab('payments')}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-sm text-[var(--color-text-secondary)]">Paid This Month</span>
-                <TrendingUp className="w-5 h-5 text-blue-600" />
-              </div>
-              <p className="text-2xl font-bold text-[var(--color-text)]">
-                {formatCurrency(stats.totalPaidThisMonth)}
-              </p>
-              <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                {payments.filter((p) => {
-                  const now = new Date();
-                  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
-                    .toISOString()
-                    .slice(0, 10);
-                  return p.payment_date >= startOfMonth;
-                }).length}{' '}
-                payments &middot; Click to view
-              </p>
-            </div>
-
-            <div
-              className="card p-5 cursor-pointer hover:shadow-md hover:border-blue-300 transition-all"
-              onClick={() => { setActiveTab('invoices'); setInvoiceFilter('draft'); }}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-sm text-[var(--color-text-secondary)]">Draft Invoices</span>
-                <FileText className="w-5 h-5 text-blue-600" />
-              </div>
-              <p className="text-2xl font-bold text-[var(--color-text)]">{stats.invoicesDraft}</p>
-              <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                Ready to send &middot; Click to view
-              </p>
-            </div>
-
-            <div
-              className="card p-5 cursor-pointer hover:shadow-md hover:border-blue-300 transition-all"
-              onClick={() => { setActiveTab('invoices'); setInvoiceFilter('overdue'); }}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-sm text-[var(--color-text-secondary)]">Overdue</span>
-                <Clock className="w-5 h-5 text-blue-600" />
-              </div>
-              <p className="text-2xl font-bold text-red-600">{stats.invoicesOverdue}</p>
-              <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                Need attention &middot; Click to view
-              </p>
-            </div>
-          </div>
-
-          {/* Recent Activity */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Recent Invoices */}
-            <div className="card">
-              <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
-                <h3 className="font-semibold text-[var(--color-text)]">Recent Invoices</h3>
-                <button
-                  onClick={() => setActiveTab('invoices')}
-                  className="text-sm text-[var(--color-primary)] hover:underline flex items-center gap-1"
-                >
-                  View all <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-              <div className="divide-y divide-[var(--color-border)]">
-                {invoices.filter(i => clientFilter === 'all' || i.client_id === clientFilter).slice(0, 5).map((invoice) => (
-                  <div
-                    key={invoice.id}
-                    className="flex items-center justify-between p-4 hover:bg-gray-50 cursor-pointer transition-colors"
-                    onClick={() => handleViewInvoice(invoice.id)}
-                  >
-                    <div>
-                      <p className="font-medium text-[var(--color-text)]">
-                        {invoice.invoice_number}
-                      </p>
-                      <p className="text-sm text-[var(--color-text-secondary)]">
-                        {getClientName(invoice.client_id)}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className="text-right">
-                        <p className="font-medium text-[var(--color-text)]">
-                          {formatCurrency(invoice.total_amount)}
-                        </p>
-                        <span
-                          className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-                            STATUS_COLORS[invoice.status].bg
-                          } ${STATUS_COLORS[invoice.status].text}`}
-                        >
-                          {invoice.status}
-                        </span>
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-[var(--color-text-secondary)]" />
-                    </div>
-                  </div>
-                ))}
-                {invoices.length === 0 && (
-                  <div className="p-8 text-center text-[var(--color-text-secondary)]">
-                    No invoices yet
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Recent Payments */}
-            <div className="card">
-              <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
-                <h3 className="font-semibold text-[var(--color-text)]">Recent Payments</h3>
-                <button
-                  onClick={() => setActiveTab('payments')}
-                  className="text-sm text-[var(--color-primary)] hover:underline flex items-center gap-1"
-                >
-                  View all <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-              <div className="divide-y divide-[var(--color-border)]">
-                {payments.filter(p => clientFilter === 'all' || p.client_id === clientFilter).slice(0, 5).map((payment) => (
-                  <div
-                    key={payment.id}
-                    className="flex items-center justify-between p-4 hover:bg-gray-50 cursor-pointer transition-colors"
-                    onClick={() => setActiveTab('payments')}
-                  >
-                    <div>
-                      <p className="font-medium text-[var(--color-text)]">
-                        {getClientName(payment.client_id)}
-                      </p>
-                      <p className="text-sm text-[var(--color-text-secondary)]">
-                        {payment.payment_date} &middot;{' '}
-                        {PAYMENT_METHOD_LABELS[payment.payment_method]}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <p className="font-medium text-emerald-600">
-                        +{formatCurrency(payment.amount)}
-                      </p>
-                      <ChevronRight className="w-4 h-4 text-[var(--color-text-secondary)]" />
-                    </div>
-                  </div>
-                ))}
-                {payments.length === 0 && (
-                  <div className="p-8 text-center text-[var(--color-text-secondary)]">
-                    No payments yet
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Invoices Tab */}
       {activeTab === 'invoices' && (
         <div className="space-y-4">
-          {/* Toolbar */}
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 flex-1">
               <select
@@ -647,6 +542,7 @@ export default function BillingPage() {
             <button
               className="btn-primary gap-2"
               onClick={() => {
+                if (!guardAction()) return;
                 setEditingInvoice(null);
                 setShowInvoiceModal(true);
               }}
@@ -656,41 +552,24 @@ export default function BillingPage() {
             </button>
           </div>
 
-          {/* Invoice List */}
           <div className="card overflow-hidden">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-[var(--color-border)] bg-gray-50">
-                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
-                    Invoice
-                  </th>
-                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
-                    Client / Agency
-                  </th>
-                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
-                    CPTs
-                  </th>
-                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
-                    Date
-                  </th>
-                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
-                    Amount
-                  </th>
-                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
-                    Status
-                  </th>
-                  <th className="text-right text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
-                    Actions
-                  </th>
+                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">Invoice</th>
+                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">Client / Agency</th>
+                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">CPTs</th>
+                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">Date</th>
+                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">Amount</th>
+                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">Status</th>
+                  <th className="text-right text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
                 {filteredInvoices.map((invoice) => (
                   <tr key={invoice.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => handleViewInvoice(invoice.id)}>
                     <td className="px-4 py-3">
-                      <span className="font-medium text-[var(--color-text)]">
-                        {invoice.invoice_number}
-                      </span>
+                      <span className="font-medium text-[var(--color-text)]">{invoice.invoice_number}</span>
                     </td>
                     <td className="px-4 py-3 text-[var(--color-text)]">
                       <div className="flex items-center gap-1.5">
@@ -702,54 +581,28 @@ export default function BillingPage() {
                         )}
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-xs text-[var(--color-text-secondary)] font-mono">
-                      {invoice.cpt_summary || ''}
-                    </td>
-                    <td className="px-4 py-3 text-[var(--color-text-secondary)]">
-                      {invoice.invoice_date}
-                    </td>
-                    <td className="px-4 py-3 font-medium text-[var(--color-text)]">
-                      {formatCurrency(invoice.total_amount)}
-                    </td>
+                    <td className="px-4 py-3 text-xs text-[var(--color-text-secondary)] font-mono">{invoice.cpt_summary || ''}</td>
+                    <td className="px-4 py-3 text-[var(--color-text-secondary)]">{invoice.invoice_date}</td>
+                    <td className="px-4 py-3 font-medium text-[var(--color-text)]">{formatCurrency(invoice.total_amount)}</td>
                     <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-                          STATUS_COLORS[invoice.status].bg
-                        } ${STATUS_COLORS[invoice.status].text}`}
-                      >
+                      <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[invoice.status].bg} ${STATUS_COLORS[invoice.status].text}`}>
                         {invoice.status}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-2">
-                        <button
-                          className="p-1.5 rounded hover:bg-gray-100 text-[var(--color-text-secondary)]"
-                          title="View/Edit"
-                          onClick={() => handleViewInvoice(invoice.id)}
-                        >
+                        <button className="p-1.5 rounded hover:bg-gray-100 text-[var(--color-text-secondary)]" title="View/Edit" onClick={() => handleViewInvoice(invoice.id)}>
                           <Eye className="w-4 h-4" />
                         </button>
-                        <button
-                          className="p-1.5 rounded hover:bg-gray-100 text-[var(--color-text-secondary)]"
-                          title="Download PDF"
-                          onClick={() => handleDownloadInvoicePdf(invoice.id)}
-                        >
+                        <button className="p-1.5 rounded hover:bg-gray-100 text-[var(--color-text-secondary)]" title="Download PDF" onClick={() => handleDownloadInvoicePdf(invoice.id)}>
                           <Download className="w-4 h-4" />
                         </button>
                         {invoice.status === 'draft' && (
-                          <button
-                            className="p-1.5 rounded hover:bg-blue-50 text-blue-500"
-                            title="Mark as Sent"
-                            onClick={() => handleMarkAsSent(invoice.id)}
-                          >
+                          <button className="p-1.5 rounded hover:bg-blue-50 text-blue-500" title="Mark as Sent" onClick={() => handleMarkAsSent(invoice.id)}>
                             <Send className="w-4 h-4" />
                           </button>
                         )}
-                        <button
-                          className="p-1.5 rounded hover:bg-red-50 text-red-500"
-                          title="Delete"
-                          onClick={() => handleDeleteInvoice(invoice.id)}
-                        >
+                        <button className="p-1.5 rounded hover:bg-red-50 text-red-500" title="Delete" onClick={() => handleDeleteInvoice(invoice.id)}>
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
@@ -759,7 +612,7 @@ export default function BillingPage() {
                 {filteredInvoices.length === 0 && (
                   <tr>
                     <td colSpan={7} className="px-4 py-12 text-center text-[var(--color-text-secondary)]">
-                      No invoices found
+                      {searchTerm ? `No invoices matching "${searchTerm}"` : 'No invoices found'}
                     </td>
                   </tr>
                 )}
@@ -772,7 +625,6 @@ export default function BillingPage() {
       {/* Payments Tab */}
       {activeTab === 'payments' && (
         <div className="space-y-4">
-          {/* Toolbar */}
           <div className="flex items-center justify-end gap-4">
             <button className="btn-primary gap-2" onClick={() => setShowPaymentModal(true)}>
               <Plus className="w-4 h-4" />
@@ -780,29 +632,16 @@ export default function BillingPage() {
             </button>
           </div>
 
-          {/* Payments List */}
           <div className="card overflow-hidden">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-[var(--color-border)] bg-gray-50">
-                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
-                    Date
-                  </th>
-                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
-                    Client
-                  </th>
-                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
-                    Method
-                  </th>
-                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
-                    Invoice
-                  </th>
-                  <th className="text-right text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
-                    Amount
-                  </th>
-                  <th className="text-right text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
-                    Actions
-                  </th>
+                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">Date</th>
+                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">Client</th>
+                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">Method</th>
+                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">Invoice</th>
+                  <th className="text-right text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">Amount</th>
+                  <th className="text-right text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
@@ -812,7 +651,7 @@ export default function BillingPage() {
                   return (
                     <tr
                       key={payment.id}
-                      className={`hover:bg-gray-50 ${!payment.invoice_id && payment.amount > 0 ? 'cursor-grab' : ''}`}
+                      className={`hover:bg-gray-50 ${!payment.invoice_id && payment.amount > 0 ? 'cursor-grab active:cursor-grabbing' : ''} ${draggedPaymentId === payment.id ? 'opacity-50 bg-blue-50' : ''}`}
                       draggable={!payment.invoice_id && payment.amount > 0}
                       onDragStart={(e) => {
                         if (!payment.invoice_id && payment.amount > 0) {
@@ -822,10 +661,15 @@ export default function BillingPage() {
                       }}
                       onDragEnd={() => setDraggedPaymentId(null)}
                     >
-                      <td className="px-4 py-3 text-[var(--color-text)]">{payment.payment_date}</td>
                       <td className="px-4 py-3 text-[var(--color-text)]">
-                        {getClientName(payment.client_id)}
+                        <div className="flex items-center gap-1.5">
+                          {!payment.invoice_id && payment.amount > 0 && (
+                            <GripVertical className="w-3.5 h-3.5 text-gray-300 flex-shrink-0" />
+                          )}
+                          {payment.payment_date}
+                        </div>
                       </td>
+                      <td className="px-4 py-3 text-[var(--color-text)]">{getClientName(payment.client_id)}</td>
                       <td className="px-4 py-3">
                         <span className="inline-flex items-center gap-1.5 text-[var(--color-text-secondary)]">
                           {payment.payment_method === 'card' && <CreditCard className="w-4 h-4" />}
@@ -834,16 +678,25 @@ export default function BillingPage() {
                       </td>
                       <td className="px-4 py-3">
                         {linkedInvoice ? (
-                          <span
-                            className="text-[var(--color-primary)] hover:underline cursor-pointer text-sm"
-                            onClick={() => handleViewInvoice(linkedInvoice.id)}
-                          >
-                            {linkedInvoice.invoice_number}
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="text-[var(--color-primary)] hover:underline cursor-pointer text-sm" onClick={() => handleViewInvoice(linkedInvoice.id)}>
+                              {linkedInvoice.invoice_number}
+                            </span>
+                            <button
+                              className="p-0.5 rounded hover:bg-amber-50 text-gray-300 hover:text-amber-600 transition-colors"
+                              title="Unmatch payment from invoice"
+                              onClick={(e) => { e.stopPropagation(); handleUnmatchPayment(payment.id); }}
+                            >
+                              <Unlink className="w-3.5 h-3.5" />
+                            </button>
                           </span>
                         ) : isRefund ? (
                           <span className="text-xs text-red-500 italic">Refund</span>
                         ) : (
-                          <span className="text-xs text-[var(--color-text-secondary)] italic">Unmatched — drag to invoice below</span>
+                          <span className="inline-flex items-center gap-1 text-xs text-amber-600 font-medium">
+                            <AlertCircle className="w-3 h-3" />
+                            Unmatched
+                          </span>
                         )}
                       </td>
                       <td className={`px-4 py-3 text-right font-medium ${isRefund ? 'text-red-600' : 'text-emerald-600'}`}>
@@ -860,6 +713,13 @@ export default function BillingPage() {
                               <Undo2 className="w-4 h-4" />
                             </button>
                           )}
+                          <button
+                            className="p-1.5 rounded hover:bg-red-50 text-[var(--color-text-secondary)] hover:text-red-500"
+                            title="Delete payment"
+                            onClick={(e) => { e.stopPropagation(); handleDeletePayment(payment.id); }}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -868,7 +728,7 @@ export default function BillingPage() {
                 {filteredPayments.length === 0 && (
                   <tr>
                     <td colSpan={6} className="px-4 py-12 text-center text-[var(--color-text-secondary)]">
-                      {clientFilter !== 'all' ? 'No payments for this client' : 'No payments recorded yet'}
+                      {searchTerm ? `No payments matching "${searchTerm}"` : clientFilter !== 'all' ? 'No payments for this client' : 'No payments recorded yet'}
                     </td>
                   </tr>
                 )}
@@ -876,22 +736,31 @@ export default function BillingPage() {
             </table>
           </div>
 
-          {/* Drop Targets - Outstanding Invoices for Payment Matching */}
-          {draggedPaymentId && (
-            <div className="mt-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Link className="w-4 h-4 text-[var(--color-primary)]" />
-                <h4 className="text-sm font-semibold text-[var(--color-text)]">
-                  Drop payment onto an invoice to match
-                </h4>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {invoices
-                  .filter(inv => inv.status !== 'paid' && inv.status !== 'void')
-                  .map(invoice => (
+          {/* Outstanding Invoices - Drop Targets for Payment Matching */}
+          {(() => {
+            const hasUnmatched = filteredPayments.some(p => !p.invoice_id && p.amount > 0);
+            const outstandingInvoices = invoices.filter(inv => inv.status !== 'paid' && inv.status !== 'void');
+            if (!hasUnmatched || outstandingInvoices.length === 0) return null;
+            return (
+              <div className="mt-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Link className="w-4 h-4 text-[var(--color-primary)]" />
+                  <h4 className="text-sm font-semibold text-[var(--color-text)]">
+                    Outstanding Invoices
+                  </h4>
+                  <span className="text-xs text-[var(--color-text-secondary)]">
+                    {draggedPaymentId ? '— drop payment here to match' : '— drag an unmatched payment here'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {outstandingInvoices.map(invoice => (
                     <div
                       key={invoice.id}
-                      className="card p-4 border-2 border-dashed border-[var(--color-primary)]/30 hover:border-[var(--color-primary)] hover:bg-[var(--color-primary)]/5 transition-all cursor-pointer"
+                      className={`card p-4 border-2 transition-all ${
+                        draggedPaymentId
+                          ? 'border-dashed border-[var(--color-primary)] bg-[var(--color-primary)]/5 shadow-md scale-[1.01]'
+                          : 'border-solid border-gray-200 hover:border-gray-300'
+                      }`}
                       onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'link'; }}
                       onDrop={(e) => {
                         e.preventDefault();
@@ -902,400 +771,413 @@ export default function BillingPage() {
                         setDraggedPaymentId(null);
                       }}
                     >
-                      <p className="text-sm font-medium text-[var(--color-text)]">{invoice.invoice_number}</p>
-                      <p className="text-xs text-[var(--color-text-secondary)]">{getClientName(invoice.client_id)}</p>
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-medium text-[var(--color-text)]">{invoice.invoice_number}</p>
+                        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[invoice.status].bg} ${STATUS_COLORS[invoice.status].text}`}>
+                          {invoice.status}
+                        </span>
+                      </div>
+                      <p className="text-xs text-[var(--color-text-secondary)] mt-1">{getInvoiceName(invoice)}</p>
                       <p className="text-sm font-bold text-[var(--color-text)] mt-1">{formatCurrency(invoice.total_amount)}</p>
-                      <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium mt-1 ${STATUS_COLORS[invoice.status].bg} ${STATUS_COLORS[invoice.status].text}`}>
-                        {invoice.status}
-                      </span>
                     </div>
                   ))}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       )}
 
-      {/* Fee Schedule Tab */}
-      {activeTab === 'fee-schedule' && (
-        <div className="space-y-4">
-          {/* Toolbar */}
-          <div className="flex items-center justify-between gap-4">
-            <p className="text-sm text-[var(--color-text-secondary)]">
-              Configure your standard fees for CPT codes. These will be used when generating invoices.
-            </p>
-            <button
-              className="btn-primary gap-2"
-              onClick={() => {
-                setEditingFee(null);
-                setShowFeeModal(true);
-              }}
-            >
-              <Plus className="w-4 h-4" />
-              Add Fee
-            </button>
-          </div>
-
-          {/* Fee Schedule List */}
-          <div className="card overflow-hidden">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-[var(--color-border)] bg-gray-50">
-                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
-                    CPT Code
-                  </th>
-                  <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
-                    Description
-                  </th>
-                  <th className="text-center text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
-                    Default Units
-                  </th>
-                  <th className="text-right text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
-                    Amount
-                  </th>
-                  <th className="text-right text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--color-border)]">
-                {feeSchedule.map((fee) => (
-                  <tr key={fee.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => handleEditFee(fee)}>
-                    <td className="px-4 py-3">
-                      <span className="font-mono font-medium text-[var(--color-text)]">
-                        {fee.cpt_code}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-[var(--color-text)]">{fee.description}</td>
-                    <td className="px-4 py-3 text-center text-[var(--color-text-secondary)]">
-                      {fee.default_units}
-                    </td>
-                    <td className="px-4 py-3 text-right font-medium text-[var(--color-text)]">
-                      {formatCurrency(fee.amount)}
-                    </td>
-                    <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          className="p-1.5 rounded hover:bg-red-50 text-red-500"
-                          title="Delete"
-                          onClick={() => handleDeleteFee(fee.id)}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
+      {/* Analytics Tab (Pro) */}
+      {activeTab === 'analytics' && (
+        <ProFeatureGate feature="caseload_dashboard" lockedMessage="Upgrade to Pro to unlock revenue analytics, client growth tracking, and practice insights.">
+          <div className="space-y-6">
+            {/* Timeframe Selector */}
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-1.5 text-[var(--color-text-secondary)]">
+                <CalendarRange className="w-4 h-4" />
+                <span className="text-xs font-medium">Timeframe:</span>
+              </div>
+              <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
+                {[
+                  { value: '3m', label: '3M' },
+                  { value: '6m', label: '6M' },
+                  { value: '12m', label: '1Y' },
+                  { value: 'ytd', label: 'YTD' },
+                  { value: '24m', label: '2Y' },
+                  { value: 'custom', label: 'Custom' },
+                ].map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setAnalyticsTimeframe(opt.value)}
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                      analyticsTimeframe === opt.value
+                        ? 'bg-white text-[var(--color-primary)] shadow-sm'
+                        : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
                 ))}
-                {feeSchedule.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-12 text-center text-[var(--color-text-secondary)]">
-                      No fee schedule entries. Add your first CPT code fee.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Settings Tab */}
-      {activeTab === 'settings' && (
-        <div className="space-y-6 max-w-2xl">
-          {/* Stripe Integration */}
-          <div className="card p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-lg bg-purple-100 flex items-center justify-center">
-                <Zap className="w-5 h-5 text-purple-600" />
               </div>
-              <div>
-                <h3 className="font-semibold text-[var(--color-text)]">Stripe Integration</h3>
-                <p className="text-sm text-[var(--color-text-secondary)]">
-                  Accept credit card payments from clients
-                </p>
-              </div>
+              {analyticsTimeframe === 'custom' && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="date"
+                    className="input text-xs py-1.5 px-2 w-36"
+                    value={customStartDate}
+                    onChange={(e) => setCustomStartDate(e.target.value)}
+                  />
+                  <span className="text-xs text-[var(--color-text-secondary)]">to</span>
+                  <input
+                    type="date"
+                    className="input text-xs py-1.5 px-2 w-36"
+                    value={customEndDate}
+                    onChange={(e) => setCustomEndDate(e.target.value)}
+                  />
+                </div>
+              )}
             </div>
 
-            {!secureStorageAvailable && (
-              <div className="p-3 bg-amber-50 rounded-lg mb-4">
-                <p className="text-sm text-amber-700">
-                  <AlertCircle className="w-4 h-4 inline mr-1" />
-                  Secure storage is not available on this system. API keys will be stored with basic
-                  obfuscation only.
-                </p>
+            {analyticsLoading ? (
+              <div className="flex items-center justify-center h-48">
+                <div className="text-[var(--color-text-secondary)]">Loading analytics...</div>
               </div>
-            )}
-
-            {stripeKeyMasked ? (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                  <div>
-                    <p className="text-sm font-medium text-[var(--color-text)]">API Key</p>
-                    <p className="text-sm font-mono text-[var(--color-text-secondary)]">
-                      {stripeKeyMasked}
-                    </p>
+            ) : analytics ? (
+              <>
+                {/* Stat Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="card p-5">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-sm text-[var(--color-text-secondary)]">Outstanding</span>
+                      <AlertCircle className="w-5 h-5 text-blue-600" />
+                    </div>
+                    <p className="text-2xl font-bold text-[var(--color-text)]">{formatCurrency(analytics.stats.outstanding)}</p>
+                    <p className="text-xs text-[var(--color-text-secondary)] mt-1">Unpaid invoices</p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
-                      <CheckCircle className="w-3 h-3" />
-                      Connected
-                    </span>
-                    <button
-                      onClick={handleRemoveStripeKey}
-                      className="p-2 rounded hover:bg-red-50 text-red-500"
-                      title="Remove API Key"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                  <div className="card p-5">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-sm text-[var(--color-text-secondary)]">Paid This Month</span>
+                      <TrendingUp className="w-5 h-5 text-emerald-600" />
+                    </div>
+                    <p className="text-2xl font-bold text-emerald-600">{formatCurrency(analytics.stats.paidThisMonth)}</p>
+                    <p className="text-xs text-[var(--color-text-secondary)] mt-1">Collections this month</p>
+                  </div>
+                  <div className="card p-5">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-sm text-[var(--color-text-secondary)]">Collection Rate</span>
+                      <Activity className="w-5 h-5 text-teal-600" />
+                    </div>
+                    <p className="text-2xl font-bold text-[var(--color-text)]">{analytics.collectionRate}%</p>
+                    <p className="text-xs text-[var(--color-text-secondary)] mt-1">{timeframeLabel}</p>
+                  </div>
+                  <div className="card p-5">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-sm text-[var(--color-text-secondary)]">Avg Revenue / Session</span>
+                      <DollarSign className="w-5 h-5 text-violet-600" />
+                    </div>
+                    <p className="text-2xl font-bold text-[var(--color-text)]">{formatCurrency(analytics.avgRevenuePerSession)}</p>
+                    <p className="text-xs text-[var(--color-text-secondary)] mt-1">Per signed note · {timeframeLabel}</p>
                   </div>
                 </div>
 
-                <div className="p-3 bg-blue-50 rounded-lg">
-                  <p className="text-sm text-blue-700">
-                    Your Stripe API key is stored securely using OS-level encryption
-                    {secureStorageAvailable
-                      ? ' (Windows Credential Manager / macOS Keychain)'
-                      : ' (fallback mode)'}
-                    .
+                {/* Revenue Chart */}
+                <div className="card p-6">
+                  <h3 className="font-semibold text-[var(--color-text)] mb-4 flex items-center gap-2">
+                    <TrendingUp className="w-5 h-5 text-teal-500" />
+                    Revenue — {timeframeLabel}
+                  </h3>
+                  <div className="space-y-3">
+                    {analytics.revenueByMonth.map((m) => {
+                      const maxVal = Math.max(...analytics.revenueByMonth.map(r => Math.max(r.invoiced, r.collected)), 1);
+                      return (
+                        <div key={m.month} className="flex items-center gap-3">
+                          <span className="text-xs text-[var(--color-text-secondary)] w-16 text-right">{formatMonthLabel(m.month)}</span>
+                          <div className="flex-1 space-y-1">
+                            <div className="flex items-center gap-2">
+                              <div className="h-4 rounded bg-blue-200" style={{ width: `${(m.invoiced / maxVal) * 100}%`, minWidth: m.invoiced > 0 ? '2px' : '0' }} />
+                              <span className="text-xs text-[var(--color-text-secondary)]">{formatCurrency(m.invoiced)}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div className="h-4 rounded bg-emerald-400" style={{ width: `${(m.collected / maxVal) * 100}%`, minWidth: m.collected > 0 ? '2px' : '0' }} />
+                              <span className="text-xs text-[var(--color-text-secondary)]">{formatCurrency(m.collected)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <div className="flex items-center gap-4 mt-2 ml-20">
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-3 h-3 rounded bg-blue-200" />
+                        <span className="text-xs text-[var(--color-text-secondary)]">Invoiced</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-3 h-3 rounded bg-emerald-400" />
+                        <span className="text-xs text-[var(--color-text-secondary)]">Collected</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Growth Charts */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Client Growth */}
+                  <div className="card p-6">
+                    <h3 className="font-semibold text-[var(--color-text)] mb-4 flex items-center gap-2">
+                      <Users className="w-5 h-5 text-blue-500" />
+                      New Clients — {timeframeLabel}
+                    </h3>
+                    <div className="space-y-2">
+                      {analytics.clientGrowth.map((m) => {
+                        const maxVal = Math.max(...analytics.clientGrowth.map(r => r.newClients), 1);
+                        return (
+                          <div key={m.month} className="flex items-center gap-3">
+                            <span className="text-xs text-[var(--color-text-secondary)] w-16 text-right">{formatMonthLabel(m.month)}</span>
+                            <div className="flex-1 flex items-center gap-2">
+                              <div className="h-5 rounded bg-blue-300" style={{ width: `${(m.newClients / maxVal) * 100}%`, minWidth: m.newClients > 0 ? '2px' : '0' }} />
+                              <span className="text-xs font-medium text-[var(--color-text)]">{m.newClients}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Sessions Volume */}
+                  <div className="card p-6">
+                    <h3 className="font-semibold text-[var(--color-text)] mb-4 flex items-center gap-2">
+                      <Activity className="w-5 h-5 text-teal-500" />
+                      Sessions — {timeframeLabel}
+                    </h3>
+                    <div className="space-y-2">
+                      {analytics.sessionsVolume.map((m) => {
+                        const maxVal = Math.max(...analytics.sessionsVolume.map(r => r.sessions), 1);
+                        return (
+                          <div key={m.month} className="flex items-center gap-3">
+                            <span className="text-xs text-[var(--color-text-secondary)] w-16 text-right">{formatMonthLabel(m.month)}</span>
+                            <div className="flex-1 flex items-center gap-2">
+                              <div className="h-5 rounded bg-teal-300" style={{ width: `${(m.sessions / maxVal) * 100}%`, minWidth: m.sessions > 0 ? '2px' : '0' }} />
+                              <span className="text-xs font-medium text-[var(--color-text)]">{m.sessions}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center justify-center h-48">
+                <div className="text-[var(--color-text-secondary)]">No analytics data available</div>
+              </div>
+            )}
+          </div>
+        </ProFeatureGate>
+      )}
+
+      {/* Stripe Payments Tab (Pro) */}
+      {activeTab === 'stripe' && (
+        <ProFeatureGate feature="stripe_billing" lockedMessage="Upgrade to Pro to accept credit card payments through Stripe.">
+          <div className="space-y-6 max-w-2xl">
+            {/* Stripe Integration Setup */}
+            <div className="card p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-lg bg-purple-100 flex items-center justify-center">
+                  <Zap className="w-5 h-5 text-purple-600" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-[var(--color-text)]">Stripe Integration</h3>
+                  <p className="text-sm text-[var(--color-text-secondary)]">
+                    Accept credit card payments from clients
                   </p>
                 </div>
               </div>
-            ) : (
-              <div className="space-y-4">
-                {showStripeSetup ? (
-                  <div className="space-y-5">
-                    {/* Step-by-step guide for Restricted Key (Best Practice) */}
-                    <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
-                      <h4 className="font-medium text-emerald-800 mb-3">
-                        <span className="inline-flex items-center gap-1.5">
-                          <CheckCircle className="w-4 h-4" />
-                          Recommended: Create a Restricted Key
-                        </span>
-                      </h4>
-                      <p className="text-sm text-emerald-700 mb-3">
-                        Stripe recommends using restricted keys for third-party apps. This limits what PocketChart can access.
-                      </p>
-                      <ol className="space-y-2 text-sm text-emerald-700">
-                        <li className="flex gap-2">
-                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">1</span>
-                          <span>Go to your <a
-                            href="https://dashboard.stripe.com/apikeys"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              window.api.shell.openExternal('https://dashboard.stripe.com/apikeys');
-                            }}
-                            className="font-medium underline text-emerald-700 hover:text-emerald-900 cursor-pointer"
-                          >Stripe Dashboard → API Keys</a></span>
-                        </li>
-                        <li className="flex gap-2">
-                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">2</span>
-                          <span>Click <strong>"Create restricted key"</strong> button</span>
-                        </li>
-                        <li className="flex gap-2">
-                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">3</span>
-                          <span>Name it something like <code className="bg-emerald-100 px-1 rounded">PocketChart</code></span>
-                        </li>
-                        <li className="flex gap-2">
-                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">4</span>
-                          <div>
-                            <span>Enable these permissions (Write access):</span>
-                            <ul className="ml-4 mt-1 space-y-0.5 text-xs">
-                              <li>• <strong>Charges</strong> - to process payments</li>
-                              <li>• <strong>Customers</strong> - to save customer info</li>
-                              <li>• <strong>Payment Intents</strong> - for payment flows</li>
-                            </ul>
-                          </div>
-                        </li>
-                        <li className="flex gap-2">
-                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">5</span>
-                          <span>For the URL field, enter your business website or <code className="bg-emerald-100 px-1 rounded">https://pocketchart.app</code></span>
-                        </li>
-                        <li className="flex gap-2">
-                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">6</span>
-                          <span>Click "Create key" and copy the key (starts with <code className="bg-emerald-100 px-1 rounded">rk_live_</code> or <code className="bg-emerald-100 px-1 rounded">rk_test_</code>)</span>
-                        </li>
-                        <li className="flex gap-2">
-                          <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">7</span>
-                          <span>Paste it below</span>
-                        </li>
-                      </ol>
-                    </div>
 
-                    {/* Warning about key types */}
-                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-                      <p className="text-sm text-amber-700">
-                        <strong>Note:</strong> Use a <strong>Restricted key</strong> (starts with <code className="bg-amber-100 px-1 rounded">rk_</code>) for best security,
-                        or a Secret key (<code className="bg-amber-100 px-1 rounded">sk_</code>) if needed.
-                        Never use the Publishable key (<code className="bg-amber-100 px-1 rounded">pk_</code>).
-                      </p>
-                    </div>
+              {!secureStorageAvailable && (
+                <div className="p-3 bg-amber-50 rounded-lg mb-4">
+                  <p className="text-sm text-amber-700">
+                    <AlertCircle className="w-4 h-4 inline mr-1" />
+                    Secure storage is not available on this system. API keys will be stored with basic
+                    obfuscation only.
+                  </p>
+                </div>
+              )}
 
+              {stripeKeyMasked ? (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
                     <div>
-                      <label className="label">Stripe API Key</label>
-                      <input
-                        type="password"
-                        className="input font-mono"
-                        placeholder="rk_live_... or rk_test_... (restricted key)"
-                        value={stripeKeyInput}
-                        onChange={(e) => setStripeKeyInput(e.target.value)}
-                      />
-                      {stripeKeyInput && stripeKeyInput.startsWith('pk_') && (
-                        <p className="text-xs text-red-600 mt-1.5">
-                          ❌ This is a Publishable key. You need a Restricted key (rk_) or Secret key (sk_) instead.
-                        </p>
-                      )}
-                      {stripeKeyInput && !stripeKeyInput.startsWith('rk_') && !stripeKeyInput.startsWith('sk_') && !stripeKeyInput.startsWith('pk_') && stripeKeyInput.length > 3 && (
-                        <p className="text-xs text-red-600 mt-1.5">
-                          ⚠️ This doesn't look like a valid Stripe key. It should start with "rk_" (restricted) or "sk_" (secret).
-                        </p>
-                      )}
-                      {stripeKeyInput && stripeKeyInput.startsWith('rk_test_') && (
-                        <p className="text-xs text-amber-600 mt-1.5">
-                          ℹ️ Restricted test key - great for testing! Use rk_live_ for real payments.
-                        </p>
-                      )}
-                      {stripeKeyInput && stripeKeyInput.startsWith('rk_live_') && (
-                        <p className="text-xs text-emerald-600 mt-1.5">
-                          ✓ Live restricted key - secure and ready for real payments!
-                        </p>
-                      )}
-                      {stripeKeyInput && stripeKeyInput.startsWith('sk_test_') && (
-                        <p className="text-xs text-amber-600 mt-1.5">
-                          ℹ️ Secret test key detected. Consider using a restricted key (rk_) for better security.
-                        </p>
-                      )}
-                      {stripeKeyInput && stripeKeyInput.startsWith('sk_live_') && (
-                        <p className="text-xs text-amber-600 mt-1.5">
-                          ⚠️ Live secret key detected. For better security, consider creating a restricted key (rk_) instead.
-                        </p>
-                      )}
+                      <p className="text-sm font-medium text-[var(--color-text)]">API Key</p>
+                      <p className="text-sm font-mono text-[var(--color-text-secondary)]">{stripeKeyMasked}</p>
                     </div>
-                    <div className="flex gap-2">
-                      <button
-                        className="btn-primary"
-                        onClick={handleSaveStripeKey}
-                        disabled={!stripeKeyInput.startsWith('rk_') && !stripeKeyInput.startsWith('sk_')}
-                      >
-                        Save API Key
-                      </button>
-                      <button className="btn-ghost" onClick={() => setShowStripeSetup(false)}>
-                        Cancel
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
+                        <CheckCircle className="w-3 h-3" />
+                        Connected
+                      </span>
+                      <button onClick={handleRemoveStripeKey} className="p-2 rounded hover:bg-red-50 text-red-500" title="Remove API Key">
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   </div>
-                ) : (
-                  <div className="space-y-4">
-                    <p className="text-sm text-[var(--color-text-secondary)]">
-                      Connect your Stripe account to accept credit card payments directly from
-                      invoices. You'll need a Stripe account (free to create).
+                  <div className="p-3 bg-blue-50 rounded-lg">
+                    <p className="text-sm text-blue-700">
+                      Your Stripe API key is stored securely using OS-level encryption
+                      {secureStorageAvailable ? ' (Windows Credential Manager / macOS Keychain)' : ' (fallback mode)'}.
                     </p>
-                    <div className="flex gap-2">
-                      <button
-                        className="btn-primary gap-2"
-                        onClick={() => setShowStripeSetup(true)}
-                      >
-                        <CreditCard className="w-4 h-4" />
-                        Connect Stripe
-                      </button>
-                      <button
-                        onClick={() => window.api.shell.openExternal('https://dashboard.stripe.com/register')}
-                        className="btn-ghost gap-2"
-                      >
-                        <ExternalLink className="w-4 h-4" />
-                        Create Stripe Account
-                      </button>
-                    </div>
                   </div>
-                )}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {showStripeSetup ? (
+                    <div className="space-y-5">
+                      <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+                        <h4 className="font-medium text-emerald-800 mb-3">
+                          <span className="inline-flex items-center gap-1.5">
+                            <CheckCircle className="w-4 h-4" />
+                            Recommended: Create a Restricted Key
+                          </span>
+                        </h4>
+                        <p className="text-sm text-emerald-700 mb-3">
+                          Stripe recommends using restricted keys for third-party apps. This limits what PocketChart can access.
+                        </p>
+                        <ol className="space-y-2 text-sm text-emerald-700">
+                          <li className="flex gap-2">
+                            <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">1</span>
+                            <span>Go to your <a
+                              href="https://dashboard.stripe.com/apikeys"
+                              onClick={(e) => { e.preventDefault(); window.api.shell.openExternal('https://dashboard.stripe.com/apikeys'); }}
+                              className="font-medium underline text-emerald-700 hover:text-emerald-900 cursor-pointer"
+                            >Stripe Dashboard &rarr; API Keys</a></span>
+                          </li>
+                          <li className="flex gap-2">
+                            <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">2</span>
+                            <span>Click <strong>"Create restricted key"</strong></span>
+                          </li>
+                          <li className="flex gap-2">
+                            <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">3</span>
+                            <span>Name it <code className="bg-emerald-100 px-1 rounded">PocketChart</code></span>
+                          </li>
+                          <li className="flex gap-2">
+                            <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">4</span>
+                            <div>
+                              <span>Enable these permissions (Write access):</span>
+                              <ul className="ml-4 mt-1 space-y-0.5 text-xs">
+                                <li>• <strong>Charges</strong> - to process payments</li>
+                                <li>• <strong>Customers</strong> - to save customer info</li>
+                                <li>• <strong>Payment Intents</strong> - for payment flows</li>
+                              </ul>
+                            </div>
+                          </li>
+                          <li className="flex gap-2">
+                            <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">5</span>
+                            <span>For the URL field, enter your business website or <code className="bg-emerald-100 px-1 rounded">https://pocketchart.app</code></span>
+                          </li>
+                          <li className="flex gap-2">
+                            <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">6</span>
+                            <span>Click "Create key" and copy the key (starts with <code className="bg-emerald-100 px-1 rounded">rk_live_</code> or <code className="bg-emerald-100 px-1 rounded">rk_test_</code>)</span>
+                          </li>
+                          <li className="flex gap-2">
+                            <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-200 text-emerald-800 flex items-center justify-center text-xs font-bold">7</span>
+                            <span>Paste it below</span>
+                          </li>
+                        </ol>
+                      </div>
+
+                      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                        <p className="text-sm text-amber-700">
+                          <strong>Note:</strong> Use a <strong>Restricted key</strong> (starts with <code className="bg-amber-100 px-1 rounded">rk_</code>) for best security,
+                          or a Secret key (<code className="bg-amber-100 px-1 rounded">sk_</code>) if needed.
+                          Never use the Publishable key (<code className="bg-amber-100 px-1 rounded">pk_</code>).
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="label">Stripe API Key</label>
+                        <input
+                          type="password"
+                          className="input font-mono"
+                          placeholder="rk_live_... or rk_test_... (restricted key)"
+                          value={stripeKeyInput}
+                          onChange={(e) => setStripeKeyInput(e.target.value)}
+                        />
+                        {stripeKeyInput && stripeKeyInput.startsWith('pk_') && (
+                          <p className="text-xs text-red-600 mt-1.5">This is a Publishable key. You need a Restricted key (rk_) or Secret key (sk_) instead.</p>
+                        )}
+                        {stripeKeyInput && !stripeKeyInput.startsWith('rk_') && !stripeKeyInput.startsWith('sk_') && !stripeKeyInput.startsWith('pk_') && stripeKeyInput.length > 3 && (
+                          <p className="text-xs text-red-600 mt-1.5">This doesn't look like a valid Stripe key. It should start with "rk_" (restricted) or "sk_" (secret).</p>
+                        )}
+                        {stripeKeyInput && stripeKeyInput.startsWith('rk_test_') && (
+                          <p className="text-xs text-amber-600 mt-1.5">Restricted test key - great for testing! Use rk_live_ for real payments.</p>
+                        )}
+                        {stripeKeyInput && stripeKeyInput.startsWith('rk_live_') && (
+                          <p className="text-xs text-emerald-600 mt-1.5">Live restricted key - secure and ready for real payments!</p>
+                        )}
+                        {stripeKeyInput && stripeKeyInput.startsWith('sk_test_') && (
+                          <p className="text-xs text-amber-600 mt-1.5">Secret test key detected. Consider using a restricted key (rk_) for better security.</p>
+                        )}
+                        {stripeKeyInput && stripeKeyInput.startsWith('sk_live_') && (
+                          <p className="text-xs text-amber-600 mt-1.5">Live secret key detected. For better security, consider creating a restricted key (rk_) instead.</p>
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        <button className="btn-primary" onClick={handleSaveStripeKey} disabled={!stripeKeyInput.startsWith('rk_') && !stripeKeyInput.startsWith('sk_')}>
+                          Save API Key
+                        </button>
+                        <button className="btn-ghost" onClick={() => setShowStripeSetup(false)}>Cancel</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <p className="text-sm text-[var(--color-text-secondary)]">
+                        Connect your Stripe account to accept credit card payments directly from invoices. You'll need a Stripe account (free to create).
+                      </p>
+                      <div className="flex gap-2">
+                        <button className="btn-primary gap-2" onClick={() => setShowStripeSetup(true)}>
+                          <CreditCard className="w-4 h-4" />
+                          Connect Stripe
+                        </button>
+                        <button onClick={() => window.api.shell.openExternal('https://dashboard.stripe.com/register')} className="btn-ghost gap-2">
+                          <ExternalLink className="w-4 h-4" />
+                          Create Stripe Account
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Recent Stripe Payments */}
+            {stripeKeyMasked && (
+              <div className="card">
+                <div className="flex items-center gap-2 p-4 border-b border-[var(--color-border)]">
+                  <CreditCard className="w-5 h-5 text-purple-500" />
+                  <h3 className="font-semibold text-[var(--color-text)]">Recent Card Payments</h3>
+                </div>
+                <div className="divide-y divide-[var(--color-border)]">
+                  {payments
+                    .filter(p => p.payment_method === 'card')
+                    .slice(0, 10)
+                    .map((payment) => (
+                      <div key={payment.id} className="flex items-center justify-between p-4 hover:bg-gray-50">
+                        <div>
+                          <p className="font-medium text-[var(--color-text)]">{getClientName(payment.client_id)}</p>
+                          <p className="text-sm text-[var(--color-text-secondary)]">{payment.payment_date}</p>
+                        </div>
+                        <p className="font-medium text-emerald-600">+{formatCurrency(payment.amount)}</p>
+                      </div>
+                    ))}
+                  {payments.filter(p => p.payment_method === 'card').length === 0 && (
+                    <div className="p-8 text-center text-[var(--color-text-secondary)]">
+                      No card payments recorded yet
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
-
-          {/* Late Cancel / No-Show Fees */}
-          <div className="card p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-lg bg-amber-100 flex items-center justify-center">
-                <AlertCircle className="w-5 h-5 text-amber-600" />
-              </div>
-              <div>
-                <h3 className="font-semibold text-[var(--color-text)]">Late Cancel & No-Show Fees</h3>
-                <p className="text-sm text-[var(--color-text-secondary)]">
-                  Automatically prompt to create a fee invoice when an appointment is cancelled or marked no-show
-                </p>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="label">Late Cancellation Fee ($)</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  className="input"
-                  placeholder="0.00"
-                  value={lateCancelFee}
-                  onChange={(e) => setLateCancelFee(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="label">No-Show Fee ($)</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  className="input"
-                  placeholder="0.00"
-                  value={noShowFee}
-                  onChange={(e) => setNoShowFee(e.target.value)}
-                />
-              </div>
-            </div>
-            <button
-              className="btn-primary"
-              disabled={feeSaving}
-              onClick={async () => {
-                setFeeSaving(true);
-                try {
-                  await window.api.settings.set('late_cancel_fee', lateCancelFee || '0');
-                  await window.api.settings.set('no_show_fee', noShowFee || '0');
-                  setToast('Fee settings saved');
-                } catch (err) {
-                  console.error('Failed to save fee settings:', err);
-                  setToast('Failed to save fee settings');
-                } finally {
-                  setFeeSaving(false);
-                }
-              }}
-            >
-              {feeSaving ? 'Saving...' : 'Save Fee Settings'}
-            </button>
-          </div>
-
-          {/* Invoice Settings */}
-          <div className="card p-6">
-            <h3 className="font-semibold text-[var(--color-text)] mb-4">Invoice Settings</h3>
-            <div className="space-y-4">
-              <div>
-                <label className="label">Default Payment Terms</label>
-                <select className="select">
-                  <option value="0">Due on Receipt</option>
-                  <option value="15">Net 15</option>
-                  <option value="30">Net 30</option>
-                  <option value="45">Net 45</option>
-                  <option value="60">Net 60</option>
-                </select>
-              </div>
-              <div>
-                <label className="label">Invoice Notes (appears on all invoices)</label>
-                <textarea
-                  className="input"
-                  rows={3}
-                  placeholder="e.g., Thank you for your business!"
-                />
-              </div>
-            </div>
-          </div>
-        </div>
+        </ProFeatureGate>
       )}
 
       {/* Modals */}
@@ -1324,17 +1206,8 @@ export default function BillingPage() {
         invoices={invoices}
       />
 
-      <FeeScheduleModal
-        isOpen={showFeeModal}
-        onClose={() => {
-          setShowFeeModal(false);
-          setEditingFee(null);
-        }}
-        onSave={() => {
-          loadData();
-        }}
-        fee={editingFee || undefined}
-      />
+      {/* Trial Expired Modal */}
+      {showExpiredModal && <TrialExpiredModal onClose={dismissExpiredModal} />}
     </div>
   );
 }

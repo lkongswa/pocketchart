@@ -36,6 +36,8 @@ const VALID_TABLES = new Set([
   'vault_documents', 'compliance_tracking', 'mileage_log', 'communication_log',
   // V5 Progress Report tables
   'staged_goals', 'progress_report_goals',
+  // Discount system
+  'client_discounts', 'discount_templates',
   // V6 Amendments
   'note_amendments',
 ]);
@@ -930,6 +932,55 @@ function runMigrations(): void {
         db.exec('CREATE INDEX IF NOT EXISTS idx_audit_action_type ON audit_log(action_type)');
         db.exec('CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp)');
         db.exec('CREATE INDEX IF NOT EXISTS idx_audit_session ON audit_log(session_id)');
+      },
+    },
+    {
+      version: 23,
+      description: 'Add client_discounts and discount_templates tables',
+      up: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS client_discounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            client_id INTEGER NOT NULL REFERENCES clients(id),
+            discount_type TEXT NOT NULL,
+            label TEXT NOT NULL DEFAULT '',
+            total_sessions INTEGER DEFAULT NULL,
+            paid_sessions INTEGER DEFAULT NULL,
+            sessions_used INTEGER DEFAULT 0,
+            session_rate REAL DEFAULT NULL,
+            flat_rate REAL DEFAULT NULL,
+            flat_rate_sessions INTEGER DEFAULT NULL,
+            flat_rate_sessions_used INTEGER DEFAULT 0,
+            discount_percent REAL DEFAULT NULL,
+            discount_fixed REAL DEFAULT NULL,
+            start_date TEXT DEFAULT NULL,
+            end_date TEXT DEFAULT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            notes TEXT DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            deleted_at DATETIME DEFAULT NULL
+          )
+        `);
+        db.exec('CREATE INDEX IF NOT EXISTS idx_client_discounts_client ON client_discounts(client_id)');
+        db.exec('CREATE INDEX IF NOT EXISTS idx_client_discounts_status ON client_discounts(status)');
+
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS discount_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            discount_type TEXT NOT NULL,
+            total_sessions INTEGER DEFAULT NULL,
+            paid_sessions INTEGER DEFAULT NULL,
+            session_rate REAL DEFAULT NULL,
+            flat_rate REAL DEFAULT NULL,
+            flat_rate_sessions INTEGER DEFAULT NULL,
+            discount_percent REAL DEFAULT NULL,
+            discount_fixed REAL DEFAULT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            deleted_at DATETIME DEFAULT NULL
+          )
+        `);
       },
     },
   ];

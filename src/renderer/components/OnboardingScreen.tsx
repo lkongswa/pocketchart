@@ -94,6 +94,11 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
       const defaultFormat = discipline === 'MFT' ? 'DAP' : 'SOAP';
       await window.api.settings.set('note_format', defaultFormat);
 
+      // Reset fee schedule to match the chosen discipline
+      if (discipline) {
+        try { await window.api.feeSchedule.reset(discipline); } catch { /* ignore */ }
+      }
+
       setStep('pin');
     } catch (err) {
       console.error('Failed to save practice info:', err);

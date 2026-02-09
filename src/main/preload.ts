@@ -271,6 +271,12 @@ const api = {
     onDownloaded: (callback: (info: any) => void) => {
       ipcRenderer.on('update:downloaded', (_event, info) => callback(info));
     },
+    onBackupComplete: (callback: (info: any) => void) => {
+      ipcRenderer.on('update:backup-complete', (_event, info) => callback(info));
+    },
+    onBackupFailed: (callback: () => void) => {
+      ipcRenderer.on('update:backup-failed', () => callback());
+    },
   },
 
   // Shell (open external links in default browser)
@@ -351,9 +357,11 @@ const api = {
     delete: (id: number) => ipcRenderer.invoke('communicationLog:delete', id),
   },
 
-  // ── Dashboard (Pro) ──
+  // ── Dashboard ──
   dashboard: {
+    getBasicAlerts: () => ipcRenderer.invoke('dashboard:getBasicAlerts'),
     getOverview: () => ipcRenderer.invoke('dashboard:getOverview'),
+    getAnalytics: (filters?: { startDate?: string; endDate?: string; monthsBack?: number }) => ipcRenderer.invoke('dashboard:getAnalytics', filters),
   },
 
   // ── Reports (Pro) ──
@@ -366,6 +374,23 @@ const api = {
   directAccess: {
     requiresReferral: (state: string, discipline: string) => ipcRenderer.invoke('directAccess:requiresReferral', state, discipline),
     getRules: () => ipcRenderer.invoke('directAccess:getRules'),
+  },
+
+  // Client Discounts & Packages
+  clientDiscounts: {
+    listByClient: (clientId: number) => ipcRenderer.invoke('clientDiscounts:listByClient', clientId),
+    getActive: (clientId: number) => ipcRenderer.invoke('clientDiscounts:getActive', clientId),
+    create: (data: any) => ipcRenderer.invoke('clientDiscounts:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('clientDiscounts:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('clientDiscounts:delete', id),
+    incrementUsage: (id: number, count?: number) => ipcRenderer.invoke('clientDiscounts:incrementUsage', id, count),
+    decrementUsage: (id: number, count?: number) => ipcRenderer.invoke('clientDiscounts:decrementUsage', id, count),
+  },
+  discountTemplates: {
+    list: () => ipcRenderer.invoke('discountTemplates:list'),
+    create: (data: any) => ipcRenderer.invoke('discountTemplates:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('discountTemplates:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('discountTemplates:delete', id),
   },
 };
 

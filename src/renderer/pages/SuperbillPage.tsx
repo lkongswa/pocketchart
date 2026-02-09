@@ -48,6 +48,10 @@ const SuperbillPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
+  // Superbill completeness warnings
+  const [superbillWarnings, setSuperbillWarnings] = useState<string[]>([]);
+  const [pendingGenerateAction, setPendingGenerateAction] = useState<'selected' | 'bulk' | null>(null);
+
   const loadData = useCallback(async () => {
     if (!clientId) return;
     setLoading(true);
@@ -109,12 +113,51 @@ const SuperbillPage: React.FC = () => {
     }
   };
 
-  // Generate superbill for selected notes
-  const handleGenerateSelected = async () => {
-    if (selectedNoteIds.size === 0) {
+  // Check for superbill completeness warnings before generating
+  const getSuperbillWarnings = (): string[] => {
+    if (!client) return [];
+    const warnings: string[] = [];
+    if (!client.dob) warnings.push('Client date of birth is missing');
+    if (!client.address || !client.city || !client.state || !client.zip) warnings.push('Client address is incomplete');
+    if (!client.primary_dx_code) warnings.push('Primary diagnosis is missing');
+    return warnings;
+  };
+
+  // Pre-generate check: show warnings if any, or proceed directly
+  const handlePreGenerate = (action: 'selected' | 'bulk') => {
+    if (action === 'selected' && selectedNoteIds.size === 0) {
       setError('Please select at least one note');
       return;
     }
+    if (action === 'bulk' && (!startDate || !endDate)) {
+      setError('Please select a start and end date');
+      return;
+    }
+    const warnings = getSuperbillWarnings();
+    if (warnings.length > 0) {
+      setSuperbillWarnings(warnings);
+      setPendingGenerateAction(action);
+    } else {
+      if (action === 'selected') doGenerateSelected();
+      else doGenerateBulk();
+    }
+  };
+
+  const dismissSuperbillWarnings = () => {
+    setSuperbillWarnings([]);
+    setPendingGenerateAction(null);
+  };
+
+  const confirmGenerateAnyway = () => {
+    const action = pendingGenerateAction;
+    setSuperbillWarnings([]);
+    setPendingGenerateAction(null);
+    if (action === 'selected') doGenerateSelected();
+    else if (action === 'bulk') doGenerateBulk();
+  };
+
+  // Generate superbill for selected notes
+  const doGenerateSelected = async () => {
     setGenerating(true);
     setError(null);
     setGeneratedPdf(null);
@@ -133,11 +176,7 @@ const SuperbillPage: React.FC = () => {
   };
 
   // Generate bulk superbill for date range
-  const handleGenerateBulk = async () => {
-    if (!startDate || !endDate) {
-      setError('Please select a start and end date');
-      return;
-    }
+  const doGenerateBulk = async () => {
     setGenerating(true);
     setError(null);
     setGeneratedPdf(null);
@@ -258,7 +297,7 @@ const SuperbillPage: React.FC = () => {
           </div>
           <button
             className="btn-accent gap-2"
-            onClick={handleGenerateBulk}
+            onClick={() => handlePreGenerate('bulk')}
             disabled={generating || !startDate || !endDate}
           >
             {generating ? <Loader2 size={16} className="animate-spin" /> : <Calendar size={16} />}
@@ -284,7 +323,7 @@ const SuperbillPage: React.FC = () => {
             </button>
             <button
               className="btn-primary gap-2"
-              onClick={handleGenerateSelected}
+              onClick={() => handlePreGenerate('selected')}
               disabled={generating || selectedNoteIds.size === 0}
             >
               {generating ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
@@ -389,6 +428,50 @@ const SuperbillPage: React.FC = () => {
               <span className="text-sm">PDF saved successfully!</span>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Superbill Completeness Warnings Dialog */}
+      {superbillWarnings.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-[var(--color-surface)] rounded-xl shadow-xl max-w-md w-full mx-4 p-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+              <div>
+                <h3 className="text-sm font-semibold text-[var(--color-text)]">
+                  Missing information on this superbill
+                </h3>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+                  Insurance companies typically require these fields for reimbursement:
+                </p>
+                <ul className="mt-2 space-y-1">
+                  {superbillWarnings.map((w, i) => (
+                    <li key={i} className="text-xs text-amber-800 flex items-center gap-1.5">
+                      <span className="w-1 h-1 rounded-full bg-amber-400 flex-shrink-0" />
+                      {w}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 justify-end">
+              <button
+                className="btn-secondary btn-sm"
+                onClick={() => {
+                  dismissSuperbillWarnings();
+                  navigate(`/clients/${clientId}`);
+                }}
+              >
+                Complete Chart
+              </button>
+              <button
+                className="btn-primary btn-sm"
+                onClick={confirmGenerateAnyway}
+              >
+                Generate Anyway
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

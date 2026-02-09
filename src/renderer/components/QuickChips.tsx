@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Settings, Star, X } from 'lucide-react';
+import { useTier } from '../hooks/useTier';
 import type { Discipline, SOAPSection, NoteBankEntry } from '../../shared/types';
 
 interface QuickChipsProps {
@@ -13,7 +14,9 @@ interface QuickChipsProps {
 /**
  * QuickChips - Displays favorite/frequent phrases as clickable chips
  * for one-click insertion into SOAP note sections.
+ * Pro-only feature: Basic users see nothing (component returns null).
  */
+
 export default function QuickChips({
   discipline,
   section,
@@ -21,6 +24,7 @@ export default function QuickChips({
   maxChips = 8,
   onOpenFullBank,
 }: QuickChipsProps) {
+  const { isPro } = useTier();
   const [chips, setChips] = useState<NoteBankEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [showManage, setShowManage] = useState(false);
@@ -118,6 +122,11 @@ export default function QuickChips({
     if (phrase.length <= maxLen) return phrase;
     return phrase.slice(0, maxLen).trim() + '...';
   };
+
+  // Non-Pro: render nothing — Quick Chips is a Pro-only feature
+  if (!isPro) {
+    return null;
+  }
 
   if (loading) {
     return (

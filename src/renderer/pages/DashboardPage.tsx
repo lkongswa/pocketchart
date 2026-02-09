@@ -14,6 +14,7 @@ import {
   ClipboardList,
 } from 'lucide-react';
 import type { Client, Note, Appointment } from '../../shared/types';
+import BasicAlertsPanel from '../components/BasicAlertsPanel';
 
 interface DashboardStats {
   incompleteEvals: number;
@@ -278,6 +279,9 @@ const DashboardPage: React.FC = () => {
         </div>
       )}
 
+      {/* Alerts Panel */}
+      <BasicAlertsPanel />
+
       {/* Stat Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         {statCards.map((card) => (
@@ -364,7 +368,7 @@ const DashboardPage: React.FC = () => {
                 <div
                   key={appt.id}
                   className="px-5 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
-                  onClick={() => navigate(`/clients/${appt.client_id}`)}
+                  onClick={() => navigate('/calendar', { state: { date: appt.scheduled_date, view: 'week' } })}
                 >
                   <div className="flex items-center justify-between">
                     <div>

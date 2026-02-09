@@ -20,7 +20,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import type { Client, Evaluation, Discipline, GoalType, EvalGoalEntry, GoalsBankEntry } from '../../shared/types';
-import SignaturePad from '../components/SignaturePad';
+
 import SignConfirmDialog from '../components/SignConfirmDialog';
 
 // ── Types ──
@@ -402,6 +402,7 @@ export default function EvalFormPage() {
   const [priorFieldKeys, setPriorFieldKeys] = useState<Set<string>>(new Set());
 
   const [client, setClient] = useState<Client | null>(null);
+  const [practiceInfo, setPracticeInfo] = useState<{ license_number?: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -440,8 +441,12 @@ export default function EvalFormPage() {
     try {
       setLoading(true);
       const cid = parseInt(clientId, 10);
-      const clientData = await window.api.clients.get(cid);
+      const [clientData, practiceData] = await Promise.all([
+        window.api.clients.get(cid),
+        window.api.practice.get().catch(() => null),
+      ]);
       setClient(clientData);
+      if (practiceData) setPracticeInfo(practiceData);
 
       const discipline = clientData.discipline as Discipline;
 
@@ -699,6 +704,18 @@ export default function EvalFormPage() {
 
       // Sync goal records to the goals table on every autosave
       let updatedGoalIds: number[] = [...(content.created_goal_ids || [])];
+
+      // Delete any orphaned goals (IDs beyond current goalEntries length)
+      if (updatedGoalIds.length > goalEntries.length) {
+        const orphanedIds = updatedGoalIds.slice(goalEntries.length);
+        for (const oid of orphanedIds) {
+          if (oid) {
+            try { await window.api.goals.delete(oid); } catch (err) { console.error('Auto-save: failed to delete orphaned goal:', err); }
+          }
+        }
+        updatedGoalIds = updatedGoalIds.slice(0, goalEntries.length);
+      }
+
       for (let i = 0; i < goalEntries.length; i++) {
         const entry = goalEntries[i];
         if (!entry.goal_text.trim()) continue;
@@ -907,6 +924,9 @@ export default function EvalFormPage() {
     if (!signatureTyped.trim()) {
       warnings.push('Provider signature name is not set. Update it in Settings > Provider Information.');
     }
+    if (!practiceInfo?.license_number?.trim()) {
+      warnings.push('Provider license number is not set. Update it in Settings > Provider Information.');
+    }
 
     return { errors, warnings };
   };
@@ -927,6 +947,18 @@ export default function EvalFormPage() {
 
       // Sync Goal records: update existing linked goals, create new ones
       let createdGoalIds: number[] = [...(content.created_goal_ids || [])];
+
+      // Delete any orphaned goals (IDs beyond current goalEntries length)
+      if (createdGoalIds.length > goalEntries.length) {
+        const orphanedIds = createdGoalIds.slice(goalEntries.length);
+        for (const oid of orphanedIds) {
+          if (oid) {
+            try { await window.api.goals.delete(oid); } catch (err) { console.error('Failed to delete orphaned goal:', err); }
+          }
+        }
+        createdGoalIds = createdGoalIds.slice(0, goalEntries.length);
+      }
+
       for (let i = 0; i < goalEntries.length; i++) {
         const entry = goalEntries[i];
         if (!entry.goal_text.trim()) continue; // skip empty entries but keep index alignment
@@ -1345,8 +1377,17 @@ export default function EvalFormPage() {
                       <button
                         type="button"
                         className="p-1 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
-                        onClick={() => {
-                          // Also remove the linked ID at this index
+                        onClick={async () => {
+                          // Delete the linked goal from the database if it exists
+                          const goalId = (content?.created_goal_ids || [])[idx];
+                          if (goalId) {
+                            try {
+                              await window.api.goals.delete(goalId);
+                            } catch (err) {
+                              console.error('Failed to delete linked goal:', err);
+                            }
+                          }
+                          // Remove the linked ID at this index
                           setContent(prev => {
                             if (!prev) return prev;
                             const ids = [...(prev.created_goal_ids || [])];
@@ -1658,11 +1699,21 @@ export default function EvalFormPage() {
           {/* Drawn Signature */}
           <div>
             <label className="label">Drawn Signature</label>
-            <SignaturePad
-              value={signatureImage}
-              onChange={setSignatureImage}
-              disabled={Boolean(existingSignedAt)}
-            />
+            {signatureImage ? (
+              <div className="border-2 border-gray-200 rounded-lg overflow-hidden bg-white p-2">
+                <img
+                  src={signatureImage}
+                  alt="Provider signature"
+                  className="w-full max-h-[150px] object-contain"
+                />
+              </div>
+            ) : (
+              <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+                <p className="text-sm text-[var(--color-text-secondary)]">
+                  No signature configured. Add one in Settings &gt; Signature.
+                </p>
+              </div>
+            )}
           </div>
 
           {existingSignedAt && (

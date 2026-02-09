@@ -462,15 +462,20 @@ export function seedFeeSchedule(db: Database.Database, discipline?: string): voi
     return;
   }
 
-  // Determine discipline from settings if not passed
+  // Determine discipline from practice table or settings
   let disc = discipline;
   if (!disc) {
     try {
-      const row = db.prepare("SELECT value FROM settings WHERE key = 'discipline'").get() as any;
-      disc = row?.value || 'ST';
-    } catch {
-      disc = 'ST';
+      const practiceRow = db.prepare("SELECT discipline FROM practice WHERE id = 1").get() as any;
+      disc = practiceRow?.discipline;
+    } catch { /* practice table may not exist yet */ }
+    if (!disc) {
+      try {
+        const settingsRow = db.prepare("SELECT value FROM settings WHERE key = 'provider_discipline'").get() as any;
+        disc = settingsRow?.value;
+      } catch { /* ignore */ }
     }
+    disc = disc || 'ST';
   }
 
   const codes = getCPTCodesForDiscipline(disc || 'ST');
@@ -514,19 +519,32 @@ export function autoFixFeeSchedule(db: Database.Database): void {
     const feeCount = (db.prepare('SELECT COUNT(*) as count FROM fee_schedule').get() as any)?.count || 0;
     if (feeCount === 0) return; // Will be seeded by seedFeeSchedule
 
-    const discRow = db.prepare("SELECT value FROM settings WHERE key = 'discipline'").get() as any;
-    const discipline = discRow?.value;
-    if (!discipline || discipline === 'MFT') return; // MFT codes are correct for MFT users
+    // Get discipline from practice table first, then settings
+    let discipline: string | undefined;
+    try {
+      const practiceRow = db.prepare("SELECT discipline FROM practice WHERE id = 1").get() as any;
+      discipline = practiceRow?.discipline;
+    } catch { /* practice table may not exist yet */ }
+    if (!discipline) {
+      try {
+        const settingsRow = db.prepare("SELECT value FROM settings WHERE key = 'provider_discipline'").get() as any;
+        discipline = settingsRow?.value;
+      } catch { /* ignore */ }
+    }
+    if (!discipline) return;
 
-    // Check if all codes are MFT-style (90xxx codes only, no 97xxx or 92xxx)
-    const allAreMFT = db.prepare(`
-      SELECT COUNT(*) as total,
-        SUM(CASE WHEN cpt_code IN ('90791','90834','90837','90832','90847','90846','90839','90840','90853','96156','96158','96159') THEN 1 ELSE 0 END) as mft_count
-      FROM fee_schedule
-    `).get() as any;
+    // Get expected CPT codes for this discipline
+    const expectedCodes = getCPTCodesForDiscipline(discipline).map(c => c.cpt_code);
+    if (expectedCodes.length === 0) return;
 
-    if (allAreMFT.total > 0 && allAreMFT.total === allAreMFT.mft_count) {
-      // All codes are MFT but discipline isn't MFT — reset
+    // Get current CPT codes in the fee schedule
+    const currentCodes = (db.prepare('SELECT cpt_code FROM fee_schedule WHERE deleted_at IS NULL').all() as any[])
+      .map((r: any) => r.cpt_code);
+
+    // Check if ANY expected code is present — if none match, codes are from wrong discipline
+    const hasAnyExpected = currentCodes.some((c: string) => expectedCodes.includes(c));
+    if (!hasAnyExpected && currentCodes.length > 0) {
+      // Complete mismatch — reset to correct discipline
       db.prepare('DELETE FROM fee_schedule').run();
       seedFeeSchedule(db, discipline);
     }

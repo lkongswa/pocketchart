@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Plus, Users, Eye } from 'lucide-react';
+import { Search, Plus, Users, Eye, Tag } from 'lucide-react';
 import type { Client, ClientStatus, Discipline } from '../../shared/types';
 import ClientFormModal from '../components/ClientFormModal';
+import TrialExpiredModal from '../components/TrialExpiredModal';
+import { useTrialGuard } from '../hooks/useTrialGuard';
 
 const statusBadgeClass: Record<ClientStatus, string> = {
   active: 'badge-active',
@@ -25,6 +27,7 @@ const disciplineBadgeClass: Record<Discipline, string> = {
 
 const ClientsPage: React.FC = () => {
   const navigate = useNavigate();
+  const { guardAction, showExpiredModal, dismissExpiredModal } = useTrialGuard();
 
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
@@ -32,6 +35,7 @@ const ClientsPage: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [disciplineFilter, setDisciplineFilter] = useState<string>('');
   const [modalOpen, setModalOpen] = useState(false);
+  const [discountClientIds, setDiscountClientIds] = useState<Set<number>>(new Set());
 
   const loadClients = useCallback(async () => {
     setLoading(true);
@@ -42,6 +46,16 @@ const ClientsPage: React.FC = () => {
       if (search.trim()) filters.search = search.trim();
       const data = await window.api.clients.list(filters);
       setClients(data);
+
+      // Load which clients have active discounts
+      const ids = new Set<number>();
+      for (const c of data) {
+        try {
+          const d = await window.api.clientDiscounts.getActive(c.id);
+          if (d && d.length > 0) ids.add(c.id);
+        } catch { /* ignore */ }
+      }
+      setDiscountClientIds(ids);
     } catch (err) {
       console.error('Failed to load clients:', err);
     } finally {
@@ -75,7 +89,7 @@ const ClientsPage: React.FC = () => {
       {/* Header */}
       <div className="page-header">
         <h1 className="page-title">Clients</h1>
-        <button className="btn-primary gap-2" onClick={() => setModalOpen(true)}>
+        <button className="btn-primary gap-2" onClick={() => { if (guardAction()) setModalOpen(true); }}>
           <Plus size={18} />
           Add Client
         </button>
@@ -137,7 +151,7 @@ const ClientsPage: React.FC = () => {
               ? 'Try adjusting your search or filters.'
               : 'Get started by adding your first client.'}
           </p>
-          <button className="btn-primary gap-2" onClick={() => setModalOpen(true)}>
+          <button className="btn-primary gap-2" onClick={() => { if (guardAction()) setModalOpen(true); }}>
             <Plus size={18} />
             Add Client
           </button>
@@ -164,7 +178,15 @@ const ClientsPage: React.FC = () => {
                   onClick={() => navigate(`/clients/${client.id}`)}
                 >
                   <td className="table-cell font-medium">
-                    {client.last_name}, {client.first_name}
+                    <span className="flex items-center gap-1.5">
+                      {client.last_name}, {client.first_name}
+                      {(!client.dob || !client.primary_dx_code) && (
+                        <span className="w-2 h-2 rounded-full bg-red-400 flex-shrink-0" title="Chart incomplete — missing required fields" />
+                      )}
+                      {discountClientIds.has(client.id) && (
+                        <span title="Active discount/package"><Tag size={12} className="text-emerald-500 flex-shrink-0" /></span>
+                      )}
+                    </span>
                   </td>
                   <td className="table-cell text-[var(--color-text-secondary)]">
                     {formatDate(client.dob)}
@@ -210,6 +232,9 @@ const ClientsPage: React.FC = () => {
         onClose={() => setModalOpen(false)}
         onSave={handleClientSaved}
       />
+
+      {/* Trial Expired Modal */}
+      {showExpiredModal && <TrialExpiredModal onClose={dismissExpiredModal} />}
     </div>
   );
 };

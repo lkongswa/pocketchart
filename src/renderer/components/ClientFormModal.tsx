@@ -56,6 +56,8 @@ interface ClientFormModalProps {
   client?: Client | null;
   onSave: (client: Client) => void;
   onDischarge?: () => void;
+  /** Sections to highlight when opened from 'Complete Chart' button */
+  highlightSections?: string[];
 }
 
 interface FormData {
@@ -136,10 +138,14 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
   client,
   onSave,
   onDischarge,
+  highlightSections = [],
 }) => {
   const [form, setForm] = useState<FormData>(emptyForm);
   const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>({});
   const [saving, setSaving] = useState(false);
+
+  // Helper for chart completeness highlighting
+  const shouldHighlight = (section: string) => highlightSections.includes(section);
 
   // ICD-10 search state
   const [dxSuggestions, setDxSuggestions] = useState<ICD10Entry[]>([]);
@@ -320,8 +326,8 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
           {/* Basic Info */}
-          <div className="rounded-lg border-l-4 border-blue-400 bg-blue-50/30 p-4">
-            <h3 className="section-title text-blue-700">Basic Information</h3>
+          <div className={`rounded-lg border-l-4 p-4 ${shouldHighlight('demographics') ? 'border-amber-400 bg-amber-50/40 ring-2 ring-amber-300' : 'border-blue-400 bg-blue-50/30'}`}>
+            <h3 className={`section-title ${shouldHighlight('demographics') ? 'text-amber-700' : 'text-blue-700'}`}>Basic Information</h3>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="label" htmlFor="first_name">First Name *</label>
@@ -404,8 +410,8 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
           </div>
 
           {/* Address */}
-          <div className="rounded-lg border-l-4 border-blue-400 bg-blue-50/30 p-4">
-            <h3 className="section-title text-blue-700">Address</h3>
+          <div className={`rounded-lg border-l-4 p-4 ${shouldHighlight('demographics') ? 'border-amber-400 bg-amber-50/40 ring-2 ring-amber-300' : 'border-blue-400 bg-blue-50/30'}`}>
+            <h3 className={`section-title ${shouldHighlight('demographics') ? 'text-amber-700' : 'text-blue-700'}`}>Address</h3>
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2">
                 <label className="label" htmlFor="address">Street Address</label>
@@ -459,8 +465,8 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
           </div>
 
           {/* Clinical */}
-          <div className="rounded-lg border-l-4 border-violet-400 bg-violet-50/30 p-4">
-            <h3 className="section-title text-violet-700">Clinical Information</h3>
+          <div className={`rounded-lg border-l-4 p-4 ${shouldHighlight('diagnosis') ? 'border-amber-400 bg-amber-50/40 ring-2 ring-amber-300' : 'border-violet-400 bg-violet-50/30'}`}>
+            <h3 className={`section-title ${shouldHighlight('diagnosis') ? 'text-amber-700' : 'text-violet-700'}`}>Clinical Information</h3>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="label" htmlFor="discipline">Discipline *</label>
@@ -584,8 +590,8 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
           </div>
 
           {/* Insurance */}
-          <div className="rounded-lg border-l-4 border-emerald-400 bg-emerald-50/30 p-4">
-            <h3 className="section-title text-emerald-700">Insurance</h3>
+          <div className={`rounded-lg border-l-4 p-4 ${shouldHighlight('insurance') ? 'border-amber-400 bg-amber-50/40 ring-2 ring-amber-300' : 'border-emerald-400 bg-emerald-50/30'}`}>
+            <h3 className={`section-title ${shouldHighlight('insurance') ? 'text-amber-700' : 'text-emerald-700'}`}>Insurance</h3>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="label" htmlFor="insurance_payer">Insurance Payer</label>
@@ -687,7 +693,7 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
           </div>
 
           {/* Referral */}
-          <div className="rounded-lg border-l-4 border-amber-400 bg-amber-50/30 p-4">
+          <div className={`rounded-lg border-l-4 p-4 ${shouldHighlight('referral') ? 'border-amber-400 bg-amber-50/40 ring-2 ring-amber-300' : 'border-amber-400 bg-amber-50/30'}`}>
             <h3 className="section-title text-amber-700">Referral Information</h3>
             <div className="grid grid-cols-2 gap-4">
               <div>

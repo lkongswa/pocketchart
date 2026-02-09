@@ -63,7 +63,7 @@ let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
 
 const isDev = process.env.NODE_ENV === 'development';
-const FORCE_PRO = true; // Toggle to false when done workshopping Pro features
+const FORCE_PRO = false; // Toggle to false when done workshopping Pro features
 
 // ── Auto-Updater Configuration ──
 autoUpdater.autoDownload = false;       // Don't download until user says yes
@@ -394,6 +394,32 @@ function registerIpcHandlers() {
   });
 
   safeHandle('update:download', async () => {
+    // MANDATORY backup before downloading update — blocks download if backup fails
+    const backupDir = getDataPath();
+    const srcDb = path.join(backupDir, 'pocketchart.db');
+    const backupName = `pocketchart_pre_update_${new Date().toISOString().slice(0, 10)}.db`;
+    const backupDest = path.join(backupDir, backupName);
+
+    try {
+      if (!fs.existsSync(srcDb)) {
+        throw new Error('Database file not found');
+      }
+      fs.copyFileSync(srcDb, backupDest);
+      // Verify the backup was actually written
+      const srcStat = fs.statSync(srcDb);
+      const destStat = fs.statSync(backupDest);
+      if (destStat.size !== srcStat.size) {
+        throw new Error('Backup file size mismatch — copy may be corrupted');
+      }
+      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_backup_date', ?)").run(new Date().toISOString());
+      mainWindow?.webContents.send('update:backup-complete', { backupPath: backupDest });
+      console.log('Pre-update backup verified:', backupDest, `(${destStat.size} bytes)`);
+    } catch (backupErr: any) {
+      console.error('Pre-update backup FAILED — blocking update download:', backupErr);
+      mainWindow?.webContents.send('update:backup-failed');
+      throw new Error(`Backup required before update. Backup failed: ${backupErr.message}`);
+    }
+
     await autoUpdater.downloadUpdate();
     return true;
   });
@@ -411,16 +437,19 @@ function registerIpcHandlers() {
     const existing = db.prepare('SELECT id FROM practice WHERE id = 1').get();
     if (existing) {
       db.prepare(`
-        UPDATE practice SET name=?, address=?, phone=?, npi=?, tax_id=?,
-        license_number=?, license_state=?, discipline=? WHERE id=1
-      `).run(data.name, data.address, data.phone, data.npi, data.tax_id,
-        data.license_number, data.license_state, data.discipline);
+        UPDATE practice SET name=?, address=?, city=?, state=?, zip=?, phone=?, npi=?, tax_id=?,
+        license_number=?, license_state=?, discipline=?, taxonomy_code=? WHERE id=1
+      `).run(data.name, data.address, data.city || '', data.state || '', data.zip || '',
+        data.phone, data.npi, data.tax_id,
+        data.license_number, data.license_state, data.discipline, data.taxonomy_code || '');
     } else {
       db.prepare(`
-        INSERT INTO practice (id, name, address, phone, npi, tax_id, license_number, license_state, discipline)
-        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(data.name, data.address, data.phone, data.npi, data.tax_id,
-        data.license_number, data.license_state, data.discipline);
+        INSERT INTO practice (id, name, address, city, state, zip, phone, npi, tax_id,
+        license_number, license_state, discipline, taxonomy_code)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(data.name, data.address, data.city || '', data.state || '', data.zip || '',
+        data.phone, data.npi, data.tax_id,
+        data.license_number, data.license_state, data.discipline, data.taxonomy_code || '');
     }
     return db.prepare('SELECT * FROM practice WHERE id = 1').get();
   });
@@ -1191,6 +1220,7 @@ function registerIpcHandlers() {
   });
 
   safeHandle('noteBank:toggleFavorite', (_event, id: number) => {
+    requireTier('pro');
     db.prepare('UPDATE note_bank SET is_favorite = NOT is_favorite WHERE id = ?').run(id);
     return db.prepare('SELECT * FROM note_bank WHERE id = ?').get(id);
   });
@@ -1642,6 +1672,48 @@ function registerIpcHandlers() {
     db.prepare("DELETE FROM settings WHERE key = ?").run(key);
   };
 
+  // ── 30-Day Free Trial ──
+  // Record install_date on first launch (never overwrite)
+  const TRIAL_DAYS = 30;
+  if (!getSetting('install_date')) {
+    setSetting('install_date', new Date().toISOString());
+  }
+
+  /**
+   * Calculates the effective tier considering trial status.
+   * - If user has a real license (basic/pro), return that tier directly.
+   * - If unlicensed and within 30-day trial window, return 'basic'.
+   * - If unlicensed and trial expired, return 'unlicensed'.
+   */
+  function getEffectiveTier(): { effectiveTier: AppTier; trialActive: boolean; trialExpired: boolean; trialDaysRemaining: number } {
+    const storedTier = (getSetting('app_tier') || 'unlicensed') as AppTier;
+
+    // If user has a real license, no trial logic needed
+    if (storedTier !== 'unlicensed') {
+      return { effectiveTier: storedTier, trialActive: false, trialExpired: false, trialDaysRemaining: 0 };
+    }
+
+    // Calculate trial status
+    const installDate = getSetting('install_date');
+    if (!installDate) {
+      // Shouldn't happen (set above), but guard anyway
+      return { effectiveTier: 'unlicensed', trialActive: false, trialExpired: false, trialDaysRemaining: 0 };
+    }
+
+    const installed = new Date(installDate);
+    const now = new Date();
+    const daysSinceInstall = Math.floor((now.getTime() - installed.getTime()) / (1000 * 60 * 60 * 24));
+    const daysRemaining = Math.max(0, TRIAL_DAYS - daysSinceInstall);
+
+    if (daysRemaining > 0) {
+      // Active trial — grant basic tier
+      return { effectiveTier: 'basic', trialActive: true, trialExpired: false, trialDaysRemaining: daysRemaining };
+    } else {
+      // Trial expired
+      return { effectiveTier: 'unlicensed', trialActive: false, trialExpired: true, trialDaysRemaining: 0 };
+    }
+  }
+
   /**
    * Validate a license key against the Lemon Squeezy API.
    * Returns the product variant name to determine tier (basic vs pro).
@@ -1836,10 +1908,13 @@ function registerIpcHandlers() {
         subscriptionStatus: 'active' as const,
         subscriptionExpiresAt: null,
         lastValidatedAt: new Date().toISOString(),
+        trialActive: false,
+        trialExpired: false,
+        trialDaysRemaining: 0,
       };
     }
 
-    const tier = (getSetting('app_tier') || 'unlicensed') as AppTier;
+    const { effectiveTier, trialActive, trialExpired, trialDaysRemaining } = getEffectiveTier();
     const licenseKey = getSetting('license_key');
     const activatedAt = getSetting('license_activated_at');
     const subscriptionStatus = getSetting('subscription_status') as 'active' | 'expired' | 'cancelled' | null;
@@ -1847,12 +1922,15 @@ function registerIpcHandlers() {
     const lastValidatedAt = getSetting('last_license_validation');
 
     return {
-      tier,
+      tier: effectiveTier,
       licenseKey,
       activatedAt,
       subscriptionStatus,
       subscriptionExpiresAt,
       lastValidatedAt,
+      trialActive,
+      trialExpired,
+      trialDaysRemaining,
     };
   });
 
@@ -2007,9 +2085,9 @@ function registerIpcHandlers() {
   // ── Tier-Gated Helper ──
   function requireTier(requiredTier: 'basic' | 'pro'): void {
     if (FORCE_PRO) return; // Bypass tier check when workshopping Pro features
-    const currentTier = (getSetting('app_tier') || 'unlicensed') as AppTier;
+    const { effectiveTier } = getEffectiveTier();
     const tierRank = { unlicensed: 0, basic: 1, pro: 2 };
-    if (tierRank[currentTier] < tierRank[requiredTier]) {
+    if (tierRank[effectiveTier] < tierRank[requiredTier]) {
       throw new Error(`This feature requires PocketChart ${requiredTier === 'pro' ? 'Pro' : 'Basic'}. Please upgrade to access this feature.`);
     }
   }
@@ -2973,6 +3051,19 @@ function registerIpcHandlers() {
       entityFeeMap = new Map(entityFees.filter(f => f.cpt_code).map(f => [f.cpt_code, f]));
     }
 
+    // Load active client discounts (for non-entity invoices)
+    let activeDiscounts: any[] = [];
+    if (clientId && !entityId) {
+      // Auto-expire past-due discounts
+      db.prepare(`
+        UPDATE client_discounts SET status = 'expired', updated_at = CURRENT_TIMESTAMP
+        WHERE client_id = ? AND status = 'active' AND end_date IS NOT NULL AND end_date < date('now') AND deleted_at IS NULL
+      `).run(clientId);
+      activeDiscounts = db.prepare(
+        "SELECT * FROM client_discounts WHERE client_id = ? AND status = 'active' AND deleted_at IS NULL ORDER BY created_at DESC"
+      ).all(clientId) as any[];
+    }
+
     const placeholders = noteIds.map(() => '?').join(',');
     // Support fetching by entity_id or client_id
     let noteQuery: string;
@@ -2987,13 +3078,63 @@ function registerIpcHandlers() {
     const notes = db.prepare(noteQuery).all(...noteParams) as any[];
 
     let subtotal = 0;
+    let discountAmount = 0;
     const items: any[] = [];
+    // Track usage per discount: discountId → sessions applied this invoice
+    const discountUsage = new Map<number, number>();
 
     for (const note of notes) {
-      // Prefer entity fee schedule rate, then global fee schedule, then note charge_amount
+      // Base rate: Entity fee → Note override → Global fee schedule → Charge amount
       const entityFee = entityFeeMap.get(note.cpt_code);
       const fee = feeMap.get(note.cpt_code);
-      const unitPrice = entityFee?.default_rate || note.rate_override || fee?.amount || note.charge_amount || 0;
+      let unitPrice = entityFee?.default_rate || note.rate_override || fee?.amount || note.charge_amount || 0;
+      const basePrice = unitPrice;
+
+      // Apply active client discounts — try session-based first, then persistent
+      if (activeDiscounts.length > 0) {
+        let applied = false;
+
+        // 1) Try session-based discounts (package / flat_rate) — first one with remaining sessions wins
+        for (const disc of activeDiscounts) {
+          if (applied) break;
+          const usedSoFar = discountUsage.get(disc.id) || 0;
+
+          if (disc.discount_type === 'package') {
+            const remaining = disc.total_sessions - (disc.sessions_used + usedSoFar);
+            if (remaining > 0) {
+              const packageRate = (disc.paid_sessions * disc.session_rate) / disc.total_sessions;
+              unitPrice = packageRate;
+              discountUsage.set(disc.id, usedSoFar + 1);
+              applied = true;
+            }
+          } else if (disc.discount_type === 'flat_rate') {
+            const remaining = disc.flat_rate_sessions
+              ? disc.flat_rate_sessions - (disc.flat_rate_sessions_used + usedSoFar)
+              : Infinity;
+            if (remaining > 0) {
+              unitPrice = disc.flat_rate;
+              discountUsage.set(disc.id, usedSoFar + 1);
+              applied = true;
+            }
+          }
+        }
+
+        // 2) If no session-based discount applied, apply persistent discounts (stack them)
+        if (!applied) {
+          for (const disc of activeDiscounts) {
+            if (disc.discount_type === 'persistent') {
+              if (disc.discount_percent) {
+                unitPrice = unitPrice * (1 - disc.discount_percent / 100);
+              } else if (disc.discount_fixed) {
+                unitPrice = Math.max(0, unitPrice - disc.discount_fixed);
+              }
+            }
+          }
+        }
+
+        discountAmount += (basePrice - unitPrice) * (note.units || 1);
+      }
+
       const amount = unitPrice * (note.units || 1);
       subtotal += amount;
       items.push({
@@ -3002,16 +3143,46 @@ function registerIpcHandlers() {
         cpt_code: note.cpt_code,
         service_date: note.date_of_service,
         units: note.units || 1,
-        unit_price: unitPrice,
-        amount,
+        unit_price: Math.round(unitPrice * 100) / 100,
+        amount: Math.round(amount * 100) / 100,
       });
     }
 
+    // Increment discount usage for session-based discounts
+    for (const disc of activeDiscounts) {
+      const sessionsApplied = discountUsage.get(disc.id) || 0;
+      if (sessionsApplied > 0) {
+        if (disc.discount_type === 'package') {
+          const newUsed = disc.sessions_used + sessionsApplied;
+          const newStatus = newUsed >= disc.total_sessions ? 'exhausted' : 'active';
+          db.prepare('UPDATE client_discounts SET sessions_used = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+            .run(newUsed, newStatus, disc.id);
+        } else if (disc.discount_type === 'flat_rate') {
+          const newUsed = disc.flat_rate_sessions_used + sessionsApplied;
+          const newStatus = disc.flat_rate_sessions && newUsed >= disc.flat_rate_sessions ? 'exhausted' : 'active';
+          db.prepare('UPDATE client_discounts SET flat_rate_sessions_used = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+            .run(newUsed, newStatus, disc.id);
+        }
+      }
+    }
+
+    // Build invoice notes with discount info
+    let invoiceNotes = '';
+    const appliedLabels = activeDiscounts.filter(d => {
+      if (d.discount_type === 'persistent') return true;
+      return (discountUsage.get(d.id) || 0) > 0;
+    }).map(d => d.label || d.discount_type);
+    if (appliedLabels.length > 0) {
+      invoiceNotes = `Discounts applied: ${appliedLabels.join(', ')}`;
+    }
+
     const invoiceNumber = generateInvoiceNumber();
+    const totalAmount = Math.round(subtotal * 100) / 100;
     const result = db.prepare(`
-      INSERT INTO invoices (client_id, entity_id, invoice_number, invoice_date, subtotal, total_amount, status)
-      VALUES (?, ?, ?, ?, ?, ?, 'draft')
-    `).run(clientId || null, entityId || null, invoiceNumber, new Date().toISOString().slice(0, 10), subtotal, subtotal);
+      INSERT INTO invoices (client_id, entity_id, invoice_number, invoice_date, subtotal, discount_amount, total_amount, status, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?)
+    `).run(clientId || null, entityId || null, invoiceNumber, new Date().toISOString().slice(0, 10),
+      totalAmount + Math.round(discountAmount * 100) / 100, Math.round(discountAmount * 100) / 100, totalAmount, invoiceNotes);
     const invoiceId = result.lastInsertRowid;
 
     const insertItem = db.prepare(`
@@ -3689,11 +3860,11 @@ function registerIpcHandlers() {
   });
 
   // ══════════════════════════════════════════════════════════════════════
-  // ── Compliance Tracking (Pro Only) ──
+  // ── Compliance Tracking (Basic + Pro) ──
   // ══════════════════════════════════════════════════════════════════════
 
   safeHandle('compliance:getByClient', (_event, clientId: number) => {
-    requireTier('pro');
+    requireTier('basic');
     let record = db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(clientId) as any;
     if (!record) {
       // Auto-create compliance tracking for the client with defaults
@@ -3706,7 +3877,7 @@ function registerIpcHandlers() {
   });
 
   safeHandle('compliance:updateSettings', (_event, clientId: number, data: any) => {
-    requireTier('pro');
+    requireTier('basic');
     // Ensure record exists
     let record = db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(clientId) as any;
     if (!record) {
@@ -3733,7 +3904,7 @@ function registerIpcHandlers() {
   });
 
   safeHandle('compliance:incrementVisit', (_event, clientId: number) => {
-    requireTier('pro');
+    requireTier('basic');
     db.prepare(`
       UPDATE compliance_tracking
       SET visits_since_last_progress = visits_since_last_progress + 1,
@@ -3744,7 +3915,7 @@ function registerIpcHandlers() {
   });
 
   safeHandle('compliance:resetProgressCounter', (_event, clientId: number) => {
-    requireTier('pro');
+    requireTier('basic');
     const now = new Date().toISOString().slice(0, 10);
     db.prepare(`
       UPDATE compliance_tracking
@@ -3758,7 +3929,7 @@ function registerIpcHandlers() {
   });
 
   safeHandle('compliance:resetRecertCounter', (_event, clientId: number) => {
-    requireTier('pro');
+    requireTier('basic');
     const now = new Date().toISOString().slice(0, 10);
     db.prepare(`
       UPDATE compliance_tracking
@@ -3772,7 +3943,7 @@ function registerIpcHandlers() {
   });
 
   safeHandle('compliance:getAlerts', () => {
-    requireTier('pro');
+    requireTier('basic');
     const alerts: any[] = [];
     const records = db.prepare(`
       SELECT ct.*, c.first_name, c.last_name
@@ -3844,7 +4015,7 @@ function registerIpcHandlers() {
   });
 
   safeHandle('compliance:getDueItems', (_event, clientId: number) => {
-    requireTier('pro');
+    requireTier('basic');
     // Similar to getAlerts but for a single client
     const r = db.prepare(`
       SELECT ct.*, c.first_name, c.last_name
@@ -3872,6 +4043,250 @@ function registerIpcHandlers() {
     }
 
     return alerts;
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // ── Basic Alerts (Basic + Pro) ──
+  // ══════════════════════════════════════════════════════════════════════
+
+  safeHandle('dashboard:getBasicAlerts', () => {
+    requireTier('basic');
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Unsigned notes
+    const unsignedNotes = db.prepare(`
+      SELECT n.id, n.client_id, n.date_of_service, n.created_at,
+        c.first_name || ' ' || c.last_name AS client_name
+      FROM notes n
+      JOIN clients c ON c.id = n.client_id
+      WHERE n.signed_at IS NULL AND n.deleted_at IS NULL AND c.deleted_at IS NULL
+      ORDER BY n.date_of_service DESC
+    `).all();
+
+    // Compliance alerts (progress reports + recertifications)
+    const complianceAlerts: any[] = [];
+    const complianceRecords = db.prepare(`
+      SELECT ct.*, c.first_name, c.last_name
+      FROM compliance_tracking ct
+      JOIN clients c ON c.id = ct.client_id
+      WHERE ct.tracking_enabled = 1 AND c.deleted_at IS NULL AND c.status = 'active'
+    `).all() as any[];
+
+    for (const r of complianceRecords) {
+      const clientName = `${r.first_name} ${r.last_name}`;
+      const visitPct = r.progress_visit_threshold > 0
+        ? r.visits_since_last_progress / r.progress_visit_threshold
+        : 0;
+
+      // Visit-based progress report
+      if (r.visits_since_last_progress >= r.progress_visit_threshold) {
+        complianceAlerts.push({ client_id: r.client_id, client_name: clientName, alert_type: 'progress_overdue',
+          detail: `${r.visits_since_last_progress}/${r.progress_visit_threshold} visits — progress report overdue` });
+      } else if (visitPct >= 0.8) {
+        complianceAlerts.push({ client_id: r.client_id, client_name: clientName, alert_type: 'progress_due',
+          detail: `${r.visits_since_last_progress}/${r.progress_visit_threshold} visits — progress report due soon` });
+      }
+
+      // Day-based progress
+      if (r.next_progress_due && r.next_progress_due <= today) {
+        complianceAlerts.push({ client_id: r.client_id, client_name: clientName, alert_type: 'progress_overdue',
+          detail: `Progress report overdue since ${r.next_progress_due}` });
+      }
+
+      // Recertification
+      if (r.next_recert_due) {
+        if (r.next_recert_due <= today) {
+          complianceAlerts.push({ client_id: r.client_id, client_name: clientName, alert_type: 'recert_overdue',
+            detail: `Recertification overdue since ${r.next_recert_due}` });
+        } else {
+          const daysUntil = (new Date(r.next_recert_due).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+          if (daysUntil <= 14) {
+            complianceAlerts.push({ client_id: r.client_id, client_name: clientName, alert_type: 'recert_due',
+              detail: `Recertification due ${r.next_recert_due} (${Math.ceil(daysUntil)} days)` });
+          }
+        }
+      }
+    }
+
+    // Expiring physician orders (within 30 days)
+    const expiringOrders = db.prepare(`
+      SELECT ct.client_id, ct.physician_order_expiration,
+        c.first_name || ' ' || c.last_name AS client_name
+      FROM compliance_tracking ct
+      JOIN clients c ON c.id = ct.client_id
+      WHERE ct.physician_order_required = 1
+        AND ct.physician_order_expiration IS NOT NULL
+        AND date(ct.physician_order_expiration) <= date('now', '+30 days')
+        AND c.deleted_at IS NULL AND c.status = 'active'
+      ORDER BY ct.physician_order_expiration
+    `).all();
+
+    // Authorization alerts (>80% used or <30 days remaining)
+    const authorizationAlerts = db.prepare(`
+      SELECT a.*, c.first_name || ' ' || c.last_name AS client_name
+      FROM authorizations a
+      JOIN clients c ON c.id = a.client_id
+      WHERE a.deleted_at IS NULL AND a.status = 'active'
+        AND (
+          (a.units_approved > 0 AND CAST(a.units_used AS REAL) / a.units_approved >= 0.8)
+          OR (a.end_date IS NOT NULL AND date(a.end_date) <= date('now', '+30 days'))
+        )
+      ORDER BY a.end_date
+    `).all();
+
+    // Incomplete charts — only critical status (missing DOB or diagnosis) for active clients
+    const activeClients = db.prepare(`
+      SELECT id, first_name, last_name, dob, primary_dx_code
+      FROM clients
+      WHERE deleted_at IS NULL AND status = 'active'
+        AND (dob IS NULL OR dob = '' OR primary_dx_code IS NULL OR primary_dx_code = '')
+      ORDER BY last_name, first_name
+    `).all() as any[];
+
+    const incompleteCharts = activeClients.map((c: any) => {
+      const missingFields: string[] = [];
+      if (!c.dob) missingFields.push('Date of Birth');
+      if (!c.primary_dx_code) missingFields.push('Primary Diagnosis');
+      return { clientId: c.id, clientName: `${c.first_name} ${c.last_name}`, missingFields };
+    });
+
+    return { unsignedNotes, complianceAlerts, expiringOrders, authorizationAlerts, incompleteCharts };
+  });
+
+  safeHandle('dashboard:getAnalytics', (_event, filters?: { startDate?: string; endDate?: string; monthsBack?: number }) => {
+    requireTier('pro');
+
+    const now = new Date();
+
+    // Determine date range from filters
+    let rangeStartDate: string;
+    let rangeEndDate: string;
+    let monthsBack = 6; // default
+
+    if (filters?.startDate && filters?.endDate) {
+      // Custom date range
+      rangeStartDate = filters.startDate;
+      rangeEndDate = filters.endDate;
+      // Calculate months between for generating month buckets
+      const sd = new Date(filters.startDate + 'T00:00:00');
+      const ed = new Date(filters.endDate + 'T00:00:00');
+      monthsBack = Math.max(1, (ed.getFullYear() - sd.getFullYear()) * 12 + (ed.getMonth() - sd.getMonth()) + 1);
+    } else {
+      monthsBack = filters?.monthsBack || 6;
+      const startMonth = new Date(now.getFullYear(), now.getMonth() - (monthsBack - 1), 1);
+      rangeStartDate = startMonth.toISOString().slice(0, 10);
+      rangeEndDate = now.toISOString().slice(0, 10);
+    }
+
+    // Build month buckets
+    const months: string[] = [];
+    if (filters?.startDate && filters?.endDate) {
+      const sd = new Date(filters.startDate + 'T00:00:00');
+      for (let i = 0; i < monthsBack; i++) {
+        const d = new Date(sd.getFullYear(), sd.getMonth() + i, 1);
+        months.push(d.toISOString().slice(0, 7));
+      }
+    } else {
+      for (let i = monthsBack - 1; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        months.push(d.toISOString().slice(0, 7));
+      }
+    }
+
+    // Revenue by month: invoiced vs collected
+    const revenueByMonth = months.map((m) => {
+      const invoiced = (db.prepare(`
+        SELECT COALESCE(SUM(total_amount), 0) AS total
+        FROM invoices
+        WHERE substr(invoice_date, 1, 7) = ? AND status != 'void' AND deleted_at IS NULL
+      `).get(m) as any).total;
+
+      const collected = (db.prepare(`
+        SELECT COALESCE(SUM(amount), 0) AS total
+        FROM payments
+        WHERE substr(payment_date, 1, 7) = ? AND amount > 0 AND deleted_at IS NULL
+      `).get(m) as any).total;
+
+      return { month: m, invoiced, collected };
+    });
+
+    // Client growth: new clients per month
+    const clientGrowth = months.map((m) => {
+      const count = (db.prepare(`
+        SELECT COUNT(*) AS cnt
+        FROM clients
+        WHERE substr(created_at, 1, 7) = ? AND deleted_at IS NULL
+      `).get(m) as any).cnt;
+      return { month: m, newClients: count };
+    });
+
+    // Sessions volume: signed notes per month
+    const sessionsVolume = months.map((m) => {
+      const count = (db.prepare(`
+        SELECT COUNT(*) AS cnt
+        FROM notes
+        WHERE signed_at IS NOT NULL AND substr(date_of_service, 1, 7) = ? AND deleted_at IS NULL
+      `).get(m) as any).cnt;
+      return { month: m, sessions: count };
+    });
+
+    // Collection rate & avg revenue scoped to the selected range
+    const rangeStartMonth = months[0]; // 'YYYY-MM'
+    const rangeEndMonth = months[months.length - 1];
+
+    const totalInvoiced = (db.prepare(`
+      SELECT COALESCE(SUM(total_amount), 0) AS total FROM invoices
+      WHERE status != 'void' AND deleted_at IS NULL
+        AND substr(invoice_date, 1, 7) >= ? AND substr(invoice_date, 1, 7) <= ?
+    `).get(rangeStartMonth, rangeEndMonth) as any).total;
+
+    const totalCollected = (db.prepare(`
+      SELECT COALESCE(SUM(amount), 0) AS total FROM payments
+      WHERE amount > 0 AND deleted_at IS NULL
+        AND substr(payment_date, 1, 7) >= ? AND substr(payment_date, 1, 7) <= ?
+    `).get(rangeStartMonth, rangeEndMonth) as any).total;
+
+    const collectionRate = totalInvoiced > 0 ? Math.round((totalCollected / totalInvoiced) * 100 * 10) / 10 : 0;
+
+    // Average revenue per session scoped to range
+    const totalSignedNotes = (db.prepare(`
+      SELECT COUNT(*) AS cnt FROM notes
+      WHERE signed_at IS NOT NULL AND deleted_at IS NULL
+        AND substr(date_of_service, 1, 7) >= ? AND substr(date_of_service, 1, 7) <= ?
+    `).get(rangeStartMonth, rangeEndMonth) as any).cnt;
+    const avgRevenuePerSession = totalSignedNotes > 0 ? Math.round((totalCollected / totalSignedNotes) * 100) / 100 : 0;
+
+    // Stats (these are always current, not range-scoped)
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+
+    const outstanding = (db.prepare(`
+      SELECT COALESCE(SUM(total_amount), 0) AS total
+      FROM invoices
+      WHERE status NOT IN ('paid', 'void') AND deleted_at IS NULL
+    `).get() as any).total;
+
+    const paidThisMonth = (db.prepare(`
+      SELECT COALESCE(SUM(amount), 0) AS total
+      FROM payments
+      WHERE payment_date >= ? AND amount > 0 AND deleted_at IS NULL
+    `).get(startOfMonth) as any).total;
+
+    const draftCount = (db.prepare(`
+      SELECT COUNT(*) AS cnt FROM invoices WHERE status = 'draft' AND deleted_at IS NULL
+    `).get() as any).cnt;
+
+    const overdueCount = (db.prepare(`
+      SELECT COUNT(*) AS cnt FROM invoices WHERE status = 'overdue' AND deleted_at IS NULL
+    `).get() as any).cnt;
+
+    return {
+      revenueByMonth,
+      clientGrowth,
+      sessionsVolume,
+      collectionRate,
+      avgRevenuePerSession,
+      stats: { outstanding, paidThisMonth, draftCount, overdueCount },
+    };
   });
 
   // ══════════════════════════════════════════════════════════════════════
@@ -4252,6 +4667,174 @@ function registerIpcHandlers() {
 
   safeHandle('directAccess:getRules', () => {
     return getDirectAccessRules();
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // ── Client Discounts & Packages ──
+  // ══════════════════════════════════════════════════════════════════════
+
+  safeHandle('clientDiscounts:listByClient', (_event, clientId: number) => {
+    return db.prepare(
+      'SELECT * FROM client_discounts WHERE client_id = ? AND deleted_at IS NULL ORDER BY created_at DESC'
+    ).all(clientId);
+  });
+
+  safeHandle('clientDiscounts:getActive', (_event, clientId: number) => {
+    // Expire any that are past end_date
+    db.prepare(`
+      UPDATE client_discounts SET status = 'expired', updated_at = CURRENT_TIMESTAMP
+      WHERE client_id = ? AND status = 'active' AND end_date IS NOT NULL AND end_date < date('now') AND deleted_at IS NULL
+    `).run(clientId);
+
+    return db.prepare(
+      "SELECT * FROM client_discounts WHERE client_id = ? AND status = 'active' AND deleted_at IS NULL ORDER BY created_at DESC"
+    ).all(clientId) || [];
+  });
+
+  safeHandle('clientDiscounts:create', (_event, data: any) => {
+    const result = db.prepare(`
+      INSERT INTO client_discounts (client_id, discount_type, label,
+        total_sessions, paid_sessions, sessions_used, session_rate,
+        flat_rate, flat_rate_sessions, flat_rate_sessions_used,
+        discount_percent, discount_fixed,
+        start_date, end_date, status, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      data.client_id, data.discount_type, data.label || '',
+      data.total_sessions ?? null, data.paid_sessions ?? null, data.sessions_used || 0, data.session_rate ?? null,
+      data.flat_rate ?? null, data.flat_rate_sessions ?? null, data.flat_rate_sessions_used || 0,
+      data.discount_percent ?? null, data.discount_fixed ?? null,
+      data.start_date || null, data.end_date || null, data.status || 'active', data.notes || ''
+    );
+
+    auditLog({
+      actionType: 'discount_created', entityType: 'client_discount', entityId: Number(result.lastInsertRowid),
+      clientId: data.client_id, detail: { discount_type: data.discount_type, label: data.label || '' }
+    });
+
+    return db.prepare('SELECT * FROM client_discounts WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('clientDiscounts:update', (_event, id: number, data: any) => {
+    const existing = db.prepare('SELECT * FROM client_discounts WHERE id = ? AND deleted_at IS NULL').get(id) as any;
+    if (!existing) throw new Error('Discount not found');
+
+    db.prepare(`
+      UPDATE client_discounts SET
+        label = COALESCE(?, label),
+        total_sessions = COALESCE(?, total_sessions),
+        paid_sessions = COALESCE(?, paid_sessions),
+        session_rate = COALESCE(?, session_rate),
+        flat_rate = COALESCE(?, flat_rate),
+        flat_rate_sessions = COALESCE(?, flat_rate_sessions),
+        discount_percent = COALESCE(?, discount_percent),
+        discount_fixed = COALESCE(?, discount_fixed),
+        start_date = COALESCE(?, start_date),
+        end_date = COALESCE(?, end_date),
+        status = COALESCE(?, status),
+        notes = COALESCE(?, notes),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND deleted_at IS NULL
+    `).run(
+      data.label, data.total_sessions, data.paid_sessions, data.session_rate,
+      data.flat_rate, data.flat_rate_sessions,
+      data.discount_percent, data.discount_fixed,
+      data.start_date, data.end_date, data.status, data.notes, id
+    );
+
+    return db.prepare('SELECT * FROM client_discounts WHERE id = ?').get(id);
+  });
+
+  safeHandle('clientDiscounts:delete', (_event, id: number) => {
+    db.prepare("UPDATE client_discounts SET deleted_at = CURRENT_TIMESTAMP, status = 'cancelled' WHERE id = ?").run(id);
+    return true;
+  });
+
+  safeHandle('clientDiscounts:incrementUsage', (_event, id: number, count?: number) => {
+    const inc = count || 1;
+    const discount = db.prepare('SELECT * FROM client_discounts WHERE id = ? AND deleted_at IS NULL').get(id) as any;
+    if (!discount) throw new Error('Discount not found');
+
+    if (discount.discount_type === 'package') {
+      const newUsed = discount.sessions_used + inc;
+      const newStatus = newUsed >= discount.total_sessions ? 'exhausted' : 'active';
+      db.prepare('UPDATE client_discounts SET sessions_used = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(newUsed, newStatus, id);
+    } else if (discount.discount_type === 'flat_rate') {
+      const newUsed = discount.flat_rate_sessions_used + inc;
+      const newStatus = discount.flat_rate_sessions && newUsed >= discount.flat_rate_sessions ? 'exhausted' : 'active';
+      db.prepare('UPDATE client_discounts SET flat_rate_sessions_used = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(newUsed, newStatus, id);
+    }
+
+    return db.prepare('SELECT * FROM client_discounts WHERE id = ?').get(id);
+  });
+
+  safeHandle('clientDiscounts:decrementUsage', (_event, id: number, count?: number) => {
+    const dec = count || 1;
+    const discount = db.prepare('SELECT * FROM client_discounts WHERE id = ? AND deleted_at IS NULL').get(id) as any;
+    if (!discount) throw new Error('Discount not found');
+
+    if (discount.discount_type === 'package') {
+      const newUsed = Math.max(0, discount.sessions_used - dec);
+      db.prepare("UPDATE client_discounts SET sessions_used = ?, status = 'active', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .run(newUsed, id);
+    } else if (discount.discount_type === 'flat_rate') {
+      const newUsed = Math.max(0, discount.flat_rate_sessions_used - dec);
+      db.prepare("UPDATE client_discounts SET flat_rate_sessions_used = ?, status = 'active', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .run(newUsed, id);
+    }
+
+    return db.prepare('SELECT * FROM client_discounts WHERE id = ?').get(id);
+  });
+
+  // ── Discount Templates ──
+
+  safeHandle('discountTemplates:list', () => {
+    return db.prepare('SELECT * FROM discount_templates WHERE deleted_at IS NULL ORDER BY name').all();
+  });
+
+  safeHandle('discountTemplates:create', (_event, data: any) => {
+    const result = db.prepare(`
+      INSERT INTO discount_templates (name, discount_type,
+        total_sessions, paid_sessions, session_rate,
+        flat_rate, flat_rate_sessions,
+        discount_percent, discount_fixed)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      data.name, data.discount_type,
+      data.total_sessions ?? null, data.paid_sessions ?? null, data.session_rate ?? null,
+      data.flat_rate ?? null, data.flat_rate_sessions ?? null,
+      data.discount_percent ?? null, data.discount_fixed ?? null
+    );
+    return db.prepare('SELECT * FROM discount_templates WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('discountTemplates:update', (_event, id: number, data: any) => {
+    db.prepare(`
+      UPDATE discount_templates SET
+        name = COALESCE(?, name),
+        discount_type = COALESCE(?, discount_type),
+        total_sessions = COALESCE(?, total_sessions),
+        paid_sessions = COALESCE(?, paid_sessions),
+        session_rate = COALESCE(?, session_rate),
+        flat_rate = COALESCE(?, flat_rate),
+        flat_rate_sessions = COALESCE(?, flat_rate_sessions),
+        discount_percent = COALESCE(?, discount_percent),
+        discount_fixed = COALESCE(?, discount_fixed)
+      WHERE id = ? AND deleted_at IS NULL
+    `).run(
+      data.name, data.discount_type,
+      data.total_sessions, data.paid_sessions, data.session_rate,
+      data.flat_rate, data.flat_rate_sessions,
+      data.discount_percent, data.discount_fixed, id
+    );
+    return db.prepare('SELECT * FROM discount_templates WHERE id = ?').get(id);
+  });
+
+  safeHandle('discountTemplates:delete', (_event, id: number) => {
+    db.prepare('UPDATE discount_templates SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
+    return true;
   });
 }
 

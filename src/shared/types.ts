@@ -392,6 +392,10 @@ export interface LicenseStatus {
   subscriptionStatus: 'active' | 'expired' | 'cancelled' | null;
   subscriptionExpiresAt: string | null;
   lastValidatedAt: string | null;
+  // Trial fields
+  trialActive: boolean;
+  trialExpired: boolean;
+  trialDaysRemaining: number;
 }
 
 export interface LicenseActivateResult {
@@ -704,6 +708,34 @@ export interface CommunicationLogEntry {
 
 // ── Dashboard Types ──
 
+export interface IncompleteChart {
+  clientId: number;
+  clientName: string;
+  missingFields: string[];
+}
+
+export interface BasicAlerts {
+  unsignedNotes: UnsignedNote[];
+  complianceAlerts: ComplianceAlert[];
+  expiringOrders: { client_id: number; client_name: string; physician_order_expiration: string }[];
+  authorizationAlerts: (Authorization & { client_name: string })[];
+  incompleteCharts: IncompleteChart[];
+}
+
+export interface AnalyticsData {
+  revenueByMonth: { month: string; invoiced: number; collected: number }[];
+  clientGrowth: { month: string; newClients: number }[];
+  sessionsVolume: { month: string; sessions: number }[];
+  collectionRate: number;
+  avgRevenuePerSession: number;
+  stats: {
+    outstanding: number;
+    paidThisMonth: number;
+    draftCount: number;
+    overdueCount: number;
+  };
+}
+
 export interface DashboardOverview {
   todayAppointments: Appointment[];
   complianceAlerts: ComplianceAlert[];
@@ -899,6 +931,48 @@ export interface AuditLogEntry {
   description: string | null;
   ip_address: string | null;
   created_at: string;
+}
+
+// Discount System
+export type DiscountType = 'package' | 'flat_rate' | 'persistent';
+export type DiscountStatus = 'active' | 'exhausted' | 'expired' | 'cancelled';
+
+export interface ClientDiscount {
+  id: number;
+  client_id: number;
+  discount_type: DiscountType;
+  label: string;
+  total_sessions: number | null;
+  paid_sessions: number | null;
+  sessions_used: number;
+  session_rate: number | null;
+  flat_rate: number | null;
+  flat_rate_sessions: number | null;
+  flat_rate_sessions_used: number;
+  discount_percent: number | null;
+  discount_fixed: number | null;
+  start_date: string | null;
+  end_date: string | null;
+  status: DiscountStatus;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface DiscountTemplate {
+  id: number;
+  name: string;
+  discount_type: DiscountType;
+  total_sessions: number | null;
+  paid_sessions: number | null;
+  session_rate: number | null;
+  flat_rate: number | null;
+  flat_rate_sessions: number | null;
+  discount_percent: number | null;
+  discount_fixed: number | null;
+  created_at: string;
+  deleted_at: string | null;
 }
 
 // API interface exposed through preload
@@ -1140,6 +1214,8 @@ export interface PocketChartAPI {
     onNotAvailable: (callback: () => void) => void;
     onProgress: (callback: (progress: { percent: number; transferred: number; total: number }) => void) => void;
     onDownloaded: (callback: (info: { version: string }) => void) => void;
+    onBackupComplete?: (callback: (info: { backupPath: string }) => void) => void;
+    onBackupFailed?: (callback: () => void) => void;
   };
   /** Stripe Payment Integration */
   stripe: {
@@ -1209,9 +1285,11 @@ export interface PocketChartAPI {
     create: (data: Partial<CommunicationLogEntry>) => Promise<CommunicationLogEntry>;
     delete: (id: number) => Promise<boolean>;
   };
-  // ── Dashboard (Pro) ──
+  // ── Dashboard ──
   dashboard: {
+    getBasicAlerts: () => Promise<BasicAlerts>;
     getOverview: () => Promise<DashboardOverview>;
+    getAnalytics: (filters?: { startDate?: string; endDate?: string; monthsBack?: number }) => Promise<AnalyticsData>;
   };
   // ── Reports (Pro) ──
   reports: {
@@ -1222,6 +1300,22 @@ export interface PocketChartAPI {
   directAccess: {
     requiresReferral: (state: string, discipline: Discipline) => Promise<boolean>;
     getRules: () => Promise<Array<{ state: string; discipline: Discipline; requires_referral: boolean }>>;
+  };
+  // ── Client Discounts & Packages ──
+  clientDiscounts: {
+    listByClient: (clientId: number) => Promise<ClientDiscount[]>;
+    getActive: (clientId: number) => Promise<ClientDiscount[]>;
+    create: (data: Partial<ClientDiscount>) => Promise<ClientDiscount>;
+    update: (id: number, data: Partial<ClientDiscount>) => Promise<ClientDiscount>;
+    delete: (id: number) => Promise<boolean>;
+    incrementUsage: (id: number, count?: number) => Promise<ClientDiscount>;
+    decrementUsage: (id: number, count?: number) => Promise<ClientDiscount>;
+  };
+  discountTemplates: {
+    list: () => Promise<DiscountTemplate[]>;
+    create: (data: Partial<DiscountTemplate>) => Promise<DiscountTemplate>;
+    update: (id: number, data: Partial<DiscountTemplate>) => Promise<DiscountTemplate>;
+    delete: (id: number) => Promise<boolean>;
   };
 }
 

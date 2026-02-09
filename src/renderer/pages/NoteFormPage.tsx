@@ -56,8 +56,9 @@ const MODIFIER_OPTIONS = [
 ];
 import NoteBankPopover from '../components/NoteBankPopover';
 import SmartTextarea from '../components/SmartTextarea';
-import SignaturePad from '../components/SignaturePad';
+
 import QuickChips from '../components/QuickChips';
+import { useTier } from '../hooks/useTier';
 
 // ── Helpers ──
 
@@ -101,6 +102,7 @@ export default function NoteFormPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const sectionColor = useSectionColor();
+  const { isPro } = useTier();
   const isEditing = Boolean(noteId);
 
   // Appointment context passed from calendar or discharge navigation
@@ -147,6 +149,9 @@ export default function NoteFormPage() {
   const [cptModifiers, setCptModifiers] = useState<string[]>([]);
   const [chargeAmount, setChargeAmount] = useState<number>(0);
 
+  // Practice info (for validation)
+  const [practiceInfo, setPracticeInfo] = useState<{ license_number?: string } | null>(null);
+
   // Contracted entity state
   const [isContractedVisit, setIsContractedVisit] = useState(false);
   const [entityId, setEntityId] = useState<number | null>(null);
@@ -173,6 +178,7 @@ export default function NoteFormPage() {
   // Post-sign state
   const [justSigned, setJustSigned] = useState(false);
   const [savedNoteId, setSavedNoteId] = useState<number | null>(null);
+  const [showProNudge, setShowProNudge] = useState(false);
 
   // Autosave state
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -266,7 +272,7 @@ export default function NoteFormPage() {
       setLoading(true);
       const cid = parseInt(clientId, 10);
 
-      const [clientData, goalsData, notesData, entitiesData, noteFormatVal, stagedGoalsData, complianceResult] = await Promise.all([
+      const [clientData, goalsData, notesData, entitiesData, noteFormatVal, stagedGoalsData, complianceResult, practiceData] = await Promise.all([
         window.api.clients.get(cid),
         window.api.goals.listByClient(cid),
         window.api.notes.listByClient(cid),
@@ -274,7 +280,9 @@ export default function NoteFormPage() {
         window.api.settings.get('note_format').catch(() => null),
         window.api.stagedGoals.listByClient(cid),
         window.api.compliance.getByClient(cid).catch(() => null),
+        window.api.practice.get().catch(() => null),
       ]);
+      if (practiceData) setPracticeInfo(practiceData);
 
       if (noteFormatVal) setNoteFormat(noteFormatVal as NoteFormat);
       setStagedGoals(stagedGoalsData);
@@ -719,10 +727,65 @@ export default function NoteFormPage() {
 
     // SOAP section content (skip for standalone discharge)
     if (!isStandaloneDischarge) {
-      const hasContent = subjective.trim() || objective.trim() || assessment.trim() || plan.trim();
-      if (!hasContent) {
-        const sectionLabels = NOTE_FORMAT_SECTIONS[noteFormat].filter(s => s.label !== '(unused)').map(s => s.label).join(', ');
+      const sections = NOTE_FORMAT_SECTIONS[noteFormat];
+      const sectionValues: Record<string, string> = {
+        subjective: subjective.trim(),
+        objective: objective.trim(),
+        assessment: assessment.trim(),
+        plan: plan.trim(),
+      };
+
+      // Check if ALL sections are empty (blocking)
+      const activeSections = sections.filter(s => s.label !== '(unused)');
+      const allEmpty = activeSections.every(s => !sectionValues[s.field]);
+      if (allEmpty) {
+        const sectionLabels = activeSections.map(s => s.label).join(', ');
         errors.push(`All ${noteFormat} sections (${sectionLabels}) are empty.`);
+      } else {
+        // Check individual empty sections (blocking)
+        for (const s of activeSections) {
+          if (!sectionValues[s.field]) {
+            errors.push(`The ${s.label} section is empty.`);
+          }
+        }
+
+        // Check short sections < 20 chars (warning)
+        for (const s of activeSections) {
+          const val = sectionValues[s.field];
+          if (val && val.length < 20) {
+            warnings.push(`The ${s.label} section is very short (${val.length} characters) — may be incomplete.`);
+          }
+        }
+
+        // Copy-paste detection: Assessment identical to or substring of Objective
+        const obj = sectionValues.objective;
+        const asmt = sectionValues.assessment;
+        if (obj && asmt && (asmt === obj || obj.includes(asmt) || asmt.includes(obj))) {
+          warnings.push('The Assessment appears identical to the Objective — consider adding clinical interpretation.');
+        }
+      }
+    }
+
+    // Progress report mode: check goal statuses and performance data
+    if (isProgressReport && progressReportGoals.length > 0) {
+      const blanks = progressReportGoals.filter(g => !g.status_at_report);
+      if (blanks.length > 0) {
+        errors.push(`${blanks.length} goal${blanks.length > 1 ? 's have' : ' has'} no status selected — all goals need a status for the progress report.`);
+      }
+
+      const noPerf = progressReportGoals.filter(g => g.status_at_report && !g.performance_data?.trim());
+      if (noPerf.length > 0) {
+        warnings.push(`${noPerf.length} goal${noPerf.length > 1 ? 's have' : ' has'} no performance data entered.`);
+      }
+    }
+
+    // Client completeness warnings
+    if (client) {
+      if (!client.dob) {
+        warnings.push('Client date of birth is missing — required on all clinical documentation and superbills.');
+      }
+      if (!client.primary_dx_code) {
+        warnings.push('No primary diagnosis (ICD-10) on file — required for insurance claims and compliant documentation.');
       }
     }
 
@@ -730,6 +793,9 @@ export default function NoteFormPage() {
     // (signature_typed should be pre-filled if practice info exists)
     if (!signatureTyped.trim()) {
       warnings.push('Provider signature name is not set. Update it in Settings > Provider Information.');
+    }
+    if (!practiceInfo?.license_number?.trim()) {
+      warnings.push('Provider license number is not set. Update it in Settings > Provider Information.');
     }
 
     return { errors, warnings };
@@ -876,6 +942,16 @@ export default function NoteFormPage() {
           setSavedNoteId(resultNoteId);
           setJustSigned(true);
           setExistingSignedAt(new Date().toISOString());
+          // Pro nudge for Basic users (once per month)
+          if (!isPro) {
+            try {
+              const lastShown = await window.api.settings.get('pro_nudge_last_shown');
+              const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+              if (!lastShown || new Date(lastShown).getTime() < thirtyDaysAgo) {
+                setShowProNudge(true);
+              }
+            } catch { /* ignore */ }
+          }
           // Don't navigate away — show invoice prompt
         }
       } else {
@@ -2106,11 +2182,21 @@ export default function NoteFormPage() {
           {/* Drawn Signature */}
           <div>
             <label className="label">Drawn Signature</label>
-            <SignaturePad
-              value={signatureImage}
-              onChange={setSignatureImage}
-              disabled={Boolean(existingSignedAt)}
-            />
+            {signatureImage ? (
+              <div className="border-2 border-gray-200 rounded-lg overflow-hidden bg-white p-2">
+                <img
+                  src={signatureImage}
+                  alt="Provider signature"
+                  className="w-full max-h-[150px] object-contain"
+                />
+              </div>
+            ) : (
+              <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+                <p className="text-sm text-[var(--color-text-secondary)]">
+                  No signature configured. Add one in Settings &gt; Signature.
+                </p>
+              </div>
+            )}
           </div>
 
           {existingSignedAt && (
@@ -2124,35 +2210,53 @@ export default function NoteFormPage() {
 
         {/* Action Buttons */}
         {justSigned ? (
-          <div className="card p-5 mb-8 border-l-4 border-l-emerald-400 bg-emerald-50/50">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-emerald-800 flex items-center gap-2">
-                  <CheckCircle className="w-4 h-4" />
-                  Note signed and saved
-                </p>
-                <p className="text-xs text-emerald-700 mt-1">
-                  Would you like to create an invoice for this session?
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  className="btn-ghost btn-sm"
-                  onClick={() => navigate(`/clients/${clientId}`)}
-                >
-                  Skip
-                </button>
-                <button
-                  className="btn-primary btn-sm flex items-center gap-1.5"
-                  onClick={handleCreateInvoice}
-                  disabled={creatingInvoice}
-                >
-                  <Receipt className="w-4 h-4" />
-                  {creatingInvoice ? 'Creating...' : 'Create Invoice'}
-                </button>
+          <>
+            <div className="card p-5 mb-4 border-l-4 border-l-emerald-400 bg-emerald-50/50">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-emerald-800 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4" />
+                    Note signed and saved
+                  </p>
+                  <p className="text-xs text-emerald-700 mt-1">
+                    Would you like to create an invoice for this session?
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    className="btn-ghost btn-sm"
+                    onClick={() => navigate(`/clients/${clientId}`)}
+                  >
+                    Skip
+                  </button>
+                  <button
+                    className="btn-primary btn-sm flex items-center gap-1.5"
+                    onClick={handleCreateInvoice}
+                    disabled={creatingInvoice}
+                  >
+                    <Receipt className="w-4 h-4" />
+                    {creatingInvoice ? 'Creating...' : 'Create Invoice'}
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
+            {showProNudge && (
+              <div className="flex items-center justify-between px-4 py-2.5 mb-8 rounded-lg bg-[var(--color-primary)]/5 border border-[var(--color-primary)]/20">
+                <p className="text-xs text-[var(--color-text-secondary)]">
+                  Pro tip: PocketChart Pro can auto-generate skilled documentation from quick taps.
+                </p>
+                <button
+                  className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] ml-4 flex-shrink-0"
+                  onClick={async () => {
+                    setShowProNudge(false);
+                    try { await window.api.settings.set('pro_nudge_last_shown', new Date().toISOString()); } catch { /* ignore */ }
+                  }}
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+          </>
         ) : (
           <div className="flex items-center justify-between pb-8">
             <div>

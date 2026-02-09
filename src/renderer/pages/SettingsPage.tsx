@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Settings, Building2, User, Stethoscope, Info, Save, CheckCircle, Database, Download, FileSpreadsheet, HardDrive, FolderOpen, RotateCcw, Upload, Trash2, Image, Clock, AlertTriangle, Shield, Lock, PenLine, BookOpen, ChevronDown, ShieldCheck, Key, Monitor, Loader2 } from 'lucide-react';
-import type { Practice, Discipline, NoteFormat, CloudDetectionResult, AppTier } from '../../shared/types';
+import { Settings, Building2, User, Stethoscope, Info, Save, CheckCircle, Database, Download, FileSpreadsheet, HardDrive, FolderOpen, RotateCcw, Upload, Trash2, Image, Clock, AlertTriangle, Shield, Lock, PenLine, BookOpen, ChevronDown, ShieldCheck, Key, Monitor, Loader2, DollarSign, Plus } from 'lucide-react';
+import type { Practice, Discipline, NoteFormat, CloudDetectionResult, AppTier, FeeScheduleEntry, DiscountTemplate, DiscountType } from '../../shared/types';
+import FeeScheduleModal from '../components/FeeScheduleModal';
 import { NOTE_FORMAT_LABELS, DISCIPLINE_DEFAULT_FORMAT } from '../../shared/types';
 import SignaturePad from '../components/SignaturePad';
 import GoalsBankPage from './GoalsBankPage';
@@ -116,6 +117,28 @@ export default function SettingsPage() {
   const [defaultSessionLength, setDefaultSessionLength] = useState<number>(45);
   const [noteFormat, setNoteFormat] = useState<NoteFormat>('SOAP');
 
+  // Billing & Fees state
+  const [feeSchedule, setFeeSchedule] = useState<FeeScheduleEntry[]>([]);
+  const [showFeeModal, setShowFeeModal] = useState(false);
+  const [editingFee, setEditingFee] = useState<FeeScheduleEntry | null>(null);
+  const [lateCancelFee, setLateCancelFee] = useState('');
+  const [noShowFee, setNoShowFee] = useState('');
+  const [promptPayDiscount, setPromptPayDiscount] = useState('');
+  const [feeSaving, setFeeSaving] = useState(false);
+
+  // Discount templates state
+  const [discountTemplates, setDiscountTemplates] = useState<DiscountTemplate[]>([]);
+  const [showTemplateForm, setShowTemplateForm] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [templateType, setTemplateType] = useState<DiscountType>('package');
+  const [templatePaid, setTemplatePaid] = useState(10);
+  const [templateFree, setTemplateFree] = useState(2);
+  const [templateRate, setTemplateRate] = useState(0);
+  const [templateFlatRate, setTemplateFlatRate] = useState(0);
+  const [templateFlatSessions, setTemplateFlatSessions] = useState(10);
+  const [templatePercent, setTemplatePercent] = useState(10);
+  const [templateFixed, setTemplateFixed] = useState(0);
+
   // Signature state
   const [signatureName, setSignatureName] = useState('');
   const [signatureCredentials, setSignatureCredentials] = useState('');
@@ -151,7 +174,7 @@ export default function SettingsPage() {
   const [cloudExportWarning, setCloudExportWarning] = useState<string | null>(null);
 
   // License & Activation state
-  const { tier, licenseStatus, refresh: refreshTier } = useTier();
+  const { tier, licenseStatus, trialActive, trialExpired, trialDaysRemaining, refresh: refreshTier } = useTier();
   const [activationUsage, setActivationUsage] = useState<number | null>(null);
   const [activationLimit, setActivationLimit] = useState<number>(2);
   const [activationLoading, setActivationLoading] = useState(false);
@@ -195,6 +218,12 @@ export default function SettingsPage() {
     window.api.security.isPinEnabled().then(setPinEnabled).catch(console.error);
     window.api.security.getTimeoutMinutes().then(setAutoTimeoutMinutes).catch(console.error);
     window.api.app.getVersion().then(setAppVersion).catch(console.error);
+    // Load billing & fees
+    window.api.feeSchedule.list().then(setFeeSchedule).catch(console.error);
+    window.api.settings.get('late_cancel_fee').then((val) => { if (val) setLateCancelFee(val); }).catch(console.error);
+    window.api.settings.get('no_show_fee').then((val) => { if (val) setNoShowFee(val); }).catch(console.error);
+    window.api.settings.get('prompt_pay_discount').then((val) => { if (val) setPromptPayDiscount(val); }).catch(console.error);
+    window.api.discountTemplates.list().then(setDiscountTemplates).catch(console.error);
     // Load activation info
     loadActivationInfo();
   }, [loadLogoPreview]);
@@ -281,9 +310,20 @@ export default function SettingsPage() {
   };
 
   const handleSave = async () => {
+    // Validate required fields
+    if (!formData.license_number?.trim()) {
+      setToast('License number is required. Please fill it in under Provider Information.');
+      return;
+    }
     try {
       setSaving(true);
       await window.api.practice.save(formData);
+      // Also persist signature settings on explicit save to ensure nothing is lost
+      await Promise.all([
+        window.api.settings.set('signature_name', signatureName),
+        window.api.settings.set('signature_credentials', signatureCredentials),
+        window.api.settings.set('signature_image', signatureImage),
+      ]);
       setToast('Practice settings saved successfully');
     } catch (err) {
       console.error('Failed to save practice settings:', err);
@@ -581,11 +621,17 @@ export default function SettingsPage() {
         </button>
       </div>
 
-      {/* Security — open by default so users notice PIN setup */}
+      {/* ═══ PRACTICE & PROVIDER ═══ */}
+      <div className="flex items-center gap-2 mt-2 mb-3">
+        <Building2 className="w-4 h-4 text-[var(--color-text-tertiary)]" />
+        <h2 className="text-xs font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">Practice & Provider</h2>
+        <div className="flex-1 border-t border-[var(--color-border)]" />
+      </div>
+
       <CollapsibleSection
-        icon={<Shield className="w-5 h-5" />}
-        title="Security"
-        description={pinEnabled ? 'PIN enabled' : 'No PIN set — recommended'}
+        icon={<Building2 className="w-5 h-5" />}
+        title="Practice Information"
+        description={formData.name || 'Not configured'}
         defaultOpen
       >
         <div className="space-y-4">
@@ -804,8 +850,11 @@ export default function SettingsPage() {
             <input type="text" className="input" placeholder="XX-XXXXXXX" value={formData.tax_id} onChange={(e) => handleChange('tax_id', e.target.value)} />
           </div>
           <div>
-            <label className="label">License Number</label>
-            <input type="text" className="input" placeholder="License number" value={formData.license_number} onChange={(e) => handleChange('license_number', e.target.value)} />
+            <label className="label">License Number <span className="text-red-500">*</span></label>
+            <input type="text" className={`input ${!formData.license_number?.trim() ? 'border-red-300' : ''}`} placeholder="License number (required)" value={formData.license_number} onChange={(e) => handleChange('license_number', e.target.value)} />
+            {!formData.license_number?.trim() && (
+              <p className="text-xs text-red-500 mt-1">License number is required</p>
+            )}
           </div>
           <div>
             <label className="label">License State</label>
@@ -879,6 +928,77 @@ export default function SettingsPage() {
         </div>
       </CollapsibleSection>
 
+      {/* Signature */}
+      <CollapsibleSection
+        icon={<PenLine className="w-5 h-5" />}
+        title="Signature"
+        description={signatureName ? `${signatureName}${signatureCredentials ? `, ${signatureCredentials}` : ''}` : 'Not configured'}
+      >
+        <p className="text-xs text-[var(--color-text-secondary)] mb-4">
+          This information will be used when you sign notes and evaluations.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="label">Name</label>
+            <input type="text" className="input" placeholder="e.g. Jane Smith" value={signatureName} onChange={(e) => handleSignatureNameChange(e.target.value)} />
+          </div>
+          <div>
+            <label className="label">Credentials</label>
+            <input type="text" className="input" placeholder="e.g. PT, DPT" value={signatureCredentials} onChange={(e) => handleSignatureCredentialsChange(e.target.value)} />
+          </div>
+        </div>
+        {signatureName && (
+          <div className="mt-4 p-3 bg-gray-50 rounded-lg">
+            <p className="text-xs text-[var(--color-text-secondary)] mb-1">Preview</p>
+            <p className="text-sm font-medium text-[var(--color-text)]">
+              {signatureName}{signatureCredentials ? `, ${signatureCredentials}` : ''}
+            </p>
+          </div>
+        )}
+
+        <div className="mt-6">
+          <label className="label">Drawn Signature</label>
+          {signatureImage ? (
+            <div>
+              <p className="text-xs text-[var(--color-text-secondary)] mb-2">
+                Your saved signature:
+              </p>
+              <div className="border-2 border-gray-200 rounded-lg overflow-hidden bg-white p-2">
+                <img
+                  src={signatureImage}
+                  alt="Saved signature"
+                  className="w-full max-h-[150px] object-contain"
+                />
+              </div>
+              <div className="flex justify-end mt-1">
+                <button
+                  type="button"
+                  className="btn-ghost btn-sm text-xs gap-1"
+                  onClick={() => handleSignatureImageChange('')}
+                >
+                  <PenLine className="w-3 h-3" />
+                  Redo Signature
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <p className="text-xs text-[var(--color-text-secondary)] mb-2">
+                Draw your signature below. It will be pre-filled when signing notes and evaluations.
+              </p>
+              <SignaturePad value={signatureImage} onChange={handleSignatureImageChange} />
+            </div>
+          )}
+        </div>
+      </CollapsibleSection>
+
+      {/* ═══ CLINICAL ═══ */}
+      <div className="flex items-center gap-2 mt-6 mb-3">
+        <Stethoscope className="w-4 h-4 text-[var(--color-text-tertiary)]" />
+        <h2 className="text-xs font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">Clinical</h2>
+        <div className="flex-1 border-t border-[var(--color-border)]" />
+      </div>
+
       {/* Note Format */}
       <CollapsibleSection
         icon={<FileSpreadsheet className="w-5 h-5" />}
@@ -935,40 +1055,420 @@ export default function SettingsPage() {
         </div>
       </CollapsibleSection>
 
-      {/* Signature */}
+      {/* Documentation Bank */}
       <CollapsibleSection
-        icon={<PenLine className="w-5 h-5" />}
-        title="Signature"
-        description={signatureName ? `${signatureName}${signatureCredentials ? `, ${signatureCredentials}` : ''}` : 'Not configured'}
+        icon={<BookOpen className="w-5 h-5" />}
+        title="Documentation Bank"
+        description="Goal templates and note phrases"
       >
         <p className="text-xs text-[var(--color-text-secondary)] mb-4">
-          This information will be used when you sign notes and evaluations.
+          Manage reusable goal templates and note phrases for faster documentation.
         </p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="label">Name</label>
-            <input type="text" className="input" placeholder="e.g. Jane Smith" value={signatureName} onChange={(e) => handleSignatureNameChange(e.target.value)} />
-          </div>
-          <div>
-            <label className="label">Credentials</label>
-            <input type="text" className="input" placeholder="e.g. PT, DPT" value={signatureCredentials} onChange={(e) => handleSignatureCredentialsChange(e.target.value)} />
-          </div>
+
+        {/* Tab Buttons */}
+        <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1 mb-4">
+          <button
+            onClick={() => setBankTab('goals')}
+            className={`flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+              bankTab === 'goals'
+                ? 'bg-white text-[var(--color-primary)] shadow-sm'
+                : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
+            }`}
+          >
+            Goal Templates
+          </button>
+          <button
+            onClick={() => setBankTab('notes')}
+            className={`flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+              bankTab === 'notes'
+                ? 'bg-white text-[var(--color-primary)] shadow-sm'
+                : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
+            }`}
+          >
+            Note Phrases
+          </button>
         </div>
-        {signatureName && (
-          <div className="mt-4 p-3 bg-gray-50 rounded-lg">
-            <p className="text-xs text-[var(--color-text-secondary)] mb-1">Preview</p>
-            <p className="text-sm font-medium text-[var(--color-text)]">
-              {signatureName}{signatureCredentials ? `, ${signatureCredentials}` : ''}
-            </p>
+
+        {/* Embedded Bank Content */}
+        <div className="border border-[var(--color-border)] rounded-lg overflow-hidden">
+          {bankTab === 'goals' ? (
+            <GoalsBankPage embedded />
+          ) : (
+            <NoteBankPage embedded />
+          )}
+        </div>
+      </CollapsibleSection>
+
+      {/* ═══ BILLING ═══ */}
+      <div className="flex items-center gap-2 mt-6 mb-3">
+        <DollarSign className="w-4 h-4 text-[var(--color-text-tertiary)]" />
+        <h2 className="text-xs font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">Billing</h2>
+        <div className="flex-1 border-t border-[var(--color-border)]" />
+      </div>
+
+      {/* Billing & Fees */}
+      <CollapsibleSection
+        icon={<DollarSign className="w-5 h-5" />}
+        title="Billing & Fees"
+        description={`${feeSchedule.length} CPT codes configured`}
+      >
+        <div className="space-y-6">
+          {/* Fee Schedule */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="text-sm font-semibold text-[var(--color-text)]">Fee Schedule</h3>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                  Standard fees for CPT codes — used when generating invoices.
+                </p>
+              </div>
+              <button className="btn-primary btn-sm gap-1.5" onClick={() => { setEditingFee(null); setShowFeeModal(true); }}>
+                <Plus className="w-3.5 h-3.5" /> Add Fee
+              </button>
+            </div>
+            <div className="border border-[var(--color-border)] rounded-lg overflow-hidden">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-[var(--color-border)] bg-gray-50">
+                    <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-2.5">CPT Code</th>
+                    <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-2.5">Description</th>
+                    <th className="text-center text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-2.5">Units</th>
+                    <th className="text-right text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-2.5">Amount</th>
+                    <th className="text-right text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-2.5 w-16"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--color-border)]">
+                  {feeSchedule.map((fee) => (
+                    <tr key={fee.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => { setEditingFee(fee); setShowFeeModal(true); }}>
+                      <td className="px-4 py-2.5"><span className="font-mono font-medium text-sm text-[var(--color-text)]">{fee.cpt_code}</span></td>
+                      <td className="px-4 py-2.5 text-sm text-[var(--color-text)]">{fee.description}</td>
+                      <td className="px-4 py-2.5 text-center text-sm text-[var(--color-text-secondary)]">{fee.default_units}</td>
+                      <td className="px-4 py-2.5 text-right text-sm font-medium text-[var(--color-text)]">${fee.amount.toFixed(2)}</td>
+                      <td className="px-4 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          className="p-1 rounded hover:bg-red-50 text-red-500"
+                          onClick={async () => {
+                            await window.api.feeSchedule.delete(fee.id);
+                            setFeeSchedule(feeSchedule.filter(f => f.id !== fee.id));
+                          }}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {feeSchedule.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-8 text-center text-sm text-[var(--color-text-secondary)]">
+                        No fee schedule entries. Add your first CPT code fee.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Late Cancel, No-Show, Discount */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="label">Late Cancellation Fee ($)</label>
+              <input
+                type="number" min="0" step="0.01" className="input" placeholder="0.00"
+                value={lateCancelFee}
+                onChange={(e) => setLateCancelFee(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="label">No-Show Fee ($)</label>
+              <input
+                type="number" min="0" step="0.01" className="input" placeholder="0.00"
+                value={noShowFee}
+                onChange={(e) => setNoShowFee(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="label">Prompt-Pay Discount (%)</label>
+              <input
+                type="number" min="0" max="100" step="0.5" className="input" placeholder="0"
+                value={promptPayDiscount}
+                onChange={(e) => setPromptPayDiscount(e.target.value)}
+              />
+              <p className="text-xs text-[var(--color-text-secondary)] mt-1">Auto-fills on new invoices</p>
+            </div>
+          </div>
+          <button
+            className="btn-primary btn-sm"
+            disabled={feeSaving}
+            onClick={async () => {
+              setFeeSaving(true);
+              try {
+                await window.api.settings.set('late_cancel_fee', lateCancelFee || '0');
+                await window.api.settings.set('no_show_fee', noShowFee || '0');
+                await window.api.settings.set('prompt_pay_discount', promptPayDiscount || '0');
+                setToast('Fee settings saved');
+              } catch { setToast('Failed to save fee settings'); }
+              finally { setFeeSaving(false); }
+            }}
+          >
+            {feeSaving ? 'Saving...' : 'Save Fee Settings'}
+          </button>
+        </div>
+      </CollapsibleSection>
+
+      {/* Discount Templates */}
+      <CollapsibleSection
+        icon={<DollarSign className="w-5 h-5" />}
+        title="Discount Templates"
+        description={`${discountTemplates.length} template${discountTemplates.length !== 1 ? 's' : ''}`}
+      >
+        <p className="text-xs text-[var(--color-text-secondary)] mb-4">
+          Create reusable discount templates for quick assignment to clients.
+        </p>
+
+        {discountTemplates.length > 0 && (
+          <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] mb-4">
+            {discountTemplates.map(t => (
+              <div key={t.id} className="flex items-center justify-between px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium text-[var(--color-text)]">{t.name}</p>
+                  <p className="text-xs text-[var(--color-text-secondary)]">
+                    {t.discount_type === 'package' && `${t.paid_sessions}+${(t.total_sessions || 0) - (t.paid_sessions || 0)} package at $${t.session_rate}/session`}
+                    {t.discount_type === 'flat_rate' && `$${t.flat_rate}/session for ${t.flat_rate_sessions} sessions`}
+                    {t.discount_type === 'persistent' && (t.discount_percent ? `${t.discount_percent}% off` : `$${t.discount_fixed} off`)}
+                  </p>
+                </div>
+                <button
+                  className="btn-ghost btn-sm text-red-500 hover:text-red-700"
+                  onClick={async () => {
+                    await window.api.discountTemplates.delete(t.id);
+                    setDiscountTemplates(prev => prev.filter(d => d.id !== t.id));
+                    setToast('Template deleted');
+                  }}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
           </div>
         )}
 
-        <div className="mt-6">
-          <label className="label">Drawn Signature</label>
-          <p className="text-xs text-[var(--color-text-secondary)] mb-2">
-            Draw your signature below. It will be pre-filled when signing notes and evaluations.
-          </p>
-          <SignaturePad value={signatureImage} onChange={handleSignatureImageChange} />
+        {showTemplateForm ? (
+          <div className="space-y-3 p-4 bg-gray-50 rounded-lg">
+            <div>
+              <label className="label">Template Name</label>
+              <input type="text" className="input" placeholder="e.g. 10+2 Package" value={templateName} onChange={e => setTemplateName(e.target.value)} />
+            </div>
+            <div>
+              <label className="label">Type</label>
+              <select className="select" value={templateType} onChange={e => setTemplateType(e.target.value as DiscountType)}>
+                <option value="package">Session Package</option>
+                <option value="flat_rate">Flat Rate</option>
+                <option value="persistent">Ongoing Discount</option>
+              </select>
+            </div>
+            {templateType === 'package' && (
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="label text-xs">Paid</label>
+                  <input type="number" className="input" min={1} value={templatePaid} onChange={e => setTemplatePaid(parseInt(e.target.value) || 1)} />
+                </div>
+                <div>
+                  <label className="label text-xs">Free</label>
+                  <input type="number" className="input" min={0} value={templateFree} onChange={e => setTemplateFree(parseInt(e.target.value) || 0)} />
+                </div>
+                <div>
+                  <label className="label text-xs">Rate</label>
+                  <input type="number" className="input" min={0} step={0.01} value={templateRate} onChange={e => setTemplateRate(parseFloat(e.target.value) || 0)} />
+                </div>
+              </div>
+            )}
+            {templateType === 'flat_rate' && (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="label text-xs">Rate/Session</label>
+                  <input type="number" className="input" min={0} step={0.01} value={templateFlatRate} onChange={e => setTemplateFlatRate(parseFloat(e.target.value) || 0)} />
+                </div>
+                <div>
+                  <label className="label text-xs">Sessions</label>
+                  <input type="number" className="input" min={1} value={templateFlatSessions} onChange={e => setTemplateFlatSessions(parseInt(e.target.value) || 1)} />
+                </div>
+              </div>
+            )}
+            {templateType === 'persistent' && (
+              <div>
+                <label className="label text-xs">Discount %</label>
+                <input type="number" className="input w-24" min={0} max={100} step={0.5} value={templatePercent} onChange={e => setTemplatePercent(parseFloat(e.target.value) || 0)} />
+              </div>
+            )}
+            <div className="flex gap-2">
+              <button
+                className="btn-primary btn-sm"
+                disabled={!templateName.trim()}
+                onClick={async () => {
+                  const data: Partial<DiscountTemplate> = {
+                    name: templateName,
+                    discount_type: templateType,
+                  };
+                  if (templateType === 'package') {
+                    data.total_sessions = templatePaid + templateFree;
+                    data.paid_sessions = templatePaid;
+                    data.session_rate = templateRate;
+                  } else if (templateType === 'flat_rate') {
+                    data.flat_rate = templateFlatRate;
+                    data.flat_rate_sessions = templateFlatSessions;
+                  } else {
+                    data.discount_percent = templatePercent;
+                  }
+                  const result = await window.api.discountTemplates.create(data);
+                  setDiscountTemplates(prev => [...prev, result]);
+                  setShowTemplateForm(false);
+                  setTemplateName('');
+                  setToast('Template created');
+                }}
+              >
+                Save Template
+              </button>
+              <button className="btn-ghost btn-sm" onClick={() => setShowTemplateForm(false)}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <button className="btn-secondary btn-sm gap-1" onClick={() => setShowTemplateForm(true)}>
+            <Plus className="w-3.5 h-3.5" /> New Template
+          </button>
+        )}
+      </CollapsibleSection>
+
+      {/* ═══ SECURITY & DATA ═══ */}
+      <div className="flex items-center gap-2 mt-6 mb-3">
+        <Shield className="w-4 h-4 text-[var(--color-text-tertiary)]" />
+        <h2 className="text-xs font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">Security & Data</h2>
+        <div className="flex-1 border-t border-[var(--color-border)]" />
+      </div>
+
+      {/* Security */}
+      <CollapsibleSection
+        icon={<Shield className="w-5 h-5" />}
+        title="Security"
+        description={pinEnabled ? 'PIN enabled' : 'No PIN set — recommended'}
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="label">PIN Lock</label>
+            <p className="text-xs text-[var(--color-text-secondary)] mb-3">
+              Protect your clinical data with a 4-digit PIN. The app will require the PIN on launch
+              and after inactivity timeout.
+            </p>
+
+            {pinEnabled ? (
+              <div className="flex items-center gap-3">
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
+                  <Lock className="w-3 h-3" />
+                  PIN Enabled
+                </span>
+                <button
+                  className="btn-secondary text-sm px-3 py-1.5"
+                  onClick={() => { resetPinForms(); setShowPinChange(true); }}
+                >
+                  Change PIN
+                </button>
+                <button
+                  className="text-sm px-3 py-1.5 rounded-lg text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+                  onClick={() => { resetPinForms(); setShowPinRemove(true); }}
+                >
+                  Remove PIN
+                </button>
+              </div>
+            ) : (
+              <button
+                className="btn-primary text-sm px-3 py-1.5 inline-flex items-center gap-1.5"
+                onClick={() => { resetPinForms(); setShowPinSetup(true); }}
+              >
+                <Lock className="w-3.5 h-3.5" />
+                Set Up PIN
+              </button>
+            )}
+          </div>
+
+          {/* PIN Setup Form */}
+          {showPinSetup && !pinEnabled && (
+            <div className="p-4 bg-gray-50 rounded-lg space-y-3">
+              <div>
+                <label className="label">New PIN</label>
+                <input type="password" className="input" style={{ maxWidth: 200 }} maxLength={4} placeholder="4 digits" value={newPinInput} onChange={(e) => setNewPinInput(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+              </div>
+              <div>
+                <label className="label">Confirm PIN</label>
+                <input type="password" className="input" style={{ maxWidth: 200 }} maxLength={4} placeholder="Confirm 4 digits" value={confirmPinInput} onChange={(e) => setConfirmPinInput(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+              </div>
+              {pinError && <p className="text-xs text-red-500">{pinError}</p>}
+              <div className="flex gap-2">
+                <button className="btn-primary text-sm px-3 py-1.5" onClick={handleSetPin}>Save PIN</button>
+                <button className="btn-ghost text-sm px-3 py-1.5" onClick={resetPinForms}>Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {/* PIN Change Form */}
+          {showPinChange && pinEnabled && (
+            <div className="p-4 bg-gray-50 rounded-lg space-y-3">
+              <div>
+                <label className="label">Current PIN</label>
+                <input type="password" className="input" style={{ maxWidth: 200 }} maxLength={4} placeholder="Current PIN" value={currentPinInput} onChange={(e) => setCurrentPinInput(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+              </div>
+              <div>
+                <label className="label">New PIN</label>
+                <input type="password" className="input" style={{ maxWidth: 200 }} maxLength={4} placeholder="New 4 digits" value={newPinInput} onChange={(e) => setNewPinInput(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+              </div>
+              <div>
+                <label className="label">Confirm New PIN</label>
+                <input type="password" className="input" style={{ maxWidth: 200 }} maxLength={4} placeholder="Confirm new PIN" value={confirmPinInput} onChange={(e) => setConfirmPinInput(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+              </div>
+              {pinError && <p className="text-xs text-red-500">{pinError}</p>}
+              <div className="flex gap-2">
+                <button className="btn-primary text-sm px-3 py-1.5" onClick={handleChangePin}>Update PIN</button>
+                <button className="btn-ghost text-sm px-3 py-1.5" onClick={resetPinForms}>Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {/* PIN Remove Form */}
+          {showPinRemove && pinEnabled && (
+            <div className="p-4 bg-gray-50 rounded-lg space-y-3">
+              <div>
+                <label className="label">Enter Current PIN to Remove</label>
+                <input type="password" className="input" style={{ maxWidth: 200 }} maxLength={4} placeholder="Current PIN" value={currentPinInput} onChange={(e) => setCurrentPinInput(e.target.value.replace(/\D/g, '').slice(0, 4))} />
+              </div>
+              {pinError && <p className="text-xs text-red-500">{pinError}</p>}
+              <div className="flex gap-2">
+                <button className="text-sm px-3 py-1.5 rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors cursor-pointer" onClick={handleRemovePin}>Remove PIN</button>
+                <button className="btn-ghost text-sm px-3 py-1.5" onClick={resetPinForms}>Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {/* Auto-Timeout */}
+          <div className="pt-4 border-t border-[var(--color-border)]">
+            <label className="label">Auto-Lock Timeout</label>
+            <select
+              className="select"
+              style={{ maxWidth: 250 }}
+              value={autoTimeoutMinutes}
+              onChange={(e) => handleTimeoutChange(parseInt(e.target.value, 10))}
+              disabled={!pinEnabled}
+            >
+              <option value={0}>Disabled</option>
+              <option value={5}>5 minutes</option>
+              <option value={10}>10 minutes</option>
+              <option value={15}>15 minutes</option>
+              <option value={30}>30 minutes</option>
+            </select>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1.5">
+              {pinEnabled
+                ? 'Lock the app after this period of inactivity.'
+                : 'Set up a PIN first to enable auto-lock.'}
+            </p>
+          </div>
         </div>
       </CollapsibleSection>
 
@@ -1035,50 +1535,6 @@ export default function SettingsPage() {
         </div>
       </CollapsibleSection>
 
-      {/* Documentation Bank */}
-      <CollapsibleSection
-        icon={<BookOpen className="w-5 h-5" />}
-        title="Documentation Bank"
-        description="Goal templates and note phrases"
-      >
-        <p className="text-xs text-[var(--color-text-secondary)] mb-4">
-          Manage reusable goal templates and note phrases for faster documentation.
-        </p>
-
-        {/* Tab Buttons */}
-        <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1 mb-4">
-          <button
-            onClick={() => setBankTab('goals')}
-            className={`flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-              bankTab === 'goals'
-                ? 'bg-white text-[var(--color-primary)] shadow-sm'
-                : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
-            }`}
-          >
-            Goal Templates
-          </button>
-          <button
-            onClick={() => setBankTab('notes')}
-            className={`flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-              bankTab === 'notes'
-                ? 'bg-white text-[var(--color-primary)] shadow-sm'
-                : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
-            }`}
-          >
-            Note Phrases
-          </button>
-        </div>
-
-        {/* Embedded Bank Content */}
-        <div className="border border-[var(--color-border)] rounded-lg overflow-hidden">
-          {bankTab === 'goals' ? (
-            <GoalsBankPage embedded />
-          ) : (
-            <NoteBankPage embedded />
-          )}
-        </div>
-      </CollapsibleSection>
-
       {/* Backup & Export */}
       <CollapsibleSection
         icon={<Database className="w-5 h-5" />}
@@ -1137,16 +1593,27 @@ export default function SettingsPage() {
         </div>
       </CollapsibleSection>
 
-      {/* About PocketChart */}
+      {/* ═══ ACCOUNT ═══ */}
+      <div className="flex items-center gap-2 mt-6 mb-3">
+        <Key className="w-4 h-4 text-[var(--color-text-tertiary)]" />
+        <h2 className="text-xs font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">Account</h2>
+        <div className="flex-1 border-t border-[var(--color-border)]" />
+      </div>
+
       {/* License & Activation */}
       <CollapsibleSection
         icon={<Key className="w-5 h-5" />}
         title="License & Activation"
-        description={tier === 'unlicensed' ? 'No active license' : `${tier.charAt(0).toUpperCase() + tier.slice(1)} plan active`}
+        description={
+          trialActive ? `Free trial — ${trialDaysRemaining} day${trialDaysRemaining === 1 ? '' : 's'} remaining`
+          : trialExpired ? 'Trial expired'
+          : tier === 'unlicensed' ? 'No active license'
+          : `${tier.charAt(0).toUpperCase() + tier.slice(1)} plan active`
+        }
       >
         <div className="space-y-4">
-          {/* Current status */}
-          {tier !== 'unlicensed' ? (
+          {/* Licensed state — has a real license key */}
+          {tier !== 'unlicensed' && !trialActive ? (
             <div className="space-y-3">
               <div className="flex items-center gap-2">
                 <CheckCircle className="w-4 h-4 text-green-500" />
@@ -1224,8 +1691,101 @@ export default function SettingsPage() {
                 </div>
               )}
             </div>
+          ) : trialActive ? (
+            /* Active trial — show trial info + activation form */
+            <div className="space-y-4">
+              <div className="flex items-start gap-3 p-3 bg-sky-50 border border-sky-200 rounded-lg">
+                <Clock className="w-5 h-5 text-sky-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-sky-800">
+                    Free Trial — {trialDaysRemaining} day{trialDaysRemaining === 1 ? '' : 's'} remaining
+                  </p>
+                  <p className="text-xs text-sky-700 mt-1">
+                    You have full Basic access during your trial. Enter a license key anytime to keep all your data and unlock permanent access.
+                  </p>
+                </div>
+              </div>
+
+              {/* Activation form */}
+              <div className="space-y-3">
+                <p className="text-sm text-[var(--color-text-secondary)]">
+                  Have a license key? Activate now to secure your access.
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    className="input flex-1"
+                    placeholder="Enter license key"
+                    value={licenseKeyInput}
+                    onChange={(e) => setLicenseKeyInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleLicenseActivate()}
+                    disabled={licenseActivating}
+                  />
+                  <button
+                    className="btn-primary btn-sm flex items-center gap-1.5 px-4"
+                    onClick={handleLicenseActivate}
+                    disabled={licenseActivating}
+                  >
+                    {licenseActivating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Key className="w-3.5 h-3.5" />}
+                    {licenseActivating ? 'Activating...' : 'Activate'}
+                  </button>
+                </div>
+              </div>
+
+              <button
+                className="btn-secondary btn-sm gap-1.5 w-full"
+                onClick={() => window.api.shell.openExternal('https://pocketchart.app')}
+              >
+                Buy PocketChart
+              </button>
+            </div>
+          ) : trialExpired ? (
+            /* Trial expired — urge activation */
+            <div className="space-y-4">
+              <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-red-800">
+                    Your 30-day trial has ended
+                  </p>
+                  <p className="text-xs text-red-700 mt-1">
+                    Your data is safe and always yours. Activate a license to continue creating clients, notes, and appointments. You can still view and export everything.
+                  </p>
+                </div>
+              </div>
+
+              {/* Activation form */}
+              <div className="space-y-3">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    className="input flex-1"
+                    placeholder="Enter license key"
+                    value={licenseKeyInput}
+                    onChange={(e) => setLicenseKeyInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleLicenseActivate()}
+                    disabled={licenseActivating}
+                  />
+                  <button
+                    className="btn-primary btn-sm flex items-center gap-1.5 px-4"
+                    onClick={handleLicenseActivate}
+                    disabled={licenseActivating}
+                  >
+                    {licenseActivating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Key className="w-3.5 h-3.5" />}
+                    {licenseActivating ? 'Activating...' : 'Activate'}
+                  </button>
+                </div>
+              </div>
+
+              <button
+                className="btn-secondary btn-sm gap-1.5 w-full"
+                onClick={() => window.api.shell.openExternal('https://pocketchart.app')}
+              >
+                Buy PocketChart
+              </button>
+            </div>
           ) : (
-            /* Unlicensed — show activation form */
+            /* Unlicensed (no trial) — show activation form */
             <div className="space-y-3">
               <p className="text-sm text-[var(--color-text-secondary)]">
                 Enter your license key to activate PocketChart.
@@ -1312,6 +1872,17 @@ export default function SettingsPage() {
           baaAvailable={baaModalProps.baaAvailable}
         />
       )}
+
+      {/* Fee Schedule Modal */}
+      <FeeScheduleModal
+        isOpen={showFeeModal}
+        onClose={() => { setShowFeeModal(false); setEditingFee(null); }}
+        onSave={async () => {
+          const updated = await window.api.feeSchedule.list();
+          setFeeSchedule(updated);
+        }}
+        fee={editingFee || undefined}
+      />
     </div>
   );
 }

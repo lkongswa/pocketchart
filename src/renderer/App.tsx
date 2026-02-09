@@ -40,6 +40,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import OnboardingScreen from './components/OnboardingScreen';
 import UpdateNotification from './components/UpdateNotification';
 import UnlicensedLandingPage from './components/UnlicensedLandingPage';
+import TrialBadge from './components/TrialBadge';
 import { useTier } from './hooks/useTier';
 
 interface NavItem {
@@ -211,9 +212,10 @@ const Sidebar: React.FC = () => {
         })}
       </nav>
 
-      {/* Footer */}
-      <div className="px-5 py-3 border-t border-[var(--color-border)]">
-        <p className="text-xs text-[var(--color-text-secondary)]">
+      {/* Trial Badge + Footer */}
+      <div className="px-3 py-3 border-t border-[var(--color-border)] space-y-2">
+        <TrialBadge />
+        <p className="text-xs text-[var(--color-text-secondary)] px-2">
           {appVersion ? `v${appVersion}` : ''}
         </p>
       </div>
@@ -301,7 +303,7 @@ const App: React.FC = () => {
   const [initialLoading, setInitialLoading] = useState(true);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const lastActivityRef = useRef<number>(Date.now());
-  const { tier, loading: tierLoading } = useTier();
+  const { tier, trialActive, trialExpired, loading: tierLoading } = useTier();
 
   // Initialize lock state on mount
   useEffect(() => {
@@ -421,7 +423,8 @@ const App: React.FC = () => {
   };
 
   // Unlicensed users see only the activation/export landing page
-  if (tier === 'unlicensed' && !showOnboarding) {
+  // Exception: trial-expired users get view-only mode (full app with creation blocked)
+  if (tier === 'unlicensed' && !trialExpired && !showOnboarding) {
     return (
       <ErrorBoundary>
         <UnlicensedLandingPage />

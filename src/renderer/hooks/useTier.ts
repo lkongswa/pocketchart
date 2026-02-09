@@ -4,13 +4,13 @@ import type { AppTier, LicenseStatus } from '@shared/types';
 const PRO_FEATURES = new Set([
   'contractor_module',
   'professional_vault',
-  'compliance_engine',
   'stripe_billing',
   'mileage_tracking',
   'communication_log',
   'caseload_dashboard',
   'batch_invoicing',
   'tax_summary',
+  'quick_chips',
 ]);
 
 export function useTier() {
@@ -52,6 +52,11 @@ export function useTier() {
   const isPro = tier === 'pro';
   const isUnlicensed = tier === 'unlicensed';
 
+  // Trial state — derived from licenseStatus
+  const trialActive = licenseStatus?.trialActive ?? false;
+  const trialExpired = licenseStatus?.trialExpired ?? false;
+  const trialDaysRemaining = licenseStatus?.trialDaysRemaining ?? 0;
+
   return {
     tier,
     licenseStatus,
@@ -60,6 +65,9 @@ export function useTier() {
     isBasicOrHigher,
     isPro,
     isUnlicensed,
+    trialActive,
+    trialExpired,
+    trialDaysRemaining,
     refresh,
   };
 }

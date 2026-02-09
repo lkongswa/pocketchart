@@ -9,11 +9,13 @@ import {
   startOfMonth,
   endOfMonth,
 } from 'date-fns';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Copy, Clipboard, Edit3, Trash2, X, Ban, AlertTriangle } from 'lucide-react';
 import type { Appointment, Invoice, InvoiceItem } from '../../shared/types';
 import type { PaymentIndicator } from '../components/calendar/AppointmentBlock';
 import AppointmentModal from '../components/AppointmentModal';
+import TrialExpiredModal from '../components/TrialExpiredModal';
+import { useTrialGuard } from '../hooks/useTrialGuard';
 import CalendarToolbar from '../components/calendar/CalendarToolbar';
 import DayView from '../components/calendar/DayView';
 import WeekView from '../components/calendar/WeekView';
@@ -40,8 +42,14 @@ interface ContextMenu {
 
 export default function CalendarPage() {
   const navigate = useNavigate();
-  const [currentView, setCurrentView] = useState<CalendarView>('week');
-  const [currentDate, setCurrentDate] = useState(new Date());
+  const location = useLocation();
+  const { guardAction, showExpiredModal, dismissExpiredModal } = useTrialGuard();
+  const routeState = (location.state as { date?: string; view?: CalendarView }) || {};
+  const [currentView, setCurrentView] = useState<CalendarView>(routeState.view || 'week');
+  const [currentDate, setCurrentDate] = useState(() => {
+    if (routeState.date) return new Date(routeState.date + 'T00:00:00');
+    return new Date();
+  });
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -191,6 +199,7 @@ export default function CalendarPage() {
 
   // Add appointment (from button)
   const handleAddAppointment = () => {
+    if (!guardAction()) return;
     setEditingAppointment(null);
     setSelectedDate(undefined);
     setSelectedTime(undefined);
@@ -199,6 +208,7 @@ export default function CalendarPage() {
 
   // Slot click on time grid
   const handleSlotClick = (date: string, time: string) => {
+    if (!guardAction()) return;
     setEditingAppointment(null);
     setSelectedDate(date);
     setSelectedTime(time);
@@ -501,6 +511,9 @@ export default function CalendarPage() {
         defaultDate={selectedDate}
         defaultTime={selectedTime}
       />
+
+      {/* Trial Expired Modal */}
+      {showExpiredModal && <TrialExpiredModal onClose={dismissExpiredModal} />}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Search, Star, Plus, ChevronDown, ChevronRight } from 'lucide-react';
+import { useTier } from '../hooks/useTier';
 import type { Discipline, SOAPSection, NoteBankEntry } from '../../shared/types';
 
 interface NoteBankPopoverProps {
@@ -35,6 +36,7 @@ export default function NoteBankPopover({
   const [newPhrase, setNewPhrase] = useState('');
   const [newCategory, setNewCategory] = useState('');
   const [saving, setSaving] = useState(false);
+  const { isPro } = useTier();
   const panelRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -261,19 +263,21 @@ export default function NoteBankPopover({
                         <span className="flex-1 leading-snug">
                           {phrase.phrase}
                         </span>
-                        <button
-                          onClick={(e) => handleToggleFavorite(phrase.id, e)}
-                          className="flex-shrink-0 mt-0.5 p-0.5 rounded hover:bg-gray-100"
-                          title={phrase.is_favorite ? 'Remove from favorites' : 'Add to favorites'}
-                        >
-                          <Star
-                            className={`w-3.5 h-3.5 ${
-                              phrase.is_favorite
-                                ? 'fill-amber-400 text-amber-400'
-                                : 'text-gray-300 group-hover:text-gray-400'
-                            }`}
-                          />
-                        </button>
+                        {isPro && (
+                          <button
+                            onClick={(e) => handleToggleFavorite(phrase.id, e)}
+                            className="flex-shrink-0 mt-0.5 p-0.5 rounded hover:bg-gray-100"
+                            title={phrase.is_favorite ? 'Remove from favorites' : 'Add to favorites'}
+                          >
+                            <Star
+                              className={`w-3.5 h-3.5 ${
+                                phrase.is_favorite
+                                  ? 'fill-amber-400 text-amber-400'
+                                  : 'text-gray-300 group-hover:text-gray-400'
+                              }`}
+                            />
+                          </button>
+                        )}
                       </button>
                     ))}
                   </div>

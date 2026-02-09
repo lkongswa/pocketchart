@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -30,7 +30,6 @@ import {
   ExternalLink,
   AlertCircle,
   Loader2,
-  TrendingUp,
   ChevronDown,
   ChevronRight,
   Shield,
@@ -45,6 +44,7 @@ import type {
   ClientStatus,
   ClientDocument,
   ClientDocumentCategory,
+  ClientDiscount,
   Discipline,
   Note,
   Evaluation,
@@ -59,9 +59,15 @@ import { CLIENT_DOCUMENT_CATEGORY_LABELS } from '../../shared/types';
 import ClientFormModal from '../components/ClientFormModal';
 import GoalFormModal from '../components/GoalFormModal';
 import GoalBuilderModal from '../components/GoalBuilderModal';
+import ClientDiscountModal from '../components/ClientDiscountModal';
+import ClientDiscountBadge from '../components/ClientDiscountBadge';
 import ComplianceSection from '../components/ComplianceSection';
 import CommunicationLogSection from '../components/CommunicationLogSection';
 import ProFeatureGate from '../components/ProFeatureGate';
+import ChartCompleteness from '../components/ChartCompleteness';
+import TrialExpiredModal from '../components/TrialExpiredModal';
+import { useTrialGuard } from '../hooks/useTrialGuard';
+import { useChartCompleteness } from '../hooks/useChartCompleteness';
 
 // --- Badge helpers ---
 
@@ -164,56 +170,6 @@ const formatCategory = (category: string): string =>
 
 // --- Simple bar chart for billing ---
 
-interface MonthlyData {
-  month: string;
-  invoiced: number;
-  paid: number;
-}
-
-function BillingChart({ invoices, payments }: { invoices: Invoice[]; payments: Payment[] }) {
-  const monthlyData = useMemo(() => {
-    const months: MonthlyData[] = [];
-    const now = new Date();
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      const label = d.toLocaleDateString('en-US', { month: 'short' });
-      const invoiced = invoices
-        .filter((inv) => inv.status !== 'void' && inv.invoice_date?.startsWith(key))
-        .reduce((sum, inv) => sum + (inv.total_amount || 0), 0);
-      const paid = payments
-        .filter((p) => p.payment_date?.startsWith(key))
-        .reduce((sum, p) => sum + (p.amount || 0), 0);
-      months.push({ month: label, invoiced, paid });
-    }
-    return months;
-  }, [invoices, payments]);
-
-  const maxVal = Math.max(...monthlyData.map((m) => Math.max(m.invoiced, m.paid)), 1);
-
-  return (
-    <div className="flex items-end gap-3 h-36 px-2">
-      {monthlyData.map((m, i) => (
-        <div key={i} className="flex-1 flex flex-col items-center gap-1">
-          <div className="flex items-end gap-0.5 w-full h-28">
-            <div
-              className="flex-1 bg-blue-200 rounded-t-sm transition-all"
-              style={{ height: `${Math.max((m.invoiced / maxVal) * 100, m.invoiced > 0 ? 4 : 0)}%` }}
-              title={`Invoiced: ${formatCurrency(m.invoiced)}`}
-            />
-            <div
-              className="flex-1 bg-emerald-400 rounded-t-sm transition-all"
-              style={{ height: `${Math.max((m.paid / maxVal) * 100, m.paid > 0 ? 4 : 0)}%` }}
-              title={`Paid: ${formatCurrency(m.paid)}`}
-            />
-          </div>
-          <span className="text-[10px] text-[var(--color-text-secondary)]">{m.month}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 // --- Collapsible Info Section ---
 
 type SectionColor = 'blue' | 'violet' | 'emerald' | 'amber' | 'slate' | 'teal';
@@ -276,6 +232,7 @@ const ClientDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
+  const { guardAction, showExpiredModal, dismissExpiredModal } = useTrialGuard();
   const clientId = Number(id);
 
   const [client, setClient] = useState<Client | null>(null);
@@ -303,6 +260,11 @@ const ClientDetailPage: React.FC = () => {
   const [checkingPaymentStatus, setCheckingPaymentStatus] = useState<number | null>(null);
   const [billingToast, setBillingToast] = useState<string | null>(null);
 
+  // Discount state
+  const [clientDiscounts, setClientDiscounts] = useState<ClientDiscount[]>([]);
+  const [activeDiscounts, setActiveDiscounts] = useState<ClientDiscount[]>([]);
+  const [showDiscountModal, setShowDiscountModal] = useState(false);
+
   // Document upload form state
   const [uploadCategory, setUploadCategory] = useState<ClientDocumentCategory>('other');
   const [uploadCertStart, setUploadCertStart] = useState('');
@@ -313,10 +275,20 @@ const ClientDetailPage: React.FC = () => {
 
   // Modals
   const [editModalOpen, setEditModalOpen] = useState(false);
+  const [highlightSections, setHighlightSections] = useState<string[]>([]);
   const [goalModalOpen, setGoalModalOpen] = useState(false);
   const [goalBuilderOpen, setGoalBuilderOpen] = useState(false);
   const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
+
+  // Chart completeness — must be called before any early returns
+  const chartCompleteness = useChartCompleteness(client);
+
+  const handleCompleteChart = () => {
+    const sections = [...new Set(chartCompleteness.missing.map(m => m.section))];
+    setHighlightSections(sections);
+    setEditModalOpen(true);
+  };
 
   const routeState = (location.state as { tab?: string; invoiceId?: number }) || {};
 
@@ -324,7 +296,7 @@ const ClientDetailPage: React.FC = () => {
     if (!clientId) return;
     setLoading(true);
     try {
-      const [clientData, notesData, evalsData, goalsData, docsData, invoicesData, paymentsData] = await Promise.all([
+      const [clientData, notesData, evalsData, goalsData, docsData, invoicesData, paymentsData, discountsData, activeDiscountsData] = await Promise.all([
         window.api.clients.get(clientId),
         window.api.notes.listByClient(clientId),
         window.api.evaluations.listByClient(clientId),
@@ -332,6 +304,8 @@ const ClientDetailPage: React.FC = () => {
         window.api.documents.list({ clientId }),
         window.api.invoices.list({ clientId }),
         window.api.payments.list({ clientId }),
+        window.api.clientDiscounts.listByClient(clientId).catch(() => []),
+        window.api.clientDiscounts.getActive(clientId).catch(() => []),
       ]);
       setClient(clientData);
       setNotes(notesData || []);
@@ -352,6 +326,8 @@ const ClientDetailPage: React.FC = () => {
         amount: typeof pay.amount === 'number' ? pay.amount : 0,
       }));
       setPayments(safePayments);
+      setClientDiscounts(discountsData || []);
+      setActiveDiscounts(activeDiscountsData || []);
     } catch (err) {
       console.error('Failed to load client data:', err);
     } finally {
@@ -372,28 +348,13 @@ const ClientDetailPage: React.FC = () => {
 
   // --- Handlers ---
 
-  const handleArchiveToggle = async () => {
+  const handleReactivate = async () => {
     if (!client) return;
-    if (client.status !== 'discharged') {
-      // Offer discharge summary
-      const createSummary = window.confirm(
-        'Would you like to create a discharge summary?\n\n' +
-        'A discharge summary documents final goal statuses, outcomes, and recommendations.\n\n' +
-        'Click OK to create one, or Cancel to change status without a summary.'
-      );
-      if (createSummary) {
-        navigate(`/clients/${client.id}/note/new`, {
-          state: { noteMode: 'discharge', standalone: true }
-        });
-        return;
-      }
-    }
-    const newStatus: ClientStatus = client.status === 'active' || client.status === 'hold' ? 'discharged' : 'active';
     try {
-      const updated = await window.api.clients.update(client.id, { ...client, status: newStatus });
+      const updated = await window.api.clients.update(client.id, { ...client, status: 'active' as ClientStatus });
       setClient(updated);
     } catch (err) {
-      console.error('Failed to update status:', err);
+      console.error('Failed to reactivate client:', err);
     }
   };
 
@@ -602,7 +563,7 @@ const ClientDetailPage: React.FC = () => {
   const inactiveGoals = goals.filter((g) => g.status !== 'active');
   const displayActiveGoals = showAllGoals ? sortedActiveGoals : sortedActiveGoals.slice(0, 4);
 
-  // Completeness checks
+  // Completeness checks (legacy — used by collapsible section badges)
   const demographicsComplete = Boolean(client.dob && client.phone);
   const insuranceComplete = Boolean(client.insurance_payer && client.insurance_member_id);
   const diagnosisComplete = Boolean(client.primary_dx_code);
@@ -635,6 +596,9 @@ const ClientDetailPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Chart Completeness Indicator */}
+      <ChartCompleteness result={chartCompleteness} onCompleteChart={handleCompleteChart} />
 
       {/* ══════════ HEADER CARD WITH COLLAPSIBLE SECTIONS ══════════ */}
       <div className="card p-5">
@@ -682,9 +646,11 @@ const ClientDetailPage: React.FC = () => {
                 <LogOut size={14} /> Discharge Client
               </button>
             )}
-            <button className="btn-ghost btn-sm gap-1.5" onClick={handleArchiveToggle}>
-              <Archive size={14} /> {client.status === 'discharged' ? 'Reactivate' : 'Change Status'}
-            </button>
+            {client.status === 'discharged' && (
+              <button className="btn-ghost btn-sm gap-1.5 text-green-600 hover:bg-green-50" onClick={handleReactivate}>
+                <Archive size={14} /> Reactivate
+              </button>
+            )}
           </div>
         </div>
 
@@ -789,14 +755,14 @@ const ClientDetailPage: React.FC = () => {
                 {evaluations.some(e => e.signed_at) && (
                   <button
                     className="btn-secondary btn-sm gap-1.5"
-                    onClick={() => navigate(`/clients/${clientId}/eval/new`, { state: { reassessment: true } })}
+                    onClick={() => { if (guardAction()) navigate(`/clients/${clientId}/eval/new`, { state: { reassessment: true } }); }}
                   >
                     <RefreshCw size={14} /> Reassessment
                   </button>
                 )}
                 <button
                   className="btn-accent btn-sm gap-1.5"
-                  onClick={() => navigate(`/clients/${clientId}/eval/new`)}
+                  onClick={() => { if (guardAction()) navigate(`/clients/${clientId}/eval/new`); }}
                 >
                   <Plus size={14} /> New Eval
                 </button>
@@ -862,7 +828,7 @@ const ClientDetailPage: React.FC = () => {
                   ({activeGoals.length} active / {goals.length} total)
                 </span>
               </h3>
-              <button className="btn-primary btn-sm gap-1.5" onClick={openAddGoal}>
+              <button className="btn-primary btn-sm gap-1.5" onClick={() => { if (guardAction()) openAddGoal(); }}>
                 <Plus size={14} /> Add Goal
               </button>
             </div>
@@ -1093,7 +1059,7 @@ const ClientDetailPage: React.FC = () => {
               </h3>
               <button
                 className="btn-primary btn-sm gap-1.5"
-                onClick={() => navigate(`/clients/${clientId}/note/new`)}
+                onClick={() => { if (guardAction()) navigate(`/clients/${clientId}/note/new`); }}
               >
                 <Plus size={14} /> New Note
               </button>
@@ -1188,18 +1154,7 @@ const ClientDetailPage: React.FC = () => {
                 setShowDocuments(true);
               }}
             >
-              <Upload size={14} /> Upload Signed POC
-            </button>
-            <button
-              className="btn-secondary btn-sm gap-1.5"
-              onClick={() => {
-                setUploadCategory('recertification');
-                setUploadPhysicianName(client.referring_physician || '');
-                setUploadReceivedDate(new Date().toISOString().split('T')[0]);
-                setShowDocuments(true);
-              }}
-            >
-              <Upload size={14} /> Upload Recertification
+              <Upload size={14} /> Upload Documents
             </button>
           </div>
         </div>
@@ -1318,13 +1273,13 @@ const ClientDetailPage: React.FC = () => {
           <div className="flex items-center gap-2">
             <button
               className="btn-primary btn-sm gap-1.5"
-              onClick={() => navigate(`/billing?newInvoice=${clientId}`)}
+              onClick={() => { if (guardAction()) navigate(`/billing?newInvoice=${clientId}`); }}
             >
               <Plus size={14} /> New Invoice
             </button>
             <button
               className="btn-secondary btn-sm gap-1.5"
-              onClick={() => navigate(`/billing?newPayment=${clientId}`)}
+              onClick={() => { if (guardAction()) navigate(`/billing?newPayment=${clientId}`); }}
             >
               <CreditCard size={14} /> Record Payment
             </button>
@@ -1338,57 +1293,39 @@ const ClientDetailPage: React.FC = () => {
         </div>
 
         <div className="p-5">
-          {/* Summary Cards + Chart Row */}
-          <div className="grid grid-cols-12 gap-5 mb-6">
-            {/* Summary Cards - Now Clickable */}
-            <div className="col-span-5 grid grid-cols-1 gap-3">
-              <div
-                className="flex items-center justify-between p-3 rounded-lg bg-amber-50 border border-amber-200 cursor-pointer hover:shadow-md transition-all"
-                onClick={() => navigate('/billing?tab=invoices')}
-              >
-                <div>
-                  <p className="text-xs text-amber-600 font-medium">Balance Due</p>
-                  <p className={`text-lg font-bold ${balanceDue > 0 ? 'text-amber-700' : 'text-gray-500'}`}>
-                    {formatCurrency(balanceDue)}
-                  </p>
-                </div>
-                <AlertCircle className={`w-5 h-5 ${balanceDue > 0 ? 'text-amber-500' : 'text-gray-300'}`} />
+          {/* Summary Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+            <div
+              className="flex items-center justify-between p-3 rounded-lg bg-amber-50 border border-amber-200 cursor-pointer hover:shadow-md transition-all"
+              onClick={() => navigate('/billing?tab=invoices')}
+            >
+              <div>
+                <p className="text-xs text-amber-600 font-medium">Balance Due</p>
+                <p className={`text-lg font-bold ${balanceDue > 0 ? 'text-amber-700' : 'text-gray-500'}`}>
+                  {formatCurrency(balanceDue)}
+                </p>
               </div>
-              <div
-                className="flex items-center justify-between p-3 rounded-lg bg-emerald-50 border border-emerald-200 cursor-pointer hover:shadow-md transition-all"
-                onClick={() => navigate('/billing?tab=payments')}
-              >
-                <div>
-                  <p className="text-xs text-emerald-600 font-medium">Total Collected</p>
-                  <p className="text-lg font-bold text-emerald-700">{formatCurrency(totalPaid)}</p>
-                </div>
-                <DollarSign className="w-5 h-5 text-emerald-500" />
-              </div>
-              <div
-                className="flex items-center justify-between p-3 rounded-lg bg-blue-50 border border-blue-200 cursor-pointer hover:shadow-md transition-all"
-                onClick={() => navigate('/billing?tab=invoices')}
-              >
-                <div>
-                  <p className="text-xs text-blue-600 font-medium">Total Invoiced</p>
-                  <p className="text-lg font-bold text-blue-700">{formatCurrency(totalInvoiced)}</p>
-                </div>
-                <Receipt className="w-5 h-5 text-blue-500" />
-              </div>
+              <AlertCircle className={`w-5 h-5 ${balanceDue > 0 ? 'text-amber-500' : 'text-gray-300'}`} />
             </div>
-
-            {/* Chart */}
-            <div className="col-span-7 rounded-lg border border-[var(--color-border)] p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-1.5">
-                  <TrendingUp size={14} className="text-[var(--color-primary)]" />
-                  Last 6 Months
-                </h4>
-                <div className="flex items-center gap-3 text-xs text-[var(--color-text-secondary)]">
-                  <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-blue-200" /> Invoiced</span>
-                  <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-400" /> Collected</span>
-                </div>
+            <div
+              className="flex items-center justify-between p-3 rounded-lg bg-emerald-50 border border-emerald-200 cursor-pointer hover:shadow-md transition-all"
+              onClick={() => navigate('/billing?tab=payments')}
+            >
+              <div>
+                <p className="text-xs text-emerald-600 font-medium">Total Collected</p>
+                <p className="text-lg font-bold text-emerald-700">{formatCurrency(totalPaid)}</p>
               </div>
-              <BillingChart invoices={invoices} payments={payments} />
+              <DollarSign className="w-5 h-5 text-emerald-500" />
+            </div>
+            <div
+              className="flex items-center justify-between p-3 rounded-lg bg-blue-50 border border-blue-200 cursor-pointer hover:shadow-md transition-all"
+              onClick={() => navigate('/billing?tab=invoices')}
+            >
+              <div>
+                <p className="text-xs text-blue-600 font-medium">Total Invoiced</p>
+                <p className="text-lg font-bold text-blue-700">{formatCurrency(totalInvoiced)}</p>
+              </div>
+              <Receipt className="w-5 h-5 text-blue-500" />
             </div>
           </div>
 
@@ -1504,8 +1441,110 @@ const ClientDetailPage: React.FC = () => {
               </div>
             )}
           </div>
+
+          {/* Discounts & Packages */}
+          <div className="mt-6">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-sm font-semibold text-[var(--color-text)]">Discounts & Packages</h4>
+              <button
+                className="btn-ghost btn-sm text-xs gap-1"
+                onClick={() => setShowDiscountModal(true)}
+              >
+                <Plus size={12} /> Add Discount
+              </button>
+            </div>
+
+            {activeDiscounts.map((disc) => (
+              <div key={disc.id} className="mb-3 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <ClientDiscountBadge discount={disc} />
+                    {disc.notes && (
+                      <span className="text-xs text-[var(--color-text-secondary)]">{disc.notes}</span>
+                    )}
+                  </div>
+                  <button
+                    className="text-xs text-red-500 hover:text-red-700"
+                    onClick={async () => {
+                      await window.api.clientDiscounts.update(disc.id, { status: 'cancelled' });
+                      loadData();
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+                {(disc.discount_type === 'package' || disc.discount_type === 'flat_rate') && (
+                  <div className="mt-2">
+                    {(() => {
+                      const total = disc.discount_type === 'package'
+                        ? disc.total_sessions || 0
+                        : disc.flat_rate_sessions || 0;
+                      const used = disc.discount_type === 'package'
+                        ? disc.sessions_used || 0
+                        : disc.flat_rate_sessions_used || 0;
+                      const pct = total > 0 ? (used / total) * 100 : 0;
+                      return (
+                        <div>
+                          <div className="flex justify-between text-xs text-[var(--color-text-secondary)] mb-1">
+                            <span>{used} of {total} sessions used</span>
+                            <span>{total - used} remaining</span>
+                          </div>
+                          <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all ${pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                              style={{ width: `${Math.min(100, pct)}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {clientDiscounts.filter(d => d.status !== 'active').length > 0 && (
+              <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+                {clientDiscounts.filter(d => d.status !== 'active').slice(0, 3).map(d => (
+                  <div key={d.id} className="flex items-center justify-between px-4 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-[var(--color-text-secondary)]">{d.label || d.discount_type}</span>
+                      <span className={`badge text-xs ${
+                        d.status === 'exhausted' ? 'bg-gray-100 text-gray-600' :
+                        d.status === 'expired' ? 'bg-amber-100 text-amber-700' :
+                        'bg-red-100 text-red-600'
+                      }`}>
+                        {d.status}
+                      </span>
+                    </div>
+                    <span className="text-xs text-[var(--color-text-secondary)]">
+                      {d.created_at ? new Date(d.created_at).toLocaleDateString() : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {clientDiscounts.length === 0 && activeDiscounts.length === 0 && (
+              <div className="rounded-lg border border-dashed border-[var(--color-border)] p-4 text-center text-sm text-[var(--color-text-secondary)]">
+                No discounts or packages. Add one to offer special pricing.
+              </div>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* ══════════ DISCOUNT MODAL ══════════ */}
+      {showDiscountModal && (
+        <ClientDiscountModal
+          isOpen={showDiscountModal}
+          onClose={() => setShowDiscountModal(false)}
+          onSave={() => loadData()}
+          clientId={clientId}
+          clientHasInsurance={Boolean(client?.insurance_payer)}
+          existingDiscounts={activeDiscounts}
+        />
+      )}
 
       {/* ══════════ DOCUMENTS MODAL ══════════ */}
       {showDocuments && (
@@ -1656,12 +1695,12 @@ const ClientDetailPage: React.FC = () => {
               </button>
             </div>
             <div className="p-6 overflow-y-auto max-h-[60vh]">
-              <ProFeatureGate feature="compliance_engine">
-                <div className="space-y-6">
-                  <ComplianceSection clientId={client.id} />
+              <div className="space-y-6">
+                <ComplianceSection clientId={client.id} />
+                <ProFeatureGate feature="communication_log">
                   <CommunicationLogSection clientId={client.id} />
-                </div>
-              </ProFeatureGate>
+                </ProFeatureGate>
+              </div>
             </div>
           </div>
         </div>
@@ -1670,12 +1709,13 @@ const ClientDetailPage: React.FC = () => {
       {/* Edit Client Modal */}
       <ClientFormModal
         isOpen={editModalOpen}
-        onClose={() => setEditModalOpen(false)}
+        onClose={() => { setEditModalOpen(false); setHighlightSections([]); }}
         client={client}
         onSave={handleClientSaved}
         onDischarge={() => navigate(`/clients/${client.id}/note/new`, {
           state: { noteMode: 'discharge', standalone: true }
         })}
+        highlightSections={highlightSections}
       />
 
       {/* Goal Modal (for editing single goals) */}
@@ -1701,6 +1741,9 @@ const ClientDetailPage: React.FC = () => {
           window.api.goals.listByClient(clientId).then(setGoals).catch(console.error);
         }}
       />
+
+      {/* Trial Expired Modal */}
+      {showExpiredModal && <TrialExpiredModal onClose={dismissExpiredModal} />}
     </div>
   );
 };

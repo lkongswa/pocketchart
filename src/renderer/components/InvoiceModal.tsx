@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Plus, Trash2, Calculator, Building2, User, CheckSquare, Square } from 'lucide-react';
-import type { Client, ContractedEntity, Invoice, InvoiceItem, FeeScheduleEntry, Note } from '../../shared/types';
+import type { Client, ClientDiscount, ContractedEntity, Invoice, InvoiceItem, FeeScheduleEntry, Note } from '../../shared/types';
+import ClientDiscountBadge from './ClientDiscountBadge';
 
 interface InvoiceModalProps {
   isOpen: boolean;
@@ -35,10 +36,39 @@ export default function InvoiceModal({
   const [items, setItems] = useState<Partial<InvoiceItem>[]>(
     invoice?.items || [{ description: '', cpt_code: '', units: 1, unit_price: 0, amount: 0 }]
   );
+  const [discountPercent, setDiscountPercent] = useState(0);
   const [unbilledNotes, setUnbilledNotes] = useState<Note[]>([]);
   const [selectedNoteIds, setSelectedNoteIds] = useState<Set<number>>(new Set());
   const [loadingNotes, setLoadingNotes] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [activeDiscounts, setActiveDiscounts] = useState<ClientDiscount[]>([]);
+
+  // Load default discount from settings + active client discount
+  useEffect(() => {
+    if (isOpen && !invoice) {
+      window.api.settings.get('prompt_pay_discount').then((val) => {
+        const pct = parseFloat(val || '0');
+        setDiscountPercent(isNaN(pct) ? 0 : pct);
+      }).catch(() => setDiscountPercent(0));
+    }
+  }, [isOpen, invoice]);
+
+  // Load active discounts when client changes
+  useEffect(() => {
+    if (isOpen && clientId && billToType === 'client') {
+      window.api.clientDiscounts.getActive(clientId as number).then((discounts) => {
+        const list = discounts || [];
+        setActiveDiscounts(list);
+        // For persistent percent discounts, apply the first one found
+        const persistentPct = list.find(d => d.discount_type === 'persistent' && d.discount_percent);
+        if (persistentPct) {
+          setDiscountPercent(persistentPct.discount_percent!);
+        }
+      }).catch(() => setActiveDiscounts([]));
+    } else {
+      setActiveDiscounts([]);
+    }
+  }, [isOpen, clientId, billToType]);
 
   // Sync state when invoice prop changes
   useEffect(() => {
@@ -53,6 +83,13 @@ export default function InvoiceModal({
       setStatus(invoice.status || 'draft');
       setItems(invoice.items?.length ? invoice.items : [{ description: '', cpt_code: '', units: 1, unit_price: 0, amount: 0 }]);
       setSelectedNoteIds(new Set());
+      // Back-calculate discount % from existing invoice
+      const subtotal = (invoice.items || []).reduce((sum: number, it: InvoiceItem) => sum + (it.amount || 0), 0);
+      if (subtotal > 0 && invoice.discount_amount > 0) {
+        setDiscountPercent(Math.round((invoice.discount_amount / subtotal) * 100 * 100) / 100);
+      } else {
+        setDiscountPercent(0);
+      }
     } else {
       setBillToType('client');
       setClientId('');
@@ -103,8 +140,17 @@ export default function InvoiceModal({
 
   const selectedBillToId = billToType === 'client' ? clientId : entityId;
 
-  const calculateTotal = () => {
+  const calculateSubtotal = () => {
     return items.reduce((sum, item) => sum + (item.amount || 0), 0);
+  };
+
+  const calculateDiscountAmount = () => {
+    if (discountPercent <= 0) return 0;
+    return calculateSubtotal() * (discountPercent / 100);
+  };
+
+  const calculateTotal = () => {
+    return calculateSubtotal() - calculateDiscountAmount();
   };
 
   const handleItemChange = (index: number, field: keyof InvoiceItem, value: any) => {
@@ -185,14 +231,17 @@ export default function InvoiceModal({
 
     setSaving(true);
     try {
-      const subtotal = calculateTotal();
+      const subtotal = calculateSubtotal();
+      const discountAmt = calculateDiscountAmount();
+      const total = subtotal - discountAmt;
       const data = {
         client_id: billToType === 'client' ? (clientId as number) : 0,
         entity_id: billToType === 'entity' ? (entityId as number) : undefined,
         invoice_date: invoiceDate,
         due_date: dueDate || undefined,
         subtotal,
-        total_amount: subtotal,
+        discount_amount: discountAmt,
+        total_amount: total,
         status,
         notes,
       };
@@ -309,6 +358,35 @@ export default function InvoiceModal({
               />
             </div>
           </div>
+
+          {/* Active Discount Banners */}
+          {activeDiscounts.length > 0 && billToType === 'client' && (
+            <div className="space-y-2">
+              {activeDiscounts.map((disc) => (
+                <div key={disc.id} className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <ClientDiscountBadge discount={disc} />
+                    {(disc.discount_type === 'package' || disc.discount_type === 'flat_rate') && (() => {
+                      const total = disc.discount_type === 'package'
+                        ? disc.total_sessions || 0
+                        : disc.flat_rate_sessions || 0;
+                      const used = disc.discount_type === 'package'
+                        ? disc.sessions_used || 0
+                        : disc.flat_rate_sessions_used || 0;
+                      return (
+                        <span className="text-xs text-emerald-700">
+                          {total - used} session{total - used !== 1 ? 's' : ''} remaining
+                        </span>
+                      );
+                    })()}
+                  </div>
+                  <span className="text-xs text-emerald-600">
+                    Auto-applied on generate
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Quick Generate from Notes */}
           {!invoice && selectedBillToId && unbilledNotes.length > 0 && (
@@ -457,6 +535,36 @@ export default function InvoiceModal({
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+
+          {/* Discount */}
+          <div className="flex items-center gap-4 p-3 bg-gray-50 rounded-lg">
+            <div className="flex-1">
+              <label className="text-xs text-[var(--color-text-secondary)]">Discount (%)</label>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.5"
+                className="input text-sm w-32"
+                value={discountPercent || ''}
+                onChange={(e) => setDiscountPercent(Number(e.target.value) || 0)}
+                placeholder="0"
+              />
+            </div>
+            <div className="text-right space-y-1">
+              <p className="text-xs text-[var(--color-text-secondary)]">
+                Subtotal: ${calculateSubtotal().toFixed(2)}
+              </p>
+              {discountPercent > 0 && (
+                <p className="text-xs text-emerald-600 font-medium">
+                  Discount ({discountPercent}%): -${calculateDiscountAmount().toFixed(2)}
+                </p>
+              )}
+              <p className="text-sm font-semibold text-[var(--color-text)]">
+                Total: ${calculateTotal().toFixed(2)}
+              </p>
             </div>
           </div>
 

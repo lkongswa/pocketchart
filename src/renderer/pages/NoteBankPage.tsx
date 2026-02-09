@@ -9,6 +9,7 @@ import {
   ChevronDown,
   Pencil,
 } from 'lucide-react';
+import { useTier } from '../hooks/useTier';
 import type { NoteBankEntry, Discipline, SOAPSection } from '../../shared/types';
 
 /**
@@ -55,6 +56,7 @@ interface NoteBankPageProps {
 }
 
 export default function NoteBankPage({ embedded }: NoteBankPageProps = {}) {
+  const { isPro } = useTier();
   const [entries, setEntries] = useState<NoteBankEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -409,20 +411,22 @@ export default function NoteBankPage({ embedded }: NoteBankPageProps = {}) {
                       </div>
                     ) : (
                       <>
-                        {/* Favorite Star */}
-                        <button
-                          onClick={() => handleToggleFavorite(entry.id)}
-                          className="mt-0.5 flex-shrink-0 transition-colors"
-                          title={entry.is_favorite ? 'Remove from favorites' : 'Add to favorites'}
-                        >
-                          <Star
-                            className={`w-4 h-4 ${
-                              entry.is_favorite
-                                ? 'fill-amber-400 text-amber-400'
-                                : 'text-gray-300 hover:text-amber-300'
-                            }`}
-                          />
-                        </button>
+                        {/* Favorite Star — Pro only */}
+                        {isPro && (
+                          <button
+                            onClick={() => handleToggleFavorite(entry.id)}
+                            className="mt-0.5 flex-shrink-0 transition-colors"
+                            title={entry.is_favorite ? 'Remove from favorites' : 'Add to favorites'}
+                          >
+                            <Star
+                              className={`w-4 h-4 ${
+                                entry.is_favorite
+                                  ? 'fill-amber-400 text-amber-400'
+                                  : 'text-gray-300 hover:text-amber-300'
+                              }`}
+                            />
+                          </button>
+                        )}
 
                         {/* Phrase Content */}
                         <div className="flex-1 min-w-0">
