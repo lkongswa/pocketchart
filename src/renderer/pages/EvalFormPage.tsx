@@ -20,13 +20,16 @@ import {
   ChevronRight,
   Receipt,
 } from 'lucide-react';
-import type { Client, Evaluation, Discipline, GoalType, EvalGoalEntry, GoalsBankEntry, CptLine, PlaceOfService } from '../../shared/types';
+import type { Client, Evaluation, Discipline, GoalType, EvalGoalEntry, GoalsBankEntry, CptLine, PlaceOfService, SOAPSection } from '../../shared/types';
 import type { ValidationIssue, ValidationFixes } from '../../shared/types/validation';
 
 import SignConfirmDialog from '../components/SignConfirmDialog';
 import EvalSectionWrapper from '../components/EvalSectionWrapper';
 import EvalOutlineNav from '../components/EvalOutlineNav';
 import CptCombobox from '../components/CptCombobox';
+import SmartTextarea from '../components/SmartTextarea';
+import QuickChips from '../components/QuickChips';
+import NoteBankPopover from '../components/NoteBankPopover';
 import { useEvalSections } from '../hooks/useEvalSections';
 
 // ── Types ──
@@ -76,6 +79,7 @@ interface SessionNoteData {
   time_in: string;
   time_out: string;
   cpt_codes: CptLine[];
+  cpt_modifiers?: string[];
   place_of_service: string;
   subjective: string;
   objective: string;
@@ -155,6 +159,23 @@ const EMPTY_SESSION_NOTE: SessionNoteData = {
   objective: '',
   assessment: '',
   plan: '',
+};
+
+const MODIFIER_OPTIONS = [
+  { value: 'GN', label: 'GN - Speech-Language Pathology', tooltip: 'Services delivered under a speech-language pathology plan of care.' },
+  { value: 'GO', label: 'GO - Occupational Therapy', tooltip: 'Services delivered under an occupational therapy plan of care.' },
+  { value: 'GP', label: 'GP - Physical Therapy', tooltip: 'Services delivered under a physical therapy plan of care.' },
+  { value: '59', label: '59 - Distinct Procedural Service', tooltip: 'Procedure/service distinct from other services on the same day.' },
+  { value: 'KX', label: 'KX - Requirements Met', tooltip: 'Medicare therapy threshold requirements met; services are medically necessary.' },
+  { value: '76', label: '76 - Repeat Procedure Same Physician', tooltip: 'Procedure repeated by the same physician on the same day.' },
+  { value: 'CO', label: 'CO - Concurrent Outpatient Rehab', tooltip: 'Concurrent outpatient rehabilitation services.' },
+];
+
+const SOAP_SECTION_TINT: Record<SOAPSection, string> = {
+  S: 'bg-sky-50/50',
+  O: 'bg-amber-50/50',
+  A: 'bg-violet-50/50',
+  P: 'bg-rose-50/50',
 };
 
 // ── Helpers ──
@@ -477,7 +498,7 @@ export default function EvalFormPage() {
   const [existingSignedAt, setExistingSignedAt] = useState('');
   const [goalEntries, setGoalEntries] = useState<EvalGoalEntry[]>([]);
   const [goalsAlreadyCreated, setGoalsAlreadyCreated] = useState(false);
-  const [completedGoals, setCompletedGoals] = useState<{ id: number; goal_text: string; goal_type: string; status: string; met_date: string; category: string }[]>([]);
+  const [completedGoals, setCompletedGoals] = useState<{ id: number; goal_text: string; goal_type: string; status: string; met_date: string; category: string; baseline: number; target: number }[]>([]);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   // Goal bank state
@@ -487,6 +508,16 @@ export default function EvalFormPage() {
 
   // Session Note & Billing state
   const [sessionNote, setSessionNote] = useState<SessionNoteData>({ ...EMPTY_SESSION_NOTE });
+  const [snModifiers, setSnModifiers] = useState<string[]>([]);
+  const [snNoteBankOpen, setSnNoteBankOpen] = useState<SOAPSection | null>(null);
+  const snSubjectiveRef = useRef<HTMLTextAreaElement | null>(null);
+  const snObjectiveRef = useRef<HTMLTextAreaElement | null>(null);
+  const snAssessmentRef = useRef<HTMLTextAreaElement | null>(null);
+  const snPlanRef = useRef<HTMLTextAreaElement | null>(null);
+  const snSubjectiveBtnRef = useRef<HTMLButtonElement | null>(null);
+  const snObjectiveBtnRef = useRef<HTMLButtonElement | null>(null);
+  const snAssessmentBtnRef = useRef<HTMLButtonElement | null>(null);
+  const snPlanBtnRef = useRef<HTMLButtonElement | null>(null);
 
   // Frequency & Duration state
   const [freqValue, setFreqValue] = useState<number>(0);
@@ -605,7 +636,7 @@ export default function EvalFormPage() {
               const clientGoals = await window.api.goals.listByClient(cid);
               const activeClientGoals = clientGoals.filter((g: any) => g.status === 'active');
               const metOrDcGoals = clientGoals.filter((g: any) => g.status === 'met' || g.status === 'discontinued');
-              setCompletedGoals(metOrDcGoals.map((g: any) => ({ id: g.id, goal_text: g.goal_text, goal_type: g.goal_type, status: g.status, met_date: g.met_date || '', category: g.category || '' })));
+              setCompletedGoals(metOrDcGoals.map((g: any) => ({ id: g.id, goal_text: g.goal_text, goal_type: g.goal_type, status: g.status, met_date: g.met_date || '', category: g.category || '', baseline: g.baseline ?? 0, target: g.target ?? 0 })));
               for (const cg of activeClientGoals) {
                 // Skip goals already tracked by this eval
                 if (alreadyCreatedIds.includes(cg.id)) continue;
@@ -656,6 +687,9 @@ export default function EvalFormPage() {
                 ? parsed.session_note.cpt_codes
                 : [{ code: '', units: 1 }],
             });
+            if (parsed.session_note.cpt_modifiers && Array.isArray(parsed.session_note.cpt_modifiers)) {
+              setSnModifiers(parsed.session_note.cpt_modifiers);
+            }
           }
         } catch {
           setContent(emptyContent(discipline));
@@ -671,7 +705,7 @@ export default function EvalFormPage() {
             const base = emptyContent(discipline);
             const prePopulated: EvalContent = {
               ...base,
-              referral_source: parsed.referral_source || '',
+              referral_source: parsed.referral_source || [clientData.referring_physician, clientData.referral_source].filter(Boolean).join(' — ') || '',
               medical_history: parsed.medical_history || '',
               prior_level_of_function: '', // blank — user fills new CLOF
               current_complaints: '', // blank — user fills new complaints
@@ -708,7 +742,7 @@ export default function EvalFormPage() {
             try {
               const allClientGoals = await window.api.goals.listByClient(cid);
               const metOrDcGoals = allClientGoals.filter((g: any) => g.status === 'met' || g.status === 'discontinued');
-              setCompletedGoals(metOrDcGoals.map((g: any) => ({ id: g.id, goal_text: g.goal_text, goal_type: g.goal_type, status: g.status, met_date: g.met_date || '', category: g.category || '' })));
+              setCompletedGoals(metOrDcGoals.map((g: any) => ({ id: g.id, goal_text: g.goal_text, goal_type: g.goal_type, status: g.status, met_date: g.met_date || '', category: g.category || '', baseline: g.baseline ?? 0, target: g.target ?? 0 })));
             } catch { /* not critical */ }
 
             // Load active goals if present — link them to existing Goal records
@@ -732,12 +766,18 @@ export default function EvalFormPage() {
             isDirty.current = true; // Mark dirty so autosave persists pre-populated data
             setToast('Pre-populated from prior evaluation — review and update fields');
           } else {
-            setContent(emptyContent(discipline));
+            const freshContent = emptyContent(discipline);
+            const refParts = [clientData.referring_physician, clientData.referral_source].filter(Boolean);
+            if (refParts.length > 0) freshContent.referral_source = refParts.join(' — ');
+            setContent(freshContent);
             setToast('No prior signed evaluation found — starting fresh');
           }
         } catch (err) {
           console.error('Failed to load prior eval for reassessment:', err);
-          setContent(emptyContent(discipline));
+          const fallbackContent = emptyContent(discipline);
+          const refParts2 = [clientData.referring_physician, clientData.referral_source].filter(Boolean);
+          if (refParts2.length > 0) fallbackContent.referral_source = refParts2.join(' — ');
+          setContent(fallbackContent);
         }
         // Pre-fill signature from settings
         const [sigName, sigCreds, sigImage] = await Promise.all([
@@ -750,6 +790,9 @@ export default function EvalFormPage() {
         if (sigImage) setSignatureImage(sigImage);
       } else {
         const newContent = emptyContent(discipline);
+        // Auto-populate referral source from client record
+        const refParts = [clientData.referring_physician, clientData.referral_source].filter(Boolean);
+        if (refParts.length > 0) newContent.referral_source = refParts.join(' — ');
         setContent(newContent);
 
         // Load existing client goals into new eval
@@ -757,7 +800,7 @@ export default function EvalFormPage() {
           const clientGoals = await window.api.goals.listByClient(cid);
           const activeClientGoals = clientGoals.filter((g: any) => g.status === 'active');
           const metOrDcGoals = clientGoals.filter((g: any) => g.status === 'met' || g.status === 'discontinued');
-          setCompletedGoals(metOrDcGoals.map((g: any) => ({ id: g.id, goal_text: g.goal_text, goal_type: g.goal_type, status: g.status, met_date: g.met_date || '', category: g.category || '' })));
+          setCompletedGoals(metOrDcGoals.map((g: any) => ({ id: g.id, goal_text: g.goal_text, goal_type: g.goal_type, status: g.status, met_date: g.met_date || '', category: g.category || '', baseline: g.baseline ?? 0, target: g.target ?? 0 })));
           if (activeClientGoals.length > 0) {
             const entries: EvalGoalEntry[] = activeClientGoals.map((cg: any) => ({
               goal_text: cg.goal_text || '',
@@ -898,7 +941,7 @@ export default function EvalFormPage() {
         ...content,
         goal_entries: goalEntries,
         created_goal_ids: updatedGoalIds,
-        session_note: sessionNote,
+        session_note: { ...sessionNote, cpt_modifiers: snModifiers },
       };
 
       const evalData: any = {
@@ -1043,6 +1086,115 @@ export default function EvalFormPage() {
   const updateGoalEntries = (updater: React.SetStateAction<EvalGoalEntry[]>) => {
     isDirty.current = true;
     setGoalEntries(updater);
+  };
+
+  /** Auto-compose goal text from structured fields */
+  const composeGoalText = (entry: EvalGoalEntry): string => {
+    const cat = entry.category || 'functional';
+    const bl = entry.baseline ?? 0;
+    const tg = entry.target ?? 80;
+
+    // Duration label from target_date
+    let durationLabel = '';
+    if (entry.target_date) {
+      const targetDate = new Date(entry.target_date + 'T00:00:00');
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const diffDays = Math.round((targetDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      if (diffDays <= 0) {
+        durationLabel = '';
+      } else if (diffDays <= 14) {
+        durationLabel = `${diffDays} days`;
+      } else if (diffDays <= 60) {
+        const weeks = Math.round(diffDays / 7);
+        durationLabel = `${weeks} week${weeks !== 1 ? 's' : ''}`;
+      } else if (diffDays <= 120) {
+        const months = Math.round(diffDays / 30);
+        durationLabel = `${months} month${months !== 1 ? 's' : ''}`;
+      } else {
+        const months = Math.round(diffDays / 30);
+        durationLabel = `${months} months`;
+      }
+    }
+
+    const withinClause = durationLabel ? ` within ${durationLabel}` : '';
+    return `Pt will improve ${cat.toLowerCase()} skills from ${bl}% to ${tg}%${withinClause}.`;
+  };
+
+  /** Check if goal text looks auto-composed (matches our pattern) */
+  const isAutoComposed = (text: string): boolean => {
+    return /^Pt will improve .+ skills from \d+% to \d+%/.test(text.trim());
+  };
+
+  /** Update a goal entry field and auto-compose text if appropriate */
+  const updateGoalField = (idx: number, field: Partial<EvalGoalEntry>) => {
+    updateGoalEntries(prev =>
+      prev.map((g, i) => {
+        if (i !== idx) return g;
+        const updated = { ...g, ...field };
+        // Auto-compose if text is empty or was previously auto-composed
+        if (!g.goal_text.trim() || isAutoComposed(g.goal_text)) {
+          updated.goal_text = composeGoalText(updated);
+        }
+        return updated;
+      })
+    );
+  };
+
+  // ── Session Note SOAP helpers ──
+
+  const snInsertAtCursor = (
+    textareaRef: React.RefObject<HTMLTextAreaElement | null>,
+    field: keyof SessionNoteData,
+    currentValue: string,
+    phrase: string,
+  ) => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      setSessionNote(prev => ({ ...prev, [field]: prev[field as keyof SessionNoteData] ? prev[field as keyof SessionNoteData] + ' ' + phrase : phrase }));
+      return;
+    }
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const before = currentValue.slice(0, start);
+    const after = currentValue.slice(end);
+    const needsSpace = before.length > 0 && !before.endsWith(' ') && !before.endsWith('\n');
+    const newValue = before + (needsSpace ? ' ' : '') + phrase + after;
+    setSessionNote(prev => ({ ...prev, [field]: newValue }));
+    setTimeout(() => {
+      const pos = start + (needsSpace ? 1 : 0) + phrase.length;
+      textarea.focus();
+      textarea.setSelectionRange(pos, pos);
+    }, 0);
+  };
+
+  const getSnInsertHandler = (section: SOAPSection) => {
+    return (phrase: string) => {
+      switch (section) {
+        case 'S': snInsertAtCursor(snSubjectiveRef, 'subjective', sessionNote.subjective, phrase); break;
+        case 'O': snInsertAtCursor(snObjectiveRef, 'objective', sessionNote.objective, phrase); break;
+        case 'A': snInsertAtCursor(snAssessmentRef, 'assessment', sessionNote.assessment, phrase); break;
+        case 'P': snInsertAtCursor(snPlanRef, 'plan', sessionNote.plan, phrase); break;
+      }
+    };
+  };
+
+  const getSnBtnRef = (section: SOAPSection) => {
+    switch (section) {
+      case 'S': return snSubjectiveBtnRef;
+      case 'O': return snObjectiveBtnRef;
+      case 'A': return snAssessmentBtnRef;
+      case 'P': return snPlanBtnRef;
+    }
+  };
+
+  const getSnTextareaRef = (section: SOAPSection) => {
+    switch (section) {
+      case 'S': return snSubjectiveRef;
+      case 'O': return snObjectiveRef;
+      case 'A': return snAssessmentRef;
+      case 'P': return snPlanRef;
+    }
   };
 
   /** Handle Tab key in goal textarea to jump to next ___ placeholder */
@@ -1320,7 +1472,7 @@ export default function EvalFormPage() {
         ...content,
         goal_entries: goalEntries,
         created_goal_ids: createdGoalIds,
-        session_note: sessionNote,
+        session_note: { ...sessionNote, cpt_modifiers: snModifiers },
       };
 
       const evalData: any = {
@@ -1366,6 +1518,7 @@ export default function EvalFormPage() {
             units: filteredCptLines.reduce((sum, l) => sum + (l.units || 0), 0) || 1,
             cpt_code: filteredCptLines[0]?.code || '',
             cpt_codes: JSON.stringify(filteredCptLines),
+            cpt_modifiers: JSON.stringify(snModifiers),
             place_of_service: (sessionNote.place_of_service || '11') as PlaceOfService,
             subjective: sessionNote.subjective || '',
             objective: sessionNote.objective || '',
@@ -1878,11 +2031,7 @@ export default function EvalFormPage() {
                       <select
                         className="select text-sm"
                         value={entry.goal_type}
-                        onChange={(e) =>
-                          updateGoalEntries(prev =>
-                            prev.map((g, i) => i === idx ? { ...g, goal_type: e.target.value as GoalType } : g)
-                          )
-                        }
+                        onChange={(e) => updateGoalField(idx, { goal_type: e.target.value as GoalType })}
                       >
                         <option value="STG">STG</option>
                         <option value="LTG">LTG</option>
@@ -1895,9 +2044,7 @@ export default function EvalFormPage() {
                         value={entry.category}
                         onChange={(e) => {
                           const newCat = e.target.value;
-                          updateGoalEntries(prev =>
-                            prev.map((g, i) => i === idx ? { ...g, category: newCat } : g)
-                          );
+                          updateGoalField(idx, { category: newCat });
                           // Reload bank for new category
                           if (showGoalBank === idx) {
                             loadGoalsBankForCategory(newCat);
@@ -1944,11 +2091,7 @@ export default function EvalFormPage() {
                                   ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
                                   : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]'
                               }`}
-                              onClick={() =>
-                                updateGoalEntries(prev =>
-                                  prev.map((g, i) => i === idx ? { ...g, target_date: iso } : g)
-                                )
-                              }
+                              onClick={() => updateGoalField(idx, { target_date: iso })}
                             >
                               {label}
                             </button>
@@ -1958,11 +2101,7 @@ export default function EvalFormPage() {
                           type="date"
                           className="input text-xs px-1.5 py-0.5 w-[130px]"
                           value={entry.target_date}
-                          onChange={(e) =>
-                            updateGoalEntries(prev =>
-                              prev.map((g, i) => i === idx ? { ...g, target_date: e.target.value } : g)
-                            )
-                          }
+                          onChange={(e) => updateGoalField(idx, { target_date: e.target.value })}
                         />
                       </div>
                     </div>
@@ -1982,11 +2121,7 @@ export default function EvalFormPage() {
                                 ? 'bg-amber-500 text-white border-amber-500'
                                 : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-amber-400 hover:text-amber-600'
                             }`}
-                            onClick={() =>
-                              updateGoalEntries(prev =>
-                                prev.map((g, i) => i === idx ? { ...g, baseline: pct } : g)
-                              )
-                            }
+                            onClick={() => updateGoalField(idx, { baseline: pct })}
                           >
                             {pct}%
                           </button>
@@ -2005,11 +2140,7 @@ export default function EvalFormPage() {
                                 ? 'bg-emerald-500 text-white border-emerald-500'
                                 : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-emerald-400 hover:text-emerald-600'
                             }`}
-                            onClick={() =>
-                              updateGoalEntries(prev =>
-                                prev.map((g, i) => i === idx ? { ...g, target: pct } : g)
-                              )
-                            }
+                            onClick={() => updateGoalField(idx, { target: pct })}
                           >
                             {pct}%
                           </button>
@@ -2098,6 +2229,13 @@ export default function EvalFormPage() {
                     {goal.goal_type}
                   </span>
                   <span className="text-xs text-[var(--color-text-secondary)] flex-1">{goal.goal_text}</span>
+                  {(goal.baseline > 0 || goal.target > 0) && (
+                    <span className="flex items-center gap-1 text-[10px] font-medium shrink-0">
+                      <span className="px-1 py-0.5 rounded bg-amber-50 text-amber-600">{goal.baseline}%</span>
+                      <span className="text-[var(--color-text-secondary)]">&rarr;</span>
+                      <span className="px-1 py-0.5 rounded bg-emerald-50 text-emerald-600">{goal.target}%</span>
+                    </span>
+                  )}
                   {goal.met_date && <span className="text-[10px] text-green-600 font-medium">{goal.met_date}</span>}
                 </div>
               ))}
@@ -2340,63 +2478,117 @@ export default function EvalFormPage() {
             </div>
           </div>
 
-          {/* Place of Service */}
-          <div className="mb-4">
-            <label className="label">Place of Service</label>
-            <select
-              className="select"
-              value={sessionNote.place_of_service}
-              onChange={(e) => setSessionNote(prev => ({ ...prev, place_of_service: e.target.value }))}
-            >
-              {PLACE_OF_SERVICE_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
+          {/* Billing Fields row */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <div>
+              <label className="label">Place of Service</label>
+              <select
+                className="select"
+                value={sessionNote.place_of_service}
+                onChange={(e) => setSessionNote(prev => ({ ...prev, place_of_service: e.target.value }))}
+              >
+                {PLACE_OF_SERVICE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label">Modifiers</label>
+              <select
+                className="select"
+                value=""
+                onChange={(e) => {
+                  if (e.target.value && !snModifiers.includes(e.target.value)) {
+                    setSnModifiers(prev => [...prev, e.target.value]);
+                  }
+                  e.target.value = '';
+                }}
+              >
+                <option value="">Add modifier...</option>
+                {MODIFIER_OPTIONS.filter(m => !snModifiers.includes(m.value)).map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+              {snModifiers.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {snModifiers.map((mod) => {
+                    const modInfo = MODIFIER_OPTIONS.find(m => m.value === mod);
+                    return (
+                      <span
+                        key={mod}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs cursor-help"
+                        title={modInfo?.tooltip}
+                      >
+                        {mod}
+                        <button
+                          type="button"
+                          className="hover:text-blue-900"
+                          onClick={() => setSnModifiers(prev => prev.filter(m => m !== mod))}
+                        >
+                          <X size={12} />
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* SOAP fields — compact */}
+          {/* SOAP sections with full features */}
           <div className="border-t border-[var(--color-border)] pt-4 space-y-3">
             <p className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">SOAP Note</p>
-            <div>
-              <label className="label text-xs">Subjective</label>
-              <textarea
-                className="input min-h-[52px]"
-                rows={2}
-                placeholder="Patient's reported symptoms, complaints, and history..."
-                value={sessionNote.subjective}
-                onChange={(e) => setSessionNote(prev => ({ ...prev, subjective: e.target.value }))}
-              />
-            </div>
-            <div>
-              <label className="label text-xs">Objective</label>
-              <textarea
-                className="input min-h-[52px]"
-                rows={2}
-                placeholder="Measurable observations, test results, vitals..."
-                value={sessionNote.objective}
-                onChange={(e) => setSessionNote(prev => ({ ...prev, objective: e.target.value }))}
-              />
-            </div>
-            <div>
-              <label className="label text-xs">Assessment</label>
-              <textarea
-                className="input min-h-[52px]"
-                rows={2}
-                placeholder="Clinical interpretation and progress toward goals..."
-                value={sessionNote.assessment}
-                onChange={(e) => setSessionNote(prev => ({ ...prev, assessment: e.target.value }))}
-              />
-            </div>
-            <div>
-              <label className="label text-xs">Plan</label>
-              <textarea
-                className="input min-h-[52px]"
-                rows={2}
-                placeholder="Treatment plan, next steps, follow-up..."
-                value={sessionNote.plan}
-                onChange={(e) => setSessionNote(prev => ({ ...prev, plan: e.target.value }))}
-              />
-            </div>
+            {([
+              { code: 'S' as SOAPSection, label: 'Subjective', field: 'subjective' as const, ref: snSubjectiveRef, btnRef: snSubjectiveBtnRef, placeholder: "Patient's reported symptoms, complaints, and history..." },
+              { code: 'O' as SOAPSection, label: 'Objective', field: 'objective' as const, ref: snObjectiveRef, btnRef: snObjectiveBtnRef, placeholder: 'Measurable observations, test results, vitals...' },
+              { code: 'A' as SOAPSection, label: 'Assessment', field: 'assessment' as const, ref: snAssessmentRef, btnRef: snAssessmentBtnRef, placeholder: 'Clinical interpretation and progress toward goals...' },
+              { code: 'P' as SOAPSection, label: 'Plan', field: 'plan' as const, ref: snPlanRef, btnRef: snPlanBtnRef, placeholder: 'Treatment plan, next steps, follow-up...' },
+            ]).map(({ code, label, field, ref, btnRef, placeholder }) => (
+              <div key={code} className={`rounded-lg p-3 ${SOAP_SECTION_TINT[code]}`}>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="label text-xs mb-0 font-semibold">{label}</label>
+                  <div className="relative">
+                    <button
+                      ref={btnRef}
+                      type="button"
+                      className="btn-ghost btn-sm flex items-center gap-1 text-[10px]"
+                      onClick={() => setSnNoteBankOpen(snNoteBankOpen === code ? null : code)}
+                    >
+                      <BookOpen className="w-3 h-3" />
+                      Note Bank
+                    </button>
+                    <NoteBankPopover
+                      isOpen={snNoteBankOpen === code}
+                      onClose={() => setSnNoteBankOpen(null)}
+                      onInsert={getSnInsertHandler(code)}
+                      discipline={discipline}
+                      section={code}
+                      anchorRef={btnRef}
+                    />
+                  </div>
+                </div>
+                <div className="mb-2">
+                  <QuickChips
+                    discipline={discipline}
+                    section={code}
+                    onInsert={getSnInsertHandler(code)}
+                    maxChips={5}
+                    onOpenFullBank={() => setSnNoteBankOpen(code)}
+                  />
+                </div>
+                <SmartTextarea
+                  ref={ref}
+                  className="textarea text-sm"
+                  rows={3}
+                  placeholder={placeholder}
+                  value={sessionNote[field]}
+                  onChange={(val) => setSessionNote(prev => ({ ...prev, [field]: val }))}
+                  discipline={discipline}
+                  section={code}
+                  disabled={Boolean(existingSignedAt)}
+                />
+              </div>
+            ))}
           </div>
         </EvalSectionWrapper>
 

@@ -1204,6 +1204,18 @@ function runMigrations(): void {
         db.exec(`ALTER TABLE goals ADD COLUMN target INTEGER DEFAULT 0`);
       },
     },
+    {
+      version: 29,
+      description: 'Add baseline/target snapshots to progress_report_goals for percentage tracking',
+      up: () => {
+        if (!columnExists('progress_report_goals', 'baseline_snapshot')) {
+          db.exec(`ALTER TABLE progress_report_goals ADD COLUMN baseline_snapshot INTEGER DEFAULT 0`);
+        }
+        if (!columnExists('progress_report_goals', 'target_snapshot')) {
+          db.exec(`ALTER TABLE progress_report_goals ADD COLUMN target_snapshot INTEGER DEFAULT 0`);
+        }
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);

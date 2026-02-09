@@ -772,15 +772,17 @@ function registerIpcHandlers() {
 
     const insert = db.prepare(`
       INSERT INTO progress_report_goals (note_id, goal_id, status_at_report, performance_data,
-        clinical_notes, goal_text_snapshot, is_new_goal, is_staged_promotion, staged_goal_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        clinical_notes, goal_text_snapshot, is_new_goal, is_staged_promotion, staged_goal_id,
+        baseline_snapshot, target_snapshot)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const txn = db.transaction(() => {
       for (const g of goals) {
         insert.run(noteId, g.goal_id, g.status_at_report || 'progressing',
           g.performance_data || '', g.clinical_notes || '', g.goal_text_snapshot || '',
-          g.is_new_goal ? 1 : 0, g.is_staged_promotion ? 1 : 0, g.staged_goal_id || null);
+          g.is_new_goal ? 1 : 0, g.is_staged_promotion ? 1 : 0, g.staged_goal_id || null,
+          g.baseline_snapshot ?? 0, g.target_snapshot ?? 0);
       }
     });
     txn();

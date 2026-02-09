@@ -257,6 +257,8 @@ export default function NoteFormPage() {
     is_new_goal: boolean;
     is_staged_promotion: boolean;
     staged_goal_id: number | null;
+    baseline_snapshot: number;
+    target_snapshot: number;
   }[]>([]);
   const [complianceData, setComplianceData] = useState<ComplianceTracking | null>(null);
   const [progressReportGoals, setProgressReportGoals] = useState<{
@@ -269,6 +271,8 @@ export default function NoteFormPage() {
     is_new_goal: boolean;
     is_staged_promotion: boolean;
     staged_goal_id: number | null;
+    baseline_snapshot: number;
+    target_snapshot: number;
   }[]>([]);
   const [clinicalSummary, setClinicalSummary] = useState('');
   const [continuedTreatmentJustification, setContinuedTreatmentJustification] = useState('');
@@ -453,6 +457,8 @@ export default function NoteFormPage() {
               is_new_goal: g.is_new_goal || false,
               is_staged_promotion: g.is_staged_promotion || false,
               staged_goal_id: g.staged_goal_id || null,
+              baseline_snapshot: g.baseline_snapshot ?? 0,
+              target_snapshot: g.target_snapshot ?? 0,
             })));
           } catch {}
         }
@@ -476,6 +482,8 @@ export default function NoteFormPage() {
               is_new_goal: false,
               is_staged_promotion: false,
               staged_goal_id: null,
+              baseline_snapshot: g.baseline_snapshot ?? 0,
+              target_snapshot: g.target_snapshot ?? 0,
             })));
           } catch {}
         }
@@ -1281,6 +1289,7 @@ export default function NoteFormPage() {
         status_at_report: 'progressing' as ProgressReportGoalStatus,
         performance_data: '', clinical_notes: '',
         is_new_goal: false, is_staged_promotion: false, staged_goal_id: null,
+        baseline_snapshot: g.baseline ?? 0, target_snapshot: g.target ?? 0,
       })));
     }
 
@@ -1296,6 +1305,8 @@ export default function NoteFormPage() {
         is_new_goal: false,
         is_staged_promotion: false,
         staged_goal_id: null,
+        baseline_snapshot: g.baseline ?? 0,
+        target_snapshot: g.target ?? 0,
       }));
       setDischargeGoals(dcGoals);
 
@@ -1893,6 +1904,13 @@ export default function NoteFormPage() {
                       {prg.goal_type}
                     </span>
                     <p className="text-sm font-medium text-[var(--color-text)] flex-1">{prg.goal_text_snapshot}</p>
+                    {(prg.baseline_snapshot > 0 || prg.target_snapshot > 0) && (
+                      <span className="flex items-center gap-1 text-[10px] font-medium shrink-0">
+                        <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">{prg.baseline_snapshot}%</span>
+                        <span className="text-[var(--color-text-secondary)]">&rarr;</span>
+                        <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">{prg.target_snapshot}%</span>
+                      </span>
+                    )}
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
@@ -1953,6 +1971,13 @@ export default function NoteFormPage() {
                         {goal.status === 'met' ? '✓ Met' : "DC'd"}
                       </span>
                       <span className="text-xs text-[var(--color-text-secondary)] flex-1">{goal.goal_text}</span>
+                      {(goal.baseline > 0 || goal.target > 0) && (
+                        <span className="flex items-center gap-1 text-[10px] font-medium shrink-0">
+                          <span className="px-1 py-0.5 rounded bg-amber-50 text-amber-600">{goal.baseline}%</span>
+                          <span className="text-[var(--color-text-secondary)]">&rarr;</span>
+                          <span className="px-1 py-0.5 rounded bg-emerald-50 text-emerald-600">{goal.target}%</span>
+                        </span>
+                      )}
                       {goal.met_date && <span className="text-[10px] text-green-600">{goal.met_date}</span>}
                     </div>
                   ))}
@@ -1985,6 +2010,7 @@ export default function NoteFormPage() {
                             status_at_report: 'progressing' as ProgressReportGoalStatus,
                             performance_data: '', clinical_notes: '',
                             is_new_goal: true, is_staged_promotion: true, staged_goal_id: sg.id,
+                            baseline_snapshot: result.goal.baseline ?? 0, target_snapshot: result.goal.target ?? 0,
                           }]);
                           const [updatedStaged, updatedGoals] = await Promise.all([
                             window.api.stagedGoals.listByClient(parseInt(clientId, 10)),
@@ -2283,6 +2309,13 @@ export default function NoteFormPage() {
                       {dg.goal_type}
                     </span>
                     <p className="text-sm font-medium text-[var(--color-text)] flex-1">{dg.goal_text_snapshot}</p>
+                    {(dg.baseline_snapshot > 0 || dg.target_snapshot > 0) && (
+                      <span className="flex items-center gap-1 text-[10px] font-medium shrink-0">
+                        <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">{dg.baseline_snapshot}%</span>
+                        <span className="text-[var(--color-text-secondary)]">&rarr;</span>
+                        <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">{dg.target_snapshot}%</span>
+                      </span>
+                    )}
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
