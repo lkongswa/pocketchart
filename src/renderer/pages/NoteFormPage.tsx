@@ -46,14 +46,14 @@ const PLACE_OF_SERVICE_OPTIONS = [
 
 // Common modifiers for therapy
 const MODIFIER_OPTIONS = [
-  { value: 'GN', label: 'GN - Speech-Language Pathology' },
-  { value: 'GO', label: 'GO - Occupational Therapy' },
-  { value: 'GP', label: 'GP - Physical Therapy' },
-  { value: '59', label: '59 - Distinct Procedural Service' },
-  { value: 'KX', label: 'KX - Requirements Met' },
-  { value: '76', label: '76 - Repeat Procedure Same Physician' },
-  { value: '77', label: '77 - Repeat Procedure Different Physician' },
-  { value: 'CO', label: 'CO - Concurrent Outpatient Rehab' },
+  { value: 'GN', label: 'GN - Speech-Language Pathology', tooltip: 'Identifies services delivered under a speech-language pathology plan of care.' },
+  { value: 'GO', label: 'GO - Occupational Therapy', tooltip: 'Identifies services delivered under an occupational therapy plan of care.' },
+  { value: 'GP', label: 'GP - Physical Therapy', tooltip: 'Identifies services delivered under a physical therapy plan of care.' },
+  { value: '59', label: '59 - Distinct Procedural Service', tooltip: 'Indicates a procedure/service that is distinct from other services on the same day.' },
+  { value: 'KX', label: 'KX - Requirements Met', tooltip: 'Certifies that Medicare therapy threshold requirements are met and services are medically necessary. Required when billed charges exceed the annual therapy cap.' },
+  { value: '76', label: '76 - Repeat Procedure Same Physician', tooltip: 'Indicates a procedure was repeated by the same physician on the same day.' },
+  { value: '77', label: '77 - Repeat Procedure Different Physician', tooltip: 'Indicates a procedure was repeated by a different physician on the same day.' },
+  { value: 'CO', label: 'CO - Concurrent Outpatient Rehab', tooltip: 'Identifies concurrent outpatient rehabilitation services.' },
 ];
 import NoteBankPopover from '../components/NoteBankPopover';
 import SmartTextarea from '../components/SmartTextarea';
@@ -1500,10 +1500,13 @@ export default function NoteFormPage() {
               </select>
               {cptModifiers.length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-2">
-                  {cptModifiers.map((mod) => (
+                  {cptModifiers.map((mod) => {
+                    const modInfo = MODIFIER_OPTIONS.find(m => m.value === mod);
+                    return (
                     <span
                       key={mod}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs cursor-help"
+                      title={modInfo?.tooltip}
                     >
                       {mod}
                       <button
@@ -1514,7 +1517,8 @@ export default function NoteFormPage() {
                         <X size={12} />
                       </button>
                     </span>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
