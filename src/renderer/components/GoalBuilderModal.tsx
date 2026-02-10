@@ -258,68 +258,36 @@ const GoalBuilderModal: React.FC<GoalBuilderModalProps> = ({
           </div>
         ) : null}
 
-        {/* Measurement Type Selector */}
-        <div className="mb-2">
-          <MeasurementTypeSelector
-            currentType={draft.measurement_type}
-            discipline={discipline}
-            onChange={(type) => {
-              const inst = type === 'standardized_score'
-                ? (DEFAULT_INSTRUMENTS[draft.category] || '') : '';
-              updateDraft(draft.id, {
-                measurement_type: type,
-                baseline_value: '',
-                target_value: '',
-                baseline_numeric: 0,
-                target_numeric: 0,
-                instrument: inst,
-              }, goalType);
-            }}
-          />
-        </div>
-
-        {/* Baseline + Target + Timeframe */}
-        <div className="grid grid-cols-[1fr_1fr_auto] gap-3 mb-3">
-          <MeasurementChips
-            measurement_type={draft.measurement_type}
-            label="CLOF (Baseline)"
-            value={draft.baseline_value}
-            numericValue={draft.baseline_numeric}
-            instrument={draft.instrument}
-            category={draft.category}
-            colorScheme="baseline"
-            onSelect={(val, num) => updateDraft(draft.id, { baseline_value: val, baseline_numeric: num }, goalType)}
-            onInstrumentChange={(inst) => updateDraft(draft.id, { instrument: inst }, goalType)}
-          />
-          <MeasurementChips
-            measurement_type={draft.measurement_type}
-            label="Goal Level (Target)"
-            value={draft.target_value}
-            numericValue={draft.target_numeric}
-            instrument={draft.instrument}
-            category={draft.category}
-            colorScheme="target"
-            onSelect={(val, num) => updateDraft(draft.id, { target_value: val, target_numeric: num }, goalType)}
-          />
-          <div>
-            <label className="text-[10px] uppercase tracking-wide text-[var(--color-text-secondary)] font-semibold mb-1 block">
-              Timeframe
-            </label>
-            <select
-              className="select text-xs py-1.5 w-full"
-              value={draft.targetDays}
-              onChange={(e) => updateDraft(draft.id, { targetDays: Number(e.target.value) }, goalType)}
-            >
-              <option value={30}>30 days</option>
-              <option value={60}>60 days</option>
-              <option value={90}>90 days</option>
-              <option value={120}>120 days</option>
-            </select>
+        {/* Timeframe */}
+        <div className="mb-3">
+          <label className="text-[10px] uppercase tracking-wide text-[var(--color-text-secondary)] font-semibold mb-1 block">
+            Timeframe
+          </label>
+          <div className="flex items-center gap-1.5">
+            {[
+              { label: '30 days', value: 30 },
+              { label: '60 days', value: 60 },
+              { label: '90 days', value: 90 },
+              { label: '120 days', value: 120 },
+            ].map(({ label, value }) => (
+              <button
+                key={value}
+                type="button"
+                className={`px-2.5 py-0.5 text-[10px] rounded-full border transition-colors cursor-pointer ${
+                  draft.targetDays === value
+                    ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
+                    : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]'
+                }`}
+                onClick={() => updateDraft(draft.id, { targetDays: draft.targetDays === value ? 0 : value }, goalType)}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         </div>
 
         {/* Live Preview */}
-        <div className="bg-white/60 rounded-lg p-2.5 border border-[var(--color-border)]">
+        <div className="bg-white/60 rounded-lg p-2.5 border border-[var(--color-border)] mb-3">
           <p className="text-[10px] uppercase tracking-wide text-[var(--color-text-secondary)] font-semibold mb-1">
             Goal Preview
           </p>
@@ -331,7 +299,7 @@ const GoalBuilderModal: React.FC<GoalBuilderModalProps> = ({
         {/* Switch to custom text editing */}
         {!draft.isCustom && (
           <button
-            className="text-xs text-[var(--color-primary)] mt-2 hover:underline cursor-pointer"
+            className="text-xs text-[var(--color-primary)] mb-3 hover:underline cursor-pointer"
             onClick={() => updateDraft(draft.id, {
               isCustom: true,
               customText: getGoalText(draft),
@@ -341,6 +309,54 @@ const GoalBuilderModal: React.FC<GoalBuilderModalProps> = ({
             Edit goal text manually
           </button>
         )}
+
+        {/* CLOF / Measurement Tracking — visually separate from goal text */}
+        <div className="p-3 rounded-lg bg-amber-50/40 border border-amber-200/60">
+          <p className="text-[10px] uppercase tracking-wide text-amber-700 font-semibold mb-2">
+            Current Level of Function (CLOF)
+          </p>
+          <div className="mb-2">
+            <MeasurementTypeSelector
+              currentType={draft.measurement_type}
+              discipline={discipline}
+              onChange={(type) => {
+                const inst = type === 'standardized_score'
+                  ? (DEFAULT_INSTRUMENTS[draft.category] || '') : '';
+                updateDraft(draft.id, {
+                  measurement_type: type,
+                  baseline_value: '',
+                  target_value: '',
+                  baseline_numeric: 0,
+                  target_numeric: 0,
+                  instrument: inst,
+                }, goalType);
+              }}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <MeasurementChips
+              measurement_type={draft.measurement_type}
+              label="Baseline (CLOF)"
+              value={draft.baseline_value}
+              numericValue={draft.baseline_numeric}
+              instrument={draft.instrument}
+              category={draft.category}
+              colorScheme="baseline"
+              onSelect={(val, num) => updateDraft(draft.id, { baseline_value: val, baseline_numeric: num }, goalType)}
+              onInstrumentChange={(inst) => updateDraft(draft.id, { instrument: inst }, goalType)}
+            />
+            <MeasurementChips
+              measurement_type={draft.measurement_type}
+              label="Goal Level (Target)"
+              value={draft.target_value}
+              numericValue={draft.target_numeric}
+              instrument={draft.instrument}
+              category={draft.category}
+              colorScheme="target"
+              onSelect={(val, num) => updateDraft(draft.id, { target_value: val, target_numeric: num }, goalType)}
+            />
+          </div>
+        </div>
       </div>
     );
   };

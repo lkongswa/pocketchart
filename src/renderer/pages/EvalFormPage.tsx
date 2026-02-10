@@ -1956,6 +1956,20 @@ export default function EvalFormPage() {
                         <BookOpen size={12} />
                         {entry.pattern_id && entry.pattern_id !== 'custom_freeform' ? 'Change Pattern' : 'Goal Patterns'}
                       </button>
+                      {entry.pattern_id && entry.pattern_id !== 'custom_freeform' && (
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium text-[var(--color-text-secondary)] hover:text-red-500 hover:bg-red-50 transition-colors cursor-pointer"
+                          onClick={() => {
+                            updateGoalField(idx, { pattern_id: undefined, components: undefined });
+                            setShowGoalBank(null);
+                          }}
+                          title="Clear pattern selection"
+                        >
+                          <X size={12} />
+                          Clear Pattern
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="p-1 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
@@ -2104,7 +2118,13 @@ export default function EvalFormPage() {
                                   ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
                                   : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]'
                               }`}
-                              onClick={() => updateGoalField(idx, { target_date: iso })}
+                              onClick={() => {
+                                if (entry.target_date === iso) {
+                                  updateGoalField(idx, { target_date: '' }); // Toggle off
+                                } else {
+                                  updateGoalField(idx, { target_date: iso });
+                                }
+                              }}
                             >
                               {label}
                             </button>
@@ -2120,47 +2140,8 @@ export default function EvalFormPage() {
                     </div>
                   </div>
 
-                  {/* Measurement Type Selector + Baseline/Target chips */}
-                  {!existingSignedAt && (
-                    <div className="mb-2">
-                      <MeasurementTypeSelector
-                        currentType={entry.measurement_type || 'percentage'}
-                        discipline={discipline as Discipline}
-                        onChange={(type) => {
-                          const inst = type === 'standardized_score' ? (DEFAULT_INSTRUMENTS[entry.category] || '') : '';
-                          updateGoalField(idx, { measurement_type: type, baseline_value: '', target_value: '', baseline: 0, target: 0, instrument: inst });
-                        }}
-                        disabled={!!existingSignedAt}
-                      />
-                    </div>
-                  )}
-                  <div className="grid grid-cols-2 gap-3 mb-3">
-                    <MeasurementChips
-                      measurement_type={entry.measurement_type || 'percentage'}
-                      label="Current Level (CLOF)"
-                      value={entry.baseline_value || `${entry.baseline ?? 0}`}
-                      numericValue={entry.baseline ?? 0}
-                      instrument={entry.instrument}
-                      category={entry.category}
-                      colorScheme="baseline"
-                      disabled={!!existingSignedAt}
-                      onSelect={(val, num) => updateGoalField(idx, { baseline_value: val, baseline: num })}
-                      onInstrumentChange={(inst) => updateGoalField(idx, { instrument: inst })}
-                    />
-                    <MeasurementChips
-                      measurement_type={entry.measurement_type || 'percentage'}
-                      label="Goal Level (Target)"
-                      value={entry.target_value || `${entry.target ?? 0}`}
-                      numericValue={entry.target ?? 0}
-                      instrument={entry.instrument}
-                      category={entry.category}
-                      colorScheme="target"
-                      disabled={!!existingSignedAt}
-                      onSelect={(val, num) => updateGoalField(idx, { target_value: val, target: num })}
-                    />
-                  </div>
-
-                  <div>
+                  {/* Goal Text */}
+                  <div className="mb-3">
                     <label className="label text-xs">Goal Text</label>
                     <textarea
                       className="textarea text-sm"
@@ -2173,6 +2154,51 @@ export default function EvalFormPage() {
                         )
                       }
                     />
+                  </div>
+
+                  {/* CLOF / Measurement Tracking — visually separate from goal text */}
+                  <div className="p-3 rounded-lg bg-amber-50/40 border border-amber-200/60">
+                    <p className="text-[10px] uppercase tracking-wide text-amber-700 font-semibold mb-2">
+                      Current Level of Function (CLOF)
+                    </p>
+                    {!existingSignedAt && (
+                      <div className="mb-2">
+                        <MeasurementTypeSelector
+                          currentType={entry.measurement_type || 'percentage'}
+                          discipline={discipline as Discipline}
+                          onChange={(type) => {
+                            const inst = type === 'standardized_score' ? (DEFAULT_INSTRUMENTS[entry.category] || '') : '';
+                            updateGoalField(idx, { measurement_type: type, baseline_value: '', target_value: '', baseline: 0, target: 0, instrument: inst });
+                          }}
+                          disabled={!!existingSignedAt}
+                        />
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-3">
+                      <MeasurementChips
+                        measurement_type={entry.measurement_type || 'percentage'}
+                        label="Baseline (CLOF)"
+                        value={entry.baseline_value || `${entry.baseline ?? 0}`}
+                        numericValue={entry.baseline ?? 0}
+                        instrument={entry.instrument}
+                        category={entry.category}
+                        colorScheme="baseline"
+                        disabled={!!existingSignedAt}
+                        onSelect={(val, num) => updateGoalField(idx, { baseline_value: val, baseline: num })}
+                        onInstrumentChange={(inst) => updateGoalField(idx, { instrument: inst })}
+                      />
+                      <MeasurementChips
+                        measurement_type={entry.measurement_type || 'percentage'}
+                        label="Goal Level (Target)"
+                        value={entry.target_value || `${entry.target ?? 0}`}
+                        numericValue={entry.target ?? 0}
+                        instrument={entry.instrument}
+                        category={entry.category}
+                        colorScheme="target"
+                        disabled={!!existingSignedAt}
+                        onSelect={(val, num) => updateGoalField(idx, { target_value: val, target: num })}
+                      />
+                    </div>
                   </div>
                 </div>
                 );

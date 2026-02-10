@@ -55,7 +55,13 @@ const MeasurementChips: React.FC<MeasurementChipsProps> = ({
                   ? activeColor
                   : `border-[var(--color-border)] text-[var(--color-text-secondary)] ${hoverColor}`
               } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-              onClick={() => onSelect(opt.value, opt.numeric)}
+              onClick={() => {
+                if (value === opt.value) {
+                  onSelect('', 0); // Toggle off
+                } else {
+                  onSelect(opt.value, opt.numeric);
+                }
+              }}
             >
               {opt.label}
             </button>

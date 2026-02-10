@@ -67,7 +67,8 @@ function renderSegment(key: string, input: GoalCompositionInput): string {
   }
 
   if (key === 'baseline_suffix') {
-    return renderBaselineSuffix(input);
+    // CLOF baseline is tracked separately — not included in goal text narrative
+    return '';
   }
 
   if (key === 'timeframe') {
