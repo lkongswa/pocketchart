@@ -11,25 +11,26 @@ export default function UpdateNotification() {
 
   useEffect(() => {
     // Listen for update events from the main process
-    window.api.update.onAvailable((info) => {
-      setVersion(info.version);
-      setState('available');
-      setDismissed(false);
-    });
+    const unsubs = [
+      window.api.update.onAvailable((info: any) => {
+        setVersion(info.version);
+        setState('available');
+        setDismissed(false);
+      }),
+      window.api.update.onProgress((prog: any) => {
+        setState('downloading');
+        setProgress(prog.percent);
+      }),
+      window.api.update.onDownloaded((info: any) => {
+        setVersion(info.version);
+        setState('ready');
+      }),
+      window.api.update.onNotAvailable(() => {
+        setState('idle');
+      }),
+    ];
 
-    window.api.update.onProgress((prog) => {
-      setState('downloading');
-      setProgress(prog.percent);
-    });
-
-    window.api.update.onDownloaded((info) => {
-      setVersion(info.version);
-      setState('ready');
-    });
-
-    window.api.update.onNotAvailable(() => {
-      setState('idle');
-    });
+    return () => { unsubs.forEach(fn => fn?.()); };
   }, []);
 
   const handleDownload = async () => {

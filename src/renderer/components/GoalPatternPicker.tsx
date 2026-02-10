@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
-import type { Discipline } from '../../shared/types';
+import type { Discipline, PatternOverride } from '../../shared/types';
 import type { GoalPattern } from '../../shared/goal-patterns';
-import { getPatternsForDiscipline, getPatternsForCategory, getPatternCategories, CUSTOM_PATTERN } from '../../shared/goal-patterns';
+import { getPatternsForDiscipline, getPatternsForCategory, getPatternCategories, applyOverrides, CUSTOM_PATTERN } from '../../shared/goal-patterns';
 
 interface GoalPatternPickerProps {
   discipline: Discipline;
   category?: string;           // Pre-filter to a category
   onSelect: (pattern: GoalPattern) => void;
   onCustom: () => void;        // "Write Custom Goal" selected
+  overrides?: PatternOverride[];  // Pattern overrides from settings
 }
 
 const GoalPatternPicker: React.FC<GoalPatternPickerProps> = ({
@@ -15,12 +16,17 @@ const GoalPatternPicker: React.FC<GoalPatternPickerProps> = ({
   category: initialCategory,
   onSelect,
   onCustom,
+  overrides,
 }) => {
   const [selectedCategory, setSelectedCategory] = useState(initialCategory || '');
   const categories = getPatternCategories(discipline);
-  const patterns = selectedCategory
+  const rawPatterns = selectedCategory
     ? getPatternsForCategory(discipline, selectedCategory)
     : getPatternsForDiscipline(discipline);
+  // Apply user overrides to patterns (adds/removes chip options)
+  const patterns = overrides
+    ? rawPatterns.map(p => applyOverrides(p, overrides))
+    : rawPatterns;
 
   return (
     <div className="space-y-3">

@@ -29,7 +29,8 @@ import {
   Archive,
   AlertTriangle,
 } from 'lucide-react';
-import type { Client, Note, Goal, GoalStatus, Discipline, SOAPSection, NoteFormat, CptLine, PlaceOfService, ContractedEntity, EntityFeeSchedule, StagedGoal, ProgressReportGoalStatus, ProgressReportData, ComplianceTracking, VisitType, GoalsBankEntry, Evaluation, NoteMode, DischargeData, DischargeGoalStatus, DischargeReason, DischargeRecommendation, EpisodeSummary, MeasurementType } from '../../shared/types';
+import type { Client, Note, Goal, GoalStatus, Discipline, SOAPSection, NoteFormat, CptLine, PlaceOfService, ContractedEntity, EntityFeeSchedule, StagedGoal, ProgressReportGoalStatus, ProgressReportData, ComplianceTracking, VisitType, Evaluation, NoteMode, DischargeData, DischargeGoalStatus, DischargeReason, DischargeRecommendation, EpisodeSummary, MeasurementType } from '../../shared/types';
+import { getPatternCategories } from '../../shared/goal-patterns';
 import { NOTE_FORMAT_SECTIONS, PROGRESS_REPORT_GOAL_STATUS_LABELS, DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS, MEASUREMENT_TYPE_LABELS } from '../../shared/types';
 import { formatMetricValue } from '../../shared/compose-goal-text';
 import MeasurementChips from '../components/MeasurementChips';
@@ -210,8 +211,7 @@ export default function NoteFormPage() {
   const [stagedGoalType, setStagedGoalType] = useState<'STG' | 'LTG'>('STG');
   const [stagedGoalCategory, setStagedGoalCategory] = useState('');
   const [stagedGoalRationale, setStagedGoalRationale] = useState('');
-  const [goalsBankEntries, setGoalsBankEntries] = useState<GoalsBankEntry[]>([]);
-  const [goalsBankCategories, setGoalsBankCategories] = useState<string[]>([]);
+  const [patternCategories, setPatternCategories] = useState<string[]>([]);
   const [treatmentPlanSummary, setTreatmentPlanSummary] = useState<{ treatmentPlan: string; frequencyDuration: string } | null>(null);
 
   // Note mode state (replaces isProgressReport boolean)
@@ -323,13 +323,8 @@ export default function NoteFormPage() {
       setClient(clientData);
       setGoals(goalsData);
 
-      // Load goals bank for this client's discipline
-      try {
-        const bankEntries = await window.api.goalsBank.list({ discipline: clientData.discipline });
-        setGoalsBankEntries(bankEntries);
-        const cats = [...new Set(bankEntries.map((e: GoalsBankEntry) => e.category).filter(Boolean))];
-        setGoalsBankCategories(cats.sort());
-      } catch { /* goals bank not critical */ }
+      // Derive categories from goal patterns
+      setPatternCategories(getPatternCategories(clientData.discipline as Discipline));
 
       // Load latest eval's treatment plan for header context
       try {
@@ -2862,53 +2857,24 @@ export default function NoteFormPage() {
                 </button>
                 {showStagedForm && (
                   <div className="mt-2 p-3 rounded-lg bg-amber-50/50 border border-amber-200 space-y-2">
-                    {/* Category dropdown from goals bank */}
+                    {/* Category dropdown from goal patterns */}
                     <select
                       className="w-full px-2 py-1 text-xs border border-amber-200 rounded-md bg-white"
                       value={stagedGoalCategory}
                       onChange={(e) => setStagedGoalCategory(e.target.value)}
                     >
                       <option value="">Select category...</option>
-                      {goalsBankCategories.map((cat) => (
+                      {patternCategories.map((cat) => (
                         <option key={cat} value={cat}>{cat}</option>
                       ))}
                     </select>
-                    {/* Goal template dropdown filtered by category, or free text */}
-                    {stagedGoalCategory && goalsBankEntries.filter(e => e.category === stagedGoalCategory).length > 0 ? (
-                      <div className="space-y-1.5">
-                        <select
-                          className="w-full px-2 py-1 text-xs border border-amber-200 rounded-md bg-white"
-                          value=""
-                          onChange={(e) => {
-                            if (e.target.value) {
-                              setStagedGoalText(e.target.value);
-                            }
-                          }}
-                        >
-                          <option value="">Pick from bank...</option>
-                          {goalsBankEntries
-                            .filter(e => e.category === stagedGoalCategory)
-                            .map(e => (
-                              <option key={e.id} value={e.goal_template}>{e.goal_template.length > 80 ? e.goal_template.slice(0, 80) + '…' : e.goal_template}</option>
-                            ))}
-                        </select>
-                        <textarea
-                          className="w-full px-2 py-1.5 text-xs border border-amber-200 rounded-md bg-white"
-                          rows={2}
-                          placeholder="Goal text (select from bank above or type custom)..."
-                          value={stagedGoalText}
-                          onChange={(e) => setStagedGoalText(e.target.value)}
-                        />
-                      </div>
-                    ) : (
-                      <textarea
-                        className="w-full px-2 py-1.5 text-xs border border-amber-200 rounded-md bg-white"
-                        rows={2}
-                        placeholder="Goal idea..."
-                        value={stagedGoalText}
-                        onChange={(e) => setStagedGoalText(e.target.value)}
-                      />
-                    )}
+                    <textarea
+                      className="w-full px-2 py-1.5 text-xs border border-amber-200 rounded-md bg-white"
+                      rows={2}
+                      placeholder="Goal idea..."
+                      value={stagedGoalText}
+                      onChange={(e) => setStagedGoalText(e.target.value)}
+                    />
                     <div className="flex gap-2">
                       <select className="flex-1 px-2 py-1 text-xs border border-amber-200 rounded-md bg-white" value={stagedGoalType}
                         onChange={(e) => setStagedGoalType(e.target.value as 'STG' | 'LTG')}>

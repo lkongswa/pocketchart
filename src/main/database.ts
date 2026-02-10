@@ -25,7 +25,7 @@ const store = new Store<StoreSchema>() as unknown as TypedStore;
 const VALID_TABLES = new Set([
   'practice', 'clients', 'goals', 'evaluations', 'notes',
   'appointments', 'note_bank', 'goals_bank', 'settings',
-  'client_documents',
+  'client_documents', 'pattern_overrides',
   // V2/V3 billing tables
   'fee_schedule', 'invoices', 'invoice_items', 'payments',
   'payers', 'authorizations', 'claims', 'claim_lines',
@@ -1437,6 +1437,23 @@ function runMigrations(): void {
         try { db.exec("ALTER TABLE goals ADD COLUMN components_json TEXT DEFAULT ''"); } catch {}
       },
     },
+    {
+      version: 33,
+      description: 'Add pattern_overrides table, drop goals_bank',
+      up: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS pattern_overrides (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pattern_id TEXT NOT NULL,
+            component_key TEXT NOT NULL,
+            custom_options TEXT NOT NULL DEFAULT '[]',
+            removed_options TEXT NOT NULL DEFAULT '[]',
+            UNIQUE(pattern_id, component_key)
+          )
+        `);
+        db.exec('DROP TABLE IF EXISTS goals_bank');
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
@@ -1463,7 +1480,6 @@ function createIndexes(): void {
     CREATE INDEX IF NOT EXISTS idx_appointments_scheduled_date ON appointments(scheduled_date);
     CREATE INDEX IF NOT EXISTS idx_client_documents_client_id ON client_documents(client_id);
     CREATE INDEX IF NOT EXISTS idx_note_bank_discipline ON note_bank(discipline);
-    CREATE INDEX IF NOT EXISTS idx_goals_bank_discipline ON goals_bank(discipline);
     CREATE INDEX IF NOT EXISTS idx_clients_status ON clients(status);
     CREATE INDEX IF NOT EXISTS idx_clients_deleted_at ON clients(deleted_at);
     CREATE INDEX IF NOT EXISTS idx_notes_deleted_at ON notes(deleted_at);

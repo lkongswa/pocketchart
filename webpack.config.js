@@ -52,5 +52,5 @@ module.exports = {
       directory: path.join(__dirname, 'dist/renderer'),
     },
   },
-  devtool: isDev ? 'eval-source-map' : 'source-map',
+  devtool: isDev ? 'eval-source-map' : false,
 };

@@ -1454,55 +1454,35 @@ function registerIpcHandlers() {
     return rows.map(r => r.category);
   });
 
-  // ── Goals Bank ──
-  safeHandle('goalsBank:list', (_event, filters?: { discipline?: string; category?: string }) => {
-    let query = 'SELECT * FROM goals_bank WHERE 1=1';
-    const params: any[] = [];
-
-    if (filters?.discipline) {
-      query += ' AND discipline = ?';
-      params.push(filters.discipline);
-    }
-    if (filters?.category) {
-      query += ' AND category = ? COLLATE NOCASE';
-      params.push(filters.category);
-    }
-
-    query += ' ORDER BY category, goal_template';
-    return db.prepare(query).all(...params);
+  // ── Pattern Overrides ──
+  safeHandle('patternOverrides:list', () => {
+    const rows = db.prepare('SELECT * FROM pattern_overrides').all() as any[];
+    return rows.map(r => ({
+      ...r,
+      custom_options: JSON.parse(r.custom_options || '[]'),
+      removed_options: JSON.parse(r.removed_options || '[]'),
+    }));
   });
 
-  safeHandle('goalsBank:create', (_event, data) => {
-    const result = db.prepare(`
-      INSERT INTO goals_bank (discipline, category, goal_template, measurement_type, is_default)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(data.discipline, data.category, data.goal_template,
-      data.measurement_type || 'percentage', data.is_default ? 1 : 0);
-    return db.prepare('SELECT * FROM goals_bank WHERE id = ?').get(result.lastInsertRowid);
-  });
-
-  safeHandle('goalsBank:update', (_event, id: number, data) => {
+  safeHandle('patternOverrides:upsert', (_event, patternId: string, componentKey: string, customOptions: string[], removedOptions: string[]) => {
     db.prepare(`
-      UPDATE goals_bank SET discipline=?, category=?, goal_template=?, measurement_type=?
-      WHERE id=?
-    `).run(data.discipline, data.category, data.goal_template,
-      data.measurement_type || 'percentage', id);
-    return db.prepare('SELECT * FROM goals_bank WHERE id = ?').get(id);
+      INSERT INTO pattern_overrides (pattern_id, component_key, custom_options, removed_options)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(pattern_id, component_key)
+      DO UPDATE SET custom_options = excluded.custom_options, removed_options = excluded.removed_options
+    `).run(patternId, componentKey, JSON.stringify(customOptions), JSON.stringify(removedOptions));
+    const row = db.prepare('SELECT * FROM pattern_overrides WHERE pattern_id = ? AND component_key = ?').get(patternId, componentKey) as any;
+    return { ...row, custom_options: JSON.parse(row.custom_options || '[]'), removed_options: JSON.parse(row.removed_options || '[]') };
   });
 
-  safeHandle('goalsBank:delete', (_event, id: number) => {
-    db.prepare('DELETE FROM goals_bank WHERE id = ?').run(id);
+  safeHandle('patternOverrides:delete', (_event, patternId: string, componentKey: string) => {
+    db.prepare('DELETE FROM pattern_overrides WHERE pattern_id = ? AND component_key = ?').run(patternId, componentKey);
     return true;
   });
 
-  safeHandle('goalsBank:getCategories', (_event, discipline: string) => {
-    const rows = db.prepare(
-      `SELECT DISTINCT category FROM goals_bank
-       WHERE discipline = ?
-       AND category IS NOT NULL AND category != ''
-       ORDER BY category COLLATE NOCASE`
-    ).all(discipline) as { category: string }[];
-    return rows.map(r => r.category);
+  safeHandle('patternOverrides:deleteAll', (_event, patternId: string) => {
+    db.prepare('DELETE FROM pattern_overrides WHERE pattern_id = ?').run(patternId);
+    return true;
   });
 
   // ── Settings ──
@@ -2321,7 +2301,18 @@ function registerIpcHandlers() {
 
   // Run background validation after 30 seconds, then every 6 hours
   setTimeout(() => backgroundLicenseValidation(), 30000);
-  setInterval(() => backgroundLicenseValidation(), 6 * 60 * 60 * 1000);
+  const licenseIntervalId = setInterval(() => backgroundLicenseValidation(), 6 * 60 * 60 * 1000);
+
+  // ── Graceful shutdown: close DB + clear intervals ──
+  app.on('before-quit', () => {
+    clearInterval(licenseIntervalId);
+    try {
+      const db = getDatabase();
+      db.close();
+    } catch (e) {
+      // DB may already be closed
+    }
+  });
 
   // ── Tier-Gated Helper ──
   function requireTier(requiredTier: 'basic' | 'pro'): void {

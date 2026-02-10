@@ -90,13 +90,15 @@ const api = {
     getCategories: (discipline: string) => ipcRenderer.invoke('noteBank:getCategories', discipline),
   },
 
-  // Goals Bank
-  goalsBank: {
-    list: (filters?: any) => ipcRenderer.invoke('goalsBank:list', filters),
-    create: (data: any) => ipcRenderer.invoke('goalsBank:create', data),
-    update: (id: number, data: any) => ipcRenderer.invoke('goalsBank:update', id, data),
-    delete: (id: number) => ipcRenderer.invoke('goalsBank:delete', id),
-    getCategories: (discipline: string) => ipcRenderer.invoke('goalsBank:getCategories', discipline),
+  // Pattern Overrides
+  patternOverrides: {
+    list: () => ipcRenderer.invoke('patternOverrides:list'),
+    upsert: (patternId: string, componentKey: string, customOptions: string[], removedOptions: string[]) =>
+      ipcRenderer.invoke('patternOverrides:upsert', patternId, componentKey, customOptions, removedOptions),
+    delete: (patternId: string, componentKey: string) =>
+      ipcRenderer.invoke('patternOverrides:delete', patternId, componentKey),
+    deleteAll: (patternId: string) =>
+      ipcRenderer.invoke('patternOverrides:deleteAll', patternId),
   },
 
   // Settings
@@ -270,22 +272,34 @@ const api = {
     download: () => ipcRenderer.invoke('update:download'),
     install: () => ipcRenderer.invoke('update:install'),
     onAvailable: (callback: (info: any) => void) => {
-      ipcRenderer.on('update:available', (_event, info) => callback(info));
+      const handler = (_event: any, info: any) => callback(info);
+      ipcRenderer.on('update:available', handler);
+      return () => { ipcRenderer.removeListener('update:available', handler); };
     },
     onNotAvailable: (callback: () => void) => {
-      ipcRenderer.on('update:not-available', () => callback());
+      const handler = () => callback();
+      ipcRenderer.on('update:not-available', handler);
+      return () => { ipcRenderer.removeListener('update:not-available', handler); };
     },
     onProgress: (callback: (progress: any) => void) => {
-      ipcRenderer.on('update:download-progress', (_event, progress) => callback(progress));
+      const handler = (_event: any, progress: any) => callback(progress);
+      ipcRenderer.on('update:download-progress', handler);
+      return () => { ipcRenderer.removeListener('update:download-progress', handler); };
     },
     onDownloaded: (callback: (info: any) => void) => {
-      ipcRenderer.on('update:downloaded', (_event, info) => callback(info));
+      const handler = (_event: any, info: any) => callback(info);
+      ipcRenderer.on('update:downloaded', handler);
+      return () => { ipcRenderer.removeListener('update:downloaded', handler); };
     },
     onBackupComplete: (callback: (info: any) => void) => {
-      ipcRenderer.on('update:backup-complete', (_event, info) => callback(info));
+      const handler = (_event: any, info: any) => callback(info);
+      ipcRenderer.on('update:backup-complete', handler);
+      return () => { ipcRenderer.removeListener('update:backup-complete', handler); };
     },
     onBackupFailed: (callback: () => void) => {
-      ipcRenderer.on('update:backup-failed', () => callback());
+      const handler = () => callback();
+      ipcRenderer.on('update:backup-failed', handler);
+      return () => { ipcRenderer.removeListener('update:backup-failed', handler); };
     },
   },
 

@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { X, Plus, Trash2, Target, TrendingUp } from 'lucide-react';
-import type { GoalType, Discipline, MeasurementType } from '../../shared/types';
+import type { GoalType, Discipline, MeasurementType, PatternOverride } from '../../shared/types';
 import type { GoalPattern } from '../../shared/goal-patterns';
-import { CUSTOM_PATTERN, getPatternById } from '../../shared/goal-patterns';
+import { CUSTOM_PATTERN, getPatternById, applyOverrides } from '../../shared/goal-patterns';
 import { composeGoalText, metricValueToNumeric } from '../../shared/compose-goal-text';
 import type { ConsistencyValue } from './ConsistencyCriterion';
 import GoalPatternPicker from './GoalPatternPicker';
@@ -55,12 +55,15 @@ const GoalBuilderModal: React.FC<GoalBuilderModalProps> = ({
   const [ltgDrafts, setLtgDrafts] = useState<DraftGoal[]>([]);
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<'stg' | 'ltg'>('stg');
+  const [patternOverrides, setPatternOverrides] = useState<PatternOverride[]>([]);
 
   useEffect(() => {
     if (isOpen) {
       setStgDrafts([]);
       setLtgDrafts([]);
       setActiveTab('stg');
+      // Load pattern overrides
+      window.api.patternOverrides.list().then(setPatternOverrides).catch(() => {});
     }
   }, [isOpen]);
 
@@ -383,6 +386,7 @@ const GoalBuilderModal: React.FC<GoalBuilderModalProps> = ({
                 discipline={discipline}
                 onSelect={(pattern) => addPatternGoal(pattern, currentGoalType)}
                 onCustom={() => addCustomGoal(currentGoalType)}
+                overrides={patternOverrides}
               />
             </div>
           </div>

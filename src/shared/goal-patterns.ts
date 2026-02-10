@@ -1,4 +1,4 @@
-import type { Discipline, MeasurementType } from './types';
+import type { Discipline, MeasurementType, PatternOverride } from './types';
 
 /** A single component field within a goal pattern */
 export interface PatternComponent {
@@ -927,4 +927,38 @@ export function getPatternById(id: string): GoalPattern | undefined {
 export function getPatternCategories(discipline: Discipline): string[] {
   const cats = new Set(ALL_PATTERNS.filter(p => p.discipline === discipline).map(p => p.category));
   return [...cats].sort();
+}
+
+/**
+ * Apply user overrides to a pattern (non-mutating).
+ * For chip_single/chip_multi/select components:
+ *   - Appends custom_options to options[]
+ *   - Filters out removed_options from options[]
+ * Returns a new GoalPattern with modified components.
+ */
+export function applyOverrides(pattern: GoalPattern, overrides: PatternOverride[]): GoalPattern {
+  const relevant = overrides.filter(o => o.pattern_id === pattern.id);
+  if (relevant.length === 0) return pattern;
+
+  const newComponents = pattern.components.map(comp => {
+    const override = relevant.find(o => o.component_key === comp.key);
+    if (!override) return comp;
+
+    // Only chip/select components have editable options
+    if (comp.type !== 'chip_single' && comp.type !== 'chip_multi' && comp.type !== 'select') {
+      return comp;
+    }
+
+    const base = comp.options || [];
+    // Filter out removed, then append custom (avoiding duplicates)
+    const removedSet = new Set(override.removed_options);
+    const filtered = base.filter(o => !removedSet.has(o));
+    const existingSet = new Set(filtered);
+    const added = override.custom_options.filter(o => !existingSet.has(o));
+    const newOptions = [...filtered, ...added];
+
+    return { ...comp, options: newOptions };
+  });
+
+  return { ...pattern, components: newComponents };
 }

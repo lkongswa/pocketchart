@@ -406,14 +406,12 @@ export interface NoteBankEntry {
   created_at: string;
 }
 
-export interface GoalsBankEntry {
+export interface PatternOverride {
   id: number;
-  discipline: Discipline;
-  category: string;
-  goal_template: string;
-  measurement_type: MeasurementType;
-  is_default: boolean;
-  created_at: string;
+  pattern_id: string;
+  component_key: string;
+  custom_options: string[];    // User-added options (JSON in DB)
+  removed_options: string[];   // Default options hidden by user (JSON in DB)
 }
 
 // Client Document types
@@ -1174,12 +1172,11 @@ export interface PocketChartAPI {
     toggleFavorite: (id: number) => Promise<NoteBankEntry>;
     getCategories: (discipline: string) => Promise<string[]>;
   };
-  goalsBank: {
-    list: (filters?: { discipline?: string; category?: string }) => Promise<GoalsBankEntry[]>;
-    create: (data: Partial<GoalsBankEntry>) => Promise<GoalsBankEntry>;
-    update: (id: number, data: Partial<GoalsBankEntry>) => Promise<GoalsBankEntry>;
-    delete: (id: number) => Promise<boolean>;
-    getCategories: (discipline: string) => Promise<string[]>;
+  patternOverrides: {
+    list: () => Promise<PatternOverride[]>;
+    upsert: (patternId: string, componentKey: string, customOptions: string[], removedOptions: string[]) => Promise<PatternOverride>;
+    delete: (patternId: string, componentKey: string) => Promise<boolean>;
+    deleteAll: (patternId: string) => Promise<boolean>;
   };
   settings: {
     get: (key: string) => Promise<string | null>;
@@ -1342,12 +1339,12 @@ export interface PocketChartAPI {
     check: () => Promise<{ updateAvailable: boolean }>;
     download: () => Promise<boolean>;
     install: () => void;
-    onAvailable: (callback: (info: { version: string; releaseNotes?: string; releaseDate?: string }) => void) => void;
-    onNotAvailable: (callback: () => void) => void;
-    onProgress: (callback: (progress: { percent: number; transferred: number; total: number }) => void) => void;
-    onDownloaded: (callback: (info: { version: string }) => void) => void;
-    onBackupComplete?: (callback: (info: { backupPath: string }) => void) => void;
-    onBackupFailed?: (callback: () => void) => void;
+    onAvailable: (callback: (info: { version: string; releaseNotes?: string; releaseDate?: string }) => void) => () => void;
+    onNotAvailable: (callback: () => void) => () => void;
+    onProgress: (callback: (progress: { percent: number; transferred: number; total: number }) => void) => () => void;
+    onDownloaded: (callback: (info: { version: string }) => void) => () => void;
+    onBackupComplete?: (callback: (info: { backupPath: string }) => void) => () => void;
+    onBackupFailed?: (callback: () => void) => () => void;
   };
   /** Stripe Payment Integration */
   stripe: {

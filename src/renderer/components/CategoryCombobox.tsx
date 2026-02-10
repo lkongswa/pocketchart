@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ChevronDown, Plus } from 'lucide-react';
+import type { Discipline } from '../../shared/types';
+import { getPatternCategories } from '../../shared/goal-patterns';
 
 type CategorySource = 'note_bank' | 'goals_bank';
 
@@ -36,11 +38,13 @@ export default function CategoryCombobox({
   // Fetch categories when discipline changes
   const loadCategories = useCallback(async () => {
     try {
-      const fetcher = source === 'note_bank'
-        ? window.api.noteBank.getCategories
-        : window.api.goalsBank.getCategories;
-      const cats = await fetcher(discipline);
-      setCategories(cats);
+      if (source === 'goals_bank') {
+        // Use pattern-derived categories instead of goals bank
+        setCategories(getPatternCategories(discipline as Discipline));
+      } else {
+        const cats = await window.api.noteBank.getCategories(discipline);
+        setCategories(cats);
+      }
     } catch (err) {
       console.error('Failed to load categories:', err);
       setCategories([]);

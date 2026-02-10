@@ -20,10 +20,10 @@ import {
   ChevronRight,
   Receipt,
 } from 'lucide-react';
-import type { Client, Evaluation, Discipline, GoalType, EvalGoalEntry, GoalsBankEntry, CptLine, PlaceOfService, SOAPSection, MeasurementType } from '../../shared/types';
+import type { Client, Evaluation, Discipline, GoalType, EvalGoalEntry, CptLine, PlaceOfService, SOAPSection, MeasurementType, PatternOverride } from '../../shared/types';
 import { composeGoalText as sharedComposeGoalText, isAutoComposedGoalText, metricValueToNumeric } from '../../shared/compose-goal-text';
 import type { GoalPattern } from '../../shared/goal-patterns';
-import { CUSTOM_PATTERN, getPatternById } from '../../shared/goal-patterns';
+import { CUSTOM_PATTERN, getPatternById, applyOverrides } from '../../shared/goal-patterns';
 import GoalPatternPicker from '../components/GoalPatternPicker';
 import GoalComponentFields from '../components/GoalComponentFields';
 import type { ConsistencyValue } from '../components/ConsistencyCriterion';
@@ -510,10 +510,9 @@ export default function EvalFormPage() {
   const [completedGoals, setCompletedGoals] = useState<{ id: number; goal_text: string; goal_type: string; status: string; met_date: string; category: string; baseline: number; target: number }[]>([]);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
-  // Goal bank state
-  const [goalsBankEntries, setGoalsBankEntries] = useState<GoalsBankEntry[]>([]);
-  const [showGoalBank, setShowGoalBank] = useState<number | null>(null); // index of goal entry showing bank
-  const goalTextareaRefs = useRef<Map<number, HTMLTextAreaElement>>(new Map());
+  // Goal pattern state
+  const [showGoalBank, setShowGoalBank] = useState<number | null>(null); // index of goal entry showing pattern picker
+  const [patternOverrides, setPatternOverrides] = useState<PatternOverride[]>([]);
 
   // Session Note & Billing state
   const [sessionNote, setSessionNote] = useState<SessionNoteData>({ ...EMPTY_SESSION_NOTE });
@@ -580,12 +579,12 @@ export default function EvalFormPage() {
 
       const discipline = clientData.discipline as Discipline;
 
-      // Load goals bank entries
+      // Load pattern overrides
       try {
-        const bankEntries = await window.api.goalsBank.list({ discipline });
-        setGoalsBankEntries(bankEntries);
+        const overrides = await window.api.patternOverrides.list();
+        setPatternOverrides(overrides);
       } catch (err) {
-        console.error('Failed to load goals bank:', err);
+        console.error('Failed to load pattern overrides:', err);
       }
 
       if (evalId) {
@@ -883,23 +882,6 @@ export default function EvalFormPage() {
     return [...new Set(goalEntries.map(g => g.category).filter(Boolean))];
   }, [goalEntries]);
 
-  const loadGoalsBankForCategory = useCallback(async (category: string) => {
-    if (!client) return;
-    try {
-      const filters: any = { discipline: client.discipline };
-      // If no specific category requested, default to most recently used
-      if (!category && usedCategories.length > 0) {
-        filters.category = usedCategories[usedCategories.length - 1];
-      } else if (category) {
-        filters.category = category;
-      }
-      const entries = await window.api.goalsBank.list(filters);
-      setGoalsBankEntries(entries);
-    } catch (err) {
-      console.error('Failed to load goals bank:', err);
-    }
-  }, [client, usedCategories]);
-
   // ── Auto-Save ──
 
   const performAutoSave = useCallback(async () => {
@@ -1103,47 +1085,6 @@ export default function EvalFormPage() {
     });
   };
 
-  // ── Goal bank template insert ──
-
-  const insertGoalFromBank = (bankEntry: GoalsBankEntry, goalIdx: number) => {
-    isDirty.current = true;
-    const mt = bankEntry.measurement_type || CATEGORY_DEFAULT_MEASUREMENT[bankEntry.category] || 'percentage';
-    const inst = mt === 'standardized_score' ? (DEFAULT_INSTRUMENTS[bankEntry.category] || '') : '';
-    setGoalEntries(prev =>
-      prev.map((g, i) => {
-        if (i !== goalIdx) return g;
-        const updated = {
-          ...g,
-          goal_text: bankEntry.goal_template,
-          category: bankEntry.category,
-          measurement_type: mt as MeasurementType,
-          baseline_value: '',
-          target_value: '',
-          baseline: 0,
-          target: 0,
-          instrument: inst,
-        };
-        // Immediately compose so the text has "Patient will ..." format,
-        // which subsequent chip clicks will recognize as auto-composed.
-        updated.goal_text = composeGoalText(updated);
-        return updated;
-      })
-    );
-    setShowGoalBank(null);
-
-    // After render, focus the textarea and select the first ___ placeholder
-    setTimeout(() => {
-      const textarea = goalTextareaRefs.current.get(goalIdx);
-      if (textarea) {
-        textarea.focus();
-        const blankIdx = textarea.value.indexOf('___');
-        if (blankIdx !== -1) {
-          textarea.setSelectionRange(blankIdx, blankIdx + 3);
-        }
-      }
-    }, 50);
-  };
-
   // Wrapper to mark dirty when goal entries change inline
   const updateGoalEntries = (updater: React.SetStateAction<EvalGoalEntry[]>) => {
     isDirty.current = true;
@@ -1152,7 +1093,8 @@ export default function EvalFormPage() {
 
   /** Auto-compose goal text from structured fields (pattern-based or custom) */
   const composeGoalText = (entry: EvalGoalEntry): string => {
-    const pattern = entry.pattern_id ? getPatternById(entry.pattern_id) : undefined;
+    let pattern = entry.pattern_id ? getPatternById(entry.pattern_id) : undefined;
+    if (pattern && patternOverrides.length > 0) pattern = applyOverrides(pattern, patternOverrides);
     if (pattern && pattern.id !== 'custom_freeform') {
       return sharedComposeGoalText({
         pattern,
@@ -1258,21 +1200,6 @@ export default function EvalFormPage() {
       case 'O': return snObjectiveRef;
       case 'A': return snAssessmentRef;
       case 'P': return snPlanRef;
-    }
-  };
-
-  /** Handle Tab key in goal textarea to jump to next ___ placeholder */
-  const handleGoalTextKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, goalIdx: number) => {
-    if (e.key === 'Tab') {
-      const textarea = e.currentTarget;
-      const text = textarea.value;
-      const cursorPos = textarea.selectionEnd;
-      // Search for next ___ after current cursor position
-      const nextBlank = text.indexOf('___', cursorPos);
-      if (nextBlank !== -1) {
-        e.preventDefault();
-        textarea.setSelectionRange(nextBlank, nextBlank + 3);
-      }
     }
   };
 
@@ -1654,14 +1581,6 @@ export default function EvalFormPage() {
   const discipline = client.discipline as Discipline;
   const objectiveFields = getObjectiveFields(discipline);
 
-  // Filter bank entries for the currently active goal category
-  const getFilteredBankEntries = (category: string): GoalsBankEntry[] => {
-    if (!category) return goalsBankEntries;
-    return goalsBankEntries.filter(e =>
-      e.category?.toLowerCase() === category.toLowerCase()
-    );
-  };
-
   return (
     <div className="overflow-y-auto h-full p-6" ref={scrollContainerRef}>
       {/* Toast */}
@@ -2004,7 +1923,6 @@ export default function EvalFormPage() {
           ) : (
             <div className="space-y-4">
               {goalEntries.map((entry, idx) => {
-                const bankForCategory = getFilteredBankEntries(entry.category);
                 const showBank = showGoalBank === idx;
                 const isLinked = Boolean((content.created_goal_ids || [])[idx]);
                 return (
@@ -2072,6 +1990,7 @@ export default function EvalFormPage() {
                       <GoalPatternPicker
                         discipline={discipline}
                         category={entry.category || undefined}
+                        overrides={patternOverrides}
                         onSelect={(pattern) => {
                           const defaultComponents: Record<string, any> = {};
                           for (const comp of pattern.components) {
@@ -2102,8 +2021,9 @@ export default function EvalFormPage() {
 
                   {/* Pattern label + component fields */}
                   {entry.pattern_id && entry.pattern_id !== 'custom_freeform' && (() => {
-                    const pattern = getPatternById(entry.pattern_id!);
+                    let pattern = getPatternById(entry.pattern_id!);
                     if (!pattern || pattern.components.length === 0) return null;
+                    if (patternOverrides.length > 0) pattern = applyOverrides(pattern, patternOverrides);
                     return (
                       <div className="mb-3 p-3 bg-violet-50/30 rounded-lg border border-violet-100">
                         <p className="text-xs font-medium text-violet-600 mb-2">
@@ -2142,10 +2062,6 @@ export default function EvalFormPage() {
                         onChange={(e) => {
                           const newCat = e.target.value;
                           updateGoalField(idx, { category: newCat });
-                          // Reload bank for new category
-                          if (showGoalBank === idx) {
-                            loadGoalsBankForCategory(newCat);
-                          }
                         }}
                       >
                         <option value="">Select</option>
@@ -2247,31 +2163,15 @@ export default function EvalFormPage() {
                   <div>
                     <label className="label text-xs">Goal Text</label>
                     <textarea
-                      ref={(el) => { if (el) goalTextareaRefs.current.set(idx, el); else goalTextareaRefs.current.delete(idx); }}
                       className="textarea text-sm"
                       rows={2}
-                      placeholder="Enter goal text or select from Goal Bank above..."
+                      placeholder="Enter goal text or select a pattern above..."
                       value={entry.goal_text}
                       onChange={(e) =>
                         updateGoalEntries(prev =>
                           prev.map((g, i) => i === idx ? { ...g, goal_text: e.target.value } : g)
                         )
                       }
-                      onKeyDown={(e) => handleGoalTextKeyDown(e, idx)}
-                      onClick={(e) => {
-                        // When clicking into the textarea for the first time after bank insert,
-                        // auto-select the first ___ if cursor lands near one
-                        const textarea = e.currentTarget;
-                        const text = textarea.value;
-                        const blankIdx = text.indexOf('___');
-                        if (blankIdx !== -1 && textarea.selectionStart === textarea.selectionEnd) {
-                          // Only auto-select if user clicked near a blank or at the end
-                          const clickPos = textarea.selectionStart;
-                          if (clickPos === 0 || clickPos === text.length) {
-                            setTimeout(() => textarea.setSelectionRange(blankIdx, blankIdx + 3), 0);
-                          }
-                        }
-                      }}
                     />
                   </div>
                 </div>

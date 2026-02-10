@@ -4,7 +4,7 @@ import type { Practice, Discipline, NoteFormat, CloudDetectionResult, AppTier, F
 import FeeScheduleModal from '../components/FeeScheduleModal';
 import { NOTE_FORMAT_LABELS, DISCIPLINE_DEFAULT_FORMAT } from '../../shared/types';
 import SignaturePad from '../components/SignaturePad';
-import GoalsBankPage from './GoalsBankPage';
+import GoalPatternSettingsPage from './GoalPatternSettingsPage';
 import NoteBankPage from './NoteBankPage';
 import BAAComplianceModal from '../components/BAAComplianceModal';
 import { useSectionColor } from '../hooks/useSectionColor';
@@ -1087,7 +1087,7 @@ export default function SettingsPage() {
                 : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
             }`}
           >
-            Goal Templates
+            Goal Patterns
           </button>
           <button
             onClick={() => setBankTab('notes')}
@@ -1104,7 +1104,7 @@ export default function SettingsPage() {
         {/* Embedded Bank Content */}
         <div className="border border-[var(--color-border)] rounded-lg overflow-hidden">
           {bankTab === 'goals' ? (
-            <GoalsBankPage embedded />
+            <GoalPatternSettingsPage embedded />
           ) : (
             <NoteBankPage embedded />
           )}
