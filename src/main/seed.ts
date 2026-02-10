@@ -9,7 +9,7 @@ export function seedDefaultData(db: Database.Database): void {
   );
 
   const insertGoalsBank = db.prepare(
-    'INSERT INTO goals_bank (discipline, category, goal_template, is_default) VALUES (?, ?, ?, 1)'
+    'INSERT INTO goals_bank (discipline, category, goal_template, measurement_type, is_default) VALUES (?, ?, ?, ?, 1)'
   );
 
   const seedTransaction = db.transaction(() => {
@@ -153,64 +153,132 @@ export function seedDefaultData(db: Database.Database): void {
     insertNoteBank.run('ST', 'discharge', 'P', 'Continue ST ___ x/week for ___ weeks. Reassess at that time.');
 
     // ── Goals Bank ──
-    // Format: No subject prefix (GoalBuilder adds "Patient/Client will"), no trailing timeframe (GoalBuilder adds it).
-    // Use {target} / {baseline} for percentage fields that map to the CLOF/Target sliders.
-    // Use ___ for free-text placeholders that QuickChips or manual entry can fill.
+    // Format: No subject prefix (GoalBuilder adds "Patient/Client will"), no trailing timeframe.
+    // Templates should describe the functional outcome. The composition engine appends
+    // "improving from {baseline} to {target}" based on measurement_type automatically.
+    // Use ___ for free-text placeholders the clinician fills in.
 
-    // PT Goals
-    insertGoalsBank.run('PT', 'Mobility', 'ambulate ___ ft with ___ device and ___ assist');
-    insertGoalsBank.run('PT', 'Mobility', 'ambulate on level surfaces with normalized gait pattern, no device');
-    insertGoalsBank.run('PT', 'Mobility', 'navigate stairs with ___ assist and ___ railing');
-    insertGoalsBank.run('PT', 'Mobility', 'perform sit-to-stand from standard height chair with ___ assist');
-    insertGoalsBank.run('PT', 'Strength', 'demonstrate ___ strength of ___/5 in ___');
-    insertGoalsBank.run('PT', 'Strength', 'improve grip strength to ___ lbs bilaterally');
-    insertGoalsBank.run('PT', 'ROM', 'achieve ___ AROM of ___ degrees');
-    insertGoalsBank.run('PT', 'ROM', 'demonstrate functional ROM for ___');
-    insertGoalsBank.run('PT', 'Balance', 'maintain static standing balance for ___ seconds without LOB');
-    insertGoalsBank.run('PT', 'Balance', 'achieve Berg Balance Scale score of ___/56');
-    insertGoalsBank.run('PT', 'Balance', 'perform dynamic balance activities with ___ LOB');
-    insertGoalsBank.run('PT', 'Pain Management', 'report pain reduction to ___/10 with functional activities');
-    insertGoalsBank.run('PT', 'Functional Activity', 'independently perform HEP with correct form');
-    insertGoalsBank.run('PT', 'Functional Activity', 'return to ___ (work/sport/activity) without limitations');
-    insertGoalsBank.run('PT', 'Transfers', 'complete bed mobility with ___ assist');
-    insertGoalsBank.run('PT', 'Transfers', 'perform all transfers with ___ assist');
+    // PT Goals — Mobility (assist_level)
+    insertGoalsBank.run('PT', 'Mobility', 'ambulate ___ ft with ___ device', 'assist_level');
+    insertGoalsBank.run('PT', 'Mobility', 'ambulate on level surfaces with normalized gait pattern', 'assist_level');
+    insertGoalsBank.run('PT', 'Mobility', 'navigate stairs with ___ railing', 'assist_level');
+    insertGoalsBank.run('PT', 'Mobility', 'perform sit-to-stand from standard height chair', 'assist_level');
+    insertGoalsBank.run('PT', 'Mobility', 'ambulate community distances of ___ ft on uneven surfaces', 'assist_level');
 
-    // OT Goals
-    insertGoalsBank.run('OT', 'ADLs', 'complete upper body dressing with ___ assist');
-    insertGoalsBank.run('OT', 'ADLs', 'complete lower body dressing with ___ assist');
-    insertGoalsBank.run('OT', 'ADLs', 'complete grooming tasks with ___ assist');
-    insertGoalsBank.run('OT', 'ADLs', 'complete bathing with ___ assist');
-    insertGoalsBank.run('OT', 'ADLs', 'independently feed self with ___ setup');
-    insertGoalsBank.run('OT', 'ADLs', 'prepare a simple meal with ___ assist');
-    insertGoalsBank.run('OT', 'ADLs', 'manage medications with ___ assist');
-    insertGoalsBank.run('OT', 'ADLs', 'perform light housekeeping with ___ assist');
-    insertGoalsBank.run('OT', 'Fine Motor', 'demonstrate functional grasp/release for ___ tasks');
-    insertGoalsBank.run('OT', 'Fine Motor', 'improve fine motor coordination for ___');
-    insertGoalsBank.run('OT', 'Fine Motor', 'achieve grip strength of ___ lbs for functional tasks');
-    insertGoalsBank.run('OT', 'Cognitive', 'follow ___-step commands with ___ cues');
-    insertGoalsBank.run('OT', 'Cognitive', 'demonstrate improved sequencing for ___-step tasks');
-    insertGoalsBank.run('OT', 'Cognitive', 'utilize compensatory strategies for ___ with ___ cues');
-    insertGoalsBank.run('OT', 'Upper Extremity', 'achieve functional AROM of ___ for ___');
-    insertGoalsBank.run('OT', 'Self-Care', 'demonstrate safe ___ techniques with ___ cues');
+    // PT Goals — Strength (mmt_grade)
+    insertGoalsBank.run('PT', 'Strength', 'demonstrate ___ strength in ___', 'mmt_grade');
+    insertGoalsBank.run('PT', 'Strength', 'improve ___ (LE/UE) strength for functional mobility', 'mmt_grade');
+    insertGoalsBank.run('PT', 'Strength', 'improve core stability for upright functional tasks', 'mmt_grade');
 
-    // ST Goals
-    insertGoalsBank.run('ST', 'Articulation', 'produce target sounds in ___ position with {target} accuracy at ___ level');
-    insertGoalsBank.run('ST', 'Articulation', 'produce {target} intelligible speech in ___ context');
-    insertGoalsBank.run('ST', 'Language Expression', 'name ___ items in ___ categories with {target} accuracy');
-    insertGoalsBank.run('ST', 'Language Expression', 'produce grammatically correct sentences of ___+ words');
-    insertGoalsBank.run('ST', 'Language Expression', 'use ___ word retrieval strategies with ___ cues');
-    insertGoalsBank.run('ST', 'Language Comprehension', 'follow ___-step commands with {target} accuracy');
-    insertGoalsBank.run('ST', 'Language Comprehension', 'answer ___ questions about ___ with {target} accuracy');
-    insertGoalsBank.run('ST', 'Language Comprehension', 'identify main idea in ___ with {target} accuracy');
-    insertGoalsBank.run('ST', 'Voice', 'demonstrate appropriate vocal quality during ___ tasks');
-    insertGoalsBank.run('ST', 'Voice', 'maintain adequate breath support for ___');
-    insertGoalsBank.run('ST', 'Fluency', 'use ___ fluency strategy with {target} success in ___ context');
-    insertGoalsBank.run('ST', 'Fluency', 'demonstrate {target} fluent speech in ___ speaking tasks');
-    insertGoalsBank.run('ST', 'Feeding/Swallowing', 'safely tolerate ___ consistency with ___ strategy');
-    insertGoalsBank.run('ST', 'Feeding/Swallowing', 'demonstrate safe swallow with ___ diet with no s/s aspiration');
-    insertGoalsBank.run('ST', 'Cognitive-Communication', 'recall ___/5 items after ___ delay with ___ cues');
-    insertGoalsBank.run('ST', 'Cognitive-Communication', 'sustain attention for ___ min on ___ task');
-    insertGoalsBank.run('ST', 'Cognitive-Communication', 'identify ___/5 safety concerns in functional scenarios');
+    // PT Goals — ROM (rom_degrees)
+    insertGoalsBank.run('PT', 'ROM', 'achieve ___ AROM', 'rom_degrees');
+    insertGoalsBank.run('PT', 'ROM', 'demonstrate functional ROM for ___ activities', 'rom_degrees');
+    insertGoalsBank.run('PT', 'ROM', 'improve ___ flexibility for pain-free movement', 'rom_degrees');
+
+    // PT Goals — Balance (timed_seconds)
+    insertGoalsBank.run('PT', 'Balance', 'maintain static standing balance without LOB', 'timed_seconds');
+    insertGoalsBank.run('PT', 'Balance', 'perform dynamic balance activities without LOB', 'timed_seconds');
+    insertGoalsBank.run('PT', 'Balance', 'maintain single-leg stance', 'timed_seconds');
+
+    // PT Goals — Balance (standardized_score — Berg)
+    insertGoalsBank.run('PT', 'Balance', 'achieve improved Berg Balance Scale score', 'standardized_score');
+
+    // PT Goals — Pain Management (pain_scale)
+    insertGoalsBank.run('PT', 'Pain Management', 'report reduced pain with functional activities', 'pain_scale');
+    insertGoalsBank.run('PT', 'Pain Management', 'manage pain during ADLs using learned strategies', 'pain_scale');
+
+    // PT Goals — Functional Activity (assist_level)
+    insertGoalsBank.run('PT', 'Functional Activity', 'independently perform HEP with correct form', 'assist_level');
+    insertGoalsBank.run('PT', 'Functional Activity', 'return to ___ (work/sport/activity) without limitations', 'assist_level');
+    insertGoalsBank.run('PT', 'Functional Activity', 'tolerate upright activity for ___ minutes', 'assist_level');
+
+    // PT Goals — Transfers (assist_level)
+    insertGoalsBank.run('PT', 'Transfers', 'complete bed mobility', 'assist_level');
+    insertGoalsBank.run('PT', 'Transfers', 'perform all functional transfers', 'assist_level');
+    insertGoalsBank.run('PT', 'Transfers', 'perform car transfer safely', 'assist_level');
+
+    // PT Goals — Gait (assist_level)
+    insertGoalsBank.run('PT', 'Gait', 'demonstrate normalized gait mechanics', 'assist_level');
+    insertGoalsBank.run('PT', 'Gait', 'ambulate with reciprocal gait pattern', 'assist_level');
+
+    // OT Goals — ADLs (assist_level)
+    insertGoalsBank.run('OT', 'ADLs', 'complete upper body dressing', 'assist_level');
+    insertGoalsBank.run('OT', 'ADLs', 'complete lower body dressing', 'assist_level');
+    insertGoalsBank.run('OT', 'ADLs', 'complete grooming tasks', 'assist_level');
+    insertGoalsBank.run('OT', 'ADLs', 'complete bathing', 'assist_level');
+    insertGoalsBank.run('OT', 'ADLs', 'feed self with appropriate utensils', 'assist_level');
+    insertGoalsBank.run('OT', 'ADLs', 'prepare a simple meal', 'assist_level');
+    insertGoalsBank.run('OT', 'ADLs', 'manage medications', 'assist_level');
+    insertGoalsBank.run('OT', 'ADLs', 'perform light housekeeping tasks', 'assist_level');
+    insertGoalsBank.run('OT', 'ADLs', 'complete toileting and hygiene', 'assist_level');
+
+    // OT Goals — Fine Motor (percentage)
+    insertGoalsBank.run('OT', 'Fine Motor', 'demonstrate functional grasp/release for ___ tasks', 'percentage');
+    insertGoalsBank.run('OT', 'Fine Motor', 'improve fine motor coordination for ___ tasks', 'percentage');
+    insertGoalsBank.run('OT', 'Fine Motor', 'demonstrate bilateral coordination for functional tasks', 'percentage');
+
+    // OT Goals — Cognitive (cue_level)
+    insertGoalsBank.run('OT', 'Cognitive', 'follow ___-step commands for functional tasks', 'cue_level');
+    insertGoalsBank.run('OT', 'Cognitive', 'demonstrate improved sequencing for ___-step tasks', 'cue_level');
+    insertGoalsBank.run('OT', 'Cognitive', 'utilize compensatory strategies for ___ tasks', 'cue_level');
+    insertGoalsBank.run('OT', 'Cognitive', 'demonstrate safe problem-solving during ___ tasks', 'cue_level');
+
+    // OT Goals — Upper Extremity (assist_level)
+    insertGoalsBank.run('OT', 'Upper Extremity', 'achieve functional UE AROM for ___ activities', 'assist_level');
+    insertGoalsBank.run('OT', 'Upper Extremity', 'demonstrate functional UE strength for ___ tasks', 'assist_level');
+
+    // OT Goals — Self-Care (assist_level)
+    insertGoalsBank.run('OT', 'Self-Care', 'demonstrate safe ___ techniques', 'assist_level');
+    insertGoalsBank.run('OT', 'Self-Care', 'use adaptive equipment for ___ tasks', 'assist_level');
+
+    // OT Goals — Sensory Processing (severity)
+    insertGoalsBank.run('OT', 'Sensory Processing', 'tolerate ___ sensory input during functional tasks', 'severity');
+    insertGoalsBank.run('OT', 'Sensory Processing', 'demonstrate improved self-regulation strategies', 'severity');
+
+    // ST Goals — Articulation (percentage)
+    insertGoalsBank.run('ST', 'Articulation', 'produce target sounds in ___ position at ___ level', 'percentage');
+    insertGoalsBank.run('ST', 'Articulation', 'produce intelligible speech in ___ context', 'percentage');
+    insertGoalsBank.run('ST', 'Articulation', 'self-correct articulation errors in ___ context', 'percentage');
+
+    // ST Goals — Language Expression (percentage)
+    insertGoalsBank.run('ST', 'Language Expression', 'name items in ___ categories', 'percentage');
+    insertGoalsBank.run('ST', 'Language Expression', 'produce grammatically correct sentences of ___+ words', 'percentage');
+    insertGoalsBank.run('ST', 'Language Expression', 'use word retrieval strategies in conversation', 'percentage');
+    insertGoalsBank.run('ST', 'Language Expression', 'formulate complete sentences to express wants/needs', 'percentage');
+    insertGoalsBank.run('ST', 'Language Expression', 'retell a story/event with appropriate detail', 'percentage');
+
+    // ST Goals — Language Comprehension (percentage)
+    insertGoalsBank.run('ST', 'Language Comprehension', 'follow ___-step directions', 'percentage');
+    insertGoalsBank.run('ST', 'Language Comprehension', 'answer ___ questions about presented material', 'percentage');
+    insertGoalsBank.run('ST', 'Language Comprehension', 'identify main idea and details in ___ material', 'percentage');
+    insertGoalsBank.run('ST', 'Language Comprehension', 'demonstrate understanding of age-appropriate vocabulary', 'percentage');
+    insertGoalsBank.run('ST', 'Language Comprehension', 'make inferences from presented material', 'percentage');
+
+    // ST Goals — Voice (severity)
+    insertGoalsBank.run('ST', 'Voice', 'demonstrate appropriate vocal quality during ___ tasks', 'severity');
+    insertGoalsBank.run('ST', 'Voice', 'maintain adequate breath support for connected speech', 'severity');
+    insertGoalsBank.run('ST', 'Voice', 'use resonant voice techniques in ___ context', 'severity');
+
+    // ST Goals — Fluency (severity)
+    insertGoalsBank.run('ST', 'Fluency', 'use ___ fluency strategy in ___ context', 'severity');
+    insertGoalsBank.run('ST', 'Fluency', 'demonstrate fluent speech in ___ speaking tasks', 'severity');
+    insertGoalsBank.run('ST', 'Fluency', 'self-monitor speech rate during conversation', 'severity');
+
+    // ST Goals — Feeding/Swallowing (severity)
+    insertGoalsBank.run('ST', 'Feeding/Swallowing', 'safely tolerate ___ consistency', 'severity');
+    insertGoalsBank.run('ST', 'Feeding/Swallowing', 'demonstrate safe swallow with ___ diet with no s/s aspiration', 'severity');
+    insertGoalsBank.run('ST', 'Feeding/Swallowing', 'use ___ compensatory swallow strategy during meals', 'severity');
+
+    // ST Goals — Cognitive-Communication (cue_level)
+    insertGoalsBank.run('ST', 'Cognitive-Communication', 'recall ___/5 items after ___ delay', 'cue_level');
+    insertGoalsBank.run('ST', 'Cognitive-Communication', 'sustain attention for ___ min on ___ task', 'cue_level');
+    insertGoalsBank.run('ST', 'Cognitive-Communication', 'identify safety concerns in functional scenarios', 'cue_level');
+    insertGoalsBank.run('ST', 'Cognitive-Communication', 'demonstrate functional problem-solving skills', 'cue_level');
+    insertGoalsBank.run('ST', 'Cognitive-Communication', 'use compensatory memory strategies during daily tasks', 'cue_level');
+
+    // ST Goals — Pragmatics (cue_level)
+    insertGoalsBank.run('ST', 'Pragmatics', 'maintain appropriate topic during conversation', 'cue_level');
+    insertGoalsBank.run('ST', 'Pragmatics', 'demonstrate appropriate turn-taking in conversation', 'cue_level');
   });
 
   seedTransaction();
@@ -290,7 +358,7 @@ export function seedMFTData(db: Database.Database): void {
   );
 
   const insertGoalsBank = db.prepare(
-    'INSERT INTO goals_bank (discipline, category, goal_template, is_default) VALUES (?, ?, ?, 1)'
+    'INSERT INTO goals_bank (discipline, category, goal_template, measurement_type, is_default) VALUES (?, ?, ?, ?, 1)'
   );
 
   const seedTransaction = db.transaction(() => {
@@ -350,42 +418,52 @@ export function seedMFTData(db: Database.Database): void {
 
     // ── MFT Goals Bank ──
     // Format: No "Client will" prefix (GoalBuilder adds discipline-appropriate subject).
-    // No trailing "within ___ weeks" (GoalBuilder adds timeframe from slider).
-    insertGoalsBank.run('MFT', 'Depression', 'report reduction in depressive symptoms to a PHQ-9 score of ___ or below');
-    insertGoalsBank.run('MFT', 'Depression', 'identify ___ positive coping strategies for managing depressive episodes');
-    insertGoalsBank.run('MFT', 'Depression', 'engage in ___ pleasurable activities per week as reported in session');
+    // No trailing timeframe. Composition engine appends measurement phrase automatically.
 
-    insertGoalsBank.run('MFT', 'Anxiety', 'report reduction in anxiety symptoms to a GAD-7 score of ___ or below');
-    insertGoalsBank.run('MFT', 'Anxiety', 'demonstrate use of ___ anxiety management techniques in daily life');
-    insertGoalsBank.run('MFT', 'Anxiety', 'reduce avoidance behaviors related to ___ as evidenced by ___');
+    // Depression (standardized_score — PHQ-9)
+    insertGoalsBank.run('MFT', 'Depression', 'report reduction in depressive symptoms as measured by PHQ-9', 'standardized_score');
+    insertGoalsBank.run('MFT', 'Depression', 'identify and practice ___ positive coping strategies for managing depressive episodes', 'standardized_score');
+    insertGoalsBank.run('MFT', 'Depression', 'engage in ___ pleasurable activities per week as reported in session', 'standardized_score');
 
-    insertGoalsBank.run('MFT', 'Trauma', 'demonstrate reduction in trauma-related symptoms as measured by ___');
-    insertGoalsBank.run('MFT', 'Trauma', 'develop and utilize a safety plan for managing trauma triggers');
-    insertGoalsBank.run('MFT', 'Trauma', 'process traumatic experiences as evidenced by decreased avoidance and intrusive symptoms');
+    // Anxiety (standardized_score — GAD-7)
+    insertGoalsBank.run('MFT', 'Anxiety', 'report reduction in anxiety symptoms as measured by GAD-7', 'standardized_score');
+    insertGoalsBank.run('MFT', 'Anxiety', 'demonstrate use of ___ anxiety management techniques in daily life', 'standardized_score');
+    insertGoalsBank.run('MFT', 'Anxiety', 'reduce avoidance behaviors related to ___', 'standardized_score');
 
-    insertGoalsBank.run('MFT', 'Relationship', 'demonstrate improved communication skills as evidenced by ___');
-    insertGoalsBank.run('MFT', 'Relationship', 'reduce frequency of escalated conflicts from ___ to ___ per week');
-    insertGoalsBank.run('MFT', 'Relationship', 'identify and modify ___ negative interaction patterns');
-    insertGoalsBank.run('MFT', 'Relationship', 'report improved relationship satisfaction as measured by ___');
+    // Trauma (standardized_score — PCL-5)
+    insertGoalsBank.run('MFT', 'Trauma', 'demonstrate reduction in trauma-related symptoms as measured by PCL-5', 'standardized_score');
+    insertGoalsBank.run('MFT', 'Trauma', 'develop and utilize a safety plan for managing trauma triggers', 'standardized_score');
+    insertGoalsBank.run('MFT', 'Trauma', 'process traumatic experiences as evidenced by decreased avoidance and intrusive symptoms', 'standardized_score');
 
-    insertGoalsBank.run('MFT', 'Family Systems', 'establish and maintain ___ healthy boundaries as evidenced by ___');
-    insertGoalsBank.run('MFT', 'Family Systems', 'demonstrate improved conflict resolution skills');
-    insertGoalsBank.run('MFT', 'Family Systems', 'increase frequency of positive interactions to ___ per week');
-    insertGoalsBank.run('MFT', 'Family Systems', 'implement ___ consistent parenting strategies as discussed in session');
+    // Relationship (severity)
+    insertGoalsBank.run('MFT', 'Relationship', 'demonstrate improved communication skills with partner/family', 'severity');
+    insertGoalsBank.run('MFT', 'Relationship', 'identify and modify negative interaction patterns', 'severity');
+    insertGoalsBank.run('MFT', 'Relationship', 'report improved relationship satisfaction', 'severity');
+    insertGoalsBank.run('MFT', 'Relationship', 'demonstrate effective conflict resolution strategies', 'severity');
 
-    insertGoalsBank.run('MFT', 'Coping Skills', 'identify and practice ___ healthy coping mechanisms for managing ___');
-    insertGoalsBank.run('MFT', 'Coping Skills', 'demonstrate ability to use grounding techniques when experiencing ___');
-    insertGoalsBank.run('MFT', 'Coping Skills', 'develop a personalized wellness plan including ___ self-care activities');
+    // Family Systems (severity)
+    insertGoalsBank.run('MFT', 'Family Systems', 'establish and maintain healthy boundaries with family members', 'severity');
+    insertGoalsBank.run('MFT', 'Family Systems', 'demonstrate improved conflict resolution skills within the family', 'severity');
+    insertGoalsBank.run('MFT', 'Family Systems', 'implement consistent parenting strategies as discussed in session', 'severity');
+    insertGoalsBank.run('MFT', 'Family Systems', 'increase frequency of positive family interactions', 'severity');
 
-    insertGoalsBank.run('MFT', 'Self-Esteem', 'identify ___ personal strengths and report improved self-perception');
-    insertGoalsBank.run('MFT', 'Self-Esteem', 'challenge ___ negative self-beliefs per session as evidenced by cognitive restructuring');
+    // Coping Skills (severity)
+    insertGoalsBank.run('MFT', 'Coping Skills', 'identify and practice ___ healthy coping mechanisms for managing ___', 'severity');
+    insertGoalsBank.run('MFT', 'Coping Skills', 'demonstrate ability to use grounding techniques when experiencing distress', 'severity');
+    insertGoalsBank.run('MFT', 'Coping Skills', 'develop a personalized wellness plan including ___ self-care activities', 'severity');
 
-    insertGoalsBank.run('MFT', 'Grief', 'process grief related to ___ as evidenced by decreased emotional distress');
-    insertGoalsBank.run('MFT', 'Grief', 'identify ___ healthy ways to honor/memorialize their loss');
+    // Self-Esteem (severity)
+    insertGoalsBank.run('MFT', 'Self-Esteem', 'identify personal strengths and report improved self-perception', 'severity');
+    insertGoalsBank.run('MFT', 'Self-Esteem', 'challenge negative self-beliefs as evidenced by cognitive restructuring', 'severity');
 
-    insertGoalsBank.run('MFT', 'Behavioral', 'reduce frequency of ___ (target behavior) from ___ to ___ per week');
-    insertGoalsBank.run('MFT', 'Behavioral', 'increase frequency of ___ (replacement behavior) to ___ per week');
-    insertGoalsBank.run('MFT', 'Behavioral', 'identify ___ triggers for maladaptive behaviors and develop alternative responses');
+    // Grief (severity)
+    insertGoalsBank.run('MFT', 'Grief', 'process grief related to ___ as evidenced by decreased emotional distress', 'severity');
+    insertGoalsBank.run('MFT', 'Grief', 'identify healthy ways to honor/memorialize their loss', 'severity');
+
+    // Behavioral (frequency)
+    insertGoalsBank.run('MFT', 'Behavioral', 'reduce frequency of ___ (target behavior)', 'frequency');
+    insertGoalsBank.run('MFT', 'Behavioral', 'increase frequency of ___ (replacement behavior)', 'frequency');
+    insertGoalsBank.run('MFT', 'Behavioral', 'identify triggers for maladaptive behaviors and develop alternative responses', 'frequency');
   });
 
   seedTransaction();

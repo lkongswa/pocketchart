@@ -634,10 +634,17 @@ function registerIpcHandlers() {
 
   safeHandle('goals:create', (_event, data) => {
     const result = db.prepare(`
-      INSERT INTO goals (client_id, goal_text, goal_type, category, status, target_date, baseline, target)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO goals (client_id, goal_text, goal_type, category, status, target_date,
+        measurement_type, baseline, target, baseline_value, target_value, instrument,
+        pattern_id, components_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(data.client_id, data.goal_text, data.goal_type, data.category,
-      data.status || 'active', data.target_date, data.baseline || 0, data.target || 0);
+      data.status || 'active', data.target_date,
+      data.measurement_type || 'percentage',
+      data.baseline || 0, data.target || 0,
+      data.baseline_value || '', data.target_value || '',
+      data.instrument || '',
+      data.pattern_id || '', data.components_json || '');
     const goal = db.prepare('SELECT * FROM goals WHERE id = ?').get(result.lastInsertRowid) as any;
     auditLog({ actionType: 'goal_created', entityType: 'goal', entityId: goal.id, clientId: data.client_id });
     return goal;
@@ -654,12 +661,22 @@ function registerIpcHandlers() {
         WHERE id=? AND deleted_at IS NULL
       `).run(data.status, data.met_date, id);
     } else {
-      // Pending goals: allow full updates
+      // Pending goals: allow full updates including measurement fields
       db.prepare(`
-        UPDATE goals SET goal_text=?, goal_type=?, category=?, status=?, target_date=?, met_date=?
+        UPDATE goals SET goal_text=?, goal_type=?, category=?, status=?, target_date=?, met_date=?,
+          measurement_type=?, baseline=?, target=?, baseline_value=?, target_value=?, instrument=?,
+          pattern_id=?, components_json=?
         WHERE id=? AND deleted_at IS NULL
       `).run(data.goal_text, data.goal_type, data.category, data.status,
-        data.target_date, data.met_date, id);
+        data.target_date, data.met_date,
+        data.measurement_type ?? before?.measurement_type ?? 'percentage',
+        data.baseline ?? before?.baseline ?? 0, data.target ?? before?.target ?? 0,
+        data.baseline_value ?? before?.baseline_value ?? '',
+        data.target_value ?? before?.target_value ?? '',
+        data.instrument ?? before?.instrument ?? '',
+        data.pattern_id ?? before?.pattern_id ?? '',
+        data.components_json ?? before?.components_json ?? '',
+        id);
     }
 
     const goal = db.prepare('SELECT * FROM goals WHERE id = ?').get(id) as any;
@@ -773,8 +790,9 @@ function registerIpcHandlers() {
     const insert = db.prepare(`
       INSERT INTO progress_report_goals (note_id, goal_id, status_at_report, performance_data,
         clinical_notes, goal_text_snapshot, is_new_goal, is_staged_promotion, staged_goal_id,
-        baseline_snapshot, target_snapshot)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        baseline_snapshot, target_snapshot,
+        measurement_type, current_value, current_numeric, baseline_value_snapshot, target_value_snapshot)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const txn = db.transaction(() => {
@@ -782,12 +800,28 @@ function registerIpcHandlers() {
         insert.run(noteId, g.goal_id, g.status_at_report || 'progressing',
           g.performance_data || '', g.clinical_notes || '', g.goal_text_snapshot || '',
           g.is_new_goal ? 1 : 0, g.is_staged_promotion ? 1 : 0, g.staged_goal_id || null,
-          g.baseline_snapshot ?? 0, g.target_snapshot ?? 0);
+          g.baseline_snapshot ?? 0, g.target_snapshot ?? 0,
+          g.measurement_type || '', g.current_value || '', g.current_numeric ?? 0,
+          g.baseline_value_snapshot || '', g.target_value_snapshot || '');
       }
     });
     txn();
 
     return db.prepare('SELECT * FROM progress_report_goals WHERE note_id = ? AND deleted_at IS NULL ORDER BY id').all(noteId);
+  });
+
+  safeHandle('progressReportGoals:getLastForGoal', (_event, goalId: number) => {
+    return db.prepare(`
+      SELECT prg.*, n.date_of_service as note_date
+      FROM progress_report_goals prg
+      JOIN notes n ON n.id = prg.note_id
+      WHERE prg.goal_id = ?
+        AND prg.deleted_at IS NULL
+        AND n.signed_at IS NOT NULL
+        AND n.deleted_at IS NULL
+      ORDER BY n.date_of_service DESC
+      LIMIT 1
+    `).get(goalId) || null;
   });
 
   // ── Notes ──
@@ -1440,17 +1474,19 @@ function registerIpcHandlers() {
 
   safeHandle('goalsBank:create', (_event, data) => {
     const result = db.prepare(`
-      INSERT INTO goals_bank (discipline, category, goal_template, is_default)
-      VALUES (?, ?, ?, ?)
-    `).run(data.discipline, data.category, data.goal_template, data.is_default ? 1 : 0);
+      INSERT INTO goals_bank (discipline, category, goal_template, measurement_type, is_default)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(data.discipline, data.category, data.goal_template,
+      data.measurement_type || 'percentage', data.is_default ? 1 : 0);
     return db.prepare('SELECT * FROM goals_bank WHERE id = ?').get(result.lastInsertRowid);
   });
 
   safeHandle('goalsBank:update', (_event, id: number, data) => {
     db.prepare(`
-      UPDATE goals_bank SET discipline=?, category=?, goal_template=?
+      UPDATE goals_bank SET discipline=?, category=?, goal_template=?, measurement_type=?
       WHERE id=?
-    `).run(data.discipline, data.category, data.goal_template, id);
+    `).run(data.discipline, data.category, data.goal_template,
+      data.measurement_type || 'percentage', id);
     return db.prepare('SELECT * FROM goals_bank WHERE id = ?').get(id);
   });
 

@@ -7,6 +7,35 @@ export type VisitType = 'T' | 'H' | 'O' | 'C';
 export type StagedGoalStatus = 'staged' | 'promoted' | 'dismissed';
 export type ProgressReportGoalStatus = 'progressing' | 'met' | 'regressed' | 'plateau' | 'discontinued' | 'modified';
 
+export type MeasurementType =
+  | 'percentage'        // 0-100%, used for ST artic accuracy, language tasks, OT fine motor
+  | 'assist_level'      // Dep → MaxA → ModA → MinA → CGA → SBA → Sup → Ind (PT mobility, transfers, OT ADLs)
+  | 'cue_level'         // Max → Mod → Min → Ind (ST language, OT cognitive)
+  | 'pain_scale'        // 0-10 numeric (PT pain management)
+  | 'mmt_grade'         // 0/5 through 5/5 with ± variants (PT strength)
+  | 'rom_degrees'       // 0-360 numeric degrees (PT ROM)
+  | 'timed_seconds'     // Numeric seconds (PT balance, endurance)
+  | 'standardized_score'// Named instrument + numeric score (PHQ-9, GAD-7, Berg, PCL-5, etc.)
+  | 'frequency'         // Count per time period (MFT behavioral: X per week → Y per week)
+  | 'severity'          // Severe → Mod → Mild → Minimal → Resolved (MFT, some ST)
+  | 'fim_score'         // 1-7 FIM scale (OT ADLs when FIM is used)
+  | 'custom_text';      // No structured metric — freeform goal, status-only tracking
+
+export const MEASUREMENT_TYPE_LABELS: Record<MeasurementType, string> = {
+  percentage: 'Percentage (e.g., 80% accuracy)',
+  assist_level: 'Assist level (Ind / SBA / Min A / Mod A / Max A)',
+  cue_level: 'Cue level (Independent / Min / Mod / Max cues)',
+  pain_scale: 'Pain scale (0-10)',
+  mmt_grade: 'Muscle strength (0/5 – 5/5)',
+  rom_degrees: 'Range of motion (degrees)',
+  timed_seconds: 'Timed performance (seconds)',
+  standardized_score: 'Score on a test (PHQ-9, Berg, etc.)',
+  frequency: 'Frequency count (per week/day)',
+  severity: 'Severity rating (Severe → Resolved)',
+  fim_score: 'FIM score (1-7)',
+  custom_text: 'Other / no specific measure',
+};
+
 export const VISIT_TYPE_LABELS: Record<VisitType, string> = {
   T: 'Telehealth',
   H: 'Home Visit',
@@ -180,8 +209,14 @@ export interface EvalGoalEntry {
   goal_type: GoalType;
   category: string;
   target_date: string;
-  baseline: number;   // Current level 0-100%
-  target: number;     // Goal level 0-100%
+  measurement_type: MeasurementType;
+  baseline: number;         // numeric for sorting/charts
+  target: number;           // numeric for sorting/charts
+  baseline_value: string;   // human-readable: "ModA", "40", "7"
+  target_value: string;     // human-readable: "SBA", "80", "3"
+  instrument: string;       // for standardized_score: "PHQ-9", "Berg"
+  pattern_id?: string;      // Which goal pattern was used
+  components?: Record<string, any>;  // Component selections for pattern-based goals
 }
 
 export interface Practice {
@@ -260,8 +295,14 @@ export interface Goal {
   status: GoalStatus;
   target_date: string;
   met_date: string;
-  baseline: number;                          // Current level 0-100%
-  target: number;                            // Goal level 0-100%
+  measurement_type: MeasurementType;         // What metric this goal tracks
+  baseline: number;                          // numeric for sorting/charts
+  target: number;                            // numeric for sorting/charts
+  baseline_value: string;                    // human-readable: "ModA", "40", "7"
+  target_value: string;                      // human-readable: "SBA", "80", "3"
+  instrument: string;                        // for standardized_score: "PHQ-9", "Berg"
+  pattern_id: string;                        // Which goal pattern was used (for re-editing)
+  components_json: string;                   // Serialized component selections (for re-editing)
   created_by_user_id: number | null;         // V4: Multi-provider
   source_document_id: number | null;         // eval ID or note ID that established this goal
   source_document_type: string | null;       // 'eval' | 'progress_report' | null (null = pending)
@@ -370,6 +411,7 @@ export interface GoalsBankEntry {
   discipline: Discipline;
   category: string;
   goal_template: string;
+  measurement_type: MeasurementType;
   is_default: boolean;
   created_at: string;
 }
@@ -624,6 +666,13 @@ export interface ProgressReportGoal {
   performance_data: string;
   clinical_notes: string;
   goal_text_snapshot: string;
+  measurement_type: MeasurementType;
+  current_value: string;
+  current_numeric: number;
+  baseline_value_snapshot: string;
+  target_value_snapshot: string;
+  baseline_snapshot: number;
+  target_snapshot: number;
   is_new_goal: boolean;
   is_staged_promotion: boolean;
   staged_goal_id: number | null;
@@ -1088,6 +1137,7 @@ export interface PocketChartAPI {
   progressReportGoals: {
     listByNote: (noteId: number) => Promise<ProgressReportGoal[]>;
     upsert: (noteId: number, goals: Partial<ProgressReportGoal>[]) => Promise<ProgressReportGoal[]>;
+    getLastForGoal: (goalId: number) => Promise<ProgressReportGoal | null>;
   };
   notes: {
     list: (filters?: { clientId?: number; entityId?: number; signed?: boolean }) => Promise<Note[]>;

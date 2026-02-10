@@ -9,7 +9,9 @@ import {
   Pencil,
   Trash2,
 } from 'lucide-react';
-import type { GoalsBankEntry, Discipline } from '../../shared/types';
+import type { GoalsBankEntry, Discipline, MeasurementType } from '../../shared/types';
+import { MEASUREMENT_TYPE_LABELS } from '../../shared/types';
+import { CATEGORY_DEFAULT_MEASUREMENT, DISCIPLINE_MEASUREMENT_OPTIONS } from '../../shared/goal-metrics';
 
 const DISCIPLINE_TABS: Array<{ value: Discipline | 'ALL'; label: string }> = [
   { value: 'ALL', label: 'All' },
@@ -68,7 +70,7 @@ export default function GoalsBankPage({ embedded }: GoalsBankPageProps = {}) {
   const [categoryFilter, setCategoryFilter] = useState('ALL');
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState({ discipline: 'PT' as Discipline, category: '', goal_template: '' });
+  const [editForm, setEditForm] = useState({ discipline: 'PT' as Discipline, category: '', goal_template: '', measurement_type: 'percentage' as MeasurementType });
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
 
@@ -77,6 +79,7 @@ export default function GoalsBankPage({ embedded }: GoalsBankPageProps = {}) {
     discipline: 'PT' as Discipline,
     category: '',
     goal_template: '',
+    measurement_type: 'percentage' as MeasurementType,
   });
 
   const loadEntries = useCallback(async () => {
@@ -138,7 +141,7 @@ export default function GoalsBankPage({ embedded }: GoalsBankPageProps = {}) {
 
   const startEdit = (entry: GoalsBankEntry) => {
     setEditingId(entry.id);
-    setEditForm({ discipline: entry.discipline, category: entry.category, goal_template: entry.goal_template });
+    setEditForm({ discipline: entry.discipline, category: entry.category, goal_template: entry.goal_template, measurement_type: entry.measurement_type || 'percentage' });
   };
 
   const handleSaveEdit = async () => {
@@ -148,6 +151,7 @@ export default function GoalsBankPage({ embedded }: GoalsBankPageProps = {}) {
         discipline: editForm.discipline,
         category: editForm.category.trim(),
         goal_template: editForm.goal_template.trim(),
+        measurement_type: editForm.measurement_type,
       });
       setEntries((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
       setEditingId(null);
@@ -179,10 +183,11 @@ export default function GoalsBankPage({ embedded }: GoalsBankPageProps = {}) {
         discipline: newGoal.discipline,
         category: newGoal.category.trim(),
         goal_template: newGoal.goal_template.trim(),
+        measurement_type: newGoal.measurement_type,
         is_default: false,
       });
       setEntries((prev) => [...prev, created]);
-      setNewGoal({ discipline: 'PT', category: '', goal_template: '' });
+      setNewGoal({ discipline: 'PT', category: '', goal_template: '', measurement_type: 'percentage' });
       setShowAddForm(false);
     } catch (err) {
       console.error('Failed to add goal template:', err);
@@ -241,12 +246,28 @@ export default function GoalsBankPage({ embedded }: GoalsBankPageProps = {}) {
               <label className="label">Category</label>
               <CategoryCombobox
                 value={newGoal.category}
-                onChange={(val) => setNewGoal((prev) => ({ ...prev, category: val }))}
+                onChange={(val) => setNewGoal((prev) => ({
+                  ...prev,
+                  category: val,
+                  measurement_type: CATEGORY_DEFAULT_MEASUREMENT[val] || prev.measurement_type,
+                }))}
                 discipline={newGoal.discipline}
                 source="goals_bank"
                 placeholder="e.g. Mobility, ADLs, Articulation"
               />
             </div>
+          </div>
+          <div className="mb-4">
+            <label className="label">How is this goal measured?</label>
+            <select
+              className="select text-sm"
+              value={newGoal.measurement_type}
+              onChange={(e) => setNewGoal((prev) => ({ ...prev, measurement_type: e.target.value as MeasurementType }))}
+            >
+              {(DISCIPLINE_MEASUREMENT_OPTIONS[newGoal.discipline] || []).map(mt => (
+                <option key={mt} value={mt}>{MEASUREMENT_TYPE_LABELS[mt]?.split(' (')[0] || mt}</option>
+              ))}
+            </select>
           </div>
           <div className="mb-4">
             <label className="label">Goal Template</label>
@@ -374,6 +395,14 @@ export default function GoalsBankPage({ embedded }: GoalsBankPageProps = {}) {
                           </select>
                           <CategoryCombobox value={editForm.category} onChange={(val) => setEditForm((p) => ({ ...p, category: val }))} discipline={editForm.discipline} source="goals_bank" placeholder="Category" className="text-sm" />
                         </div>
+                        <div className="mb-2">
+                          <label className="text-xs text-[var(--color-text-secondary)] mb-0.5 block">Measurement</label>
+                          <select className="select text-xs py-1" value={editForm.measurement_type} onChange={(e) => setEditForm((p) => ({ ...p, measurement_type: e.target.value as MeasurementType }))}>
+                            {(DISCIPLINE_MEASUREMENT_OPTIONS[editForm.discipline] || []).map(mt => (
+                              <option key={mt} value={mt}>{MEASUREMENT_TYPE_LABELS[mt]?.split(' (')[0] || mt}</option>
+                            ))}
+                          </select>
+                        </div>
                         <textarea className="textarea text-sm" rows={3} value={editForm.goal_template} onChange={(e) => setEditForm((p) => ({ ...p, goal_template: e.target.value }))} />
                         <div className="flex items-center gap-2">
                           <button className="btn-primary btn-sm text-xs" onClick={handleSaveEdit}>Save</button>
@@ -399,6 +428,9 @@ export default function GoalsBankPage({ embedded }: GoalsBankPageProps = {}) {
                             </span>
                             <span className="badge text-[10px] bg-indigo-100 text-indigo-700">
                               {formatCategory(entry.category)}
+                            </span>
+                            <span className="badge text-[10px] bg-teal-100 text-teal-700">
+                              {MEASUREMENT_TYPE_LABELS[entry.measurement_type || 'percentage']?.split(' (')[0] || entry.measurement_type || 'Percentage'}
                             </span>
                             {entry.is_default && (
                               <span className="badge text-[10px] bg-gray-100 text-gray-500">

@@ -44,6 +44,7 @@ const api = {
   progressReportGoals: {
     listByNote: (noteId: number) => ipcRenderer.invoke('progressReportGoals:listByNote', noteId),
     upsert: (noteId: number, goals: any[]) => ipcRenderer.invoke('progressReportGoals:upsert', noteId, goals),
+    getLastForGoal: (goalId: number) => ipcRenderer.invoke('progressReportGoals:getLastForGoal', goalId),
   },
 
   // Notes

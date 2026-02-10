@@ -1216,6 +1216,227 @@ function runMigrations(): void {
         }
       },
     },
+    {
+      version: 30,
+      description: 'Add measurement_type and structured value fields to goals, goals_bank, progress_report_goals',
+      up: () => {
+        // ── goals table ──
+        if (!columnExists('goals', 'measurement_type')) {
+          db.exec("ALTER TABLE goals ADD COLUMN measurement_type TEXT DEFAULT 'percentage'");
+        }
+        if (!columnExists('goals', 'baseline_value')) {
+          db.exec("ALTER TABLE goals ADD COLUMN baseline_value TEXT DEFAULT ''");
+        }
+        if (!columnExists('goals', 'target_value')) {
+          db.exec("ALTER TABLE goals ADD COLUMN target_value TEXT DEFAULT ''");
+        }
+        if (!columnExists('goals', 'instrument')) {
+          db.exec("ALTER TABLE goals ADD COLUMN instrument TEXT DEFAULT ''");
+        }
+
+        // Backfill existing goals: their baseline/target are integers 0-100, treat as percentage
+        const existingGoals = db.prepare(
+          "SELECT id, baseline, target FROM goals WHERE deleted_at IS NULL"
+        ).all() as Array<{ id: number; baseline: number; target: number }>;
+
+        const updateStmt = db.prepare(
+          "UPDATE goals SET measurement_type = 'percentage', baseline_value = ?, target_value = ? WHERE id = ?"
+        );
+        for (const goal of existingGoals) {
+          updateStmt.run(
+            `${goal.baseline || 0}`,
+            `${goal.target || 0}`,
+            goal.id
+          );
+        }
+
+        // ── goals_bank table ──
+        if (!columnExists('goals_bank', 'measurement_type')) {
+          db.exec("ALTER TABLE goals_bank ADD COLUMN measurement_type TEXT DEFAULT 'percentage'");
+        }
+
+        // Backfill bank entries based on category
+        const categoryMeasurements: Record<string, string> = {
+          'Mobility': 'assist_level', 'Transfers': 'assist_level',
+          'Strength': 'mmt_grade', 'ROM': 'rom_degrees',
+          'Balance': 'timed_seconds', 'Pain Management': 'pain_scale',
+          'Functional Activity': 'assist_level', 'Gait': 'assist_level',
+          'Endurance': 'timed_seconds', 'Posture': 'percentage',
+          'ADLs': 'assist_level', 'Fine Motor': 'percentage',
+          'Visual Motor': 'percentage', 'Sensory Processing': 'severity',
+          'Handwriting': 'percentage', 'Self-Care': 'assist_level',
+          'Feeding': 'assist_level', 'Upper Extremity': 'assist_level',
+          'Cognitive': 'cue_level', 'Play Skills': 'cue_level',
+          'Articulation': 'percentage', 'Language Comprehension': 'percentage',
+          'Language Expression': 'percentage', 'Fluency': 'severity',
+          'Voice': 'severity', 'Pragmatics': 'cue_level',
+          'Phonological Awareness': 'percentage', 'Feeding/Swallowing': 'severity',
+          'AAC': 'cue_level', 'Cognitive-Communication': 'cue_level',
+          'Depression': 'standardized_score', 'Anxiety': 'standardized_score',
+          'Trauma': 'standardized_score', 'Relationship': 'severity',
+          'Family Systems': 'severity', 'Coping Skills': 'severity',
+          'Self-Esteem': 'severity', 'Grief': 'severity',
+          'Behavioral': 'frequency',
+        };
+
+        const updateBank = db.prepare(
+          'UPDATE goals_bank SET measurement_type = ? WHERE category = ?'
+        );
+        for (const [category, mtype] of Object.entries(categoryMeasurements)) {
+          updateBank.run(mtype, category);
+        }
+
+        // ── progress_report_goals table ──
+        if (!columnExists('progress_report_goals', 'measurement_type')) {
+          db.exec("ALTER TABLE progress_report_goals ADD COLUMN measurement_type TEXT DEFAULT ''");
+        }
+        if (!columnExists('progress_report_goals', 'current_value')) {
+          db.exec("ALTER TABLE progress_report_goals ADD COLUMN current_value TEXT DEFAULT ''");
+        }
+        if (!columnExists('progress_report_goals', 'current_numeric')) {
+          db.exec("ALTER TABLE progress_report_goals ADD COLUMN current_numeric INTEGER DEFAULT 0");
+        }
+        if (!columnExists('progress_report_goals', 'baseline_value_snapshot')) {
+          db.exec("ALTER TABLE progress_report_goals ADD COLUMN baseline_value_snapshot TEXT DEFAULT ''");
+        }
+        if (!columnExists('progress_report_goals', 'target_value_snapshot')) {
+          db.exec("ALTER TABLE progress_report_goals ADD COLUMN target_value_snapshot TEXT DEFAULT ''");
+        }
+      },
+    },
+    {
+      version: 31,
+      description: 'Overhaul goals_bank with measurement-type-aware templates for all disciplines',
+      up: () => {
+        // Delete ALL default goals bank entries — they'll be re-seeded with proper measurement_type
+        db.prepare("DELETE FROM goals_bank WHERE is_default = 1").run();
+
+        // Re-seed using inline INSERT since seed functions have guards that prevent re-running
+        const ins = db.prepare(
+          'INSERT INTO goals_bank (discipline, category, goal_template, measurement_type, is_default) VALUES (?, ?, ?, ?, 1)'
+        );
+
+        // PT
+        ins.run('PT', 'Mobility', 'ambulate ___ ft with ___ device', 'assist_level');
+        ins.run('PT', 'Mobility', 'ambulate on level surfaces with normalized gait pattern', 'assist_level');
+        ins.run('PT', 'Mobility', 'navigate stairs with ___ railing', 'assist_level');
+        ins.run('PT', 'Mobility', 'perform sit-to-stand from standard height chair', 'assist_level');
+        ins.run('PT', 'Mobility', 'ambulate community distances of ___ ft on uneven surfaces', 'assist_level');
+        ins.run('PT', 'Strength', 'demonstrate ___ strength in ___', 'mmt_grade');
+        ins.run('PT', 'Strength', 'improve ___ (LE/UE) strength for functional mobility', 'mmt_grade');
+        ins.run('PT', 'Strength', 'improve core stability for upright functional tasks', 'mmt_grade');
+        ins.run('PT', 'ROM', 'achieve ___ AROM', 'rom_degrees');
+        ins.run('PT', 'ROM', 'demonstrate functional ROM for ___ activities', 'rom_degrees');
+        ins.run('PT', 'ROM', 'improve ___ flexibility for pain-free movement', 'rom_degrees');
+        ins.run('PT', 'Balance', 'maintain static standing balance without LOB', 'timed_seconds');
+        ins.run('PT', 'Balance', 'perform dynamic balance activities without LOB', 'timed_seconds');
+        ins.run('PT', 'Balance', 'maintain single-leg stance', 'timed_seconds');
+        ins.run('PT', 'Balance', 'achieve improved Berg Balance Scale score', 'standardized_score');
+        ins.run('PT', 'Pain Management', 'report reduced pain with functional activities', 'pain_scale');
+        ins.run('PT', 'Pain Management', 'manage pain during ADLs using learned strategies', 'pain_scale');
+        ins.run('PT', 'Functional Activity', 'independently perform HEP with correct form', 'assist_level');
+        ins.run('PT', 'Functional Activity', 'return to ___ (work/sport/activity) without limitations', 'assist_level');
+        ins.run('PT', 'Functional Activity', 'tolerate upright activity for ___ minutes', 'assist_level');
+        ins.run('PT', 'Transfers', 'complete bed mobility', 'assist_level');
+        ins.run('PT', 'Transfers', 'perform all functional transfers', 'assist_level');
+        ins.run('PT', 'Transfers', 'perform car transfer safely', 'assist_level');
+        ins.run('PT', 'Gait', 'demonstrate normalized gait mechanics', 'assist_level');
+        ins.run('PT', 'Gait', 'ambulate with reciprocal gait pattern', 'assist_level');
+
+        // OT
+        ins.run('OT', 'ADLs', 'complete upper body dressing', 'assist_level');
+        ins.run('OT', 'ADLs', 'complete lower body dressing', 'assist_level');
+        ins.run('OT', 'ADLs', 'complete grooming tasks', 'assist_level');
+        ins.run('OT', 'ADLs', 'complete bathing', 'assist_level');
+        ins.run('OT', 'ADLs', 'feed self with appropriate utensils', 'assist_level');
+        ins.run('OT', 'ADLs', 'prepare a simple meal', 'assist_level');
+        ins.run('OT', 'ADLs', 'manage medications', 'assist_level');
+        ins.run('OT', 'ADLs', 'perform light housekeeping tasks', 'assist_level');
+        ins.run('OT', 'ADLs', 'complete toileting and hygiene', 'assist_level');
+        ins.run('OT', 'Fine Motor', 'demonstrate functional grasp/release for ___ tasks', 'percentage');
+        ins.run('OT', 'Fine Motor', 'improve fine motor coordination for ___ tasks', 'percentage');
+        ins.run('OT', 'Fine Motor', 'demonstrate bilateral coordination for functional tasks', 'percentage');
+        ins.run('OT', 'Cognitive', 'follow ___-step commands for functional tasks', 'cue_level');
+        ins.run('OT', 'Cognitive', 'demonstrate improved sequencing for ___-step tasks', 'cue_level');
+        ins.run('OT', 'Cognitive', 'utilize compensatory strategies for ___ tasks', 'cue_level');
+        ins.run('OT', 'Cognitive', 'demonstrate safe problem-solving during ___ tasks', 'cue_level');
+        ins.run('OT', 'Upper Extremity', 'achieve functional UE AROM for ___ activities', 'assist_level');
+        ins.run('OT', 'Upper Extremity', 'demonstrate functional UE strength for ___ tasks', 'assist_level');
+        ins.run('OT', 'Self-Care', 'demonstrate safe ___ techniques', 'assist_level');
+        ins.run('OT', 'Self-Care', 'use adaptive equipment for ___ tasks', 'assist_level');
+        ins.run('OT', 'Sensory Processing', 'tolerate ___ sensory input during functional tasks', 'severity');
+        ins.run('OT', 'Sensory Processing', 'demonstrate improved self-regulation strategies', 'severity');
+
+        // ST
+        ins.run('ST', 'Articulation', 'produce target sounds in ___ position at ___ level', 'percentage');
+        ins.run('ST', 'Articulation', 'produce intelligible speech in ___ context', 'percentage');
+        ins.run('ST', 'Articulation', 'self-correct articulation errors in ___ context', 'percentage');
+        ins.run('ST', 'Language Expression', 'name items in ___ categories', 'percentage');
+        ins.run('ST', 'Language Expression', 'produce grammatically correct sentences of ___+ words', 'percentage');
+        ins.run('ST', 'Language Expression', 'use word retrieval strategies in conversation', 'percentage');
+        ins.run('ST', 'Language Expression', 'formulate complete sentences to express wants/needs', 'percentage');
+        ins.run('ST', 'Language Expression', 'retell a story/event with appropriate detail', 'percentage');
+        ins.run('ST', 'Language Comprehension', 'follow ___-step directions', 'percentage');
+        ins.run('ST', 'Language Comprehension', 'answer ___ questions about presented material', 'percentage');
+        ins.run('ST', 'Language Comprehension', 'identify main idea and details in ___ material', 'percentage');
+        ins.run('ST', 'Language Comprehension', 'demonstrate understanding of age-appropriate vocabulary', 'percentage');
+        ins.run('ST', 'Language Comprehension', 'make inferences from presented material', 'percentage');
+        ins.run('ST', 'Voice', 'demonstrate appropriate vocal quality during ___ tasks', 'severity');
+        ins.run('ST', 'Voice', 'maintain adequate breath support for connected speech', 'severity');
+        ins.run('ST', 'Voice', 'use resonant voice techniques in ___ context', 'severity');
+        ins.run('ST', 'Fluency', 'use ___ fluency strategy in ___ context', 'severity');
+        ins.run('ST', 'Fluency', 'demonstrate fluent speech in ___ speaking tasks', 'severity');
+        ins.run('ST', 'Fluency', 'self-monitor speech rate during conversation', 'severity');
+        ins.run('ST', 'Feeding/Swallowing', 'safely tolerate ___ consistency', 'severity');
+        ins.run('ST', 'Feeding/Swallowing', 'demonstrate safe swallow with ___ diet with no s/s aspiration', 'severity');
+        ins.run('ST', 'Feeding/Swallowing', 'use ___ compensatory swallow strategy during meals', 'severity');
+        ins.run('ST', 'Cognitive-Communication', 'recall ___/5 items after ___ delay', 'cue_level');
+        ins.run('ST', 'Cognitive-Communication', 'sustain attention for ___ min on ___ task', 'cue_level');
+        ins.run('ST', 'Cognitive-Communication', 'identify safety concerns in functional scenarios', 'cue_level');
+        ins.run('ST', 'Cognitive-Communication', 'demonstrate functional problem-solving skills', 'cue_level');
+        ins.run('ST', 'Cognitive-Communication', 'use compensatory memory strategies during daily tasks', 'cue_level');
+        ins.run('ST', 'Pragmatics', 'maintain appropriate topic during conversation', 'cue_level');
+        ins.run('ST', 'Pragmatics', 'demonstrate appropriate turn-taking in conversation', 'cue_level');
+
+        // MFT
+        ins.run('MFT', 'Depression', 'report reduction in depressive symptoms as measured by PHQ-9', 'standardized_score');
+        ins.run('MFT', 'Depression', 'identify and practice ___ positive coping strategies for managing depressive episodes', 'standardized_score');
+        ins.run('MFT', 'Depression', 'engage in ___ pleasurable activities per week as reported in session', 'standardized_score');
+        ins.run('MFT', 'Anxiety', 'report reduction in anxiety symptoms as measured by GAD-7', 'standardized_score');
+        ins.run('MFT', 'Anxiety', 'demonstrate use of ___ anxiety management techniques in daily life', 'standardized_score');
+        ins.run('MFT', 'Anxiety', 'reduce avoidance behaviors related to ___', 'standardized_score');
+        ins.run('MFT', 'Trauma', 'demonstrate reduction in trauma-related symptoms as measured by PCL-5', 'standardized_score');
+        ins.run('MFT', 'Trauma', 'develop and utilize a safety plan for managing trauma triggers', 'standardized_score');
+        ins.run('MFT', 'Trauma', 'process traumatic experiences as evidenced by decreased avoidance and intrusive symptoms', 'standardized_score');
+        ins.run('MFT', 'Relationship', 'demonstrate improved communication skills with partner/family', 'severity');
+        ins.run('MFT', 'Relationship', 'identify and modify negative interaction patterns', 'severity');
+        ins.run('MFT', 'Relationship', 'report improved relationship satisfaction', 'severity');
+        ins.run('MFT', 'Relationship', 'demonstrate effective conflict resolution strategies', 'severity');
+        ins.run('MFT', 'Family Systems', 'establish and maintain healthy boundaries with family members', 'severity');
+        ins.run('MFT', 'Family Systems', 'demonstrate improved conflict resolution skills within the family', 'severity');
+        ins.run('MFT', 'Family Systems', 'implement consistent parenting strategies as discussed in session', 'severity');
+        ins.run('MFT', 'Family Systems', 'increase frequency of positive family interactions', 'severity');
+        ins.run('MFT', 'Coping Skills', 'identify and practice ___ healthy coping mechanisms for managing ___', 'severity');
+        ins.run('MFT', 'Coping Skills', 'demonstrate ability to use grounding techniques when experiencing distress', 'severity');
+        ins.run('MFT', 'Coping Skills', 'develop a personalized wellness plan including ___ self-care activities', 'severity');
+        ins.run('MFT', 'Self-Esteem', 'identify personal strengths and report improved self-perception', 'severity');
+        ins.run('MFT', 'Self-Esteem', 'challenge negative self-beliefs as evidenced by cognitive restructuring', 'severity');
+        ins.run('MFT', 'Grief', 'process grief related to ___ as evidenced by decreased emotional distress', 'severity');
+        ins.run('MFT', 'Grief', 'identify healthy ways to honor/memorialize their loss', 'severity');
+        ins.run('MFT', 'Behavioral', 'reduce frequency of ___ (target behavior)', 'frequency');
+        ins.run('MFT', 'Behavioral', 'increase frequency of ___ (replacement behavior)', 'frequency');
+        ins.run('MFT', 'Behavioral', 'identify triggers for maladaptive behaviors and develop alternative responses', 'frequency');
+      },
+    },
+    {
+      version: 32,
+      description: 'Add pattern_id and components_json columns for pattern-based goals',
+      up: () => {
+        // goals table
+        try { db.exec("ALTER TABLE goals ADD COLUMN pattern_id TEXT DEFAULT ''"); } catch {}
+        try { db.exec("ALTER TABLE goals ADD COLUMN components_json TEXT DEFAULT ''"); } catch {}
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);

@@ -29,8 +29,12 @@ import {
   Archive,
   AlertTriangle,
 } from 'lucide-react';
-import type { Client, Note, Goal, GoalStatus, Discipline, SOAPSection, NoteFormat, CptLine, PlaceOfService, ContractedEntity, EntityFeeSchedule, StagedGoal, ProgressReportGoalStatus, ProgressReportData, ComplianceTracking, VisitType, GoalsBankEntry, Evaluation, NoteMode, DischargeData, DischargeGoalStatus, DischargeReason, DischargeRecommendation, EpisodeSummary } from '../../shared/types';
-import { NOTE_FORMAT_SECTIONS, PROGRESS_REPORT_GOAL_STATUS_LABELS, DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS } from '../../shared/types';
+import type { Client, Note, Goal, GoalStatus, Discipline, SOAPSection, NoteFormat, CptLine, PlaceOfService, ContractedEntity, EntityFeeSchedule, StagedGoal, ProgressReportGoalStatus, ProgressReportData, ComplianceTracking, VisitType, GoalsBankEntry, Evaluation, NoteMode, DischargeData, DischargeGoalStatus, DischargeReason, DischargeRecommendation, EpisodeSummary, MeasurementType } from '../../shared/types';
+import { NOTE_FORMAT_SECTIONS, PROGRESS_REPORT_GOAL_STATUS_LABELS, DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS, MEASUREMENT_TYPE_LABELS } from '../../shared/types';
+import { formatMetricValue } from '../../shared/compose-goal-text';
+import MeasurementChips from '../components/MeasurementChips';
+import GoalProgressBar from '../components/GoalProgressBar';
+import { METRIC_OPTIONS, calculateProgress, getMetricDirection } from '../../shared/goal-metrics';
 import type { ValidationIssue, ValidationFixes } from '../../shared/types/validation';
 import SignConfirmDialog from '../components/SignConfirmDialog';
 import CptCombobox from '../components/CptCombobox';
@@ -259,6 +263,11 @@ export default function NoteFormPage() {
     staged_goal_id: number | null;
     baseline_snapshot: number;
     target_snapshot: number;
+    measurement_type?: MeasurementType;
+    current_value?: string;
+    current_numeric?: number;
+    baseline_value_snapshot?: string;
+    target_value_snapshot?: string;
   }[]>([]);
   const [complianceData, setComplianceData] = useState<ComplianceTracking | null>(null);
   const [progressReportGoals, setProgressReportGoals] = useState<{
@@ -273,6 +282,11 @@ export default function NoteFormPage() {
     staged_goal_id: number | null;
     baseline_snapshot: number;
     target_snapshot: number;
+    measurement_type?: MeasurementType;
+    current_value?: string;
+    current_numeric?: number;
+    baseline_value_snapshot?: string;
+    target_value_snapshot?: string;
   }[]>([]);
   const [clinicalSummary, setClinicalSummary] = useState('');
   const [continuedTreatmentJustification, setContinuedTreatmentJustification] = useState('');
@@ -459,6 +473,11 @@ export default function NoteFormPage() {
               staged_goal_id: g.staged_goal_id || null,
               baseline_snapshot: g.baseline_snapshot ?? 0,
               target_snapshot: g.target_snapshot ?? 0,
+              measurement_type: g.measurement_type || 'percentage',
+              current_value: g.current_value || '',
+              current_numeric: g.current_numeric ?? 0,
+              baseline_value_snapshot: g.baseline_value_snapshot || '',
+              target_value_snapshot: g.target_value_snapshot || '',
             })));
           } catch {}
         }
@@ -484,6 +503,11 @@ export default function NoteFormPage() {
               staged_goal_id: null,
               baseline_snapshot: g.baseline_snapshot ?? 0,
               target_snapshot: g.target_snapshot ?? 0,
+              measurement_type: g.measurement_type || 'percentage',
+              current_value: g.current_value || '',
+              current_numeric: g.current_numeric ?? 0,
+              baseline_value_snapshot: g.baseline_value_snapshot || '',
+              target_value_snapshot: g.target_value_snapshot || '',
             })));
           } catch {}
         }
@@ -1284,13 +1308,31 @@ export default function NoteFormPage() {
     setNoteMode(mode);
 
     if (mode === 'progress_report' && activeGoals.length > 0) {
-      setProgressReportGoals(activeGoals.map(g => ({
+      // Build initial PR goals, then pre-fill current_value from last signed PR
+      const prGoals = activeGoals.map(g => ({
         goal_id: g.id, goal_text_snapshot: g.goal_text, goal_type: g.goal_type || 'STG',
         status_at_report: 'progressing' as ProgressReportGoalStatus,
         performance_data: '', clinical_notes: '',
         is_new_goal: false, is_staged_promotion: false, staged_goal_id: null,
         baseline_snapshot: g.baseline ?? 0, target_snapshot: g.target ?? 0,
-      })));
+        measurement_type: g.measurement_type || 'percentage',
+        current_value: '', current_numeric: 0,
+        baseline_value_snapshot: g.baseline_value || '',
+        target_value_snapshot: g.target_value || '',
+      }));
+
+      // Pre-fill from last signed progress report
+      for (let i = 0; i < prGoals.length; i++) {
+        try {
+          const lastPR = await window.api.progressReportGoals.getLastForGoal(prGoals[i].goal_id);
+          if (lastPR?.current_value) {
+            prGoals[i].current_value = lastPR.current_value;
+            prGoals[i].current_numeric = lastPR.current_numeric ?? 0;
+          }
+        } catch { /* not critical */ }
+      }
+
+      setProgressReportGoals(prGoals);
     }
 
     if (mode === 'discharge') {
@@ -1307,7 +1349,23 @@ export default function NoteFormPage() {
         staged_goal_id: null,
         baseline_snapshot: g.baseline ?? 0,
         target_snapshot: g.target ?? 0,
+        measurement_type: g.measurement_type || 'percentage',
+        current_value: '', current_numeric: 0,
+        baseline_value_snapshot: g.baseline_value || '',
+        target_value_snapshot: g.target_value || '',
       }));
+
+      // Pre-fill current_value from last signed progress report
+      for (let i = 0; i < dcGoals.length; i++) {
+        try {
+          const lastPR = await window.api.progressReportGoals.getLastForGoal(dcGoals[i].goal_id);
+          if (lastPR?.current_value) {
+            dcGoals[i].current_value = lastPR.current_value;
+            dcGoals[i].current_numeric = lastPR.current_numeric ?? 0;
+          }
+        } catch { /* not critical */ }
+      }
+
       setDischargeGoals(dcGoals);
 
       // Load episode summary
@@ -1904,14 +1962,37 @@ export default function NoteFormPage() {
                       {prg.goal_type}
                     </span>
                     <p className="text-sm font-medium text-[var(--color-text)] flex-1">{prg.goal_text_snapshot}</p>
-                    {(prg.baseline_snapshot > 0 || prg.target_snapshot > 0) && (
-                      <span className="flex items-center gap-1 text-[10px] font-medium shrink-0">
-                        <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">{prg.baseline_snapshot}%</span>
-                        <span className="text-[var(--color-text-secondary)]">&rarr;</span>
-                        <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">{prg.target_snapshot}%</span>
-                      </span>
-                    )}
                   </div>
+                  {/* GoalProgressBar */}
+                  {(prg.baseline_value_snapshot || prg.baseline_snapshot > 0 || prg.target_value_snapshot || prg.target_snapshot > 0) && (
+                    <GoalProgressBar
+                      measurement_type={(prg.measurement_type || 'percentage') as MeasurementType}
+                      baseline_value={prg.baseline_value_snapshot || `${prg.baseline_snapshot}`}
+                      baseline_numeric={prg.baseline_snapshot ?? 0}
+                      current_value={prg.current_value || undefined}
+                      current_numeric={prg.current_numeric ?? undefined}
+                      target_value={prg.target_value_snapshot || `${prg.target_snapshot}`}
+                      target_numeric={prg.target_snapshot ?? 0}
+                    />
+                  )}
+                  {/* Current Level chips for measurement type */}
+                  {prg.measurement_type && prg.measurement_type !== 'custom_text' && (
+                    <div className="mb-3">
+                      <MeasurementChips
+                        measurement_type={(prg.measurement_type || 'percentage') as MeasurementType}
+                        label="Current Level"
+                        value={prg.current_value || ''}
+                        numericValue={prg.current_numeric ?? 0}
+                        colorScheme="target"
+                        disabled={!!existingSignedAt}
+                        onSelect={(val, num) => {
+                          const updated = [...progressReportGoals];
+                          updated[idx] = { ...updated[idx], current_value: val, current_numeric: num };
+                          setProgressReportGoals(updated);
+                        }}
+                      />
+                    </div>
+                  )}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
                       <label className="label text-xs">Status</label>
@@ -1928,8 +2009,8 @@ export default function NoteFormPage() {
                       </select>
                     </div>
                     <div className="md:col-span-2">
-                      <label className="label text-xs">Current Performance</label>
-                      <input className="input text-sm w-full" placeholder="e.g., 75% accuracy, moderate cueing"
+                      <label className="label text-xs">Performance Summary</label>
+                      <input className="input text-sm w-full" placeholder="Brief narrative (metric captured above)"
                         disabled={!!existingSignedAt}
                         value={prg.performance_data}
                         onChange={(e) => {
@@ -1971,11 +2052,19 @@ export default function NoteFormPage() {
                         {goal.status === 'met' ? '✓ Met' : "DC'd"}
                       </span>
                       <span className="text-xs text-[var(--color-text-secondary)] flex-1">{goal.goal_text}</span>
-                      {(goal.baseline > 0 || goal.target > 0) && (
+                      {(goal.baseline_value || goal.baseline > 0 || goal.target_value || goal.target > 0) && (
                         <span className="flex items-center gap-1 text-[10px] font-medium shrink-0">
-                          <span className="px-1 py-0.5 rounded bg-amber-50 text-amber-600">{goal.baseline}%</span>
+                          <span className="px-1 py-0.5 rounded bg-amber-50 text-amber-600">
+                            {goal.baseline_value
+                              ? formatMetricValue((goal.measurement_type || 'percentage') as MeasurementType, goal.baseline_value)
+                              : `${goal.baseline}%`}
+                          </span>
                           <span className="text-[var(--color-text-secondary)]">&rarr;</span>
-                          <span className="px-1 py-0.5 rounded bg-emerald-50 text-emerald-600">{goal.target}%</span>
+                          <span className="px-1 py-0.5 rounded bg-emerald-50 text-emerald-600">
+                            {goal.target_value
+                              ? formatMetricValue((goal.measurement_type || 'percentage') as MeasurementType, goal.target_value)
+                              : `${goal.target}%`}
+                          </span>
                         </span>
                       )}
                       {goal.met_date && <span className="text-[10px] text-green-600">{goal.met_date}</span>}
@@ -2011,6 +2100,10 @@ export default function NoteFormPage() {
                             performance_data: '', clinical_notes: '',
                             is_new_goal: true, is_staged_promotion: true, staged_goal_id: sg.id,
                             baseline_snapshot: result.goal.baseline ?? 0, target_snapshot: result.goal.target ?? 0,
+                            measurement_type: result.goal.measurement_type || 'percentage',
+                            current_value: '', current_numeric: 0,
+                            baseline_value_snapshot: result.goal.baseline_value || '',
+                            target_value_snapshot: result.goal.target_value || '',
                           }]);
                           const [updatedStaged, updatedGoals] = await Promise.all([
                             window.api.stagedGoals.listByClient(parseInt(clientId, 10)),
@@ -2309,14 +2402,37 @@ export default function NoteFormPage() {
                       {dg.goal_type}
                     </span>
                     <p className="text-sm font-medium text-[var(--color-text)] flex-1">{dg.goal_text_snapshot}</p>
-                    {(dg.baseline_snapshot > 0 || dg.target_snapshot > 0) && (
-                      <span className="flex items-center gap-1 text-[10px] font-medium shrink-0">
-                        <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">{dg.baseline_snapshot}%</span>
-                        <span className="text-[var(--color-text-secondary)]">&rarr;</span>
-                        <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">{dg.target_snapshot}%</span>
-                      </span>
-                    )}
                   </div>
+                  {/* GoalProgressBar for discharge */}
+                  {(dg.baseline_value_snapshot || dg.baseline_snapshot > 0 || dg.target_value_snapshot || dg.target_snapshot > 0) && (
+                    <GoalProgressBar
+                      measurement_type={(dg.measurement_type || 'percentage') as MeasurementType}
+                      baseline_value={dg.baseline_value_snapshot || `${dg.baseline_snapshot}`}
+                      baseline_numeric={dg.baseline_snapshot ?? 0}
+                      current_value={dg.current_value || undefined}
+                      current_numeric={dg.current_numeric ?? undefined}
+                      target_value={dg.target_value_snapshot || `${dg.target_snapshot}`}
+                      target_numeric={dg.target_snapshot ?? 0}
+                    />
+                  )}
+                  {/* Final Level chips for measurement type */}
+                  {dg.measurement_type && dg.measurement_type !== 'custom_text' && (
+                    <div className="mb-3">
+                      <MeasurementChips
+                        measurement_type={(dg.measurement_type || 'percentage') as MeasurementType}
+                        label="Final Level at Discharge"
+                        value={dg.current_value || ''}
+                        numericValue={dg.current_numeric ?? 0}
+                        colorScheme="target"
+                        disabled={!!existingSignedAt}
+                        onSelect={(val, num) => {
+                          const updated = [...dischargeGoals];
+                          updated[idx] = { ...updated[idx], current_value: val, current_numeric: num };
+                          setDischargeGoals(updated);
+                        }}
+                      />
+                    </div>
+                  )}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
                       <label className="label text-xs">Final Status <span className="text-red-500">*</span></label>
@@ -2625,6 +2741,17 @@ export default function NoteFormPage() {
                       <p className="text-[var(--color-text)] leading-snug mb-1.5">
                         {goal.goal_text}
                       </p>
+                      {/* Measurement progress bar */}
+                      {(goal.baseline_value || goal.baseline > 0 || goal.target_value || goal.target > 0) && (
+                        <GoalProgressBar
+                          measurement_type={(goal.measurement_type || 'percentage') as MeasurementType}
+                          baseline_value={goal.baseline_value || `${goal.baseline}`}
+                          baseline_numeric={goal.baseline ?? 0}
+                          target_value={goal.target_value || `${goal.target}`}
+                          target_numeric={goal.target ?? 0}
+                          compact
+                        />
+                      )}
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className={`badge text-[10px] ${goal.goal_type === 'STG' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
                           {goal.goal_type}

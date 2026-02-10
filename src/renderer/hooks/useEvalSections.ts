@@ -38,7 +38,7 @@ interface EvalSectionInput {
     };
   } | null;
   evalDate: string;
-  goalEntries: Array<{ goal_text: string }>;
+  goalEntries: Array<{ goal_text: string; goal_type?: string }>;
   completedGoals: any[];
   signatureImage: string;
   signatureTyped: string;
@@ -145,8 +145,11 @@ export function useEvalSections(input: EvalSectionInput): UseEvalSectionsReturn 
           return { hasContent: !!content.rehabilitation_potential?.trim(), visible: true };
         case 'precautions':
           return { hasContent: !!content.precautions?.trim(), visible: true };
-        case 'goals':
-          return { hasContent: goalEntries.length > 0 && goalEntries.some((g) => g.goal_text.trim()), visible: true };
+        case 'goals': {
+          const hasGoalText = goalEntries.length > 0 && goalEntries.some((g) => g.goal_text.trim());
+          const hasLTG = goalEntries.some((g) => g.goal_type === 'LTG' && g.goal_text.trim());
+          return { hasContent: hasGoalText && hasLTG, visible: true };
+        }
         case 'goalsMet':
           return { hasContent: completedGoals.length > 0, visible: completedGoals.length > 0 };
         case 'treatmentPlan':

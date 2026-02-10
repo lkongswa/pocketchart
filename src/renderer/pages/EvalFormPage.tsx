@@ -20,7 +20,16 @@ import {
   ChevronRight,
   Receipt,
 } from 'lucide-react';
-import type { Client, Evaluation, Discipline, GoalType, EvalGoalEntry, GoalsBankEntry, CptLine, PlaceOfService, SOAPSection } from '../../shared/types';
+import type { Client, Evaluation, Discipline, GoalType, EvalGoalEntry, GoalsBankEntry, CptLine, PlaceOfService, SOAPSection, MeasurementType } from '../../shared/types';
+import { composeGoalText as sharedComposeGoalText, isAutoComposedGoalText, metricValueToNumeric } from '../../shared/compose-goal-text';
+import type { GoalPattern } from '../../shared/goal-patterns';
+import { CUSTOM_PATTERN, getPatternById } from '../../shared/goal-patterns';
+import GoalPatternPicker from '../components/GoalPatternPicker';
+import GoalComponentFields from '../components/GoalComponentFields';
+import type { ConsistencyValue } from '../components/ConsistencyCriterion';
+import MeasurementChips from '../components/MeasurementChips';
+import MeasurementTypeSelector from '../components/MeasurementTypeSelector';
+import { CATEGORY_DEFAULT_MEASUREMENT, DEFAULT_INSTRUMENTS } from '../../shared/goal-metrics';
 import type { ValidationIssue, ValidationFixes } from '../../shared/types/validation';
 
 import SignConfirmDialog from '../components/SignConfirmDialog';
@@ -621,8 +630,12 @@ export default function EvalFormPage() {
           if (parsed.goal_entries && Array.isArray(parsed.goal_entries)) {
             loadedEntries = parsed.goal_entries.map((g: any) => ({
               ...g,
+              measurement_type: g.measurement_type || 'percentage',
               baseline: g.baseline ?? 0,
-              target: g.target ?? 80,
+              target: g.target ?? 0,
+              baseline_value: g.baseline_value || `${g.baseline ?? 0}`,
+              target_value: g.target_value || `${g.target ?? 0}`,
+              instrument: g.instrument || '',
             }));
             if (parsed.created_goal_ids && parsed.created_goal_ids.length > 0) {
               alreadyCreatedIds = parsed.created_goal_ids;
@@ -651,8 +664,12 @@ export default function EvalFormPage() {
                   goal_type: cg.goal_type || 'STG',
                   category: cg.category || '',
                   target_date: cg.target_date || '',
+                  measurement_type: cg.measurement_type || 'percentage',
                   baseline: cg.baseline ?? 0,
-                  target: cg.target ?? 80,
+                  target: cg.target ?? 0,
+                  baseline_value: cg.baseline_value || `${cg.baseline ?? 0}`,
+                  target_value: cg.target_value || `${cg.target ?? 0}`,
+                  instrument: cg.instrument || '',
                 });
                 alreadyCreatedIds.push(cg.id);
               }
@@ -752,8 +769,14 @@ export default function EvalFormPage() {
                 goal_type: g.goal_type || 'STG',
                 category: g.category || '',
                 target_date: g.target_date || '',
+                measurement_type: g.measurement_type || 'percentage',
                 baseline: g.baseline ?? 0,
-                target: g.target ?? 80,
+                target: g.target ?? 0,
+                baseline_value: g.baseline_value || `${g.baseline ?? 0}`,
+                target_value: g.target_value || `${g.target ?? 0}`,
+                instrument: g.instrument || '',
+                pattern_id: g.pattern_id || '',
+                components: g.components_json ? JSON.parse(g.components_json) : undefined,
               }));
               const linkedIds = prior.activeGoals.map((g: any) => g.id).filter(Boolean);
               setGoalEntries(entries);
@@ -807,8 +830,14 @@ export default function EvalFormPage() {
               goal_type: cg.goal_type || 'STG',
               category: cg.category || '',
               target_date: cg.target_date || '',
+              measurement_type: cg.measurement_type || 'percentage',
               baseline: cg.baseline ?? 0,
-              target: cg.target ?? 80,
+              target: cg.target ?? 0,
+              baseline_value: cg.baseline_value || `${cg.baseline ?? 0}`,
+              target_value: cg.target_value || `${cg.target ?? 0}`,
+              instrument: cg.instrument || '',
+              pattern_id: cg.pattern_id || '',
+              components: cg.components_json ? JSON.parse(cg.components_json) : undefined,
             }));
             const linkedIds = activeClientGoals.map((cg: any) => cg.id);
             setGoalEntries(entries);
@@ -906,6 +935,14 @@ export default function EvalFormPage() {
               goal_type: entry.goal_type,
               category: entry.category,
               target_date: entry.target_date,
+              measurement_type: entry.measurement_type || 'percentage',
+              baseline: entry.baseline || 0,
+              target: entry.target || 0,
+              baseline_value: entry.baseline_value || '',
+              target_value: entry.target_value || '',
+              instrument: entry.instrument || '',
+              pattern_id: entry.pattern_id || '',
+              components_json: entry.components ? JSON.stringify(entry.components) : '',
               status: 'active',
               met_date: undefined,
             });
@@ -920,8 +957,14 @@ export default function EvalFormPage() {
               goal_type: entry.goal_type,
               category: entry.category,
               target_date: entry.target_date,
+              measurement_type: entry.measurement_type || 'percentage',
               baseline: entry.baseline || 0,
               target: entry.target || 0,
+              baseline_value: entry.baseline_value || '',
+              target_value: entry.target_value || '',
+              instrument: entry.instrument || '',
+              pattern_id: entry.pattern_id || '',
+              components_json: entry.components ? JSON.stringify(entry.components) : '',
               status: 'active',
             });
             while (updatedGoalIds.length <= i) updatedGoalIds.push(0);
@@ -1062,10 +1105,29 @@ export default function EvalFormPage() {
 
   // ── Goal bank template insert ──
 
-  const insertGoalFromBank = (template: string, category: string, goalIdx: number) => {
+  const insertGoalFromBank = (bankEntry: GoalsBankEntry, goalIdx: number) => {
     isDirty.current = true;
+    const mt = bankEntry.measurement_type || CATEGORY_DEFAULT_MEASUREMENT[bankEntry.category] || 'percentage';
+    const inst = mt === 'standardized_score' ? (DEFAULT_INSTRUMENTS[bankEntry.category] || '') : '';
     setGoalEntries(prev =>
-      prev.map((g, i) => i === goalIdx ? { ...g, goal_text: template, category } : g)
+      prev.map((g, i) => {
+        if (i !== goalIdx) return g;
+        const updated = {
+          ...g,
+          goal_text: bankEntry.goal_template,
+          category: bankEntry.category,
+          measurement_type: mt as MeasurementType,
+          baseline_value: '',
+          target_value: '',
+          baseline: 0,
+          target: 0,
+          instrument: inst,
+        };
+        // Immediately compose so the text has "Patient will ..." format,
+        // which subsequent chip clicks will recognize as auto-composed.
+        updated.goal_text = composeGoalText(updated);
+        return updated;
+      })
     );
     setShowGoalBank(null);
 
@@ -1074,7 +1136,7 @@ export default function EvalFormPage() {
       const textarea = goalTextareaRefs.current.get(goalIdx);
       if (textarea) {
         textarea.focus();
-        const blankIdx = template.indexOf('___');
+        const blankIdx = textarea.value.indexOf('___');
         if (blankIdx !== -1) {
           textarea.setSelectionRange(blankIdx, blankIdx + 3);
         }
@@ -1088,42 +1150,28 @@ export default function EvalFormPage() {
     setGoalEntries(updater);
   };
 
-  /** Auto-compose goal text from structured fields */
+  /** Auto-compose goal text from structured fields (pattern-based or custom) */
   const composeGoalText = (entry: EvalGoalEntry): string => {
-    const cat = entry.category || 'functional';
-    const bl = entry.baseline ?? 0;
-    const tg = entry.target ?? 80;
-
-    // Duration label from target_date
-    let durationLabel = '';
-    if (entry.target_date) {
-      const targetDate = new Date(entry.target_date + 'T00:00:00');
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const diffDays = Math.round((targetDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-      if (diffDays <= 0) {
-        durationLabel = '';
-      } else if (diffDays <= 14) {
-        durationLabel = `${diffDays} days`;
-      } else if (diffDays <= 60) {
-        const weeks = Math.round(diffDays / 7);
-        durationLabel = `${weeks} week${weeks !== 1 ? 's' : ''}`;
-      } else if (diffDays <= 120) {
-        const months = Math.round(diffDays / 30);
-        durationLabel = `${months} month${months !== 1 ? 's' : ''}`;
-      } else {
-        const months = Math.round(diffDays / 30);
-        durationLabel = `${months} months`;
-      }
+    const pattern = entry.pattern_id ? getPatternById(entry.pattern_id) : undefined;
+    if (pattern && pattern.id !== 'custom_freeform') {
+      return sharedComposeGoalText({
+        pattern,
+        discipline: discipline as Discipline,
+        components: entry.components || {},
+        measurement_type: entry.measurement_type || 'percentage',
+        baseline_value: entry.baseline_value || `${entry.baseline ?? 0}`,
+        target_value: entry.target_value || `${entry.target ?? 80}`,
+        instrument: entry.instrument || '',
+        target_date: entry.target_date || undefined,
+      });
     }
-
-    const withinClause = durationLabel ? ` within ${durationLabel}` : '';
-    return `Pt will improve ${cat.toLowerCase()} skills from ${bl}% to ${tg}%${withinClause}.`;
+    // Custom/legacy: return existing text as-is (user writes it manually)
+    return entry.goal_text || '';
   };
 
   /** Check if goal text looks auto-composed (matches our pattern) */
   const isAutoComposed = (text: string): boolean => {
-    return /^Pt will improve .+ skills from \d+% to \d+%/.test(text.trim());
+    return isAutoComposedGoalText(text);
   };
 
   /** Update a goal entry field and auto-compose text if appropriate */
@@ -1132,8 +1180,24 @@ export default function EvalFormPage() {
       prev.map((g, i) => {
         if (i !== idx) return g;
         const updated = { ...g, ...field };
-        // Auto-compose if text is empty or was previously auto-composed
-        if (!g.goal_text.trim() || isAutoComposed(g.goal_text)) {
+        // If category changed without explicit measurement_type override, auto-update
+        if (field.category && field.category !== g.category && !field.measurement_type) {
+          const newMt = CATEGORY_DEFAULT_MEASUREMENT[field.category] || 'percentage';
+          if (newMt !== g.measurement_type) {
+            updated.measurement_type = newMt as MeasurementType;
+            updated.baseline_value = '';
+            updated.target_value = '';
+            updated.baseline = 0;
+            updated.target = 0;
+            updated.instrument = newMt === 'standardized_score'
+              ? (DEFAULT_INSTRUMENTS[field.category] || '') : '';
+          }
+        }
+        // Auto-compose if pattern-based goal, or if text was previously auto-composed
+        if (updated.pattern_id && updated.pattern_id !== 'custom_freeform') {
+          updated.goal_text = composeGoalText(updated);
+        } else if (!g.goal_text.trim() || isAutoComposed(g.goal_text)) {
+          // Legacy: only recompose if it was auto-composed before
           updated.goal_text = composeGoalText(updated);
         }
         return updated;
@@ -1897,10 +1961,15 @@ export default function EvalFormPage() {
               className="btn-ghost btn-sm gap-1 text-xs ml-auto"
               onClick={(e) => {
                 e.stopPropagation();
-                updateGoalEntries(prev => [
-                  ...prev,
-                  { goal_text: '', goal_type: 'STG' as GoalType, category: (CATEGORY_OPTIONS[discipline] || [])[0] || '', target_date: '', baseline: 0, target: 80 },
-                ]);
+                updateGoalEntries(prev => {
+                  const cat = (CATEGORY_OPTIONS[discipline] || [])[0] || '';
+                  const mt = CATEGORY_DEFAULT_MEASUREMENT[cat] || 'percentage';
+                  const inst = mt === 'standardized_score' ? (DEFAULT_INSTRUMENTS[cat] || '') : '';
+                  return [
+                    ...prev,
+                    { goal_text: '', goal_type: 'STG' as GoalType, category: cat, target_date: '', measurement_type: mt as MeasurementType, baseline: 0, target: 0, baseline_value: '', target_value: '', instrument: inst, pattern_id: '', components: undefined },
+                  ];
+                });
               }}
             >
               <Plus size={14} />
@@ -1954,21 +2023,20 @@ export default function EvalFormPage() {
                     <div className="flex items-center gap-1">
                       <button
                         type="button"
-                        className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
+                        className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors cursor-pointer ${
                           showBank ? 'bg-violet-100 text-violet-700' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] hover:bg-violet-50'
                         }`}
                         onClick={() => {
                           if (showBank) {
                             setShowGoalBank(null);
                           } else {
-                            loadGoalsBankForCategory(entry.category);
                             setShowGoalBank(idx);
                           }
                         }}
-                        title="Browse goals bank"
+                        title="Browse goal patterns"
                       >
                         <BookOpen size={12} />
-                        Goal Bank
+                        {entry.pattern_id && entry.pattern_id !== 'custom_freeform' ? 'Change Pattern' : 'Goal Patterns'}
                       </button>
                       <button
                         type="button"
@@ -1998,32 +2066,61 @@ export default function EvalFormPage() {
                     </div>
                   </div>
 
-                  {/* Goal Bank Dropdown */}
+                  {/* Pattern Picker Dropdown */}
                   {showBank && (
-                    <div className="mb-3 p-3 bg-violet-50 rounded-lg border border-violet-200 max-h-48 overflow-y-auto">
-                      <p className="text-xs font-semibold text-violet-700 mb-2">
-                        {entry.category ? `${entry.category} Templates` : 'All Templates'} ({bankForCategory.length})
-                      </p>
-                      {bankForCategory.length === 0 ? (
-                        <p className="text-xs text-[var(--color-text-secondary)] italic">
-                          No templates found for this category. Try selecting a different category.
-                        </p>
-                      ) : (
-                        <div className="space-y-1">
-                          {bankForCategory.map((bankEntry) => (
-                            <button
-                              key={bankEntry.id}
-                              type="button"
-                              className="w-full text-left p-2 rounded text-xs text-[var(--color-text)] hover:bg-violet-100 transition-colors leading-snug"
-                              onClick={() => insertGoalFromBank(bankEntry.goal_template, bankEntry.category, idx)}
-                            >
-                              {bankEntry.goal_template}
-                            </button>
-                          ))}
-                        </div>
-                      )}
+                    <div className="mb-3 p-3 bg-violet-50 rounded-lg border border-violet-200 max-h-64 overflow-y-auto">
+                      <GoalPatternPicker
+                        discipline={discipline}
+                        category={entry.category || undefined}
+                        onSelect={(pattern) => {
+                          const defaultComponents: Record<string, any> = {};
+                          for (const comp of pattern.components) {
+                            if (comp.defaultValue !== undefined) {
+                              defaultComponents[comp.key] = comp.defaultValue;
+                            }
+                          }
+                          const mt = pattern.measurement_type || 'percentage';
+                          const inst = pattern.instrument || (mt === 'standardized_score' ? (DEFAULT_INSTRUMENTS[pattern.category] || '') : '');
+                          updateGoalField(idx, {
+                            pattern_id: pattern.id,
+                            components: defaultComponents,
+                            category: pattern.category,
+                            measurement_type: mt as MeasurementType,
+                            baseline_value: entry.baseline_value || '',
+                            target_value: entry.target_value || '',
+                            instrument: inst,
+                          });
+                          setShowGoalBank(null);
+                        }}
+                        onCustom={() => {
+                          updateGoalField(idx, { pattern_id: 'custom_freeform', components: undefined });
+                          setShowGoalBank(null);
+                        }}
+                      />
                     </div>
                   )}
+
+                  {/* Pattern label + component fields */}
+                  {entry.pattern_id && entry.pattern_id !== 'custom_freeform' && (() => {
+                    const pattern = getPatternById(entry.pattern_id!);
+                    if (!pattern || pattern.components.length === 0) return null;
+                    return (
+                      <div className="mb-3 p-3 bg-violet-50/30 rounded-lg border border-violet-100">
+                        <p className="text-xs font-medium text-violet-600 mb-2">
+                          {pattern.icon} {pattern.label}
+                        </p>
+                        <GoalComponentFields
+                          pattern={pattern}
+                          components={entry.components || {}}
+                          onChange={(key, value) => {
+                            const updatedComps = { ...(entry.components || {}), [key]: value };
+                            updateGoalField(idx, { components: updatedComps });
+                          }}
+                          disabled={!!existingSignedAt}
+                        />
+                      </div>
+                    );
+                  })()}
 
                   <div className="grid grid-cols-3 gap-3 mb-3">
                     <div>
@@ -2107,46 +2204,44 @@ export default function EvalFormPage() {
                     </div>
                   </div>
 
-                  {/* Baseline / Target percentage chips */}
+                  {/* Measurement Type Selector + Baseline/Target chips */}
+                  {!existingSignedAt && (
+                    <div className="mb-2">
+                      <MeasurementTypeSelector
+                        currentType={entry.measurement_type || 'percentage'}
+                        discipline={discipline as Discipline}
+                        onChange={(type) => {
+                          const inst = type === 'standardized_score' ? (DEFAULT_INSTRUMENTS[entry.category] || '') : '';
+                          updateGoalField(idx, { measurement_type: type, baseline_value: '', target_value: '', baseline: 0, target: 0, instrument: inst });
+                        }}
+                        disabled={!!existingSignedAt}
+                      />
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-3 mb-3">
-                    <div>
-                      <label className="label text-xs">Current Level (CLOF)</label>
-                      <div className="flex items-center gap-1 flex-wrap">
-                        {[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map(pct => (
-                          <button
-                            key={`bl-${pct}`}
-                            type="button"
-                            className={`px-1.5 py-0.5 text-[10px] rounded-full border transition-colors cursor-pointer ${
-                              entry.baseline === pct
-                                ? 'bg-amber-500 text-white border-amber-500'
-                                : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-amber-400 hover:text-amber-600'
-                            }`}
-                            onClick={() => updateGoalField(idx, { baseline: pct })}
-                          >
-                            {pct}%
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div>
-                      <label className="label text-xs">Goal Level (Target)</label>
-                      <div className="flex items-center gap-1 flex-wrap">
-                        {[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map(pct => (
-                          <button
-                            key={`tg-${pct}`}
-                            type="button"
-                            className={`px-1.5 py-0.5 text-[10px] rounded-full border transition-colors cursor-pointer ${
-                              entry.target === pct
-                                ? 'bg-emerald-500 text-white border-emerald-500'
-                                : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-emerald-400 hover:text-emerald-600'
-                            }`}
-                            onClick={() => updateGoalField(idx, { target: pct })}
-                          >
-                            {pct}%
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+                    <MeasurementChips
+                      measurement_type={entry.measurement_type || 'percentage'}
+                      label="Current Level (CLOF)"
+                      value={entry.baseline_value || `${entry.baseline ?? 0}`}
+                      numericValue={entry.baseline ?? 0}
+                      instrument={entry.instrument}
+                      category={entry.category}
+                      colorScheme="baseline"
+                      disabled={!!existingSignedAt}
+                      onSelect={(val, num) => updateGoalField(idx, { baseline_value: val, baseline: num })}
+                      onInstrumentChange={(inst) => updateGoalField(idx, { instrument: inst })}
+                    />
+                    <MeasurementChips
+                      measurement_type={entry.measurement_type || 'percentage'}
+                      label="Goal Level (Target)"
+                      value={entry.target_value || `${entry.target ?? 0}`}
+                      numericValue={entry.target ?? 0}
+                      instrument={entry.instrument}
+                      category={entry.category}
+                      colorScheme="target"
+                      disabled={!!existingSignedAt}
+                      onSelect={(val, num) => updateGoalField(idx, { target_value: val, target: num })}
+                    />
                   </div>
 
                   <div>
