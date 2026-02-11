@@ -64,7 +64,10 @@ import GoalFormModal from '../components/GoalFormModal';
 import GoalBuilderModal from '../components/GoalBuilderModal';
 import ClientDiscountModal from '../components/ClientDiscountModal';
 import ClientDiscountBadge from '../components/ClientDiscountBadge';
-import GoalProgressTimeline from '../components/GoalProgressTimeline';
+import CollapsedGoalCard from '../components/CollapsedGoalCard';
+import ExpandedGoalCard from '../components/ExpandedGoalCard';
+import { goalToCardData, generateGoalFingerprint } from '../../shared/goal-card-data';
+import type { PatternOverride } from '../../shared/types';
 import ComplianceSection from '../components/ComplianceSection';
 import CommunicationLogSection from '../components/CommunicationLogSection';
 import ProFeatureGate from '../components/ProFeatureGate';
@@ -260,6 +263,8 @@ const ClientDetailPage: React.FC = () => {
   const [showAllGoals, setShowAllGoals] = useState(false);
   const [showInactiveGoals, setShowInactiveGoals] = useState(false);
   const [goalStatusMenuId, setGoalStatusMenuId] = useState<number | null>(null);
+  const [expandedGoalIdx, setExpandedGoalIdx] = useState<number | null>(0); // first active goal expanded by default
+  const [patternOverrides, setPatternOverrides] = useState<PatternOverride[]>([]);
   const [showDocuments, setShowDocuments] = useState(false);
   const [showCompliance, setShowCompliance] = useState(false);
 
@@ -339,6 +344,8 @@ const ClientDetailPage: React.FC = () => {
           setGoalHistories(histories);
         } catch { /* not critical */ }
       }
+      // Load pattern overrides for goal card display
+      window.api.patternOverrides.list().then(setPatternOverrides).catch(() => {});
       setDocuments(docsData || []);
       const safeInvoices = (invoicesData || []).map((inv: any) => ({
         ...inv,
@@ -634,6 +641,12 @@ const ClientDetailPage: React.FC = () => {
   const establishedInactive = goals.filter(g => g.status !== 'active' && isEstablishedGoal(g));
   const pendingInactive = goals.filter(g => g.status !== 'active' && !isEstablishedGoal(g));
   const inactiveGoals = [...establishedInactive, ...pendingInactive];
+
+  // Build card data for active goals (established first, then pending)
+  const allActiveGoals = [...establishedActive, ...pendingActive];
+  const activeGoalCards = allActiveGoals.map((goal, idx) =>
+    goalToCardData(goal, idx, goalHistories[goal.id] || [], patternOverrides)
+  );
 
   // Completeness checks — used by collapsible section badges
   const demographicsComplete = Boolean(client.dob && client.phone && client.gender && client.address);
@@ -942,255 +955,73 @@ const ClientDetailPage: React.FC = () => {
               </div>
             ) : (
               <>
-                {/* ── Established Goals (active) ── */}
-                {establishedActive.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-2 px-4 py-2 bg-blue-50/40 border-b border-[var(--color-border)]">
-                      <Lock size={12} className="text-blue-500" />
-                      <span className="text-xs font-medium text-blue-700">Established Goals</span>
-                      <span className="text-[10px] text-blue-500">({establishedActive.length})</span>
-                    </div>
-                    <div className="divide-y divide-[var(--color-border)]">
-                      {establishedActive.map((goal) => {
-                        const config = goalStatusConfig[goal.status];
-                        const StatusIcon = config.icon;
-                        return (
-                          <div key={goal.id} className="px-4 py-3 hover:bg-gray-50 transition-colors border-l-2 border-blue-200">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-1.5 mb-1">
-                                  <span title="Part of signed documentation"><Lock size={10} className="text-blue-400" /></span>
-                                  <span className="badge bg-gray-100 text-gray-700 text-xs font-semibold">{goal.goal_type}</span>
-                                  {goal.category && (
-                                    <span className="badge bg-blue-50 text-blue-600 text-xs">{formatCategory(goal.category)}</span>
-                                  )}
-                                  <div className="relative inline-block">
-                                    <button
-                                      className={`badge text-xs cursor-pointer hover:opacity-80 transition-opacity ${config.className}`}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setGoalStatusMenuId(goalStatusMenuId === goal.id ? null : goal.id);
-                                      }}
-                                    >
-                                      <StatusIcon size={10} className="mr-0.5" /> {config.label}
-                                      <ChevronDown size={10} className="ml-0.5 opacity-60" />
-                                    </button>
-                                    {goalStatusMenuId === goal.id && (
-                                      <div className="absolute left-0 top-full mt-1 z-50 bg-white rounded-lg shadow-lg border border-[var(--color-border)] py-1 min-w-[140px]">
-                                        {(Object.entries(goalStatusConfig) as [GoalStatus, typeof config][]).map(([status, cfg]) => {
-                                          const Icon = cfg.icon;
-                                          return (
-                                            <button
-                                              key={status}
-                                              className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors ${goal.status === status ? 'font-semibold bg-gray-50' : ''}`}
-                                              onClick={async (e) => {
-                                                e.stopPropagation();
-                                                setGoalStatusMenuId(null);
-                                                if (status === goal.status) return;
-                                                try {
-                                                  await window.api.goals.update(goal.id, {
-                                                    ...goal,
-                                                    status,
-                                                    met_date: status === 'met' ? new Date().toISOString().slice(0, 10) : goal.met_date,
-                                                  });
-                                                  const updatedGoals = await window.api.goals.listByClient(clientId);
-                                                  setGoals(updatedGoals);
-                                                } catch (err) {
-                                                  console.error('Failed to update goal status:', err);
-                                                }
-                                              }}
-                                            >
-                                              <Icon size={12} /> {cfg.label}
-                                            </button>
-                                          );
-                                        })}
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                                <p className="text-sm text-[var(--color-text)]">{goal.goal_text}</p>
-                                {goalHistories[goal.id]?.length >= 2 && (
-                                  <GoalProgressTimeline
-                                    history={goalHistories[goal.id]}
-                                    measurement_type={goal.measurement_type || 'percentage'}
-                                    target_value={goal.target_value || `${goal.target}`}
-                                    target_numeric={goal.target ?? 0}
-                                    baseline_numeric={goal.baseline ?? 0}
-                                    instrument={goal.instrument}
-                                    compact={true}
-                                  />
-                                )}
-                                {goal.target_date && (
-                                  <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                                    Target: {formatDate(goal.target_date)}
-                                  </p>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <button
-                                  className="btn-ghost p-1 text-amber-500 hover:text-amber-600 hover:bg-amber-50"
-                                  title="Flag for Checkpoint"
-                                  onClick={async (e) => {
-                                    e.stopPropagation();
-                                    try {
-                                      await window.api.stagedGoals.create({
-                                        client_id: clientId,
-                                        goal_text: goal.goal_text,
-                                        goal_type: goal.goal_type,
-                                        category: goal.category || '',
-                                        rationale: '',
-                                        flagged_from_note_id: undefined,
-                                      });
-                                      (e.target as HTMLElement).closest('button')!.classList.add('text-emerald-500');
-                                      setTimeout(() => {
-                                        (e.target as HTMLElement).closest('button')?.classList.remove('text-emerald-500');
-                                      }, 1500);
-                                    } catch (err) {
-                                      console.error('Failed to flag goal for checkpoint:', err);
-                                    }
-                                  }}
-                                >
-                                  <Flag size={12} />
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {/* ── Pending Goals (active) ── */}
-                {pendingActive.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-2 px-4 py-2 bg-amber-50/40 border-b border-[var(--color-border)]">
-                      <Clock size={12} className="text-amber-500" />
-                      <span className="text-xs font-medium text-amber-700">Pending Goals</span>
-                      <span className="text-[10px] text-amber-500">({pendingActive.length})</span>
-                    </div>
-                    <div className="px-4 py-1.5 bg-amber-50/20 border-b border-[var(--color-border)]">
-                      <p className="text-[10px] text-amber-600">
-                        Not yet part of signed documentation. Will become established when included in your next evaluation or progress report.
-                      </p>
-                    </div>
-                    <div className="divide-y divide-[var(--color-border)]">
-                      {pendingActive.map((goal) => {
-                        const config = goalStatusConfig[goal.status];
-                        const StatusIcon = config.icon;
-                        return (
-                          <div key={goal.id} className="px-4 py-3 hover:bg-gray-50 transition-colors border-l-2 border-amber-200">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-1.5 mb-1">
-                                  <span className="badge bg-gray-100 text-gray-700 text-xs font-semibold">{goal.goal_type}</span>
-                                  {goal.category && (
-                                    <span className="badge bg-blue-50 text-blue-600 text-xs">{formatCategory(goal.category)}</span>
-                                  )}
-                                  <div className="relative inline-block">
-                                    <button
-                                      className={`badge text-xs cursor-pointer hover:opacity-80 transition-opacity ${config.className}`}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setGoalStatusMenuId(goalStatusMenuId === goal.id ? null : goal.id);
-                                      }}
-                                    >
-                                      <StatusIcon size={10} className="mr-0.5" /> {config.label}
-                                      <ChevronDown size={10} className="ml-0.5 opacity-60" />
-                                    </button>
-                                    {goalStatusMenuId === goal.id && (
-                                      <div className="absolute left-0 top-full mt-1 z-50 bg-white rounded-lg shadow-lg border border-[var(--color-border)] py-1 min-w-[140px]">
-                                        {(Object.entries(goalStatusConfig) as [GoalStatus, typeof config][]).map(([status, cfg]) => {
-                                          const Icon = cfg.icon;
-                                          return (
-                                            <button
-                                              key={status}
-                                              className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-gray-50 transition-colors ${goal.status === status ? 'font-semibold bg-gray-50' : ''}`}
-                                              onClick={async (e) => {
-                                                e.stopPropagation();
-                                                setGoalStatusMenuId(null);
-                                                if (status === goal.status) return;
-                                                try {
-                                                  await window.api.goals.update(goal.id, {
-                                                    ...goal,
-                                                    status,
-                                                    met_date: status === 'met' ? new Date().toISOString().slice(0, 10) : goal.met_date,
-                                                  });
-                                                  const updatedGoals = await window.api.goals.listByClient(clientId);
-                                                  setGoals(updatedGoals);
-                                                } catch (err) {
-                                                  console.error('Failed to update goal status:', err);
-                                                }
-                                              }}
-                                            >
-                                              <Icon size={12} /> {cfg.label}
-                                            </button>
-                                          );
-                                        })}
-                                      </div>
-                                    )}
-                                  </div>
-                                  <span className="badge bg-amber-100 text-amber-600 text-[10px]">Pending</span>
-                                </div>
-                                <p className="text-sm text-[var(--color-text)]">{goal.goal_text}</p>
-                                {goal.target_date && (
-                                  <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                                    Target: {formatDate(goal.target_date)}
-                                  </p>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <button className="btn-ghost p-1" onClick={() => openEditGoal(goal)}>
-                                  <Edit size={12} />
-                                </button>
-                                <button
-                                  className="btn-ghost p-1 text-amber-500 hover:text-amber-600 hover:bg-amber-50"
-                                  title="Flag for Checkpoint"
-                                  onClick={async (e) => {
-                                    e.stopPropagation();
-                                    try {
-                                      await window.api.stagedGoals.create({
-                                        client_id: clientId,
-                                        goal_text: goal.goal_text,
-                                        goal_type: goal.goal_type,
-                                        category: goal.category || '',
-                                        rationale: '',
-                                        flagged_from_note_id: undefined,
-                                      });
-                                      (e.target as HTMLElement).closest('button')!.classList.add('text-emerald-500');
-                                      setTimeout(() => {
-                                        (e.target as HTMLElement).closest('button')?.classList.remove('text-emerald-500');
-                                      }, 1500);
-                                    } catch (err) {
-                                      console.error('Failed to flag goal for checkpoint:', err);
-                                    }
-                                  }}
-                                >
-                                  <Flag size={12} />
-                                </button>
-                                <button
-                                  className="btn-ghost p-1 text-red-400 hover:text-red-600 hover:bg-red-50"
-                                  title="Delete Goal"
-                                  onClick={async (e) => {
-                                    e.stopPropagation();
-                                    if (!window.confirm('Delete this goal? This action cannot be undone.')) return;
-                                    try {
-                                      await window.api.goals.delete(goal.id);
-                                      const updatedGoals = await window.api.goals.listByClient(clientId);
-                                      setGoals(updatedGoals);
-                                    } catch (err) {
-                                      console.error('Failed to delete goal:', err);
-                                    }
-                                  }}
-                                >
-                                  <Trash2 size={12} />
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                {/* ── Active Goals Accordion ── */}
+                {allActiveGoals.length > 0 && (
+                  <div className="p-3 space-y-2">
+                    {activeGoalCards.map((card, idx) => {
+                      const goal = allActiveGoals[idx];
+                      const isEstablished = isEstablishedGoal(goal);
+                      return expandedGoalIdx === idx ? (
+                        <ExpandedGoalCard
+                          key={goal.id}
+                          data={card}
+                          discipline={client.discipline}
+                          patternOverrides={patternOverrides}
+                          disabled={isEstablished}
+                          onCollapse={() => setExpandedGoalIdx(null)}
+                          onFieldChange={() => {}}
+                          onComponentChange={() => {}}
+                          onDelete={!isEstablished ? async () => {
+                            if (!window.confirm('Delete this goal? This action cannot be undone.')) return;
+                            try {
+                              await window.api.goals.delete(goal.id);
+                              const updatedGoals = await window.api.goals.listByClient(clientId);
+                              setGoals(updatedGoals);
+                              setExpandedGoalIdx(null);
+                            } catch (err) {
+                              console.error('Failed to delete goal:', err);
+                            }
+                          } : undefined}
+                          onStatusChange={async (status) => {
+                            try {
+                              await window.api.goals.update(goal.id, {
+                                ...goal,
+                                status,
+                                met_date: status === 'met' ? new Date().toISOString().slice(0, 10) : goal.met_date,
+                              });
+                              const updatedGoals = await window.api.goals.listByClient(clientId);
+                              setGoals(updatedGoals);
+                            } catch (err) {
+                              console.error('Failed to update goal status:', err);
+                            }
+                          }}
+                          onFlagCheckpoint={async () => {
+                            try {
+                              await window.api.stagedGoals.create({
+                                client_id: clientId,
+                                goal_text: goal.goal_text,
+                                goal_type: goal.goal_type,
+                                category: goal.category || '',
+                                rationale: '',
+                                flagged_from_note_id: undefined,
+                              });
+                            } catch (err) {
+                              console.error('Failed to flag goal for checkpoint:', err);
+                            }
+                          }}
+                          onEditModal={!isEstablished ? () => openEditGoal(goal) : undefined}
+                          categoryOptions={[]}
+                          usedCategories={[]}
+                        />
+                      ) : (
+                        <CollapsedGoalCard
+                          key={goal.id}
+                          data={card}
+                          fingerprint={generateGoalFingerprint(card.pattern_id, card.components, card.category)}
+                          onClick={() => setExpandedGoalIdx(idx)}
+                        />
+                      );
+                    })}
                   </div>
                 )}
 

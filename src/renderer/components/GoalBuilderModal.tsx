@@ -297,8 +297,6 @@ const GoalBuilderModal: React.FC<GoalBuilderModalProps> = ({
                   components: { ...draft.components, [key]: value },
                 }, goalType);
               }}
-              consistency={draft.consistency}
-              onConsistencyChange={(val) => updateDraft(draft.id, { consistency: val }, goalType)}
               excludeKeys={excludeKeys}
             />
           </div>

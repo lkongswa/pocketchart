@@ -1,14 +1,10 @@
 import React from 'react';
 import type { GoalPattern, PatternComponent } from '../../shared/goal-patterns';
-import ConsistencyCriterion from './ConsistencyCriterion';
-import type { ConsistencyValue } from './ConsistencyCriterion';
 
 interface GoalComponentFieldsProps {
   pattern: GoalPattern;
   components: Record<string, any>;
   onChange: (key: string, value: any) => void;
-  consistency?: ConsistencyValue | null;
-  onConsistencyChange?: (val: ConsistencyValue | null) => void;
   disabled?: boolean;
   excludeKeys?: string[];
 }
@@ -19,14 +15,15 @@ export interface ComponentClassification {
   rightKeys: string[];
   cueBaselineKey: string | null;
   cueTargetKey: string | null;
+  widthMap: Record<string, 'full' | 'half'>;
 }
 
 /**
- * Classify pattern components for 2-column layout.
- * - cueing_baseline → pulled out for CLOF pairing
- * - cueing (when cueing_baseline also exists) → pulled out for CLOF pairing
- * - consistency → right column
- * - everything else → left column
+ * Classify pattern components for layout.
+ * - cueing_baseline → pulled out for cueing section
+ * - cueing (when cueing_baseline also exists) → pulled out for cueing section
+ * - consistency → skipped entirely
+ * - everything else → leftKeys (full-width)
  */
 export function classifyComponents(pattern: GoalPattern): ComponentClassification {
   const hasCueBaseline = pattern.components.some(c => c.key === 'cueing_baseline');
@@ -34,6 +31,7 @@ export function classifyComponents(pattern: GoalPattern): ComponentClassificatio
   let cueTargetKey: string | null = null;
   const leftKeys: string[] = [];
   const rightKeys: string[] = [];
+  const widthMap: Record<string, 'full' | 'half'> = {};
 
   for (const comp of pattern.components) {
     if (comp.key === 'cueing_baseline') {
@@ -41,13 +39,16 @@ export function classifyComponents(pattern: GoalPattern): ComponentClassificatio
     } else if (comp.key === 'cueing' && hasCueBaseline) {
       cueTargetKey = comp.key;
     } else if (comp.type === 'consistency') {
-      rightKeys.push(comp.key);
+      // Skip consistency — not displayed
+      continue;
     } else {
       leftKeys.push(comp.key);
     }
+
+    widthMap[comp.key] = 'full';
   }
 
-  return { leftKeys, rightKeys, cueBaselineKey, cueTargetKey };
+  return { leftKeys, rightKeys, cueBaselineKey, cueTargetKey, widthMap };
 }
 
 /** Render a single component field (extracted for reuse) */
@@ -55,19 +56,10 @@ function renderComponent(
   comp: PatternComponent,
   components: Record<string, any>,
   onChange: (key: string, value: any) => void,
-  consistency: ConsistencyValue | null | undefined,
-  onConsistencyChange: ((val: ConsistencyValue | null) => void) | undefined,
   disabled: boolean,
 ): React.ReactNode {
   if (comp.type === 'consistency') {
-    return (
-      <ConsistencyCriterion
-        key={comp.key}
-        value={consistency}
-        onChange={(val) => onConsistencyChange?.(val)}
-        disabled={disabled}
-      />
-    );
+    return null; // Consistency criterion removed from UI
   }
 
   if (comp.type === 'chip_single') {
@@ -194,52 +186,18 @@ const GoalComponentFields: React.FC<GoalComponentFieldsProps> = ({
   pattern,
   components,
   onChange,
-  consistency,
-  onConsistencyChange,
   disabled = false,
   excludeKeys = [],
 }) => {
-  // Filter out excluded keys
-  const visibleComps = pattern.components.filter(c => !excludeKeys.includes(c.key));
+  // Filter out excluded keys and consistency
+  const visibleComps = pattern.components.filter(
+    c => !excludeKeys.includes(c.key) && c.type !== 'consistency'
+  );
 
-  // Classify into left/right columns
-  const leftComps: PatternComponent[] = [];
-  const rightComps: PatternComponent[] = [];
-  for (const comp of visibleComps) {
-    if (comp.type === 'consistency') {
-      rightComps.push(comp);
-    } else {
-      leftComps.push(comp);
-    }
-  }
-
-  // Use 2-column layout when left has >=2 items AND right has >=1 item
-  const useTwoColumns = leftComps.length >= 2 && rightComps.length >= 1;
-
-  if (useTwoColumns) {
-    return (
-      <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-        {/* Left column */}
-        <div className="space-y-3">
-          {leftComps.map(comp =>
-            renderComponent(comp, components, onChange, consistency, onConsistencyChange, disabled)
-          )}
-        </div>
-        {/* Right column */}
-        <div className="space-y-3">
-          {rightComps.map(comp =>
-            renderComponent(comp, components, onChange, consistency, onConsistencyChange, disabled)
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // Single column fallback
   return (
     <div className="space-y-3">
       {visibleComps.map(comp =>
-        renderComponent(comp, components, onChange, consistency, onConsistencyChange, disabled)
+        renderComponent(comp, components, onChange, disabled)
       )}
     </div>
   );

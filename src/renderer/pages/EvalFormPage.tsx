@@ -23,15 +23,12 @@ import {
 import type { Client, Evaluation, Discipline, GoalType, EvalGoalEntry, CptLine, PlaceOfService, SOAPSection, MeasurementType, PatternOverride } from '../../shared/types';
 import { composeGoalText as sharedComposeGoalText, isAutoComposedGoalText, metricValueToNumeric } from '../../shared/compose-goal-text';
 import type { GoalPattern } from '../../shared/goal-patterns';
-import { CUSTOM_PATTERN, getPatternById, applyOverrides } from '../../shared/goal-patterns';
-import GoalPatternPicker from '../components/GoalPatternPicker';
-import GoalComponentFields, { classifyComponents } from '../components/GoalComponentFields';
-import GoalProgressTimeline from '../components/GoalProgressTimeline';
+import { getPatternById, applyOverrides } from '../../shared/goal-patterns';
 import type { GoalProgressEntry } from '../../shared/types';
-import type { ConsistencyValue } from '../components/ConsistencyCriterion';
-import MeasurementChips from '../components/MeasurementChips';
-import MeasurementTypeSelector from '../components/MeasurementTypeSelector';
 import { CATEGORY_DEFAULT_MEASUREMENT, DEFAULT_INSTRUMENTS } from '../../shared/goal-metrics';
+import { evalEntryToCardData, generateGoalFingerprint } from '../../shared/goal-card-data';
+import CollapsedGoalCard from '../components/CollapsedGoalCard';
+import ExpandedGoalCard from '../components/ExpandedGoalCard';
 import type { ValidationIssue, ValidationFixes } from '../../shared/types/validation';
 
 import SignConfirmDialog from '../components/SignConfirmDialog';
@@ -518,7 +515,7 @@ export default function EvalFormPage() {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   // Goal pattern state
-  const [showGoalBank, setShowGoalBank] = useState<number | null>(null); // index of goal entry showing pattern picker
+  const [expandedGoalIdx, setExpandedGoalIdx] = useState<number | null>(null);
   const [patternOverrides, setPatternOverrides] = useState<PatternOverride[]>([]);
 
   // Session Note & Billing state
@@ -896,6 +893,16 @@ export default function EvalFormPage() {
   const usedCategories = useMemo(() => {
     return [...new Set(goalEntries.map(g => g.category).filter(Boolean))];
   }, [goalEntries]);
+
+  // Build GoalCardData[] for the new accordion cards
+  const goalCards = useMemo(() =>
+    goalEntries.map((entry, idx) => {
+      const goalId = (content?.created_goal_ids || [])[idx] || null;
+      const history = goalId ? (goalHistories[goalId] || []) : [];
+      return evalEntryToCardData(entry, idx, goalId, history, patternOverrides);
+    }),
+    [goalEntries, content?.created_goal_ids, goalHistories, patternOverrides]
+  );
 
   // ── Auto-Save ──
 
@@ -1925,6 +1932,7 @@ export default function EvalFormPage() {
               className="btn-ghost btn-sm gap-1 text-xs ml-auto"
               onClick={(e) => {
                 e.stopPropagation();
+                const newIdx = goalEntries.length;
                 updateGoalEntries(prev => {
                   const cat = (CATEGORY_OPTIONS[discipline] || [])[0] || '';
                   const mt = CATEGORY_DEFAULT_MEASUREMENT[cat] || 'percentage';
@@ -1934,6 +1942,7 @@ export default function EvalFormPage() {
                     { goal_text: '', goal_type: 'STG' as GoalType, category: cat, target_date: '', measurement_type: mt as MeasurementType, baseline: 0, target: 0, baseline_value: '', target_value: '', instrument: inst, pattern_id: '', components: undefined },
                   ];
                 });
+                setExpandedGoalIdx(newIdx);
               }}
             >
               <Plus size={14} />
@@ -1966,378 +1975,68 @@ export default function EvalFormPage() {
               </p>
             </div>
           ) : (
-            <div className="space-y-4">
-              {goalEntries.map((entry, idx) => {
-                const showBank = showGoalBank === idx;
-                const isLinked = Boolean((content.created_goal_ids || [])[idx]);
-                // Pre-compute pattern + classification ONCE per goal card (avoids repeated lookups)
-                const hasPattern = entry.pattern_id && entry.pattern_id !== 'custom_freeform';
-                let resolvedPattern = hasPattern ? getPatternById(entry.pattern_id!) : null;
-                if (resolvedPattern && patternOverrides.length > 0) resolvedPattern = applyOverrides(resolvedPattern, patternOverrides);
-                const classified = resolvedPattern ? classifyComponents(resolvedPattern) : null;
-                const cueExcludeKeys = classified ? [
-                  ...(classified.cueBaselineKey ? [classified.cueBaselineKey] : []),
-                  ...(classified.cueTargetKey ? [classified.cueTargetKey] : []),
-                ] : [];
-                const cueBaselineComp = classified?.cueBaselineKey && resolvedPattern
-                  ? resolvedPattern.components.find(c => c.key === classified.cueBaselineKey)
-                  : null;
-                const cueTargetComp = classified?.cueTargetKey && resolvedPattern
-                  ? resolvedPattern.components.find(c => c.key === classified.cueTargetKey)
-                  : null;
-                const goalId = (content.created_goal_ids || [])[idx];
-                const goalHistory = goalId ? goalHistories[goalId] : null;
-                return (
-                <div key={idx} className={`p-4 rounded-lg border ${isLinked ? 'bg-blue-50/40 border-blue-200' : 'bg-gray-50 border-[var(--color-border)]'}`}>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase">
-                        Goal {idx + 1}
-                      </span>
-                      {isLinked && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-600">
-                          Synced
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors cursor-pointer ${
-                          showBank ? 'bg-violet-100 text-violet-700' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] hover:bg-violet-50'
-                        }`}
-                        onClick={() => {
-                          if (showBank) {
-                            setShowGoalBank(null);
-                          } else {
-                            setShowGoalBank(idx);
-                          }
-                        }}
-                        title="Browse goal patterns"
-                      >
-                        <BookOpen size={12} />
-                        {entry.pattern_id && entry.pattern_id !== 'custom_freeform' ? 'Change Pattern' : 'Goal Patterns'}
-                      </button>
-                      {entry.pattern_id && entry.pattern_id !== 'custom_freeform' && (
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium text-[var(--color-text-secondary)] hover:text-red-500 hover:bg-red-50 transition-colors cursor-pointer"
-                          onClick={() => {
-                            updateGoalField(idx, { pattern_id: undefined, components: undefined });
-                            setShowGoalBank(null);
-                          }}
-                          title="Clear pattern selection"
-                        >
-                          <X size={12} />
-                          Clear Pattern
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="p-1 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
-                        onClick={async () => {
-                          // Delete the linked goal from the database if it exists
-                          const goalId = (content?.created_goal_ids || [])[idx];
-                          if (goalId) {
-                            try {
-                              await window.api.goals.delete(goalId);
-                            } catch (err) {
-                              console.error('Failed to delete linked goal:', err);
-                            }
-                          }
-                          // Remove the linked ID at this index
-                          setContent(prev => {
-                            if (!prev) return prev;
-                            const ids = [...(prev.created_goal_ids || [])];
-                            ids.splice(idx, 1);
-                            return { ...prev, created_goal_ids: ids };
-                          });
-                          updateGoalEntries(prev => prev.filter((_, i) => i !== idx));
-                        }}
-                      >
-                        <X size={16} />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Pattern Picker Dropdown */}
-                  {showBank && (
-                    <div className="mb-3 p-3 bg-violet-50 rounded-lg border border-violet-200 max-h-64 overflow-y-auto">
-                      <GoalPatternPicker
-                        discipline={discipline}
-                        category={entry.category || undefined}
-                        overrides={patternOverrides}
-                        onSelect={(pattern) => {
-                          const defaultComponents: Record<string, any> = {};
-                          for (const comp of pattern.components) {
-                            if (comp.defaultValue !== undefined) {
-                              defaultComponents[comp.key] = comp.defaultValue;
-                            }
-                          }
-                          const mt = pattern.measurement_type || 'percentage';
-                          const inst = pattern.instrument || (mt === 'standardized_score' ? (DEFAULT_INSTRUMENTS[pattern.category] || '') : '');
-                          updateGoalField(idx, {
-                            pattern_id: pattern.id,
-                            components: defaultComponents,
-                            category: pattern.category,
-                            measurement_type: mt as MeasurementType,
-                            baseline_value: entry.baseline_value || '',
-                            target_value: entry.target_value || '',
-                            instrument: inst,
-                          });
-                          setShowGoalBank(null);
-                        }}
-                        onCustom={() => {
-                          updateGoalField(idx, { pattern_id: 'custom_freeform', components: undefined });
-                          setShowGoalBank(null);
-                        }}
-                      />
-                    </div>
-                  )}
-
-                  {/* Pattern label + component fields */}
-                  {resolvedPattern && resolvedPattern.components.length > 0 && (
-                    <div className="mb-3 p-3 bg-violet-50/30 rounded-lg border border-violet-100">
-                      <p className="text-xs font-medium text-violet-600 mb-2">
-                        {resolvedPattern.icon} {resolvedPattern.label}
-                      </p>
-                      <GoalComponentFields
-                        pattern={resolvedPattern}
-                        components={entry.components || {}}
-                        onChange={(key, value) => {
-                          const updatedComps = { ...(entry.components || {}), [key]: value };
-                          updateGoalField(idx, { components: updatedComps });
-                        }}
-                        disabled={!!existingSignedAt}
-                        excludeKeys={cueExcludeKeys}
-                      />
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-3 gap-3 mb-3">
-                    <div>
-                      <label className="label text-xs">Type</label>
-                      <select
-                        className="select text-sm"
-                        value={entry.goal_type}
-                        onChange={(e) => updateGoalField(idx, { goal_type: e.target.value as GoalType })}
-                      >
-                        <option value="STG">STG</option>
-                        <option value="LTG">LTG</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="label text-xs">Category</label>
-                      <select
-                        className="select text-sm"
-                        value={entry.category}
-                        onChange={(e) => {
-                          const newCat = e.target.value;
-                          updateGoalField(idx, { category: newCat });
-                        }}
-                      >
-                        <option value="">Select</option>
-                        {usedCategories.length > 0 && (
-                          <optgroup label="Current Goals">
-                            {usedCategories.map(cat => (
-                              <option key={`used-${cat}`} value={cat}>{cat}</option>
-                            ))}
-                          </optgroup>
-                        )}
-                        <optgroup label={usedCategories.length > 0 ? 'All Categories' : ''}>
-                          {(CATEGORY_OPTIONS[discipline] || [])
-                            .filter(cat => !usedCategories.includes(cat))
-                            .map(cat => (
-                              <option key={cat} value={cat}>{cat}</option>
-                            ))}
-                        </optgroup>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="label text-xs">Target Date</label>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {[
-                          { label: '1 wk', days: 7 },
-                          { label: '2 wk', days: 14 },
-                          { label: '30 d', days: 30 },
-                          { label: '60 d', days: 60 },
-                          { label: '90 d', days: 90 },
-                          { label: '6 mo', days: 180 },
-                        ].map(({ label, days }) => {
-                          const d = new Date();
-                          d.setDate(d.getDate() + days);
-                          const iso = d.toISOString().slice(0, 10);
-                          return (
-                            <button
-                              key={label}
-                              type="button"
-                              className={`px-2 py-0.5 text-[10px] rounded-full border transition-colors cursor-pointer ${
-                                entry.target_date === iso
-                                  ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
-                                  : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]'
-                              }`}
-                              onClick={() => {
-                                if (entry.target_date === iso) {
-                                  updateGoalField(idx, { target_date: '' }); // Toggle off
-                                } else {
-                                  updateGoalField(idx, { target_date: iso });
-                                }
-                              }}
-                            >
-                              {label}
-                            </button>
-                          );
-                        })}
-                        <input
-                          type="date"
-                          className="input text-xs px-1.5 py-0.5 w-[130px]"
-                          value={entry.target_date}
-                          onChange={(e) => updateGoalField(idx, { target_date: e.target.value })}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Goal Text */}
-                  <div className="mb-3">
-                    <label className="label text-xs">Goal Text</label>
-                    <textarea
-                      className="textarea text-sm"
-                      rows={2}
-                      placeholder="Enter goal text or select a pattern above..."
-                      value={entry.goal_text}
-                      onChange={(e) =>
-                        updateGoalEntries(prev =>
-                          prev.map((g, i) => i === idx ? { ...g, goal_text: e.target.value } : g)
-                        )
+            <div className="space-y-2">
+              {goalCards.map((card, idx) =>
+                expandedGoalIdx === idx ? (
+                  <ExpandedGoalCard
+                    key={idx}
+                    data={card}
+                    discipline={discipline as Discipline}
+                    patternOverrides={patternOverrides}
+                    disabled={!!existingSignedAt}
+                    onCollapse={() => setExpandedGoalIdx(null)}
+                    onFieldChange={(field) => updateGoalField(idx, field)}
+                    onComponentChange={(key, value) => {
+                      const updatedComps = { ...(goalEntries[idx].components || {}), [key]: value };
+                      updateGoalField(idx, { components: updatedComps });
+                    }}
+                    onDelete={!existingSignedAt ? async () => {
+                      const goalId = (content?.created_goal_ids || [])[idx];
+                      if (goalId) {
+                        try { await window.api.goals.delete(goalId); } catch (err) { console.error('Failed to delete linked goal:', err); }
                       }
-                    />
-                  </div>
-
-                  {/* Progress History Timeline */}
-                  {goalHistory && goalHistory.length >= 2 && (
-                    <div className="mb-3">
-                      <GoalProgressTimeline
-                        history={goalHistory}
-                        measurement_type={entry.measurement_type || 'percentage'}
-                        target_value={entry.target_value || `${entry.target ?? 0}`}
-                        target_numeric={entry.target ?? 0}
-                        baseline_numeric={entry.baseline ?? 0}
-                        instrument={entry.instrument}
-                        defaultExpanded={true}
-                      />
-                    </div>
-                  )}
-
-                  {/* CLOF / Measurement Tracking — visually separate from goal text */}
-                  <div className="p-3 rounded-lg bg-amber-50/40 border border-amber-200/60">
-                    <p className="text-[10px] uppercase tracking-wide text-amber-700 font-semibold mb-2">
-                      Current Level of Function (CLOF)
-                    </p>
-                    {!existingSignedAt && (
-                      <div className="mb-2">
-                        <MeasurementTypeSelector
-                          currentType={entry.measurement_type || 'percentage'}
-                          discipline={discipline as Discipline}
-                          onChange={(type) => {
-                            const inst = type === 'standardized_score' ? (DEFAULT_INSTRUMENTS[entry.category] || '') : '';
-                            updateGoalField(idx, { measurement_type: type, baseline_value: '', target_value: '', baseline: 0, target: 0, instrument: inst });
-                          }}
-                          disabled={!!existingSignedAt}
-                        />
-                      </div>
-                    )}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        {/* Cueing Baseline above Baseline CLOF */}
-                        {cueBaselineComp && cueBaselineComp.type === 'chip_single' && (() => {
-                          const selected = (entry.components || {})[cueBaselineComp.key] || '';
-                          return (
-                            <div className="mb-2">
-                              <label className="label text-[10px]">{cueBaselineComp.label}</label>
-                              <div className="flex items-center gap-1 flex-wrap">
-                                {cueBaselineComp.options?.map(opt => (
-                                  <button
-                                    key={opt}
-                                    type="button"
-                                    disabled={!!existingSignedAt}
-                                    className={`px-2 py-0.5 text-[10px] rounded-full border transition-colors cursor-pointer ${
-                                      selected === opt
-                                        ? 'bg-amber-500 text-white border-amber-500'
-                                        : 'border-amber-200 text-amber-600 hover:border-amber-400 hover:text-amber-700'
-                                    } ${existingSignedAt ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                    onClick={() => {
-                                      const updatedComps = { ...(entry.components || {}), [cueBaselineComp.key]: selected === opt ? '' : opt };
-                                      updateGoalField(idx, { components: updatedComps });
-                                    }}
-                                  >
-                                    {opt}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })()}
-                        <MeasurementChips
-                          measurement_type={entry.measurement_type || 'percentage'}
-                          label="Baseline (CLOF)"
-                          value={entry.baseline_value || `${entry.baseline ?? 0}`}
-                          numericValue={entry.baseline ?? 0}
-                          instrument={entry.instrument}
-                          category={entry.category}
-                          colorScheme="baseline"
-                          disabled={!!existingSignedAt}
-                          onSelect={(val, num) => updateGoalField(idx, { baseline_value: val, baseline: num })}
-                          onInstrumentChange={(inst) => updateGoalField(idx, { instrument: inst })}
-                        />
-                      </div>
-                      <div>
-                        {/* Cueing Target above Target CLOF */}
-                        {cueTargetComp && cueTargetComp.type === 'chip_single' && (() => {
-                          const selected = (entry.components || {})[cueTargetComp.key] || '';
-                          return (
-                            <div className="mb-2">
-                              <label className="label text-[10px]">{cueTargetComp.label}</label>
-                              <div className="flex items-center gap-1 flex-wrap">
-                                {cueTargetComp.options?.map(opt => (
-                                  <button
-                                    key={opt}
-                                    type="button"
-                                    disabled={!!existingSignedAt}
-                                    className={`px-2 py-0.5 text-[10px] rounded-full border transition-colors cursor-pointer ${
-                                      selected === opt
-                                        ? 'bg-emerald-500 text-white border-emerald-500'
-                                        : 'border-amber-200 text-amber-600 hover:border-amber-400 hover:text-amber-700'
-                                    } ${existingSignedAt ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                    onClick={() => {
-                                      const updatedComps = { ...(entry.components || {}), [cueTargetComp.key]: selected === opt ? '' : opt };
-                                      updateGoalField(idx, { components: updatedComps });
-                                    }}
-                                  >
-                                    {opt}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })()}
-                        <MeasurementChips
-                          measurement_type={entry.measurement_type || 'percentage'}
-                          label="Goal Level (Target)"
-                          value={entry.target_value || `${entry.target ?? 0}`}
-                          numericValue={entry.target ?? 0}
-                          instrument={entry.instrument}
-                          category={entry.category}
-                          colorScheme="target"
-                          disabled={!!existingSignedAt}
-                          onSelect={(val, num) => updateGoalField(idx, { target_value: val, target: num })}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                );
-              })}
+                      setContent(prev => {
+                        if (!prev) return prev;
+                        const ids = [...(prev.created_goal_ids || [])];
+                        ids.splice(idx, 1);
+                        return { ...prev, created_goal_ids: ids };
+                      });
+                      updateGoalEntries(prev => prev.filter((_, i) => i !== idx));
+                      setExpandedGoalIdx(null);
+                    } : undefined}
+                    onPatternSelect={(pattern) => {
+                      const defaultComponents: Record<string, any> = {};
+                      for (const comp of pattern.components) {
+                        if (comp.defaultValue !== undefined) {
+                          defaultComponents[comp.key] = comp.defaultValue;
+                        }
+                      }
+                      const mt = pattern.measurement_type || 'percentage';
+                      const inst = pattern.instrument || (mt === 'standardized_score' ? (DEFAULT_INSTRUMENTS[pattern.category] || '') : '');
+                      updateGoalField(idx, {
+                        pattern_id: pattern.id,
+                        components: defaultComponents,
+                        category: pattern.category,
+                        measurement_type: mt as MeasurementType,
+                        baseline_value: goalEntries[idx].baseline_value || '',
+                        target_value: goalEntries[idx].target_value || '',
+                        instrument: inst,
+                      });
+                    }}
+                    onPatternClear={() => updateGoalField(idx, { pattern_id: undefined, components: undefined })}
+                    onCustomPattern={() => updateGoalField(idx, { pattern_id: 'custom_freeform', components: undefined })}
+                    categoryOptions={CATEGORY_OPTIONS[discipline] || []}
+                    usedCategories={usedCategories}
+                  />
+                ) : (
+                  <CollapsedGoalCard
+                    key={idx}
+                    data={card}
+                    fingerprint={generateGoalFingerprint(card.pattern_id, card.components, card.category)}
+                    onClick={() => setExpandedGoalIdx(idx)}
+                  />
+                )
+              )}
             </div>
           )}
 
