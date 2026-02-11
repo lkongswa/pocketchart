@@ -35,6 +35,7 @@ import { NOTE_FORMAT_SECTIONS, PROGRESS_REPORT_GOAL_STATUS_LABELS, DISCHARGE_REA
 import { formatMetricValue } from '../../shared/compose-goal-text';
 import MeasurementChips from '../components/MeasurementChips';
 import GoalProgressBar from '../components/GoalProgressBar';
+import GoalProgressTimeline from '../components/GoalProgressTimeline';
 import { METRIC_OPTIONS, calculateProgress, getMetricDirection } from '../../shared/goal-metrics';
 import type { ValidationIssue, ValidationFixes } from '../../shared/types/validation';
 import SignConfirmDialog from '../components/SignConfirmDialog';
@@ -294,6 +295,7 @@ export default function NoteFormPage() {
     baseline_value_snapshot?: string;
     target_value_snapshot?: string;
   }[]>([]);
+  const [goalHistories, setGoalHistories] = useState<Record<number, import('../../shared/types').GoalProgressEntry[]>>({});
   const [clinicalSummary, setClinicalSummary] = useState('');
   const [continuedTreatmentJustification, setContinuedTreatmentJustification] = useState('');
   const [planOfCareUpdate, setPlanOfCareUpdate] = useState('');
@@ -462,7 +464,7 @@ export default function NoteFormPage() {
           } catch {}
           try {
             const prGoals = await window.api.progressReportGoals.listByNote(parseInt(noteId, 10));
-            setProgressReportGoals(prGoals.map((g: any) => ({
+            const mappedPrGoals = prGoals.map((g: any) => ({
               goal_id: g.goal_id,
               goal_text_snapshot: g.goal_text_snapshot,
               goal_type: g.goal_type || 'STG',
@@ -479,7 +481,14 @@ export default function NoteFormPage() {
               current_numeric: g.current_numeric ?? 0,
               baseline_value_snapshot: g.baseline_value_snapshot || '',
               target_value_snapshot: g.target_value_snapshot || '',
-            })));
+            }));
+            setProgressReportGoals(mappedPrGoals);
+            // Load progress histories
+            try {
+              const goalIds = mappedPrGoals.map((g: any) => g.goal_id);
+              const histories = await window.api.goals.getProgressHistoryBatch(goalIds);
+              setGoalHistories(histories);
+            } catch { /* not critical */ }
           } catch {}
         }
 
@@ -492,7 +501,7 @@ export default function NoteFormPage() {
           } catch {}
           try {
             const dcGoals = await window.api.progressReportGoals.listByNote(parseInt(noteId, 10));
-            setDischargeGoals(dcGoals.map((g: any) => ({
+            const mappedDcGoals = dcGoals.map((g: any) => ({
               goal_id: g.goal_id,
               goal_text_snapshot: g.goal_text_snapshot,
               goal_type: g.goal_type || 'STG',
@@ -509,7 +518,14 @@ export default function NoteFormPage() {
               current_numeric: g.current_numeric ?? 0,
               baseline_value_snapshot: g.baseline_value_snapshot || '',
               target_value_snapshot: g.target_value_snapshot || '',
-            })));
+            }));
+            setDischargeGoals(mappedDcGoals);
+            // Load progress histories
+            try {
+              const goalIds = mappedDcGoals.map((g: any) => g.goal_id);
+              const histories = await window.api.goals.getProgressHistoryBatch(goalIds);
+              setGoalHistories(histories);
+            } catch { /* not critical */ }
           } catch {}
         }
       }
@@ -1163,6 +1179,23 @@ export default function NoteFormPage() {
             } else if (prg.status_at_report === 'modified') {
               await window.api.goals.update(prg.goal_id, { status: 'modified' } as any);
             }
+            // Write progress history entry
+            if (prg.current_value) {
+              const sourceType = (noteMode as string) === 'recertification' ? 'recert' : 'progress_report';
+              try {
+                await window.api.goals.addProgressEntry({
+                  goal_id: prg.goal_id,
+                  client_id: parseInt(clientId!, 10),
+                  recorded_date: dateOfService,
+                  measurement_type: prg.measurement_type || 'percentage',
+                  value: prg.current_value,
+                  numeric_value: prg.current_numeric ?? 0,
+                  instrument: '',
+                  source_type: sourceType as any,
+                  source_document_id: noteIdForPR,
+                });
+              } catch (_) { /* ignore */ }
+            }
           }
         }
       }
@@ -1181,6 +1214,22 @@ export default function NoteFormPage() {
               status: goalStatus,
               met_date: metDate,
             } as any);
+            // Write discharge progress history entry
+            if (dg.current_value) {
+              try {
+                await window.api.goals.addProgressEntry({
+                  goal_id: dg.goal_id,
+                  client_id: parseInt(clientId!, 10),
+                  recorded_date: dateOfService,
+                  measurement_type: (dg.measurement_type as string) || 'percentage',
+                  value: dg.current_value,
+                  numeric_value: dg.current_numeric ?? 0,
+                  instrument: '',
+                  source_type: 'discharge',
+                  source_document_id: noteIdForDC,
+                });
+              } catch (_) { /* ignore */ }
+            }
           }
         }
       }
@@ -1334,6 +1383,13 @@ export default function NoteFormPage() {
       }
 
       setProgressReportGoals(prGoals);
+
+      // Load progress history for all goals
+      try {
+        const goalIds = prGoals.map(g => g.goal_id);
+        const histories = await window.api.goals.getProgressHistoryBatch(goalIds);
+        setGoalHistories(histories);
+      } catch { /* not critical */ }
     }
 
     if (mode === 'discharge') {
@@ -1368,6 +1424,13 @@ export default function NoteFormPage() {
       }
 
       setDischargeGoals(dcGoals);
+
+      // Load progress history for all goals
+      try {
+        const goalIds = dcGoals.map(g => g.goal_id);
+        const histories = await window.api.goals.getProgressHistoryBatch(goalIds);
+        setGoalHistories(histories);
+      } catch { /* not critical */ }
 
       // Load episode summary
       try {
@@ -1964,8 +2027,19 @@ export default function NoteFormPage() {
                     </span>
                     <p className="text-sm font-medium text-[var(--color-text)] flex-1">{prg.goal_text_snapshot}</p>
                   </div>
-                  {/* GoalProgressBar */}
-                  {(prg.baseline_value_snapshot || prg.baseline_snapshot > 0 || prg.target_value_snapshot || prg.target_snapshot > 0) && (
+                  {/* Progress History Timeline */}
+                  {goalHistories[prg.goal_id]?.length >= 2 && (
+                    <GoalProgressTimeline
+                      history={goalHistories[prg.goal_id]}
+                      measurement_type={prg.measurement_type || 'percentage'}
+                      target_value={prg.target_value_snapshot || `${prg.target_snapshot}`}
+                      target_numeric={prg.target_snapshot ?? 0}
+                      baseline_numeric={prg.baseline_snapshot ?? 0}
+                      defaultExpanded={true}
+                    />
+                  )}
+                  {/* GoalProgressBar (shown when no history available) */}
+                  {(!goalHistories[prg.goal_id] || goalHistories[prg.goal_id].length < 2) && (prg.baseline_value_snapshot || prg.baseline_snapshot > 0 || prg.target_value_snapshot || prg.target_snapshot > 0) && (
                     <GoalProgressBar
                       measurement_type={(prg.measurement_type || 'percentage') as MeasurementType}
                       baseline_value={prg.baseline_value_snapshot || `${prg.baseline_snapshot}`}
@@ -2404,8 +2478,19 @@ export default function NoteFormPage() {
                     </span>
                     <p className="text-sm font-medium text-[var(--color-text)] flex-1">{dg.goal_text_snapshot}</p>
                   </div>
-                  {/* GoalProgressBar for discharge */}
-                  {(dg.baseline_value_snapshot || dg.baseline_snapshot > 0 || dg.target_value_snapshot || dg.target_snapshot > 0) && (
+                  {/* Progress History Timeline (read-only for discharge) */}
+                  {goalHistories[dg.goal_id]?.length >= 2 && (
+                    <GoalProgressTimeline
+                      history={goalHistories[dg.goal_id]}
+                      measurement_type={(dg.measurement_type as string) || 'percentage'}
+                      target_value={dg.target_value_snapshot || `${dg.target_snapshot}`}
+                      target_numeric={dg.target_snapshot ?? 0}
+                      baseline_numeric={dg.baseline_snapshot ?? 0}
+                      defaultExpanded={true}
+                    />
+                  )}
+                  {/* GoalProgressBar for discharge (fallback when no history) */}
+                  {(!goalHistories[dg.goal_id] || goalHistories[dg.goal_id].length < 2) && (dg.baseline_value_snapshot || dg.baseline_snapshot > 0 || dg.target_value_snapshot || dg.target_snapshot > 0) && (
                     <GoalProgressBar
                       measurement_type={(dg.measurement_type || 'percentage') as MeasurementType}
                       baseline_value={dg.baseline_value_snapshot || `${dg.baseline_snapshot}`}

@@ -28,6 +28,9 @@ const api = {
     update: (id: number, data: any) => ipcRenderer.invoke('goals:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('goals:delete', id),
     tagSource: (goalId: number, docId: number, docType: string) => ipcRenderer.invoke('goals:tagSource', goalId, docId, docType),
+    getProgressHistory: (goalId: number) => ipcRenderer.invoke('goals:getProgressHistory', goalId),
+    getProgressHistoryBatch: (goalIds: number[]) => ipcRenderer.invoke('goals:getProgressHistoryBatch', goalIds),
+    addProgressEntry: (data: any) => ipcRenderer.invoke('goals:addProgressEntry', data),
   },
 
   // Staged Goals
@@ -387,6 +390,7 @@ const api = {
     getBasicAlerts: () => ipcRenderer.invoke('dashboard:getBasicAlerts'),
     getOverview: () => ipcRenderer.invoke('dashboard:getOverview'),
     getAnalytics: (filters?: { startDate?: string; endDate?: string; monthsBack?: number }) => ipcRenderer.invoke('dashboard:getAnalytics', filters),
+    getOutstandingBalance: () => ipcRenderer.invoke('dashboard:getOutstandingBalance'),
   },
 
   // ── Data Integrity ──

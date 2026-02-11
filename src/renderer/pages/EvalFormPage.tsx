@@ -25,7 +25,9 @@ import { composeGoalText as sharedComposeGoalText, isAutoComposedGoalText, metri
 import type { GoalPattern } from '../../shared/goal-patterns';
 import { CUSTOM_PATTERN, getPatternById, applyOverrides } from '../../shared/goal-patterns';
 import GoalPatternPicker from '../components/GoalPatternPicker';
-import GoalComponentFields from '../components/GoalComponentFields';
+import GoalComponentFields, { classifyComponents } from '../components/GoalComponentFields';
+import GoalProgressTimeline from '../components/GoalProgressTimeline';
+import type { GoalProgressEntry } from '../../shared/types';
 import type { ConsistencyValue } from '../components/ConsistencyCriterion';
 import MeasurementChips from '../components/MeasurementChips';
 import MeasurementTypeSelector from '../components/MeasurementTypeSelector';
@@ -510,6 +512,7 @@ export default function EvalFormPage() {
   const [signatureTyped, setSignatureTyped] = useState('');
   const [existingSignedAt, setExistingSignedAt] = useState('');
   const [goalEntries, setGoalEntries] = useState<EvalGoalEntry[]>([]);
+  const [goalHistories, setGoalHistories] = useState<Record<number, GoalProgressEntry[]>>({});
   const [goalsAlreadyCreated, setGoalsAlreadyCreated] = useState(false);
   const [completedGoals, setCompletedGoals] = useState<{ id: number; goal_text: string; goal_type: string; status: string; met_date: string; category: string; baseline: number; target: number }[]>([]);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -688,6 +691,14 @@ export default function EvalFormPage() {
           // Update content with merged goal IDs
           if (alreadyCreatedIds.length > 0) {
             setContent(prev => prev ? { ...prev, created_goal_ids: alreadyCreatedIds } : prev);
+            // Load progress histories for linked goals
+            try {
+              const validIds = alreadyCreatedIds.filter((id: number) => id > 0);
+              if (validIds.length > 0) {
+                const histories = await window.api.goals.getProgressHistoryBatch(validIds);
+                setGoalHistories(histories);
+              }
+            } catch { /* not critical */ }
           }
 
           // Parse frequency/duration
@@ -1108,7 +1119,7 @@ export default function EvalFormPage() {
         baseline_value: entry.baseline_value || `${entry.baseline ?? 0}`,
         target_value: entry.target_value || `${entry.target ?? 80}`,
         instrument: entry.instrument || '',
-        target_date: entry.target_date || undefined,
+        // target_date intentionally omitted — date chip is sufficient, no need in goal narrative
       });
     }
     // Custom/legacy: return existing text as-is (user writes it manually)
@@ -1460,6 +1471,10 @@ export default function EvalFormPage() {
             target_date: entry.target_date,
             baseline: entry.baseline || 0,
             target: entry.target || 0,
+            measurement_type: entry.measurement_type || 'percentage',
+            baseline_value: entry.baseline_value || '',
+            target_value: entry.target_value || '',
+            instrument: entry.instrument || '',
             status: 'active',
           });
           // Ensure createdGoalIds array is long enough
@@ -1502,9 +1517,27 @@ export default function EvalFormPage() {
 
       // Tag goals as established by this signed eval
       if (sign && finalEvalId) {
-        for (const gid of createdGoalIds) {
-          if (gid) {
-            try { await window.api.goals.tagSource(gid, finalEvalId, 'eval'); } catch (_) { /* ignore */ }
+        for (let i = 0; i < createdGoalIds.length; i++) {
+          const gid = createdGoalIds[i];
+          if (!gid) continue;
+          try { await window.api.goals.tagSource(gid, finalEvalId, 'eval'); } catch (_) { /* ignore */ }
+
+          // Write baseline as first progress history entry
+          const entry = goalEntries[i];
+          if (entry && (entry.baseline_value || entry.baseline)) {
+            try {
+              await window.api.goals.addProgressEntry({
+                goal_id: gid,
+                client_id: cid,
+                recorded_date: evalDate || new Date().toISOString().split('T')[0],
+                measurement_type: entry.measurement_type || 'percentage',
+                value: entry.baseline_value || `${entry.baseline || 0}`,
+                numeric_value: entry.baseline || 0,
+                instrument: entry.instrument || '',
+                source_type: 'eval',
+                source_document_id: finalEvalId,
+              });
+            } catch (_) { /* ignore */ }
           }
         }
       }
@@ -1937,6 +1970,23 @@ export default function EvalFormPage() {
               {goalEntries.map((entry, idx) => {
                 const showBank = showGoalBank === idx;
                 const isLinked = Boolean((content.created_goal_ids || [])[idx]);
+                // Pre-compute pattern + classification ONCE per goal card (avoids repeated lookups)
+                const hasPattern = entry.pattern_id && entry.pattern_id !== 'custom_freeform';
+                let resolvedPattern = hasPattern ? getPatternById(entry.pattern_id!) : null;
+                if (resolvedPattern && patternOverrides.length > 0) resolvedPattern = applyOverrides(resolvedPattern, patternOverrides);
+                const classified = resolvedPattern ? classifyComponents(resolvedPattern) : null;
+                const cueExcludeKeys = classified ? [
+                  ...(classified.cueBaselineKey ? [classified.cueBaselineKey] : []),
+                  ...(classified.cueTargetKey ? [classified.cueTargetKey] : []),
+                ] : [];
+                const cueBaselineComp = classified?.cueBaselineKey && resolvedPattern
+                  ? resolvedPattern.components.find(c => c.key === classified.cueBaselineKey)
+                  : null;
+                const cueTargetComp = classified?.cueTargetKey && resolvedPattern
+                  ? resolvedPattern.components.find(c => c.key === classified.cueTargetKey)
+                  : null;
+                const goalId = (content.created_goal_ids || [])[idx];
+                const goalHistory = goalId ? goalHistories[goalId] : null;
                 return (
                 <div key={idx} className={`p-4 rounded-lg border ${isLinked ? 'bg-blue-50/40 border-blue-200' : 'bg-gray-50 border-[var(--color-border)]'}`}>
                   <div className="flex items-center justify-between mb-3">
@@ -2046,27 +2096,23 @@ export default function EvalFormPage() {
                   )}
 
                   {/* Pattern label + component fields */}
-                  {entry.pattern_id && entry.pattern_id !== 'custom_freeform' && (() => {
-                    let pattern = getPatternById(entry.pattern_id!);
-                    if (!pattern || pattern.components.length === 0) return null;
-                    if (patternOverrides.length > 0) pattern = applyOverrides(pattern, patternOverrides);
-                    return (
-                      <div className="mb-3 p-3 bg-violet-50/30 rounded-lg border border-violet-100">
-                        <p className="text-xs font-medium text-violet-600 mb-2">
-                          {pattern.icon} {pattern.label}
-                        </p>
-                        <GoalComponentFields
-                          pattern={pattern}
-                          components={entry.components || {}}
-                          onChange={(key, value) => {
-                            const updatedComps = { ...(entry.components || {}), [key]: value };
-                            updateGoalField(idx, { components: updatedComps });
-                          }}
-                          disabled={!!existingSignedAt}
-                        />
-                      </div>
-                    );
-                  })()}
+                  {resolvedPattern && resolvedPattern.components.length > 0 && (
+                    <div className="mb-3 p-3 bg-violet-50/30 rounded-lg border border-violet-100">
+                      <p className="text-xs font-medium text-violet-600 mb-2">
+                        {resolvedPattern.icon} {resolvedPattern.label}
+                      </p>
+                      <GoalComponentFields
+                        pattern={resolvedPattern}
+                        components={entry.components || {}}
+                        onChange={(key, value) => {
+                          const updatedComps = { ...(entry.components || {}), [key]: value };
+                          updateGoalField(idx, { components: updatedComps });
+                        }}
+                        disabled={!!existingSignedAt}
+                        excludeKeys={cueExcludeKeys}
+                      />
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-3 gap-3 mb-3">
                     <div>
@@ -2168,6 +2214,21 @@ export default function EvalFormPage() {
                     />
                   </div>
 
+                  {/* Progress History Timeline */}
+                  {goalHistory && goalHistory.length >= 2 && (
+                    <div className="mb-3">
+                      <GoalProgressTimeline
+                        history={goalHistory}
+                        measurement_type={entry.measurement_type || 'percentage'}
+                        target_value={entry.target_value || `${entry.target ?? 0}`}
+                        target_numeric={entry.target ?? 0}
+                        baseline_numeric={entry.baseline ?? 0}
+                        instrument={entry.instrument}
+                        defaultExpanded={true}
+                      />
+                    </div>
+                  )}
+
                   {/* CLOF / Measurement Tracking — visually separate from goal text */}
                   <div className="p-3 rounded-lg bg-amber-50/40 border border-amber-200/60">
                     <p className="text-[10px] uppercase tracking-wide text-amber-700 font-semibold mb-2">
@@ -2187,29 +2248,91 @@ export default function EvalFormPage() {
                       </div>
                     )}
                     <div className="grid grid-cols-2 gap-3">
-                      <MeasurementChips
-                        measurement_type={entry.measurement_type || 'percentage'}
-                        label="Baseline (CLOF)"
-                        value={entry.baseline_value || `${entry.baseline ?? 0}`}
-                        numericValue={entry.baseline ?? 0}
-                        instrument={entry.instrument}
-                        category={entry.category}
-                        colorScheme="baseline"
-                        disabled={!!existingSignedAt}
-                        onSelect={(val, num) => updateGoalField(idx, { baseline_value: val, baseline: num })}
-                        onInstrumentChange={(inst) => updateGoalField(idx, { instrument: inst })}
-                      />
-                      <MeasurementChips
-                        measurement_type={entry.measurement_type || 'percentage'}
-                        label="Goal Level (Target)"
-                        value={entry.target_value || `${entry.target ?? 0}`}
-                        numericValue={entry.target ?? 0}
-                        instrument={entry.instrument}
-                        category={entry.category}
-                        colorScheme="target"
-                        disabled={!!existingSignedAt}
-                        onSelect={(val, num) => updateGoalField(idx, { target_value: val, target: num })}
-                      />
+                      <div>
+                        {/* Cueing Baseline above Baseline CLOF */}
+                        {cueBaselineComp && cueBaselineComp.type === 'chip_single' && (() => {
+                          const selected = (entry.components || {})[cueBaselineComp.key] || '';
+                          return (
+                            <div className="mb-2">
+                              <label className="label text-[10px]">{cueBaselineComp.label}</label>
+                              <div className="flex items-center gap-1 flex-wrap">
+                                {cueBaselineComp.options?.map(opt => (
+                                  <button
+                                    key={opt}
+                                    type="button"
+                                    disabled={!!existingSignedAt}
+                                    className={`px-2 py-0.5 text-[10px] rounded-full border transition-colors cursor-pointer ${
+                                      selected === opt
+                                        ? 'bg-amber-500 text-white border-amber-500'
+                                        : 'border-amber-200 text-amber-600 hover:border-amber-400 hover:text-amber-700'
+                                    } ${existingSignedAt ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                    onClick={() => {
+                                      const updatedComps = { ...(entry.components || {}), [cueBaselineComp.key]: selected === opt ? '' : opt };
+                                      updateGoalField(idx, { components: updatedComps });
+                                    }}
+                                  >
+                                    {opt}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
+                        <MeasurementChips
+                          measurement_type={entry.measurement_type || 'percentage'}
+                          label="Baseline (CLOF)"
+                          value={entry.baseline_value || `${entry.baseline ?? 0}`}
+                          numericValue={entry.baseline ?? 0}
+                          instrument={entry.instrument}
+                          category={entry.category}
+                          colorScheme="baseline"
+                          disabled={!!existingSignedAt}
+                          onSelect={(val, num) => updateGoalField(idx, { baseline_value: val, baseline: num })}
+                          onInstrumentChange={(inst) => updateGoalField(idx, { instrument: inst })}
+                        />
+                      </div>
+                      <div>
+                        {/* Cueing Target above Target CLOF */}
+                        {cueTargetComp && cueTargetComp.type === 'chip_single' && (() => {
+                          const selected = (entry.components || {})[cueTargetComp.key] || '';
+                          return (
+                            <div className="mb-2">
+                              <label className="label text-[10px]">{cueTargetComp.label}</label>
+                              <div className="flex items-center gap-1 flex-wrap">
+                                {cueTargetComp.options?.map(opt => (
+                                  <button
+                                    key={opt}
+                                    type="button"
+                                    disabled={!!existingSignedAt}
+                                    className={`px-2 py-0.5 text-[10px] rounded-full border transition-colors cursor-pointer ${
+                                      selected === opt
+                                        ? 'bg-emerald-500 text-white border-emerald-500'
+                                        : 'border-amber-200 text-amber-600 hover:border-amber-400 hover:text-amber-700'
+                                    } ${existingSignedAt ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                    onClick={() => {
+                                      const updatedComps = { ...(entry.components || {}), [cueTargetComp.key]: selected === opt ? '' : opt };
+                                      updateGoalField(idx, { components: updatedComps });
+                                    }}
+                                  >
+                                    {opt}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
+                        <MeasurementChips
+                          measurement_type={entry.measurement_type || 'percentage'}
+                          label="Goal Level (Target)"
+                          value={entry.target_value || `${entry.target ?? 0}`}
+                          numericValue={entry.target ?? 0}
+                          instrument={entry.instrument}
+                          category={entry.category}
+                          colorScheme="target"
+                          disabled={!!existingSignedAt}
+                          onSelect={(val, num) => updateGoalField(idx, { target_value: val, target: num })}
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>

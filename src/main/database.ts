@@ -1515,6 +1515,107 @@ function runMigrations(): void {
         `);
       },
     },
+    {
+      version: 37,
+      description: 'Add priority flag to dashboard_todos',
+      up: () => {
+        db.exec(`ALTER TABLE dashboard_todos ADD COLUMN priority INTEGER NOT NULL DEFAULT 0`);
+      },
+    },
+    {
+      version: 38,
+      description: 'Create goal_progress_history table and backfill from existing data',
+      up: () => {
+        // Create the table
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS goal_progress_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            goal_id INTEGER NOT NULL REFERENCES goals(id),
+            client_id INTEGER NOT NULL REFERENCES clients(id),
+            recorded_date TEXT NOT NULL,
+            measurement_type TEXT NOT NULL DEFAULT 'percentage',
+            value TEXT NOT NULL DEFAULT '',
+            numeric_value INTEGER NOT NULL DEFAULT 0,
+            instrument TEXT DEFAULT '',
+            source_type TEXT NOT NULL,
+            source_document_id INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            deleted_at TEXT DEFAULT NULL
+          )
+        `);
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_goal_progress_goal ON goal_progress_history(goal_id, deleted_at)`);
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_goal_progress_source ON goal_progress_history(source_type, source_document_id)`);
+
+        // Backfill Step 1: Eval baselines
+        // For each goal established by a signed eval, insert the baseline as the first history entry
+        const insertHistory = db.prepare(`
+          INSERT INTO goal_progress_history
+            (goal_id, client_id, recorded_date, measurement_type, value, numeric_value, instrument, source_type, source_document_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        const goalsWithEvalSource = db.prepare(`
+          SELECT g.id, g.client_id, g.baseline_value, g.baseline, g.measurement_type, g.instrument,
+                 g.source_document_id, e.signed_at
+          FROM goals g
+          JOIN evaluations e ON e.id = g.source_document_id
+          WHERE g.source_document_type = 'eval'
+            AND g.deleted_at IS NULL
+            AND e.signed_at IS NOT NULL
+            AND e.deleted_at IS NULL
+        `).all() as any[];
+
+        for (const goal of goalsWithEvalSource) {
+          const dateStr = goal.signed_at ? goal.signed_at.split('T')[0] : new Date().toISOString().split('T')[0];
+          const val = goal.baseline_value || `${goal.baseline || 0}`;
+          if (val && val !== '0' && val !== '') {
+            insertHistory.run(
+              goal.id,
+              goal.client_id,
+              dateStr,
+              goal.measurement_type || 'percentage',
+              val,
+              goal.baseline || 0,
+              goal.instrument || '',
+              'eval',
+              goal.source_document_id
+            );
+          }
+        }
+
+        // Backfill Step 2: Progress report / recert / discharge checkpoints
+        const prGoalEntries = db.prepare(`
+          SELECT prg.goal_id, n.date_of_service, prg.current_value, prg.current_numeric,
+                 prg.measurement_type, n.id as note_id, n.note_type, g.client_id, g.instrument
+          FROM progress_report_goals prg
+          JOIN notes n ON n.id = prg.note_id
+          JOIN goals g ON g.id = prg.goal_id
+          WHERE n.signed_at IS NOT NULL
+            AND n.deleted_at IS NULL
+            AND prg.deleted_at IS NULL
+            AND prg.current_value IS NOT NULL
+            AND prg.current_value != ''
+        `).all() as any[];
+
+        for (const entry of prGoalEntries) {
+          let sourceType = 'progress_report';
+          if (entry.note_type === 'discharge') sourceType = 'discharge';
+          else if (entry.note_type === 'recertification') sourceType = 'recert';
+
+          insertHistory.run(
+            entry.goal_id,
+            entry.client_id,
+            entry.date_of_service,
+            entry.measurement_type || 'percentage',
+            entry.current_value,
+            entry.current_numeric || 0,
+            entry.instrument || '',
+            sourceType,
+            entry.note_id
+          );
+        }
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);

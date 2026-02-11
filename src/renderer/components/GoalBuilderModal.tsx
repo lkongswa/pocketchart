@@ -6,7 +6,7 @@ import { CUSTOM_PATTERN, getPatternById, applyOverrides } from '../../shared/goa
 import { composeGoalText, metricValueToNumeric } from '../../shared/compose-goal-text';
 import type { ConsistencyValue } from './ConsistencyCriterion';
 import GoalPatternPicker from './GoalPatternPicker';
-import GoalComponentFields from './GoalComponentFields';
+import GoalComponentFields, { classifyComponents } from './GoalComponentFields';
 import MeasurementChips from './MeasurementChips';
 import MeasurementTypeSelector from './MeasurementTypeSelector';
 import { CATEGORY_DEFAULT_MEASUREMENT, DEFAULT_INSTRUMENTS } from '../../shared/goal-metrics';
@@ -153,7 +153,7 @@ const GoalBuilderModal: React.FC<GoalBuilderModalProps> = ({
       consistency_count: draft.consistency?.type === 'consecutive_sessions' ? draft.consistency.count : undefined,
       trials_num: draft.consistency?.type === 'trials' ? draft.consistency.count : undefined,
       trials_denom: draft.consistency?.type === 'trials' ? draft.consistency.trials_denom : undefined,
-      target_days: draft.targetDays,
+      // target_days intentionally omitted — timeframe chip is sufficient, no need in goal narrative
     });
   };
 
@@ -202,6 +202,51 @@ const GoalBuilderModal: React.FC<GoalBuilderModalProps> = ({
     const goalType = draft.goal_type;
     const borderColor = goalType === 'STG' ? 'border-l-blue-400' : 'border-l-purple-400';
     const bgColor = goalType === 'STG' ? 'bg-blue-50/50' : 'bg-purple-50/50';
+
+    // Classify components for 2-column layout and cueing-CLOF pairing
+    const classified = classifyComponents(draft.pattern);
+    const excludeKeys = [
+      ...(classified.cueBaselineKey ? [classified.cueBaselineKey] : []),
+      ...(classified.cueTargetKey ? [classified.cueTargetKey] : []),
+    ];
+
+    // Find the actual component definitions for cueing fields (for inline rendering in CLOF box)
+    const cueBaselineComp = classified.cueBaselineKey
+      ? draft.pattern.components.find(c => c.key === classified.cueBaselineKey)
+      : null;
+    const cueTargetComp = classified.cueTargetKey
+      ? draft.pattern.components.find(c => c.key === classified.cueTargetKey)
+      : null;
+
+    const renderCueingChips = (comp: typeof cueBaselineComp, colorClass: string) => {
+      if (!comp || comp.type !== 'chip_single') return null;
+      const selected = draft.components[comp.key] || '';
+      return (
+        <div className="mb-2">
+          <label className="label text-[10px]">{comp.label}</label>
+          <div className="flex items-center gap-1 flex-wrap">
+            {comp.options?.map(opt => (
+              <button
+                key={opt}
+                type="button"
+                className={`px-2 py-0.5 text-[10px] rounded-full border transition-colors cursor-pointer ${
+                  selected === opt
+                    ? colorClass
+                    : 'border-amber-200 text-amber-600 hover:border-amber-400 hover:text-amber-700'
+                }`}
+                onClick={() => {
+                  updateDraft(draft.id, {
+                    components: { ...draft.components, [comp.key]: selected === opt ? '' : opt },
+                  }, goalType);
+                }}
+              >
+                {opt}
+              </button>
+            ))}
+          </div>
+        </div>
+      );
+    };
 
     return (
       <div key={draft.id} className={`card p-4 ${bgColor} border-l-4 ${borderColor}`}>
@@ -254,6 +299,7 @@ const GoalBuilderModal: React.FC<GoalBuilderModalProps> = ({
               }}
               consistency={draft.consistency}
               onConsistencyChange={(val) => updateDraft(draft.id, { consistency: val }, goalType)}
+              excludeKeys={excludeKeys}
             />
           </div>
         ) : null}
@@ -334,27 +380,33 @@ const GoalBuilderModal: React.FC<GoalBuilderModalProps> = ({
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <MeasurementChips
-              measurement_type={draft.measurement_type}
-              label="Baseline (CLOF)"
-              value={draft.baseline_value}
-              numericValue={draft.baseline_numeric}
-              instrument={draft.instrument}
-              category={draft.category}
-              colorScheme="baseline"
-              onSelect={(val, num) => updateDraft(draft.id, { baseline_value: val, baseline_numeric: num }, goalType)}
-              onInstrumentChange={(inst) => updateDraft(draft.id, { instrument: inst }, goalType)}
-            />
-            <MeasurementChips
-              measurement_type={draft.measurement_type}
-              label="Goal Level (Target)"
-              value={draft.target_value}
-              numericValue={draft.target_numeric}
-              instrument={draft.instrument}
-              category={draft.category}
-              colorScheme="target"
-              onSelect={(val, num) => updateDraft(draft.id, { target_value: val, target_numeric: num }, goalType)}
-            />
+            <div>
+              {renderCueingChips(cueBaselineComp, 'bg-amber-500 text-white border-amber-500')}
+              <MeasurementChips
+                measurement_type={draft.measurement_type}
+                label="Baseline (CLOF)"
+                value={draft.baseline_value}
+                numericValue={draft.baseline_numeric}
+                instrument={draft.instrument}
+                category={draft.category}
+                colorScheme="baseline"
+                onSelect={(val, num) => updateDraft(draft.id, { baseline_value: val, baseline_numeric: num }, goalType)}
+                onInstrumentChange={(inst) => updateDraft(draft.id, { instrument: inst }, goalType)}
+              />
+            </div>
+            <div>
+              {renderCueingChips(cueTargetComp, 'bg-emerald-500 text-white border-emerald-500')}
+              <MeasurementChips
+                measurement_type={draft.measurement_type}
+                label="Goal Level (Target)"
+                value={draft.target_value}
+                numericValue={draft.target_numeric}
+                instrument={draft.instrument}
+                category={draft.category}
+                colorScheme="target"
+                onSelect={(val, num) => updateDraft(draft.id, { target_value: val, target_numeric: num }, goalType)}
+              />
+            </div>
           </div>
         </div>
       </div>

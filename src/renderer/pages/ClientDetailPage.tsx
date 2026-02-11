@@ -51,6 +51,7 @@ import type {
   Evaluation,
   Goal,
   GoalStatus,
+  GoalProgressEntry,
   Invoice,
   InvoiceStatus,
   Payment,
@@ -63,6 +64,7 @@ import GoalFormModal from '../components/GoalFormModal';
 import GoalBuilderModal from '../components/GoalBuilderModal';
 import ClientDiscountModal from '../components/ClientDiscountModal';
 import ClientDiscountBadge from '../components/ClientDiscountBadge';
+import GoalProgressTimeline from '../components/GoalProgressTimeline';
 import ComplianceSection from '../components/ComplianceSection';
 import CommunicationLogSection from '../components/CommunicationLogSection';
 import ProFeatureGate from '../components/ProFeatureGate';
@@ -243,6 +245,7 @@ const ClientDetailPage: React.FC = () => {
   const [notes, setNotes] = useState<Note[]>([]);
   const [evaluations, setEvaluations] = useState<Evaluation[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
+  const [goalHistories, setGoalHistories] = useState<Record<number, GoalProgressEntry[]>>({});
   const [documents, setDocuments] = useState<ClientDocument[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -328,6 +331,14 @@ const ClientDetailPage: React.FC = () => {
       setNotes(notesData || []);
       setEvaluations(evalsData || []);
       setGoals(goalsData || []);
+      // Load progress histories for all goals
+      if (goalsData?.length) {
+        try {
+          const goalIds = goalsData.map((g: Goal) => g.id);
+          const histories = await window.api.goals.getProgressHistoryBatch(goalIds);
+          setGoalHistories(histories);
+        } catch { /* not critical */ }
+      }
       setDocuments(docsData || []);
       const safeInvoices = (invoicesData || []).map((inv: any) => ({
         ...inv,
@@ -998,6 +1009,17 @@ const ClientDetailPage: React.FC = () => {
                                   </div>
                                 </div>
                                 <p className="text-sm text-[var(--color-text)]">{goal.goal_text}</p>
+                                {goalHistories[goal.id]?.length >= 2 && (
+                                  <GoalProgressTimeline
+                                    history={goalHistories[goal.id]}
+                                    measurement_type={goal.measurement_type || 'percentage'}
+                                    target_value={goal.target_value || `${goal.target}`}
+                                    target_numeric={goal.target ?? 0}
+                                    baseline_numeric={goal.baseline ?? 0}
+                                    instrument={goal.instrument}
+                                    compact={true}
+                                  />
+                                )}
                                 {goal.target_date && (
                                   <p className="text-xs text-[var(--color-text-secondary)] mt-1">
                                     Target: {formatDate(goal.target_date)}

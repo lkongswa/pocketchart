@@ -12,6 +12,7 @@ import {
   ShieldAlert,
   X,
   ClipboardList,
+  DollarSign,
 } from 'lucide-react';
 import type { Client, Note, Appointment } from '../../shared/types';
 import BasicAlertsPanel from '../components/BasicAlertsPanel';
@@ -22,6 +23,8 @@ interface DashboardStats {
   notesThisWeek: number;
   upcomingAppointments: number;
   unsignedNotes: number;
+  outstandingBalance: number;
+  unpaidInvoiceCount: number;
 }
 
 interface RecentNote {
@@ -38,6 +41,8 @@ const DashboardPage: React.FC = () => {
     notesThisWeek: 0,
     upcomingAppointments: 0,
     unsignedNotes: 0,
+    outstandingBalance: 0,
+    unpaidInvoiceCount: 0,
   });
   const [recentNotes, setRecentNotes] = useState<RecentNote[]>([]);
   const [upcomingAppointments, setUpcomingAppointments] = useState<Appointment[]>([]);
@@ -166,11 +171,16 @@ const DashboardPage: React.FC = () => {
       // Count unsigned notes
       const unsignedNotes = allNotes.filter((item) => !item.note.signed_at).length;
 
+      // Outstanding balance
+      const balanceData = await window.api.dashboard.getOutstandingBalance().catch(() => ({ outstanding: 0, unpaidCount: 0 }));
+
       setStats({
         incompleteEvals,
         notesThisWeek,
         upcomingAppointments: appointments.filter((a) => a.status === 'scheduled').length,
         unsignedNotes,
+        outstandingBalance: balanceData.outstanding,
+        unpaidInvoiceCount: balanceData.unpaidCount,
       });
     } catch (error) {
       console.error('Failed to load dashboard data:', error);
@@ -226,6 +236,18 @@ const DashboardPage: React.FC = () => {
       icon: <PenLine size={24} className="text-teal-500" />,
       bgClass: 'bg-teal-50',
       onClick: () => navigate('/notes'),
+    },
+    {
+      label: 'Outstanding Balance',
+      count: stats.outstandingBalance,
+      subtitle: stats.unpaidInvoiceCount > 0
+        ? `${stats.unpaidInvoiceCount} unpaid invoice${stats.unpaidInvoiceCount !== 1 ? 's' : ''}`
+        : undefined,
+      isCurrency: true,
+      icon: <DollarSign size={24} className="text-blue-500" />,
+      bgClass: 'bg-blue-50',
+      hoverBorder: 'hover:border-blue-300',
+      onClick: () => navigate('/billing?filter=unpaid'),
     },
   ];
 
@@ -312,11 +334,11 @@ const DashboardPage: React.FC = () => {
       <BasicAlertsPanel />
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
         {statCards.map((card) => (
           <div
             key={card.label}
-            className="card p-5 cursor-pointer hover:shadow-md hover:border-teal-300 transition-all group"
+            className={`card p-5 cursor-pointer hover:shadow-md transition-all group ${card.hoverBorder || 'hover:border-teal-300'}`}
             onClick={card.onClick}
           >
             <div className="flex items-center gap-4">
@@ -326,8 +348,15 @@ const DashboardPage: React.FC = () => {
                 {card.icon}
               </div>
               <div>
-                <p className="text-2xl font-bold text-[var(--color-text)]">{card.count}</p>
+                <p className="text-2xl font-bold text-[var(--color-text)]">
+                  {card.isCurrency
+                    ? `$${card.count.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    : card.count}
+                </p>
                 <p className="text-sm text-[var(--color-text-secondary)]">{card.label}</p>
+                {card.subtitle && (
+                  <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">{card.subtitle}</p>
+                )}
               </div>
             </div>
           </div>

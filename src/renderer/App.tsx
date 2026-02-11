@@ -380,8 +380,10 @@ const App: React.FC = () => {
       lastActivityRef.current = Date.now();
     };
 
-    const events = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart'];
+    const events = ['mousemove', 'mousedown', 'keydown'];
+    const passiveEvents = ['scroll', 'touchstart'];
     events.forEach(event => document.addEventListener(event, resetActivity, true));
+    passiveEvents.forEach(event => document.addEventListener(event, resetActivity, { capture: true, passive: true }));
 
     const intervalId = setInterval(() => {
       if (isLocked) return;
@@ -393,6 +395,7 @@ const App: React.FC = () => {
 
     return () => {
       events.forEach(event => document.removeEventListener(event, resetActivity, true));
+      passiveEvents.forEach(event => document.removeEventListener(event, resetActivity, true));
       clearInterval(intervalId);
     };
   }, [pinEnabled, timeoutMinutes, isLocked]);

@@ -310,6 +310,19 @@ export interface Goal {
   deleted_at: string | null;
 }
 
+export interface GoalProgressEntry {
+  id: number;
+  goal_id: number;
+  client_id: number;
+  recorded_date: string;
+  measurement_type: string;
+  value: string;
+  numeric_value: number;
+  instrument: string;
+  source_type: 'eval' | 'progress_report' | 'recert' | 'discharge';
+  source_document_id: number;
+}
+
 export interface Evaluation {
   id: number;
   client_id: number;
@@ -498,6 +511,7 @@ export interface DashboardTodo {
   text: string;
   completed: number; // 0 or 1
   position: number;
+  priority: number; // 0 or 1
   created_at: string;
   updated_at: string;
 }
@@ -1159,6 +1173,9 @@ export interface PocketChartAPI {
     update: (id: number, data: Partial<Goal>) => Promise<Goal>;
     delete: (id: number) => Promise<boolean>;
     tagSource: (goalId: number, docId: number, docType: string) => Promise<boolean>;
+    getProgressHistory: (goalId: number) => Promise<GoalProgressEntry[]>;
+    getProgressHistoryBatch: (goalIds: number[]) => Promise<Record<number, GoalProgressEntry[]>>;
+    addProgressEntry: (data: Omit<GoalProgressEntry, 'id'>) => Promise<{ id: number }>;
   };
   stagedGoals: {
     listByClient: (clientId: number) => Promise<StagedGoal[]>;
@@ -1456,6 +1473,7 @@ export interface PocketChartAPI {
     getBasicAlerts: () => Promise<BasicAlerts>;
     getOverview: () => Promise<DashboardOverview>;
     getAnalytics: (filters?: { startDate?: string; endDate?: string; monthsBack?: number }) => Promise<AnalyticsData>;
+    getOutstandingBalance: () => Promise<{ outstanding: number; unpaidCount: number }>;
   };
   // ── Reports (Pro) ──
   reports: {
@@ -1502,7 +1520,7 @@ export interface PocketChartAPI {
   dashboardTodos: {
     list: () => Promise<DashboardTodo[]>;
     create: (text: string) => Promise<DashboardTodo>;
-    update: (id: number, data: Partial<Pick<DashboardTodo, 'text' | 'completed' | 'position'>>) => Promise<DashboardTodo>;
+    update: (id: number, data: Partial<Pick<DashboardTodo, 'text' | 'completed' | 'position' | 'priority'>>) => Promise<DashboardTodo>;
     delete: (id: number) => Promise<boolean>;
     search: (query: string) => Promise<DashboardTodo[]>;
     reorder: (items: Array<{ id: number; position: number }>) => Promise<DashboardTodo[]>;

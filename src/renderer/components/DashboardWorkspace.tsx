@@ -7,6 +7,7 @@ import {
   X,
   Check,
   GripVertical,
+  Star,
 } from 'lucide-react';
 import type { DashboardNote, DashboardTodo } from '../../shared/types';
 
@@ -102,6 +103,11 @@ function TodoPanel({ searchQuery }: { searchQuery: string }) {
 
   const deleteTodo = async (id: number) => {
     await window.api.dashboardTodos.delete(id);
+    loadTodos();
+  };
+
+  const togglePriority = async (todo: DashboardTodo) => {
+    await window.api.dashboardTodos.update(todo.id, { priority: todo.priority ? 0 : 1 });
     loadTodos();
   };
 
@@ -229,6 +235,19 @@ function TodoPanel({ searchQuery }: { searchQuery: string }) {
               >
                 {highlightMatch(todo.text)}
               </span>
+              {/* Priority star */}
+              <button
+                type="button"
+                className={`shrink-0 transition-all ${
+                  todo.priority
+                    ? 'text-amber-400 hover:text-amber-500'
+                    : 'opacity-0 group-hover:opacity-60 text-[var(--color-text-secondary)] hover:text-amber-400'
+                }`}
+                onClick={() => togglePriority(todo)}
+                title={todo.priority ? 'Remove priority' : 'Mark as priority'}
+              >
+                <Star size={14} fill={todo.priority ? 'currentColor' : 'none'} />
+              </button>
               {/* Delete */}
               <button
                 type="button"

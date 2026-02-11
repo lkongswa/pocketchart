@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useSectionColor } from '../hooks/useSectionColor';
 import { useTier } from '../hooks/useTier';
 import { useTrialGuard } from '../hooks/useTrialGuard';
@@ -65,6 +66,7 @@ const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
 
 export default function BillingPage() {
   const sectionColor = useSectionColor();
+  const location = useLocation();
   const { isPro } = useTier();
   const { guardAction, showExpiredModal, dismissExpiredModal } = useTrialGuard();
   const [activeTab, setActiveTab] = useState<BillingTab>('invoices');
@@ -94,7 +96,7 @@ export default function BillingPage() {
   const [loading, setLoading] = useState(true);
 
   // Filters
-  const [invoiceFilter, setInvoiceFilter] = useState<InvoiceStatus | 'all'>('all');
+  const [invoiceFilter, setInvoiceFilter] = useState<InvoiceStatus | 'all' | 'unpaid'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [clientFilter, setClientFilter] = useState<number | 'all'>('all');
 
@@ -102,6 +104,16 @@ export default function BillingPage() {
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<(Invoice & { items: InvoiceItem[] }) | null>(null);
+
+  // Read URL params to pre-set filters (e.g. from dashboard stat card)
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const filter = params.get('filter');
+    if (filter === 'unpaid') {
+      setActiveTab('invoices');
+      setInvoiceFilter('unpaid');
+    }
+  }, [location.search]);
 
   useEffect(() => {
     if (toast) {
@@ -398,7 +410,8 @@ export default function BillingPage() {
       if (filterVal > 0 && inv.client_id !== filterVal) return false;
       if (filterVal < 0 && inv.entity_id !== Math.abs(filterVal)) return false;
     }
-    if (invoiceFilter !== 'all' && inv.status !== invoiceFilter) return false;
+    if (invoiceFilter === 'unpaid' && (inv.status === 'paid' || inv.status === 'void')) return false;
+    if (invoiceFilter !== 'all' && invoiceFilter !== 'unpaid' && inv.status !== invoiceFilter) return false;
     if (searchTerm) {
       const name = getInvoiceName(inv).toLowerCase();
       return (
@@ -528,9 +541,10 @@ export default function BillingPage() {
               <select
                 className="select"
                 value={invoiceFilter}
-                onChange={(e) => setInvoiceFilter(e.target.value as InvoiceStatus | 'all')}
+                onChange={(e) => setInvoiceFilter(e.target.value as InvoiceStatus | 'all' | 'unpaid')}
               >
                 <option value="all">All Status</option>
+                <option value="unpaid">Unpaid</option>
                 <option value="draft">Draft</option>
                 <option value="sent">Sent</option>
                 <option value="paid">Paid</option>

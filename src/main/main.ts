@@ -712,6 +712,75 @@ function registerIpcHandlers() {
     return true;
   });
 
+  // ── Goal Progress History ──
+
+  safeHandle('goals:getProgressHistory', (_event, goalId: number) => {
+    return db.prepare(`
+      SELECT id, goal_id, recorded_date, measurement_type, value, numeric_value,
+             instrument, source_type, source_document_id
+      FROM goal_progress_history
+      WHERE goal_id = ? AND deleted_at IS NULL
+      ORDER BY recorded_date ASC, id ASC
+    `).all(goalId);
+  });
+
+  safeHandle('goals:getProgressHistoryBatch', (_event, goalIds: number[]) => {
+    if (!goalIds.length) return {};
+    const placeholders = goalIds.map(() => '?').join(',');
+    const rows = db.prepare(`
+      SELECT id, goal_id, recorded_date, measurement_type, value, numeric_value,
+             instrument, source_type, source_document_id
+      FROM goal_progress_history
+      WHERE goal_id IN (${placeholders}) AND deleted_at IS NULL
+      ORDER BY recorded_date ASC, id ASC
+    `).all(...goalIds) as any[];
+
+    const result: Record<number, any[]> = {};
+    for (const row of rows) {
+      if (!result[row.goal_id]) result[row.goal_id] = [];
+      result[row.goal_id].push(row);
+    }
+    return result;
+  });
+
+  safeHandle('goals:addProgressEntry', (_event, data: {
+    goal_id: number;
+    client_id: number;
+    recorded_date: string;
+    measurement_type: string;
+    value: string;
+    numeric_value: number;
+    instrument?: string;
+    source_type: string;
+    source_document_id: number;
+  }) => {
+    // Prevent duplicates: check if entry already exists for this goal + source document
+    const existing = db.prepare(`
+      SELECT id FROM goal_progress_history
+      WHERE goal_id = ? AND source_document_id = ? AND source_type = ? AND deleted_at IS NULL
+    `).get(data.goal_id, data.source_document_id, data.source_type) as any;
+
+    if (existing) {
+      db.prepare(`
+        UPDATE goal_progress_history
+        SET value = ?, numeric_value = ?, recorded_date = ?, measurement_type = ?, instrument = ?
+        WHERE id = ?
+      `).run(data.value, data.numeric_value, data.recorded_date,
+             data.measurement_type, data.instrument || '', existing.id);
+      return { id: existing.id };
+    }
+
+    const result = db.prepare(`
+      INSERT INTO goal_progress_history
+        (goal_id, client_id, recorded_date, measurement_type, value, numeric_value, instrument, source_type, source_document_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(data.goal_id, data.client_id, data.recorded_date,
+           data.measurement_type, data.value, data.numeric_value,
+           data.instrument || '', data.source_type, data.source_document_id);
+
+    return { id: result.lastInsertRowid };
+  });
+
   // ── Staged Goals ──
 
   safeHandle('stagedGoals:listByClient', (_event, clientId: number) => {
@@ -4567,6 +4636,23 @@ function registerIpcHandlers() {
     return { unsignedNotes, complianceAlerts, expiringOrders, authorizationAlerts, incompleteCharts };
   });
 
+  // Outstanding balance for dashboard stat card (no Pro gate)
+  safeHandle('dashboard:getOutstandingBalance', () => {
+    const outstanding = (db.prepare(`
+      SELECT COALESCE(SUM(total_amount), 0) AS total
+      FROM invoices
+      WHERE status NOT IN ('paid', 'void') AND deleted_at IS NULL
+    `).get() as any).total;
+
+    const unpaidCount = (db.prepare(`
+      SELECT COUNT(*) AS cnt
+      FROM invoices
+      WHERE status NOT IN ('paid', 'void') AND deleted_at IS NULL
+    `).get() as any).cnt;
+
+    return { outstanding, unpaidCount };
+  });
+
   safeHandle('dashboard:getAnalytics', (_event, filters?: { startDate?: string; endDate?: string; monthsBack?: number }) => {
     requireTier('pro');
 
@@ -5272,7 +5358,7 @@ function registerIpcHandlers() {
   // ── Dashboard Todos ──
 
   safeHandle('dashboardTodos:list', () => {
-    return db.prepare('SELECT * FROM dashboard_todos ORDER BY completed ASC, position ASC').all();
+    return db.prepare('SELECT * FROM dashboard_todos ORDER BY completed ASC, priority DESC, position ASC').all();
   });
 
   safeHandle('dashboardTodos:create', (_event, text: string) => {
@@ -5282,12 +5368,13 @@ function registerIpcHandlers() {
     return db.prepare('SELECT * FROM dashboard_todos WHERE id = ?').get(result.lastInsertRowid);
   });
 
-  safeHandle('dashboardTodos:update', (_event, id: number, data: { text?: string; completed?: number; position?: number }) => {
+  safeHandle('dashboardTodos:update', (_event, id: number, data: { text?: string; completed?: number; position?: number; priority?: number }) => {
     const sets: string[] = [];
     const values: any[] = [];
     if (data.text !== undefined) { sets.push('text = ?'); values.push(data.text); }
     if (data.completed !== undefined) { sets.push('completed = ?'); values.push(data.completed); }
     if (data.position !== undefined) { sets.push('position = ?'); values.push(data.position); }
+    if (data.priority !== undefined) { sets.push('priority = ?'); values.push(data.priority); }
     if (sets.length === 0) return db.prepare('SELECT * FROM dashboard_todos WHERE id = ?').get(id);
     sets.push('updated_at = CURRENT_TIMESTAMP');
     values.push(id);
@@ -5301,7 +5388,7 @@ function registerIpcHandlers() {
   });
 
   safeHandle('dashboardTodos:search', (_event, query: string) => {
-    return db.prepare('SELECT * FROM dashboard_todos WHERE text LIKE ? ORDER BY completed ASC, position ASC').all(`%${query}%`);
+    return db.prepare('SELECT * FROM dashboard_todos WHERE text LIKE ? ORDER BY completed ASC, priority DESC, position ASC').all(`%${query}%`);
   });
 
   safeHandle('dashboardTodos:reorder', (_event, items: Array<{ id: number; position: number }>) => {
@@ -5312,7 +5399,7 @@ function registerIpcHandlers() {
       }
     });
     reorder();
-    return db.prepare('SELECT * FROM dashboard_todos ORDER BY completed ASC, position ASC').all();
+    return db.prepare('SELECT * FROM dashboard_todos ORDER BY completed ASC, priority DESC, position ASC').all();
   });
 
   safeHandle('dashboardTodos:listIncomplete', () => {
