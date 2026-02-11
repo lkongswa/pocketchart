@@ -10,8 +10,8 @@ import {
   endOfMonth,
 } from 'date-fns';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Copy, Clipboard, Edit3, Trash2, X, Ban, AlertTriangle } from 'lucide-react';
-import type { Appointment, Invoice, InvoiceItem } from '../../shared/types';
+import { Copy, Clipboard, Edit3, Trash2, X, Ban, AlertTriangle, ListTodo, ChevronRight, GripVertical, CheckCircle2, Undo2 } from 'lucide-react';
+import type { Appointment, Invoice, InvoiceItem, DashboardTodo, CalendarBlock } from '../../shared/types';
 import type { PaymentIndicator } from '../components/calendar/AppointmentBlock';
 import AppointmentModal from '../components/AppointmentModal';
 import TrialExpiredModal from '../components/TrialExpiredModal';
@@ -40,6 +40,13 @@ interface ContextMenu {
   appointment: Appointment;
 }
 
+// Block context menu state
+interface BlockContextMenu {
+  x: number;
+  y: number;
+  block: CalendarBlock;
+}
+
 export default function CalendarPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -65,6 +72,16 @@ export default function CalendarPage() {
   // Context menu state
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+
+  // Todo sidebar state
+  const [todoSidebarOpen, setTodoSidebarOpen] = useState(false);
+  const [incompleteTodos, setIncompleteTodos] = useState<DashboardTodo[]>([]);
+
+  // Calendar blocks (admin time blocks — separate from appointments)
+  const [calendarBlocks, setCalendarBlocks] = useState<CalendarBlock[]>([]);
+
+  // Block context menu state
+  const [blockContextMenu, setBlockContextMenu] = useState<BlockContextMenu | null>(null);
 
   // Compute date range based on current view
   const getDateRange = useCallback((): { startDate: string; endDate: string } => {
@@ -135,9 +152,21 @@ export default function CalendarPage() {
     }
   }, [getDateRange]);
 
+  // Load calendar blocks (admin time blocks)
+  const loadCalendarBlocks = useCallback(async () => {
+    try {
+      const { startDate, endDate } = getDateRange();
+      const blocks = await window.api.calendarBlocks.list({ startDate, endDate });
+      setCalendarBlocks(blocks);
+    } catch (err) {
+      console.error('Failed to load calendar blocks:', err);
+    }
+  }, [getDateRange]);
+
   useEffect(() => {
     loadAppointments();
-  }, [loadAppointments]);
+    loadCalendarBlocks();
+  }, [loadAppointments, loadCalendarBlocks]);
 
   // Navigation
   const handleNavigate = (direction: 'prev' | 'next' | 'today') => {
@@ -225,6 +254,34 @@ export default function CalendarPage() {
     await loadAppointments();
   };
 
+  // Load incomplete todos for sidebar
+  const loadIncompleteTodos = useCallback(async () => {
+    const todos = await window.api.dashboardTodos.listIncomplete();
+    setIncompleteTodos(todos);
+  }, []);
+
+  useEffect(() => {
+    if (todoSidebarOpen) loadIncompleteTodos();
+  }, [todoSidebarOpen, loadIncompleteTodos]);
+
+  // Handle todo dropped onto calendar — create admin block (NOT an appointment)
+  const handleTodoDrop = async (todoId: number, date: string, time?: string) => {
+    const todo = incompleteTodos.find((t) => t.id === todoId);
+    if (!todo) return;
+    // Create calendar block in separate non-clinical table
+    await window.api.calendarBlocks.create({
+      title: todo.text,
+      scheduled_date: date,
+      scheduled_time: time || '09:00',
+      duration_minutes: 30,
+      source_todo_id: todo.id,
+    });
+    // Mark todo as completed
+    await window.api.dashboardTodos.update(todoId, { completed: 1 });
+    await loadCalendarBlocks();
+    await loadIncompleteTodos();
+  };
+
   // Drag and drop
   const handleAppointmentDrop = async (apptId: number, newDate: string, newTime?: string) => {
     const appt = appointments.find((a) => a.id === apptId);
@@ -253,14 +310,55 @@ export default function CalendarPage() {
     setContextMenu({ x, y, appointment: appt });
   }, []);
 
+  // Block context menu handler
+  const handleBlockContextMenu = useCallback((block: CalendarBlock, x: number, y: number) => {
+    setBlockContextMenu({ x, y, block });
+    setContextMenu(null); // Close appointment menu if open
+  }, []);
+
+  // Block actions
+  const handleToggleBlockDone = async (block: CalendarBlock) => {
+    setBlockContextMenu(null);
+    await window.api.calendarBlocks.update(block.id, { completed: block.completed ? 0 : 1 });
+    await loadCalendarBlocks();
+  };
+
+  const handleDeleteAndRestoreBlock = async (block: CalendarBlock) => {
+    setBlockContextMenu(null);
+    await window.api.calendarBlocks.deleteAndRestore(block.id);
+    await loadCalendarBlocks();
+    await loadIncompleteTodos();
+  };
+
+  const handleDeleteBlock = async (block: CalendarBlock) => {
+    setBlockContextMenu(null);
+    await window.api.calendarBlocks.delete(block.id);
+    await loadCalendarBlocks();
+  };
+
+  // Inline block remove (X button): if linked to a todo, restore it; otherwise just delete
+  const handleBlockRemoveInline = async (block: CalendarBlock) => {
+    if (block.source_todo_id) {
+      await window.api.calendarBlocks.deleteAndRestore(block.id);
+      await loadCalendarBlocks();
+      await loadIncompleteTodos();
+    } else {
+      await window.api.calendarBlocks.delete(block.id);
+      await loadCalendarBlocks();
+    }
+  };
+
   // Close context menu on click outside
   useEffect(() => {
-    const handleClick = () => setContextMenu(null);
-    if (contextMenu) {
+    const handleClick = () => {
+      setContextMenu(null);
+      setBlockContextMenu(null);
+    };
+    if (contextMenu || blockContextMenu) {
       document.addEventListener('click', handleClick);
       return () => document.removeEventListener('click', handleClick);
     }
-  }, [contextMenu]);
+  }, [contextMenu, blockContextMenu]);
 
   // Copy appointment to clipboard
   const handleCopyAppointment = (appt: Appointment) => {
@@ -417,41 +515,124 @@ export default function CalendarPage() {
         </div>
       )}
 
-      <div className="flex-1 overflow-hidden mt-4">
-        {loading ? (
-          <div className="flex items-center justify-center h-64">
-            <div className="text-[var(--color-text-secondary)]">Loading appointments...</div>
-          </div>
-        ) : currentView === 'day' ? (
-          <DayView
-            date={currentDate}
-            appointments={filteredAppointments}
-            onSlotClick={handleSlotClickWithPaste}
-            onAppointmentClick={handleAppointmentClick}
-            onAppointmentDrop={handleAppointmentDrop}
-            onAppointmentContextMenu={handleAppointmentContextMenu}
-            paymentStatusMap={paymentStatusMap}
-          />
-        ) : currentView === 'week' ? (
-          <WeekView
-            weekStart={weekStart}
-            appointments={filteredAppointments}
-            onSlotClick={handleSlotClickWithPaste}
-            onAppointmentClick={handleAppointmentClick}
-            onAppointmentDrop={handleAppointmentDrop}
-            onAppointmentContextMenu={handleAppointmentContextMenu}
-            paymentStatusMap={paymentStatusMap}
-          />
-        ) : (
-          <MonthView
-            currentDate={currentDate}
-            appointments={filteredAppointments}
-            onDayClick={handleDayClick}
-            onAppointmentClick={handleAppointmentClick}
-            onAppointmentDrop={(apptId, newDate) => handleAppointmentDrop(apptId, newDate)}
-            paymentStatusMap={paymentStatusMap}
-          />
+      <div className="flex-1 overflow-hidden mt-4 flex gap-0">
+        {/* Main calendar area */}
+        <div className="flex-1 overflow-hidden">
+          {loading ? (
+            <div className="flex items-center justify-center h-64">
+              <div className="text-[var(--color-text-secondary)]">Loading appointments...</div>
+            </div>
+          ) : currentView === 'day' ? (
+            <DayView
+              date={currentDate}
+              appointments={filteredAppointments}
+              calendarBlocks={calendarBlocks}
+              onSlotClick={handleSlotClickWithPaste}
+              onAppointmentClick={handleAppointmentClick}
+              onAppointmentDrop={handleAppointmentDrop}
+              onTodoDrop={handleTodoDrop}
+              onAppointmentContextMenu={handleAppointmentContextMenu}
+              onBlockContextMenu={handleBlockContextMenu}
+              onBlockToggleDone={handleToggleBlockDone}
+              onBlockRemove={handleBlockRemoveInline}
+              paymentStatusMap={paymentStatusMap}
+            />
+          ) : currentView === 'week' ? (
+            <WeekView
+              weekStart={weekStart}
+              appointments={filteredAppointments}
+              calendarBlocks={calendarBlocks}
+              onSlotClick={handleSlotClickWithPaste}
+              onAppointmentClick={handleAppointmentClick}
+              onAppointmentDrop={handleAppointmentDrop}
+              onTodoDrop={handleTodoDrop}
+              onAppointmentContextMenu={handleAppointmentContextMenu}
+              onBlockContextMenu={handleBlockContextMenu}
+              onBlockToggleDone={handleToggleBlockDone}
+              onBlockRemove={handleBlockRemoveInline}
+              paymentStatusMap={paymentStatusMap}
+            />
+          ) : (
+            <MonthView
+              currentDate={currentDate}
+              appointments={filteredAppointments}
+              calendarBlocks={calendarBlocks}
+              onDayClick={handleDayClick}
+              onAppointmentClick={handleAppointmentClick}
+              onAppointmentDrop={(apptId, newDate) => handleAppointmentDrop(apptId, newDate)}
+              onTodoDrop={(todoId, date) => handleTodoDrop(todoId, date)}
+              onBlockContextMenu={handleBlockContextMenu}
+              onBlockToggleDone={handleToggleBlockDone}
+              onBlockRemove={handleBlockRemoveInline}
+              paymentStatusMap={paymentStatusMap}
+            />
+          )}
+        </div>
+
+        {/* Todo sidebar toggle */}
+        {!todoSidebarOpen && (
+          <button
+            type="button"
+            className="shrink-0 flex items-center justify-center w-8 bg-gray-50 hover:bg-gray-100 border-l border-[var(--color-border)] transition-colors"
+            onClick={() => setTodoSidebarOpen(true)}
+            title="Show tasks"
+          >
+            <ListTodo size={16} className="text-[var(--color-text-secondary)]" />
+          </button>
         )}
+
+        {/* Todo sidebar */}
+        {todoSidebarOpen && (() => {
+          // Filter out todos that already have a calendar block (prevents duplicates)
+          const blockedTodoIds = new Set(
+            calendarBlocks.filter(b => b.source_todo_id).map(b => b.source_todo_id)
+          );
+          const sidebarTodos = incompleteTodos.filter(t => !blockedTodoIds.has(t.id));
+
+          return (
+          <div className="shrink-0 w-56 border-l border-[var(--color-border)] bg-white flex flex-col overflow-hidden">
+            <div className="flex items-center gap-2 px-3 py-2.5 border-b border-[var(--color-border)]">
+              <ListTodo size={14} className="text-teal-500" />
+              <span className="text-xs font-semibold text-[var(--color-text)] flex-1">Tasks</span>
+              <button
+                type="button"
+                className="p-0.5 rounded hover:bg-gray-100 transition-colors"
+                onClick={() => setTodoSidebarOpen(false)}
+                title="Hide tasks"
+              >
+                <ChevronRight size={14} className="text-[var(--color-text-secondary)]" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5">
+              {sidebarTodos.length === 0 ? (
+                <div className="text-center text-[var(--color-text-secondary)] text-xs py-6">
+                  No pending tasks.
+                </div>
+              ) : (
+                sidebarTodos.map((todo) => (
+                  <div
+                    key={todo.id}
+                    className="group flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-gray-50 cursor-grab transition-colors"
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData('application/todo-id', todo.id.toString());
+                      e.dataTransfer.effectAllowed = 'move';
+                    }}
+                  >
+                    <GripVertical size={10} className="shrink-0 text-[var(--color-text-secondary)] opacity-40 group-hover:opacity-80" />
+                    <span className="text-xs text-[var(--color-text)] leading-tight flex-1 truncate">
+                      {todo.text}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="px-3 py-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-secondary)]">
+              Drag a task onto the calendar to block admin time
+            </div>
+          </div>
+          );
+        })()}
       </div>
 
       {/* Context Menu */}
@@ -495,6 +676,37 @@ export default function CalendarPage() {
             onClick={() => handleDeleteAppointment(contextMenu.appointment)}
           >
             <Trash2 size={14} /> Delete
+          </button>
+        </div>
+      )}
+
+      {/* Block Context Menu */}
+      {blockContextMenu && (
+        <div
+          className="fixed z-50 bg-white rounded-lg shadow-xl border border-[var(--color-border)] py-1 min-w-[180px]"
+          style={{ top: blockContextMenu.y, left: blockContextMenu.x }}
+        >
+          <button
+            className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 transition-colors"
+            onClick={() => handleToggleBlockDone(blockContextMenu.block)}
+          >
+            <CheckCircle2 size={14} className={blockContextMenu.block.completed ? 'text-amber-500' : 'text-emerald-500'} />
+            {blockContextMenu.block.completed ? 'Mark Undone' : 'Mark Done'}
+          </button>
+          <div className="border-t border-[var(--color-border)] my-1" />
+          {blockContextMenu.block.source_todo_id && (
+            <button
+              className="w-full text-left px-3 py-2 text-sm hover:bg-amber-50 text-amber-700 flex items-center gap-2 transition-colors"
+              onClick={() => handleDeleteAndRestoreBlock(blockContextMenu.block)}
+            >
+              <Undo2 size={14} /> Remove & Restore Task
+            </button>
+          )}
+          <button
+            className="w-full text-left px-3 py-2 text-sm hover:bg-red-50 text-red-600 flex items-center gap-2 transition-colors"
+            onClick={() => handleDeleteBlock(blockContextMenu.block)}
+          >
+            <Trash2 size={14} /> Delete Block
           </button>
         </div>
       )}

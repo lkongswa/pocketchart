@@ -28,6 +28,8 @@ const VALID_TABLES = new Set([
   'client_documents', 'pattern_overrides',
   // V2/V3 billing tables
   'fee_schedule', 'invoices', 'invoice_items', 'payments',
+  // Dashboard workspace tables
+  'dashboard_notes', 'dashboard_todos', 'calendar_blocks', 'quick_links',
   'payers', 'authorizations', 'claims', 'claim_lines',
   // Audit log
   'audit_log',
@@ -40,6 +42,8 @@ const VALID_TABLES = new Set([
   'client_discounts', 'discount_templates',
   // V6 Amendments
   'note_amendments',
+  // Dashboard workspace
+  'dashboard_notes', 'dashboard_todos',
 ]);
 
 export function getDataPath(): string {
@@ -1454,6 +1458,63 @@ function runMigrations(): void {
         db.exec('DROP TABLE IF EXISTS goals_bank');
       },
     },
+    {
+      version: 34,
+      description: 'Add dashboard scratchpad and todo tables',
+      up: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS dashboard_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content TEXT NOT NULL DEFAULT '',
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS dashboard_todos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            text TEXT NOT NULL DEFAULT '',
+            completed INTEGER NOT NULL DEFAULT 0,
+            position INTEGER NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+      },
+    },
+    {
+      version: 35,
+      description: 'Add calendar_blocks table for admin time blocks',
+      up: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS calendar_blocks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL DEFAULT '',
+            scheduled_date TEXT NOT NULL,
+            scheduled_time TEXT NOT NULL DEFAULT '09:00',
+            duration_minutes INTEGER NOT NULL DEFAULT 30,
+            source_todo_id INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+      },
+    },
+    {
+      version: 36,
+      description: 'Add completed to calendar_blocks, create quick_links table',
+      up: () => {
+        db.exec(`ALTER TABLE calendar_blocks ADD COLUMN completed INTEGER NOT NULL DEFAULT 0`);
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS quick_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL DEFAULT '',
+            url TEXT NOT NULL DEFAULT '',
+            position INTEGER NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
@@ -1486,6 +1547,9 @@ function createIndexes(): void {
     CREATE INDEX IF NOT EXISTS idx_evaluations_deleted_at ON evaluations(deleted_at);
     CREATE INDEX IF NOT EXISTS idx_goals_deleted_at ON goals(deleted_at);
     CREATE INDEX IF NOT EXISTS idx_appointments_deleted_at ON appointments(deleted_at);
+    CREATE INDEX IF NOT EXISTS idx_dashboard_todos_position ON dashboard_todos(position);
+    CREATE INDEX IF NOT EXISTS idx_calendar_blocks_date ON calendar_blocks(scheduled_date);
+    CREATE INDEX IF NOT EXISTS idx_quick_links_position ON quick_links(position);
   `);
 
   // V2/V3 billing table indexes (run after migrations create tables)

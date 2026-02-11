@@ -27,7 +27,7 @@ interface MissingNote {
   clientId: number;
 }
 
-type TabFilter = 'due' | 'drafts' | 'overdue' | 'all';
+type TabFilter = 'due' | 'drafts' | 'overdue' | 'all' | 'progress_reports';
 
 function formatDate(dateStr: string): string {
   if (!dateStr) return '';
@@ -143,11 +143,11 @@ export default function NotesOverviewPage() {
   // Derived counts
   const drafts = allNotes.filter(n => !n.note.signed_at);
   const overdue = drafts.filter(n => daysSince(n.note.date_of_service) > 2);
+  const progressReports = allNotes.filter(n => n.note.note_type === 'progress_report');
   const notesDue = missingNotes.length; // Appointments without notes
 
   // Build display list based on tab
   const getDisplayItems = () => {
-    let items: NoteWithClient[] = [];
     switch (tab) {
       case 'due':
         // Show drafts (unsigned notes) - this is the to-do queue
@@ -156,6 +156,8 @@ export default function NotesOverviewPage() {
         return drafts.filter(matchesSearch);
       case 'overdue':
         return overdue.filter(matchesSearch);
+      case 'progress_reports':
+        return progressReports.filter(matchesSearch);
       case 'all':
         return allNotes.filter(matchesSearch);
     }
@@ -298,6 +300,7 @@ export default function NotesOverviewPage() {
             { key: 'due' as TabFilter, label: 'Notes Due', count: drafts.length },
             { key: 'drafts' as TabFilter, label: 'Drafts', count: drafts.length },
             { key: 'overdue' as TabFilter, label: 'Overdue', count: overdue.length },
+            { key: 'progress_reports' as TabFilter, label: 'Progress Reports', count: progressReports.length },
             { key: 'all' as TabFilter, label: 'All Notes', count: allNotes.length },
           ]).map((t) => (
             <button
@@ -347,6 +350,8 @@ export default function NotesOverviewPage() {
                 ? 'No unsigned notes. All caught up! 🎉'
                 : tab === 'overdue'
                 ? 'No overdue notes. Great job staying on top of documentation!'
+                : tab === 'progress_reports'
+                ? 'No progress reports found.'
                 : 'No notes found matching your criteria.'}
             </div>
           ) : (
@@ -365,8 +370,14 @@ export default function NotesOverviewPage() {
                   }
                 >
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-[var(--color-text)] truncate">
+                    <p className="text-sm font-medium text-[var(--color-text)] truncate flex items-center gap-1.5">
                       {item.clientName}
+                      {item.note.note_type === 'progress_report' && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-teal-100 text-teal-700 flex-shrink-0">PR</span>
+                      )}
+                      {item.note.note_type === 'discharge' && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-100 text-rose-700 flex-shrink-0">DC</span>
+                      )}
                     </p>
                     <p className="text-xs text-[var(--color-text-secondary)] truncate mt-0.5">
                       {item.note.subjective

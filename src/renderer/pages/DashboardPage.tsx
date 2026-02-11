@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import type { Client, Note, Appointment } from '../../shared/types';
 import BasicAlertsPanel from '../components/BasicAlertsPanel';
+import DashboardWorkspace from '../components/DashboardWorkspace';
 
 interface DashboardStats {
   incompleteEvals: number;
@@ -431,6 +432,9 @@ const DashboardPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Workspace: Scratchpad + Tasks */}
+      <DashboardWorkspace />
     </div>
   );
 };

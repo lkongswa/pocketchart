@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useParams, useNavigate, useLocation, useBlocker } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, useBlocker, useSearchParams } from 'react-router-dom';
 import { useSectionColor } from '../hooks/useSectionColor';
 import {
   ArrowLeft,
@@ -122,6 +122,8 @@ export default function NoteFormPage() {
   }) || {};
 
   const isStandaloneDischarge = apptState.standalone === true && apptState.noteMode === 'discharge';
+  const [searchParams] = useSearchParams();
+  const queryType = searchParams.get('type'); // 'progress_report' | 'discharge' | null
 
   // Data
   const [client, setClient] = useState<Client | null>(null);
@@ -215,7 +217,11 @@ export default function NoteFormPage() {
   const [treatmentPlanSummary, setTreatmentPlanSummary] = useState<{ treatmentPlan: string; frequencyDuration: string } | null>(null);
 
   // Note mode state (replaces isProgressReport boolean)
-  const [noteMode, setNoteMode] = useState<NoteMode>(isStandaloneDischarge ? 'discharge' : 'soap');
+  // Priority: standalone discharge > query param > default soap
+  const initialNoteMode: NoteMode = isStandaloneDischarge ? 'discharge'
+    : (queryType === 'progress_report' || queryType === 'discharge') ? queryType
+    : 'soap';
+  const [noteMode, setNoteMode] = useState<NoteMode>(initialNoteMode);
   const isProgressReport = noteMode === 'progress_report';
   const isDischarge = noteMode === 'discharge';
 

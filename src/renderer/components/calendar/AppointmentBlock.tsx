@@ -10,6 +10,7 @@ interface AppointmentBlockProps {
   startHour: number;
   onClick: (appt: Appointment) => void;
   onContextMenu?: (appt: Appointment, x: number, y: number) => void;
+  onTodoDrop?: (todoId: number, date: string, time: string) => void;
   compact?: boolean;
   paymentStatus?: PaymentIndicator;
 }
@@ -49,6 +50,7 @@ export default function AppointmentBlock({
   startHour,
   onClick,
   onContextMenu,
+  onTodoDrop,
   compact = false,
   paymentStatus = 'none',
 }: AppointmentBlockProps) {
@@ -70,6 +72,23 @@ export default function AppointmentBlock({
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>) => {
     e.dataTransfer.setData('text/plain', appointment.id.toString());
     e.dataTransfer.effectAllowed = 'move';
+  };
+
+  // Allow todo items to be dropped onto time slots that already have appointments
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    if (e.dataTransfer.types.includes('application/todo-id')) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    const todoId = e.dataTransfer.getData('application/todo-id');
+    if (todoId && onTodoDrop) {
+      e.preventDefault();
+      e.stopPropagation();
+      onTodoDrop(parseInt(todoId, 10), appointment.scheduled_date, appointment.scheduled_time);
+    }
   };
 
   const handleContextMenu = (e: React.MouseEvent) => {
@@ -122,10 +141,12 @@ export default function AppointmentBlock({
   // Full mode: absolutely positioned for day/week time grid
   return (
     <div
-      className={`absolute left-0.5 right-0.5 rounded-md px-2 py-1 overflow-hidden cursor-pointer transition-shadow hover:shadow-md z-10 ${isContractorAppt ? CONTRACTOR_STATUS_CLASSES[appointment.status] : STATUS_CLASSES[appointment.status]}`}
+      className={`absolute left-0.5 right-0.5 rounded-md px-2 py-1 overflow-hidden cursor-pointer transition-shadow hover:shadow-md z-10 pointer-events-auto ${isContractorAppt ? CONTRACTOR_STATUS_CLASSES[appointment.status] : STATUS_CLASSES[appointment.status]}`}
       style={{ top: topPx, height: heightPx }}
       draggable={true}
       onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
       onClick={(e) => {
         e.stopPropagation();
         onClick(appointment);

@@ -296,7 +296,7 @@ const SuperbillPage: React.FC = () => {
             />
           </div>
           <button
-            className="btn-accent gap-2"
+            className="btn-primary gap-2"
             onClick={() => handlePreGenerate('bulk')}
             disabled={generating || !startDate || !endDate}
           >

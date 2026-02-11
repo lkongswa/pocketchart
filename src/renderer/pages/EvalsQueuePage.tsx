@@ -9,6 +9,7 @@ import {
   Clock,
   Filter,
   AlertTriangle,
+  RefreshCw,
 } from 'lucide-react';
 
 interface EvalWithClient {
@@ -25,6 +26,8 @@ interface EvalWithClient {
   last_name: string;
   client_discipline: string;
 }
+
+type TabFilter = 'incomplete' | 'recerts' | 'all';
 
 function formatDate(dateStr: string): string {
   if (!dateStr) return '';
@@ -55,9 +58,11 @@ function getContentPreview(contentJson: string): string {
 export default function EvalsQueuePage() {
   const navigate = useNavigate();
   const sectionColor = useSectionColor();
-  const [evals, setEvals] = useState<EvalWithClient[]>([]);
+  const [incompleteEvals, setIncompleteEvals] = useState<EvalWithClient[]>([]);
+  const [allEvals, setAllEvals] = useState<EvalWithClient[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [tab, setTab] = useState<TabFilter>('incomplete');
 
   useEffect(() => {
     loadData();
@@ -66,16 +71,20 @@ export default function EvalsQueuePage() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const incomplete = await window.api.evaluations.listIncomplete();
-      setEvals(incomplete);
+      const [incomplete, all] = await Promise.all([
+        window.api.evaluations.listIncomplete(),
+        window.api.evaluations.listAll(),
+      ]);
+      setIncompleteEvals(incomplete);
+      setAllEvals(all);
     } catch (err) {
-      console.error('Failed to load incomplete evals:', err);
+      console.error('Failed to load evals:', err);
     } finally {
       setLoading(false);
     }
   };
 
-  const filtered = evals.filter((e) => {
+  const matchesSearch = (e: EvalWithClient) => {
     if (!searchQuery.trim()) return true;
     const q = searchQuery.toLowerCase();
     return (
@@ -83,9 +92,24 @@ export default function EvalsQueuePage() {
       (e.eval_date || '').includes(q) ||
       (e.eval_type || '').toLowerCase().includes(q)
     );
-  });
+  };
 
-  const overdue = filtered.filter(e => daysSince(e.eval_date) > 7);
+  // Derived lists
+  const recerts = allEvals.filter(e => e.eval_type === 'reassessment');
+  const incompleteOverdue = incompleteEvals.filter(e => daysSince(e.eval_date) > 7);
+
+  const getDisplayItems = (): EvalWithClient[] => {
+    switch (tab) {
+      case 'incomplete':
+        return incompleteEvals.filter(matchesSearch);
+      case 'recerts':
+        return recerts.filter(matchesSearch);
+      case 'all':
+        return allEvals.filter(matchesSearch);
+    }
+  };
+
+  const displayItems = getDisplayItems();
 
   if (loading) {
     return (
@@ -110,10 +134,10 @@ export default function EvalsQueuePage() {
           <div>
             <h1 className="page-title flex items-center gap-2">
               <ClipboardList className="w-6 h-6" style={{ color: sectionColor.color }} />
-              Evaluations Queue
+              Evals &amp; Recertifications
             </h1>
             <p className="text-[var(--color-text-secondary)] mt-1">
-              Evaluations that need your attention
+              Evaluations and reassessments that need your attention
             </p>
           </div>
         </div>
@@ -121,48 +145,75 @@ export default function EvalsQueuePage() {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-        <div className="card p-4">
+        <div
+          className="card p-4 cursor-pointer hover:shadow-md transition-all hover:border-teal-300"
+          onClick={() => setTab('incomplete')}
+        >
           <div className="flex items-center gap-3">
             <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-amber-50">
               <PenLine size={20} className="text-amber-500" />
             </div>
             <div>
-              <p className="text-xl font-bold text-[var(--color-text)]">{filtered.length}</p>
+              <p className="text-xl font-bold text-[var(--color-text)]">{incompleteEvals.length}</p>
               <p className="text-xs text-[var(--color-text-secondary)]">Incomplete Evals</p>
               <p className="text-[10px] text-[var(--color-text-secondary)]">Unsigned drafts</p>
             </div>
           </div>
         </div>
-        <div className="card p-4">
+        <div
+          className="card p-4 cursor-pointer hover:shadow-md transition-all hover:border-teal-300"
+          onClick={() => setTab('incomplete')}
+        >
           <div className="flex items-center gap-3">
             <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-red-50">
               <AlertTriangle size={20} className="text-red-500" />
             </div>
             <div>
-              <p className="text-xl font-bold text-[var(--color-text)]">{overdue.length}</p>
+              <p className="text-xl font-bold text-[var(--color-text)]">{incompleteOverdue.length}</p>
               <p className="text-xs text-[var(--color-text-secondary)]">Overdue</p>
               <p className="text-[10px] text-[var(--color-text-secondary)]">More than 7 days old</p>
             </div>
           </div>
         </div>
-        <div className="card p-4">
+        <div
+          className="card p-4 cursor-pointer hover:shadow-md transition-all hover:border-teal-300"
+          onClick={() => setTab('recerts')}
+        >
           <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-emerald-50">
-              <Clock size={20} className="text-emerald-500" />
+            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-blue-50">
+              <RefreshCw size={20} className="text-blue-500" />
             </div>
             <div>
-              <p className="text-xl font-bold text-[var(--color-text)]">
-                {filtered.filter(e => daysSince(e.eval_date) <= 7).length}
-              </p>
-              <p className="text-xs text-[var(--color-text-secondary)]">Recent</p>
-              <p className="text-[10px] text-[var(--color-text-secondary)]">Within the last 7 days</p>
+              <p className="text-xl font-bold text-[var(--color-text)]">{recerts.length}</p>
+              <p className="text-xs text-[var(--color-text-secondary)]">Recertifications</p>
+              <p className="text-[10px] text-[var(--color-text-secondary)]">Reassessment evals</p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Search */}
-      <div className="flex items-center justify-end mb-4">
+      {/* Tabs + Search */}
+      <div className="flex items-center justify-between mb-4 gap-4">
+        <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+          {([
+            { key: 'incomplete' as TabFilter, label: 'Incomplete', count: incompleteEvals.length },
+            { key: 'recerts' as TabFilter, label: 'Recertifications', count: recerts.length },
+            { key: 'all' as TabFilter, label: 'All Evals', count: allEvals.length },
+          ]).map((t) => (
+            <button
+              key={t.key}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                tab === t.key
+                  ? 'bg-white text-[var(--color-text)] shadow-sm'
+                  : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
+              }`}
+              onClick={() => setTab(t.key)}
+            >
+              {t.label}
+              <span className="ml-1.5 text-xs opacity-60">({t.count})</span>
+            </button>
+          ))}
+        </div>
         <div className="relative">
           <Filter size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)]" />
           <input
@@ -188,14 +239,19 @@ export default function EvalsQueuePage() {
 
         {/* Rows */}
         <div className="divide-y divide-[var(--color-border)]">
-          {filtered.length === 0 ? (
+          {displayItems.length === 0 ? (
             <div className="px-5 py-12 text-center text-[var(--color-text-secondary)] text-sm">
-              No incomplete evaluations. All caught up! 🎉
+              {tab === 'incomplete'
+                ? 'No incomplete evaluations. All caught up! 🎉'
+                : tab === 'recerts'
+                ? 'No recertification evals found.'
+                : 'No evaluations found matching your criteria.'}
             </div>
           ) : (
-            filtered.map((evalItem) => {
+            displayItems.map((evalItem) => {
               const daysOld = daysSince(evalItem.eval_date);
-              const isOverdue = daysOld > 7;
+              const isSigned = Boolean(evalItem.signed_at);
+              const isOverdue = !isSigned && daysOld > 7;
               return (
                 <div
                   key={evalItem.id}
@@ -231,19 +287,32 @@ export default function EvalsQueuePage() {
                   <div className="text-xs text-[var(--color-text-secondary)] capitalize">
                     {evalItem.eval_type === 'reassessment' ? (
                       <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">
-                        Update
+                        Recert
+                      </span>
+                    ) : evalItem.eval_type === 'discharge' ? (
+                      <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 font-medium">
+                        Discharge
                       </span>
                     ) : (
-                      evalItem.eval_type || 'Initial'
+                      <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 font-medium">
+                        Initial
+                      </span>
                     )}
                   </div>
                   <div>
-                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
-                      isOverdue ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
-                    }`}>
-                      <PenLine size={12} />
-                      {isOverdue ? 'Late' : 'Draft'}
-                    </span>
+                    {isSigned ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-medium">
+                        <CheckCircle size={12} />
+                        Signed
+                      </span>
+                    ) : (
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                        isOverdue ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+                      }`}>
+                        <PenLine size={12} />
+                        {isOverdue ? 'Late' : 'Draft'}
+                      </span>
+                    )}
                   </div>
                 </div>
               );

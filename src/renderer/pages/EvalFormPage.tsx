@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useParams, useNavigate, useLocation, useBlocker } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, useBlocker, useSearchParams } from 'react-router-dom';
 import { useSectionColor } from '../hooks/useSectionColor';
 import {
   ArrowLeft,
@@ -485,10 +485,14 @@ export default function EvalFormPage() {
   const sectionColor = useSectionColor();
   const isEditing = Boolean(evalId);
 
-  // Reassessment mode via route state
-  const isReassessment = Boolean((location.state as any)?.reassessment);
+  // Reassessment mode via route state or query param (?type=reassessment)
+  const [searchParams] = useSearchParams();
+  const queryEvalType = searchParams.get('type'); // 'reassessment' | 'discharge' | null
+  const isReassessment = Boolean((location.state as any)?.reassessment) || queryEvalType === 'reassessment';
   const [evalType, setEvalType] = useState<'initial' | 'reassessment' | 'discharge'>(
-    isReassessment ? 'reassessment' : 'initial'
+    isReassessment ? 'reassessment'
+      : queryEvalType === 'discharge' ? 'discharge'
+      : 'initial'
   );
   const [priorFieldKeys, setPriorFieldKeys] = useState<Set<string>>(new Set());
 
@@ -1360,7 +1364,7 @@ export default function EvalFormPage() {
 
   /** Handle fix-it sign: apply fixes from dialog, then save+sign */
   const handleSignWithFixes = (fixes: ValidationFixes) => {
-    // Apply document fixes to eval content state
+    // Apply document fixes to eval content state (for UI display)
     if (Object.keys(fixes.documentFixes).length > 0) {
       setContent(prev => {
         if (!prev) return prev;
@@ -1369,12 +1373,16 @@ export default function EvalFormPage() {
     }
 
     setSignDialogOpen(false);
-    setTimeout(() => handleSave(true), 50);
+    // Pass fixes directly into handleSave so they're merged at save time
+    // (avoids stale closure where setContent hasn't resolved yet)
+    const docFixes = Object.keys(fixes.documentFixes).length > 0 ? fixes.documentFixes : undefined;
+    const goalFixes = Object.keys(fixes.goalFixes).length > 0 ? fixes.goalFixes : undefined;
+    setTimeout(() => handleSave(true, docFixes, goalFixes), 50);
   };
 
   /** Save fixes from the Sign dialog WITHOUT signing — just apply and close */
   const handleSaveFixesOnly = (fixes: ValidationFixes) => {
-    // Apply document fixes to eval content state
+    // Apply document fixes to eval content state (for UI display)
     if (Object.keys(fixes.documentFixes).length > 0) {
       setContent(prev => {
         if (!prev) return prev;
@@ -1383,8 +1391,10 @@ export default function EvalFormPage() {
     }
 
     setSignDialogOpen(false);
-    // Trigger a non-signing draft save so fixes are persisted
-    setTimeout(() => handleSave(false), 50);
+    // Pass fixes directly into handleSave so they're merged at save time
+    const docFixes = Object.keys(fixes.documentFixes).length > 0 ? fixes.documentFixes : undefined;
+    const goalFixes = Object.keys(fixes.goalFixes).length > 0 ? fixes.goalFixes : undefined;
+    setTimeout(() => handleSave(false, docFixes, goalFixes), 50);
   };
 
   /** Handle client record updates from Fix-It dialog */
@@ -1395,7 +1405,7 @@ export default function EvalFormPage() {
     setClient(updated);
   };
 
-  const handleSave = async (sign: boolean) => {
+  const handleSave = async (sign: boolean, documentFixes?: Record<string, any>, goalFixes?: Record<number, any>) => {
     if (!clientId || !client || !content) return;
 
     // Cancel any pending auto-save to prevent it from overwriting signed_at
@@ -1459,8 +1469,10 @@ export default function EvalFormPage() {
       }
 
       // Store goal_entries, created_goal_ids, and session_note in content
+      // Merge in any document fixes from the Sign dialog (passed directly to avoid stale closure)
       const contentToSave = {
         ...content,
+        ...(documentFixes || {}),
         goal_entries: goalEntries,
         created_goal_ids: createdGoalIds,
         session_note: { ...sessionNote, cpt_modifiers: snModifiers },
@@ -2691,6 +2703,7 @@ export default function EvalFormPage() {
           >
             Cancel
           </button>
+          {!existingSignedAt && (
           <button
             className="btn-primary flex items-center gap-2"
             onClick={() => handleSave(false)}
@@ -2699,6 +2712,7 @@ export default function EvalFormPage() {
             <Save className="w-4 h-4" />
             {saving ? 'Saving...' : 'Save Draft'}
           </button>
+          )}
           <button
             className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border-2 border-amber-500 text-amber-700 bg-white hover:bg-amber-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleSignClick}

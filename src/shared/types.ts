@@ -485,6 +485,42 @@ export interface PinSetupResult {
   error?: string;
 }
 
+// Dashboard Workspace types
+export interface DashboardNote {
+  id: number;
+  content: string;
+  updated_at: string;
+  created_at: string;
+}
+
+export interface DashboardTodo {
+  id: number;
+  text: string;
+  completed: number; // 0 or 1
+  position: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CalendarBlock {
+  id: number;
+  title: string;
+  scheduled_date: string;
+  scheduled_time: string;
+  duration_minutes: number;
+  source_todo_id: number | null;
+  completed: number; // 0 or 1
+  created_at: string;
+}
+
+export interface QuickLink {
+  id: number;
+  title: string;
+  url: string;
+  position: number;
+  created_at: string;
+}
+
 export type AppTier = 'unlicensed' | 'basic' | 'pro';
 
 export interface LicenseStatus {
@@ -1156,6 +1192,7 @@ export interface PocketChartAPI {
     createReassessment: (clientId: number) => Promise<{ priorContent: string; activeGoals: any[] } | null>;
     countIncomplete: () => Promise<number>;
     listIncomplete: () => Promise<any[]>;
+    listAll: () => Promise<any[]>;
   };
   appointments: {
     list: (filters?: { startDate?: string; endDate?: string; clientId?: number }) => Promise<Appointment[]>;
@@ -1455,6 +1492,36 @@ export interface PocketChartAPI {
   integrity: {
     runCheck: () => Promise<{ tamperedDocuments: Array<{ type: string; id: number; clientId: number; date: string }>; totalChecked: number }>;
     verifyAuditChain: () => Promise<{ intact: boolean; breakPoint?: number; totalEntries: number }>;
+  };
+  // ── Dashboard Scratchpad ──
+  scratchpad: {
+    get: () => Promise<DashboardNote | null>;
+    save: (content: string) => Promise<DashboardNote>;
+  };
+  // ── Dashboard Todos ──
+  dashboardTodos: {
+    list: () => Promise<DashboardTodo[]>;
+    create: (text: string) => Promise<DashboardTodo>;
+    update: (id: number, data: Partial<Pick<DashboardTodo, 'text' | 'completed' | 'position'>>) => Promise<DashboardTodo>;
+    delete: (id: number) => Promise<boolean>;
+    search: (query: string) => Promise<DashboardTodo[]>;
+    reorder: (items: Array<{ id: number; position: number }>) => Promise<DashboardTodo[]>;
+    listIncomplete: () => Promise<DashboardTodo[]>;
+  };
+  // ── Calendar Blocks (admin time blocks) ──
+  calendarBlocks: {
+    list: (filters?: { startDate?: string; endDate?: string }) => Promise<CalendarBlock[]>;
+    create: (data: { title: string; scheduled_date: string; scheduled_time?: string; duration_minutes?: number; source_todo_id?: number }) => Promise<CalendarBlock>;
+    delete: (id: number) => Promise<boolean>;
+    update: (id: number, data: { completed?: number; title?: string }) => Promise<CalendarBlock>;
+    deleteAndRestore: (id: number) => Promise<boolean>;
+  };
+  // ── Quick Links ──
+  quickLinks: {
+    list: () => Promise<QuickLink[]>;
+    create: (data: { title: string; url: string }) => Promise<QuickLink>;
+    update: (id: number, data: Partial<Pick<QuickLink, 'title' | 'url' | 'position'>>) => Promise<QuickLink>;
+    delete: (id: number) => Promise<boolean>;
   };
 }
 

@@ -69,6 +69,7 @@ const api = {
     createReassessment: (clientId: number) => ipcRenderer.invoke('evaluations:createReassessment', clientId),
     countIncomplete: () => ipcRenderer.invoke('evaluations:countIncomplete'),
     listIncomplete: () => ipcRenderer.invoke('evaluations:listIncomplete'),
+    listAll: () => ipcRenderer.invoke('evaluations:listAll'),
   },
 
   // Appointments
@@ -421,6 +422,40 @@ const api = {
     create: (data: any) => ipcRenderer.invoke('discountTemplates:create', data),
     update: (id: number, data: any) => ipcRenderer.invoke('discountTemplates:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('discountTemplates:delete', id),
+  },
+
+  // ── Dashboard Scratchpad ──
+  scratchpad: {
+    get: () => ipcRenderer.invoke('scratchpad:get'),
+    save: (content: string) => ipcRenderer.invoke('scratchpad:save', content),
+  },
+
+  // ── Dashboard Todos ──
+  dashboardTodos: {
+    list: () => ipcRenderer.invoke('dashboardTodos:list'),
+    create: (text: string) => ipcRenderer.invoke('dashboardTodos:create', text),
+    update: (id: number, data: any) => ipcRenderer.invoke('dashboardTodos:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('dashboardTodos:delete', id),
+    search: (query: string) => ipcRenderer.invoke('dashboardTodos:search', query),
+    reorder: (items: Array<{ id: number; position: number }>) => ipcRenderer.invoke('dashboardTodos:reorder', items),
+    listIncomplete: () => ipcRenderer.invoke('dashboardTodos:listIncomplete'),
+  },
+
+  // ── Calendar Blocks (admin time blocks) ──
+  calendarBlocks: {
+    list: (filters?: { startDate?: string; endDate?: string }) => ipcRenderer.invoke('calendarBlocks:list', filters),
+    create: (data: any) => ipcRenderer.invoke('calendarBlocks:create', data),
+    delete: (id: number) => ipcRenderer.invoke('calendarBlocks:delete', id),
+    update: (id: number, data: any) => ipcRenderer.invoke('calendarBlocks:update', id, data),
+    deleteAndRestore: (id: number) => ipcRenderer.invoke('calendarBlocks:deleteAndRestore', id),
+  },
+
+  // ── Quick Links ──
+  quickLinks: {
+    list: () => ipcRenderer.invoke('quickLinks:list'),
+    create: (data: any) => ipcRenderer.invoke('quickLinks:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('quickLinks:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('quickLinks:delete', id),
   },
 };
 

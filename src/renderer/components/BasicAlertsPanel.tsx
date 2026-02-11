@@ -54,15 +54,18 @@ export default function BasicAlertsPanel() {
       // Compliance alerts
       for (const a of data.complianceAlerts) {
         const isOverdue = a.alert_type.includes('overdue');
+        const isRecert = a.alert_type.includes('recert');
         items.push({
           key: `compliance-${a.client_id}-${a.alert_type}-${a.detail}`,
           urgency: isOverdue ? 'overdue' : 'due_soon',
           icon: <Shield size={14} />,
-          label: a.alert_type.includes('recert')
+          label: isRecert
             ? `Recertification ${isOverdue ? 'overdue' : 'due soon'} — ${a.client_name}`
             : `Progress report ${isOverdue ? 'overdue' : 'due soon'} — ${a.client_name}`,
           detail: a.detail,
-          onClick: () => navigate(`/clients/${a.client_id}`),
+          onClick: () => isRecert
+            ? navigate(`/clients/${a.client_id}/eval/new?type=reassessment`)
+            : navigate(`/clients/${a.client_id}/note/new?type=progress_report`),
         });
       }
 

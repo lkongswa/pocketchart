@@ -74,7 +74,11 @@ const ClientsPage: React.FC = () => {
   const formatDate = (dateStr: string): string => {
     if (!dateStr) return '--';
     try {
-      return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', {
+      // Handle both date-only ("2025-01-15") and datetime ("2025-01-15 14:30:00") strings
+      const normalized = dateStr.includes('T') || dateStr.includes(' ')
+        ? dateStr.replace(' ', 'T')
+        : dateStr + 'T00:00:00';
+      return new Date(normalized).toLocaleDateString('en-US', {
         month: 'short',
         day: 'numeric',
         year: 'numeric',

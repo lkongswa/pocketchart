@@ -217,6 +217,8 @@ export function useEvalSections(input: EvalSectionInput): UseEvalSectionsReturn 
   // ── Scroll to section ──
 
   const scrollToSection = useCallback((id: string) => {
+    // Immediately highlight clicked section
+    setActiveSectionId(id);
     // Expand the section first
     setExpandedSections((prev) => ({ ...prev, [id]: true }));
     // Scroll after a tick so the DOM updates
@@ -228,47 +230,76 @@ export function useEvalSections(input: EvalSectionInput): UseEvalSectionsReturn 
     }, 50);
   }, []);
 
-  // ── IntersectionObserver for active section ──
+  // ── Helper: find which section is closest to the top of the scroll container ──
+
+  const computeActiveSection = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const containerTop = container.getBoundingClientRect().top;
+    let bestId = '';
+    let bestDist = Infinity;
+
+    for (const [id, el] of Object.entries(sectionRefs.current)) {
+      if (!el) continue;
+      const rect = el.getBoundingClientRect();
+      // Distance from this section's top to the container's top + a small offset
+      const dist = rect.top - containerTop;
+      // We want the section whose top is closest to (or just above) the container top
+      // Sections above viewport have negative dist; prefer the one closest to 0
+      if (dist < 80 && Math.abs(dist) < bestDist) {
+        // Section is at or above the top zone
+        bestDist = Math.abs(dist);
+        bestId = id;
+      } else if (bestId === '' && dist >= 0 && dist < bestDist) {
+        // Fallback: first section below viewport top
+        bestDist = dist;
+        bestId = id;
+      }
+    }
+
+    if (bestId) setActiveSectionId(bestId);
+  }, []);
+
+  // ── Scroll tracking + focus tracking ──
 
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        // Collect all currently intersecting sections
-        const visible: Array<{ id: string; top: number }> = [];
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            const id = entry.target.getAttribute('data-section-id');
-            if (id) {
-              visible.push({ id, top: entry.boundingClientRect.top });
-            }
-          }
-        }
-        if (visible.length > 0) {
-          // Pick the one closest to the top of the viewport
-          visible.sort((a, b) => Math.abs(a.top) - Math.abs(b.top));
-          setActiveSectionId(visible[0].id);
-        }
-      },
-      {
-        root: container,
-        rootMargin: '-5% 0px -75% 0px',
-        threshold: 0,
-      },
-    );
+    // Scroll handler: throttled via rAF
+    let rafId = 0;
+    const handleScroll = () => {
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(computeActiveSection);
+    };
 
-    // Observe all section elements
-    for (const [id, el] of Object.entries(sectionRefs.current)) {
-      if (el) {
-        el.setAttribute('data-section-id', id);
-        observer.observe(el);
+    // Focus handler: when user clicks into a field, highlight that section
+    const handleFocusIn = (e: FocusEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target) return;
+      let el: HTMLElement | null = target;
+      while (el && el !== container) {
+        const sectionId = el.getAttribute('data-section-id');
+        if (sectionId) {
+          setActiveSectionId(sectionId);
+          return;
+        }
+        el = el.parentElement;
       }
-    }
+    };
 
-    return () => observer.disconnect();
-  }); // Re-run on every render to pick up new/removed refs
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    container.addEventListener('focusin', handleFocusIn);
+
+    // Run once to set initial active section
+    computeActiveSection();
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      container.removeEventListener('scroll', handleScroll);
+      container.removeEventListener('focusin', handleFocusIn);
+    };
+  }, [computeActiveSection, sections]); // Re-attach when sections change (visibility)
 
   return {
     sections,

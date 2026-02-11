@@ -854,7 +854,7 @@ const ClientDetailPage: React.FC = () => {
                   </button>
                 )}
                 <button
-                  className="btn-accent btn-sm gap-1.5"
+                  className="btn-primary btn-sm gap-1.5"
                   onClick={() => { if (guardAction()) navigate(`/clients/${clientId}/eval/new`); }}
                 >
                   <Plus size={14} /> New Eval

@@ -39,6 +39,7 @@ import PinLockScreen from './components/PinLockScreen';
 import ErrorBoundary from './components/ErrorBoundary';
 import OnboardingScreen from './components/OnboardingScreen';
 import UpdateNotification from './components/UpdateNotification';
+import FloatingWidget from './components/FloatingWidget';
 import UnlicensedLandingPage from './components/UnlicensedLandingPage';
 import TrialBadge from './components/TrialBadge';
 import { useTier } from './hooks/useTier';
@@ -66,8 +67,8 @@ const navGroups: NavGroup[] = [
       { to: '/', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
       { to: '/clients', label: 'Clients', icon: <Users size={18} />, matchPrefix: '/clients' },
       { to: '/calendar', label: 'Calendar', icon: <Calendar size={18} /> },
-      { to: '/notes', label: 'Notes', icon: <FileText size={18} /> },
-      { to: '/evals', label: 'Evaluations', icon: <ClipboardList size={18} /> },
+      { to: '/notes', label: 'Notes / PRs', icon: <FileText size={18} /> },
+      { to: '/evals', label: 'Evals / Recerts', icon: <ClipboardList size={18} /> },
     ],
   },
   {
@@ -437,6 +438,7 @@ const App: React.FC = () => {
       {showOnboarding && <OnboardingScreen onComplete={handleOnboardingComplete} />}
       {isLocked && pinEnabled && !showOnboarding && <PinLockScreen onUnlock={handleUnlock} />}
       <RouterProvider router={router} />
+      <FloatingWidget />
       <UpdateNotification />
     </ErrorBoundary>
   );

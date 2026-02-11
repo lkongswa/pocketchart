@@ -1306,6 +1306,16 @@ function registerIpcHandlers() {
     `).all();
   });
 
+  safeHandle('evaluations:listAll', () => {
+    return db.prepare(`
+      SELECT e.*, c.first_name, c.last_name, c.discipline AS client_discipline
+      FROM evaluations e
+      JOIN clients c ON c.id = e.client_id AND c.deleted_at IS NULL
+      WHERE e.deleted_at IS NULL
+      ORDER BY e.eval_date DESC
+    `).all();
+  });
+
   // ── Appointments ──
   const apptSelectQuery = `
     SELECT a.*,
@@ -3369,68 +3379,88 @@ function registerIpcHandlers() {
     const discountUsage = new Map<number, number>();
 
     for (const note of notes) {
-      // Base rate: Entity fee → Note override → Global fee schedule → Charge amount
-      const entityFee = entityFeeMap.get(note.cpt_code);
-      const fee = feeMap.get(note.cpt_code);
-      let unitPrice = entityFee?.default_rate || note.rate_override || fee?.amount || note.charge_amount || 0;
-      const basePrice = unitPrice;
-
-      // Apply active client discounts — try session-based first, then persistent
-      if (activeDiscounts.length > 0) {
-        let applied = false;
-
-        // 1) Try session-based discounts (package / flat_rate) — first one with remaining sessions wins
-        for (const disc of activeDiscounts) {
-          if (applied) break;
-          const usedSoFar = discountUsage.get(disc.id) || 0;
-
-          if (disc.discount_type === 'package') {
-            const remaining = disc.total_sessions - (disc.sessions_used + usedSoFar);
-            if (remaining > 0) {
-              const packageRate = (disc.paid_sessions * disc.session_rate) / disc.total_sessions;
-              unitPrice = packageRate;
-              discountUsage.set(disc.id, usedSoFar + 1);
-              applied = true;
-            }
-          } else if (disc.discount_type === 'flat_rate') {
-            const remaining = disc.flat_rate_sessions
-              ? disc.flat_rate_sessions - (disc.flat_rate_sessions_used + usedSoFar)
-              : Infinity;
-            if (remaining > 0) {
-              unitPrice = disc.flat_rate;
-              discountUsage.set(disc.id, usedSoFar + 1);
-              applied = true;
-            }
-          }
+      // Parse cpt_codes JSON to support multiple CPT lines per note
+      let cptLines: { code: string; units: number }[] = [];
+      try {
+        const parsed = JSON.parse(note.cpt_codes || '[]');
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          cptLines = parsed.filter((l: any) => l.code && l.code.trim());
         }
+      } catch { /* ignore parse errors */ }
 
-        // 2) If no session-based discount applied, apply persistent discounts (stack them)
-        if (!applied) {
+      // Fallback to single cpt_code if cpt_codes is empty/invalid
+      if (cptLines.length === 0) {
+        cptLines = [{ code: note.cpt_code || '', units: note.units || 1 }];
+      }
+
+      // Create one invoice item per CPT line
+      for (const cptLine of cptLines) {
+        const lineCode = cptLine.code;
+        const lineUnits = cptLine.units || 1;
+
+        // Base rate: Entity fee → Note override → Global fee schedule → Charge amount
+        const entityFee = entityFeeMap.get(lineCode);
+        const fee = feeMap.get(lineCode);
+        let unitPrice = entityFee?.default_rate || note.rate_override || fee?.amount || note.charge_amount || 0;
+        const basePrice = unitPrice;
+
+        // Apply active client discounts — try session-based first, then persistent
+        if (activeDiscounts.length > 0) {
+          let applied = false;
+
+          // 1) Try session-based discounts (package / flat_rate) — first one with remaining sessions wins
           for (const disc of activeDiscounts) {
-            if (disc.discount_type === 'persistent') {
-              if (disc.discount_percent) {
-                unitPrice = unitPrice * (1 - disc.discount_percent / 100);
-              } else if (disc.discount_fixed) {
-                unitPrice = Math.max(0, unitPrice - disc.discount_fixed);
+            if (applied) break;
+            const usedSoFar = discountUsage.get(disc.id) || 0;
+
+            if (disc.discount_type === 'package') {
+              const remaining = disc.total_sessions - (disc.sessions_used + usedSoFar);
+              if (remaining > 0) {
+                const packageRate = (disc.paid_sessions * disc.session_rate) / disc.total_sessions;
+                unitPrice = packageRate;
+                discountUsage.set(disc.id, usedSoFar + 1);
+                applied = true;
+              }
+            } else if (disc.discount_type === 'flat_rate') {
+              const remaining = disc.flat_rate_sessions
+                ? disc.flat_rate_sessions - (disc.flat_rate_sessions_used + usedSoFar)
+                : Infinity;
+              if (remaining > 0) {
+                unitPrice = disc.flat_rate;
+                discountUsage.set(disc.id, usedSoFar + 1);
+                applied = true;
               }
             }
           }
+
+          // 2) If no session-based discount applied, apply persistent discounts (stack them)
+          if (!applied) {
+            for (const disc of activeDiscounts) {
+              if (disc.discount_type === 'persistent') {
+                if (disc.discount_percent) {
+                  unitPrice = unitPrice * (1 - disc.discount_percent / 100);
+                } else if (disc.discount_fixed) {
+                  unitPrice = Math.max(0, unitPrice - disc.discount_fixed);
+                }
+              }
+            }
+          }
+
+          discountAmount += (basePrice - unitPrice) * lineUnits;
         }
 
-        discountAmount += (basePrice - unitPrice) * (note.units || 1);
+        const amount = unitPrice * lineUnits;
+        subtotal += amount;
+        items.push({
+          note_id: note.id,
+          description: entityFee?.description || fee?.description || `Service on ${note.date_of_service}`,
+          cpt_code: lineCode,
+          service_date: note.date_of_service,
+          units: lineUnits,
+          unit_price: Math.round(unitPrice * 100) / 100,
+          amount: Math.round(amount * 100) / 100,
+        });
       }
-
-      const amount = unitPrice * (note.units || 1);
-      subtotal += amount;
-      items.push({
-        note_id: note.id,
-        description: entityFee?.description || fee?.description || `Service on ${note.date_of_service}`,
-        cpt_code: note.cpt_code,
-        service_date: note.date_of_service,
-        units: note.units || 1,
-        unit_price: Math.round(unitPrice * 100) / 100,
-        amount: Math.round(amount * 100) / 100,
-      });
     }
 
     // Increment discount usage for session-based discounts
@@ -5218,6 +5248,151 @@ function registerIpcHandlers() {
 
   safeHandle('discountTemplates:delete', (_event, id: number) => {
     db.prepare('UPDATE discount_templates SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
+    return true;
+  });
+
+  // ── Dashboard Scratchpad ──
+
+  safeHandle('scratchpad:get', () => {
+    const row = db.prepare('SELECT * FROM dashboard_notes ORDER BY id LIMIT 1').get();
+    return row || null;
+  });
+
+  safeHandle('scratchpad:save', (_event, content: string) => {
+    const existing = db.prepare('SELECT id FROM dashboard_notes ORDER BY id LIMIT 1').get() as any;
+    if (existing) {
+      db.prepare('UPDATE dashboard_notes SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(content, existing.id);
+      return db.prepare('SELECT * FROM dashboard_notes WHERE id = ?').get(existing.id);
+    } else {
+      const result = db.prepare('INSERT INTO dashboard_notes (content) VALUES (?)').run(content);
+      return db.prepare('SELECT * FROM dashboard_notes WHERE id = ?').get(result.lastInsertRowid);
+    }
+  });
+
+  // ── Dashboard Todos ──
+
+  safeHandle('dashboardTodos:list', () => {
+    return db.prepare('SELECT * FROM dashboard_todos ORDER BY completed ASC, position ASC').all();
+  });
+
+  safeHandle('dashboardTodos:create', (_event, text: string) => {
+    const maxPos = db.prepare('SELECT COALESCE(MAX(position), -1) as mp FROM dashboard_todos').get() as any;
+    const position = (maxPos?.mp ?? -1) + 1;
+    const result = db.prepare('INSERT INTO dashboard_todos (text, position) VALUES (?, ?)').run(text, position);
+    return db.prepare('SELECT * FROM dashboard_todos WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('dashboardTodos:update', (_event, id: number, data: { text?: string; completed?: number; position?: number }) => {
+    const sets: string[] = [];
+    const values: any[] = [];
+    if (data.text !== undefined) { sets.push('text = ?'); values.push(data.text); }
+    if (data.completed !== undefined) { sets.push('completed = ?'); values.push(data.completed); }
+    if (data.position !== undefined) { sets.push('position = ?'); values.push(data.position); }
+    if (sets.length === 0) return db.prepare('SELECT * FROM dashboard_todos WHERE id = ?').get(id);
+    sets.push('updated_at = CURRENT_TIMESTAMP');
+    values.push(id);
+    db.prepare(`UPDATE dashboard_todos SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    return db.prepare('SELECT * FROM dashboard_todos WHERE id = ?').get(id);
+  });
+
+  safeHandle('dashboardTodos:delete', (_event, id: number) => {
+    db.prepare('DELETE FROM dashboard_todos WHERE id = ?').run(id);
+    return true;
+  });
+
+  safeHandle('dashboardTodos:search', (_event, query: string) => {
+    return db.prepare('SELECT * FROM dashboard_todos WHERE text LIKE ? ORDER BY completed ASC, position ASC').all(`%${query}%`);
+  });
+
+  safeHandle('dashboardTodos:reorder', (_event, items: Array<{ id: number; position: number }>) => {
+    const update = db.prepare('UPDATE dashboard_todos SET position = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
+    const reorder = db.transaction(() => {
+      for (const item of items) {
+        update.run(item.position, item.id);
+      }
+    });
+    reorder();
+    return db.prepare('SELECT * FROM dashboard_todos ORDER BY completed ASC, position ASC').all();
+  });
+
+  safeHandle('dashboardTodos:listIncomplete', () => {
+    return db.prepare('SELECT * FROM dashboard_todos WHERE completed = 0 ORDER BY position ASC').all();
+  });
+
+  // ── Calendar Blocks (admin time blocks — non-clinical, no audit) ──
+
+  safeHandle('calendarBlocks:list', (_event, filters?: { startDate?: string; endDate?: string }) => {
+    let query = 'SELECT * FROM calendar_blocks WHERE 1=1';
+    const params: any[] = [];
+    if (filters?.startDate) { query += ' AND scheduled_date >= ?'; params.push(filters.startDate); }
+    if (filters?.endDate) { query += ' AND scheduled_date <= ?'; params.push(filters.endDate); }
+    query += ' ORDER BY scheduled_date, scheduled_time';
+    return db.prepare(query).all(...params);
+  });
+
+  safeHandle('calendarBlocks:create', (_event, data: { title: string; scheduled_date: string; scheduled_time?: string; duration_minutes?: number; source_todo_id?: number }) => {
+    const result = db.prepare(
+      'INSERT INTO calendar_blocks (title, scheduled_date, scheduled_time, duration_minutes, source_todo_id) VALUES (?, ?, ?, ?, ?)'
+    ).run(data.title, data.scheduled_date, data.scheduled_time || '09:00', data.duration_minutes || 30, data.source_todo_id || null);
+    return db.prepare('SELECT * FROM calendar_blocks WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('calendarBlocks:delete', (_event, id: number) => {
+    db.prepare('DELETE FROM calendar_blocks WHERE id = ?').run(id);
+    return true;
+  });
+
+  safeHandle('calendarBlocks:update', (_event, id: number, data: { completed?: number; title?: string }) => {
+    const sets: string[] = [];
+    const values: any[] = [];
+    if (data.completed !== undefined) { sets.push('completed = ?'); values.push(data.completed); }
+    if (data.title !== undefined) { sets.push('title = ?'); values.push(data.title); }
+    if (sets.length === 0) return db.prepare('SELECT * FROM calendar_blocks WHERE id = ?').get(id);
+    values.push(id);
+    db.prepare(`UPDATE calendar_blocks SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    return db.prepare('SELECT * FROM calendar_blocks WHERE id = ?').get(id);
+  });
+
+  safeHandle('calendarBlocks:deleteAndRestore', (_event, id: number) => {
+    const block = db.prepare('SELECT * FROM calendar_blocks WHERE id = ?').get(id) as any;
+    if (!block) return false;
+    const doIt = db.transaction(() => {
+      db.prepare('DELETE FROM calendar_blocks WHERE id = ?').run(id);
+      if (block.source_todo_id) {
+        db.prepare('UPDATE dashboard_todos SET completed = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(block.source_todo_id);
+      }
+    });
+    doIt();
+    return true;
+  });
+
+  // ── Quick Links ──
+
+  safeHandle('quickLinks:list', () => {
+    return db.prepare('SELECT * FROM quick_links ORDER BY position ASC').all();
+  });
+
+  safeHandle('quickLinks:create', (_event, data: { title: string; url: string }) => {
+    const maxPos = db.prepare('SELECT COALESCE(MAX(position), -1) as mp FROM quick_links').get() as any;
+    const position = (maxPos?.mp ?? -1) + 1;
+    const result = db.prepare('INSERT INTO quick_links (title, url, position) VALUES (?, ?, ?)').run(data.title, data.url, position);
+    return db.prepare('SELECT * FROM quick_links WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('quickLinks:update', (_event, id: number, data: { title?: string; url?: string; position?: number }) => {
+    const sets: string[] = [];
+    const values: any[] = [];
+    if (data.title !== undefined) { sets.push('title = ?'); values.push(data.title); }
+    if (data.url !== undefined) { sets.push('url = ?'); values.push(data.url); }
+    if (data.position !== undefined) { sets.push('position = ?'); values.push(data.position); }
+    if (sets.length === 0) return db.prepare('SELECT * FROM quick_links WHERE id = ?').get(id);
+    values.push(id);
+    db.prepare(`UPDATE quick_links SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    return db.prepare('SELECT * FROM quick_links WHERE id = ?').get(id);
+  });
+
+  safeHandle('quickLinks:delete', (_event, id: number) => {
+    db.prepare('DELETE FROM quick_links WHERE id = ?').run(id);
     return true;
   });
 }

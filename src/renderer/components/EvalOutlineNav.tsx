@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronDown, ChevronRight, List } from 'lucide-react';
+import { ChevronDown, ChevronRight, Navigation } from 'lucide-react';
 import type { EvalSectionDef, SectionStatus } from '../hooks/useEvalSections';
 
 interface EvalOutlineNavProps {
@@ -22,7 +22,7 @@ const STATUS_DOT: Record<SectionStatus, string> = {
   'required-empty': 'bg-red-400',
 };
 
-export default function EvalOutlineNav({
+function EvalOutlineNav({
   sections,
   activeSectionId,
   onSectionClick,
@@ -38,15 +38,10 @@ export default function EvalOutlineNav({
     <div className="fixed right-3 top-1/2 -translate-y-1/2 w-44 z-30">
       <div className="card p-3 shadow-md border border-[var(--color-border)]">
         {/* Header */}
-        <div className="flex items-center justify-between mb-2 pb-2 border-b border-[var(--color-border)]/50">
-          <div className="flex items-center gap-1.5">
-            <List className="w-3.5 h-3.5 text-[var(--color-text-secondary)]" />
-            <span className="text-[11px] font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">
-              Outline
-            </span>
-          </div>
-          <span className="text-[10px] font-medium text-[var(--color-text-secondary)]">
-            {completeCount}/{totalCount}
+        <div className="flex items-center gap-1.5 mb-2 pb-2 border-b border-[var(--color-border)]/50">
+          <Navigation className="w-3.5 h-3.5 text-[var(--color-text-secondary)]" />
+          <span className="text-[11px] font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">
+            Navigator
           </span>
         </div>
 
@@ -108,3 +103,5 @@ export default function EvalOutlineNav({
     </div>
   );
 }
+
+export default React.memo(EvalOutlineNav);
