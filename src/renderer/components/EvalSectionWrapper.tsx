@@ -26,7 +26,7 @@ const COLLAPSED_BORDER: Record<SectionStatus, string> = {
   'required-empty': 'border-red-200',
 };
 
-export default function EvalSectionWrapper({
+const EvalSectionWrapper = React.memo(function EvalSectionWrapper({
   id,
   title,
   icon,
@@ -68,4 +68,6 @@ export default function EvalSectionWrapper({
       )}
     </div>
   );
-}
+});
+
+export default EvalSectionWrapper;

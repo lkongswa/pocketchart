@@ -4,6 +4,7 @@ export type GoalType = 'STG' | 'LTG';
 export type GoalStatus = 'active' | 'met' | 'discontinued' | 'modified';
 export type AppointmentStatus = 'scheduled' | 'completed' | 'cancelled' | 'no-show';
 export type VisitType = 'T' | 'H' | 'O' | 'C';
+export type SessionType = 'visit' | 'eval' | 'recert';
 export type StagedGoalStatus = 'staged' | 'promoted' | 'dismissed';
 export type ProgressReportGoalStatus = 'progressing' | 'met' | 'regressed' | 'plateau' | 'discontinued' | 'modified';
 
@@ -41,6 +42,12 @@ export const VISIT_TYPE_LABELS: Record<VisitType, string> = {
   H: 'Home Visit',
   O: 'Office',
   C: 'Community',
+};
+
+export const SESSION_TYPE_LABELS: Record<SessionType, string> = {
+  visit: 'Visit',
+  eval: 'Evaluation',
+  recert: 'Recertification',
 };
 
 export const PROGRESS_REPORT_GOAL_STATUS_LABELS: Record<ProgressReportGoalStatus, string> = {
@@ -399,6 +406,8 @@ export interface Appointment {
   rate_override_reason: string;
   patient_name: string;
   visit_type: VisitType;
+  session_type: SessionType;
+  evaluation_id: number | null;
   created_at: string;
   deleted_at: string | null;
   // Joined fields
@@ -425,6 +434,18 @@ export interface PatternOverride {
   component_key: string;
   custom_options: string[];    // User-added options (JSON in DB)
   removed_options: string[];   // Default options hidden by user (JSON in DB)
+}
+
+export interface CustomPattern {
+  id: number;
+  discipline: Discipline;
+  category: string;
+  label: string;
+  icon: string;
+  measurement_type: MeasurementType;
+  chips_json: string;          // JSON array of string[]
+  created_at: string;
+  deleted_at: string | null;
 }
 
 // Client Document types
@@ -1151,6 +1172,71 @@ export interface DiscountTemplate {
   deleted_at: string | null;
 }
 
+// ── Backup & Restore Types ──
+
+export interface BackupSummary {
+  filePath: string;
+  fileSize: number;
+  schemaVersion: number;
+  clientCount: number;
+  activeClients: number;
+  noteCount: number;
+  signedNotes: number;
+  evalCount: number;
+  goalCount: number;
+  appointmentCount: number;
+  invoiceCount: number;
+  entityCount: number;
+  earliestDate: string;
+  latestDate: string;
+  practiceInfo: { name?: string; discipline?: string } | null;
+  fileModified: string;
+  isEncrypted: boolean;
+  isCompatible: boolean;
+  currentSchemaVersion: number;
+}
+
+export interface BackupClientInfo {
+  id: number;
+  first_name: string;
+  last_name: string;
+  dob: string;
+  status: string;
+  discipline: string;
+  noteCount: number;
+  signedNoteCount: number;
+  evalCount: number;
+  goalCount: number;
+  appointmentCount: number;
+  earliestService: string;
+  latestService: string;
+  existsInCurrent: boolean;
+}
+
+export interface ImportResult {
+  success: boolean;
+  clients: number;
+  notes: number;
+  evaluations: number;
+  goals: number;
+  appointments: number;
+  documents: number;
+  documentFilesMissing: number;
+  invoices: number;
+  payments: number;
+  entities: number;
+  warnings: string[];
+}
+
+export interface IntegrityCheckResult {
+  quickCheckPassed: boolean;
+  quickCheckResult: string;
+  fullCheckPassed?: boolean;
+  fullCheckResult?: string;
+  fullCheckRan: boolean;
+  timestamp: string;
+}
+
 // API interface exposed through preload
 export interface PocketChartAPI {
   app: {
@@ -1216,6 +1302,13 @@ export interface PocketChartAPI {
     create: (data: Partial<Appointment>) => Promise<Appointment>;
     createBatch: (items: Partial<Appointment>[]) => Promise<Appointment[]>;
     update: (id: number, data: Partial<Appointment>) => Promise<Appointment>;
+    delete: (id: number) => Promise<boolean>;
+    linkEval: (appointmentId: number, evaluationId: number) => Promise<boolean>;
+  };
+  customPatterns: {
+    list: () => Promise<CustomPattern[]>;
+    create: (data: Partial<CustomPattern>) => Promise<CustomPattern>;
+    update: (id: number, data: Partial<CustomPattern>) => Promise<CustomPattern>;
     delete: (id: number) => Promise<boolean>;
   };
   noteBank: {
@@ -1510,6 +1603,7 @@ export interface PocketChartAPI {
   integrity: {
     runCheck: () => Promise<{ tamperedDocuments: Array<{ type: string; id: number; clientId: number; date: string }>; totalChecked: number }>;
     verifyAuditChain: () => Promise<{ intact: boolean; breakPoint?: number; totalEntries: number }>;
+    startupCheck: () => Promise<IntegrityCheckResult>;
   };
   // ── Dashboard Scratchpad ──
   scratchpad: {
@@ -1540,6 +1634,45 @@ export interface PocketChartAPI {
     create: (data: { title: string; url: string }) => Promise<QuickLink>;
     update: (id: number, data: Partial<Pick<QuickLink, 'title' | 'url' | 'position'>>) => Promise<QuickLink>;
     delete: (id: number) => Promise<boolean>;
+  };
+  // ── Feedback ──
+  feedback: {
+    submit: (data: {
+      description: string;
+      category: string;
+      appVersion: string;
+      discipline: string;
+      practiceName: string;
+      os: string;
+    }) => Promise<{ success: boolean }>;
+  };
+  // ── Restore ──
+  restore: {
+    pickFile: () => Promise<string | null>;
+    validateAndSummarize: (filePath: string, passphrase: string) => Promise<{ summary?: BackupSummary; error?: string }>;
+    execute: (filePath: string, passphrase: string) => Promise<{ success: boolean; recoveryKey?: string; error?: string }>;
+    executeFromSettings: (filePath: string, passphrase: string) => Promise<{ success: boolean; error?: string }>;
+    getBackupClients: (filePath: string, passphrase: string) => Promise<{ clients?: BackupClientInfo[]; backupInfo?: { filePath: string; fileModified: string; schemaVersion: number }; error?: string }>;
+    importClients: (filePath: string, passphrase: string, clientIds: number[]) => Promise<ImportResult>;
+    getCurrentSummary: () => Promise<BackupSummary>;
+    getPendingRecoveryKey: () => Promise<string | null>;
+    clearPendingRecoveryKey: () => Promise<void>;
+  };
+  // ── Encryption ──
+  encryption: {
+    getStatus: () => Promise<{ needsSetup: boolean; needsPassphrase: boolean; needsMigration: boolean }>;
+    setup: (passphrase: string) => Promise<{ success: boolean; recoveryKey?: string; error?: string }>;
+    unlock: (passphrase: string) => Promise<{ success: boolean; error?: string }>;
+    unlockWithRecovery: (recoveryKey: string) => Promise<{ success: boolean; error?: string }>;
+    changePassphrase: (current: string, newPass: string) => Promise<{ success: boolean; error?: string }>;
+    regenerateRecoveryKey: (passphrase: string) => Promise<{ success: boolean; recoveryKey?: string; error?: string }>;
+    verifyPassphrase: (passphrase: string) => Promise<boolean>;
+    migrateAndSetup: (passphrase: string) => Promise<{ success: boolean; recoveryKey?: string; error?: string }>;
+    onDbReady: (callback: () => void) => () => void;
+  };
+  // ── Dev (temporary) ──
+  dev: {
+    seedDemoData: () => Promise<{ seeded: boolean; message: string; counts?: any }>;
   };
 }
 

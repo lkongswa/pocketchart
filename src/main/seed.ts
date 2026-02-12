@@ -1,6 +1,6 @@
-import Database from 'better-sqlite3';
+import type BetterSqlite3 from 'better-sqlite3';
 
-export function seedDefaultData(db: Database.Database): void {
+export function seedDefaultData(db: BetterSqlite3.Database): void {
   const hasData = db.prepare('SELECT COUNT(*) as count FROM note_bank').get() as any;
   if (hasData.count > 0) return;
 
@@ -153,7 +153,7 @@ export function seedDefaultData(db: Database.Database): void {
 }
 
 // Seed universal quick chips (ALL disciplines, favorited by default)
-export function seedDefaultQuickChips(db: Database.Database): void {
+export function seedDefaultQuickChips(db: BetterSqlite3.Database): void {
   const defaultChips = [
     { discipline: 'ALL', section: 'S', category: 'general', phrase: 'Pt was ready for therapy.' },
     { discipline: 'ALL', section: 'A', category: 'response', phrase: 'Pt responded well to tx.' },
@@ -176,7 +176,7 @@ export function seedDefaultQuickChips(db: Database.Database): void {
 }
 
 // Seed common payers for V3 insurance billing
-export function seedPayers(db: Database.Database): void {
+export function seedPayers(db: BetterSqlite3.Database): void {
   // Check if payers table exists and has data
   try {
     const hasData = db.prepare('SELECT COUNT(*) as count FROM payers').get() as any;
@@ -215,7 +215,7 @@ export function seedPayers(db: Database.Database): void {
 
 // Seed MFT discipline data (note bank, goals bank, CPT codes)
 // Runs separately from seedDefaultData so existing users get MFT phrases on update
-export function seedMFTData(db: Database.Database): void {
+export function seedMFTData(db: BetterSqlite3.Database): void {
   const hasData = db.prepare(
     "SELECT COUNT(*) as count FROM note_bank WHERE discipline = 'MFT'"
   ).get() as any;
@@ -286,7 +286,7 @@ export function seedMFTData(db: Database.Database): void {
 
 // Seed goal-category-aligned note bank phrases for Quick Chips intelligence
 // Runs separately so existing users get these phrases on update
-export function seedCategoryAlignedPhrases(db: Database.Database): void {
+export function seedCategoryAlignedPhrases(db: BetterSqlite3.Database): void {
   // Check if we already seeded these (use a sentinel phrase)
   const sentinel = db.prepare(
     "SELECT id FROM note_bank WHERE discipline = 'ST' AND category = 'Articulation' AND section = 'O' AND phrase LIKE 'Produced target phonemes%'"
@@ -489,7 +489,7 @@ function getCPTCodesForDiscipline(discipline: string): Array<{ cpt_code: string;
 }
 
 // Seed fee schedule entries — discipline-aware
-export function seedFeeSchedule(db: Database.Database, discipline?: string): void {
+export function seedFeeSchedule(db: BetterSqlite3.Database, discipline?: string): void {
   try {
     const hasData = db.prepare('SELECT COUNT(*) as count FROM fee_schedule').get() as any;
     if (hasData.count > 0) return;
@@ -528,7 +528,7 @@ export function seedFeeSchedule(db: Database.Database, discipline?: string): voi
 }
 
 // Reset fee schedule to discipline defaults (called when discipline changes)
-export function resetFeeSchedule(db: Database.Database, discipline: string): void {
+export function resetFeeSchedule(db: BetterSqlite3.Database, discipline: string): void {
   try {
     db.prepare('DELETE FROM fee_schedule').run();
   } catch {
@@ -549,7 +549,7 @@ export function resetFeeSchedule(db: Database.Database, discipline: string): voi
 }
 
 // Auto-fix: detect mismatched fee schedule on startup
-export function autoFixFeeSchedule(db: Database.Database): void {
+export function autoFixFeeSchedule(db: BetterSqlite3.Database): void {
   try {
     const feeCount = (db.prepare('SELECT COUNT(*) as count FROM fee_schedule').get() as any)?.count || 0;
     if (feeCount === 0) return; // Will be seeded by seedFeeSchedule

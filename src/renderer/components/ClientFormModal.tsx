@@ -262,7 +262,13 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
         status: client.status,
       });
     } else {
-      setForm(emptyForm);
+      // New client: default discipline from practice record
+      window.api.practice.get().then((practice: any) => {
+        const practiceDiscipline = practice?.discipline || 'PT';
+        setForm({ ...emptyForm, discipline: practiceDiscipline });
+      }).catch(() => {
+        setForm(emptyForm);
+      });
     }
     setErrors({});
   }, [client, isOpen]);

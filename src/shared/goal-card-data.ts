@@ -56,9 +56,10 @@ export interface GoalCardFieldUpdate {
 function resolvePattern(
   patternId: string | undefined,
   overrides: PatternOverride[],
+  customPatterns?: GoalPattern[],
 ): GoalPattern | null {
   if (!patternId || patternId === 'custom_freeform') return null;
-  let pattern = getPatternById(patternId) ?? null;
+  let pattern = getPatternById(patternId) ?? customPatterns?.find(p => p.id === patternId) ?? null;
   if (pattern && overrides.length > 0) pattern = applyOverrides(pattern, overrides);
   return pattern;
 }
@@ -69,6 +70,7 @@ export function evalEntryToCardData(
   linkedGoalId: number | null,
   history: GoalProgressEntry[],
   patternOverrides: PatternOverride[],
+  customPatterns?: GoalPattern[],
 ): GoalCardData {
   return {
     index,
@@ -85,7 +87,7 @@ export function evalEntryToCardData(
     instrument: entry.instrument,
     pattern_id: entry.pattern_id,
     components: entry.components || {},
-    resolvedPattern: resolvePattern(entry.pattern_id, patternOverrides),
+    resolvedPattern: resolvePattern(entry.pattern_id, patternOverrides, customPatterns),
     status: null,
     isSynced: linkedGoalId != null && linkedGoalId > 0,
     progressHistory: history,

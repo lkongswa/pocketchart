@@ -137,17 +137,20 @@ const SmartTextarea = forwardRef<HTMLTextAreaElement, SmartTextareaProps>(
     }, [allPhrases, phrasesLoaded]);
 
     // Debounced suggestion computation on text change
+    // NOTE: only depend on `value` — computeSuggestions is stable via ref closure
+    const computeSuggestionsRef = useRef(computeSuggestions);
+    computeSuggestionsRef.current = computeSuggestions;
     useEffect(() => {
       if (debounceRef.current) {
         clearTimeout(debounceRef.current);
       }
       debounceRef.current = setTimeout(() => {
-        computeSuggestions(value);
+        computeSuggestionsRef.current(value);
       }, 200);
       return () => {
         if (debounceRef.current) clearTimeout(debounceRef.current);
       };
-    }, [value, computeSuggestions]);
+    }, [value]);
 
     const acceptSuggestion = useCallback((phrase: string) => {
       const textarea = internalRef.current;

@@ -130,4 +130,4 @@ const CollapsedGoalCard: React.FC<CollapsedGoalCardProps> = ({ data, fingerprint
   );
 };
 
-export default CollapsedGoalCard;
+export default React.memo(CollapsedGoalCard);

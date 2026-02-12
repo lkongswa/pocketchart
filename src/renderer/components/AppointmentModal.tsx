@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { X, Calendar, Clock, User, Building2, Repeat, ChevronDown } from 'lucide-react';
 import { addDays, addWeeks, addMonths, format } from 'date-fns';
-import type { Appointment, AppointmentStatus, Client, ContractedEntity, EntityFeeSchedule, VisitType } from '../../shared/types';
-import { VISIT_TYPE_LABELS } from '../../shared/types';
+import type { Appointment, AppointmentStatus, Client, ContractedEntity, EntityFeeSchedule, VisitType, SessionType } from '../../shared/types';
+import { VISIT_TYPE_LABELS, SESSION_TYPE_LABELS } from '../../shared/types';
 
 // Unified search result item
 type SearchItem =
@@ -69,6 +69,7 @@ export default function AppointmentModal({
     duration_minutes: 45,
     status: 'scheduled' as AppointmentStatus,
     visit_type: 'O' as VisitType,
+    session_type: 'visit' as SessionType,
   });
   const [patientName, setPatientName] = useState('');
 
@@ -97,6 +98,7 @@ export default function AppointmentModal({
           duration_minutes: appointment.duration_minutes,
           status: appointment.status,
           visit_type: (appointment as any).visit_type || 'O',
+          session_type: appointment.session_type || 'visit',
         });
         // Restore selection
         if (appointment.entity_id && appointment.entity_name) {
@@ -121,6 +123,7 @@ export default function AppointmentModal({
           duration_minutes: duration,
           status: 'scheduled',
           visit_type: 'O' as VisitType,
+          session_type: 'visit' as SessionType,
         });
         setSearchQuery('');
         setSelectedItem(null);
@@ -474,6 +477,32 @@ export default function AppointmentModal({
               ))}
             </div>
           </div>
+
+          {/* Session Type (only for client appointments) */}
+          {selectedItem?.type === 'client' && (
+            <div>
+              <label className="label">Session Type</label>
+              <div className="flex gap-1">
+                {(['visit', 'eval', 'recert'] as SessionType[]).map((st) => {
+                  const colors: Record<SessionType, string> = {
+                    visit: formData.session_type === st ? 'bg-teal-500 text-white' : 'bg-teal-50 text-teal-700 hover:bg-teal-100',
+                    eval: formData.session_type === st ? 'bg-violet-500 text-white' : 'bg-violet-50 text-violet-700 hover:bg-violet-100',
+                    recert: formData.session_type === st ? 'bg-amber-500 text-white' : 'bg-amber-50 text-amber-700 hover:bg-amber-100',
+                  };
+                  return (
+                    <button
+                      key={st}
+                      type="button"
+                      onClick={() => setFormData((prev) => ({ ...prev, session_type: st }))}
+                      className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${colors[st]}`}
+                    >
+                      {SESSION_TYPE_LABELS[st]}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Repeat Visit (only for new appointments) */}
           {!appointment && (

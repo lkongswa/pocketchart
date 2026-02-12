@@ -23,7 +23,8 @@ import {
 import type { Client, Evaluation, Discipline, GoalType, EvalGoalEntry, CptLine, PlaceOfService, SOAPSection, MeasurementType, PatternOverride } from '../../shared/types';
 import { composeGoalText as sharedComposeGoalText, isAutoComposedGoalText, metricValueToNumeric } from '../../shared/compose-goal-text';
 import type { GoalPattern } from '../../shared/goal-patterns';
-import { getPatternById, applyOverrides } from '../../shared/goal-patterns';
+import { getPatternById, applyOverrides, customPatternToGoalPattern } from '../../shared/goal-patterns';
+import type { CustomPattern } from '../../shared/types';
 import type { GoalProgressEntry } from '../../shared/types';
 import { CATEGORY_DEFAULT_MEASUREMENT, DEFAULT_INSTRUMENTS } from '../../shared/goal-metrics';
 import { evalEntryToCardData, generateGoalFingerprint } from '../../shared/goal-card-data';
@@ -110,6 +111,7 @@ interface EvalContent {
   treatment_plan: string;
   frequency_duration: string;
   session_note?: SessionNoteData;
+  enabled_objective_fields?: string[];
 }
 
 const CATEGORY_OPTIONS: Record<Discipline, string[]> = {
@@ -264,51 +266,114 @@ function emptyContent(discipline: Discipline): EvalContent {
   };
 }
 
-const PT_OBJECTIVE_FIELDS: Array<{ key: keyof PTObjectiveAssessment; label: string }> = [
-  { key: 'rom', label: 'ROM' },
-  { key: 'strength_mmt', label: 'Strength / MMT' },
-  { key: 'posture', label: 'Posture' },
-  { key: 'gait_analysis', label: 'Gait Analysis' },
-  { key: 'balance', label: 'Balance' },
-  { key: 'functional_mobility', label: 'Functional Mobility' },
-  { key: 'pain_assessment', label: 'Pain Assessment' },
+type ObjectiveFieldType = 'textarea' | 'pain_scale';
+
+interface ObjectiveFieldDef {
+  key: string;
+  label: string;
+  fieldType: ObjectiveFieldType;
+  placeholder?: string;
+}
+
+const PT_OBJECTIVE_FIELDS: ObjectiveFieldDef[] = [
+  { key: 'rom', label: 'ROM', fieldType: 'textarea' },
+  { key: 'strength_mmt', label: 'Strength / MMT', fieldType: 'textarea' },
+  { key: 'posture', label: 'Posture', fieldType: 'textarea' },
+  { key: 'gait_analysis', label: 'Gait Analysis', fieldType: 'textarea' },
+  { key: 'balance', label: 'Balance', fieldType: 'textarea' },
+  { key: 'functional_mobility', label: 'Functional Mobility', fieldType: 'textarea' },
+  { key: 'pain_assessment', label: 'Pain Assessment', fieldType: 'pain_scale' },
 ];
 
-const OT_OBJECTIVE_FIELDS: Array<{ key: keyof OTObjectiveAssessment; label: string }> = [
-  { key: 'adl_assessment', label: 'ADL Assessment' },
-  { key: 'hand_function', label: 'Hand Function' },
-  { key: 'cognition_screening', label: 'Cognition Screening' },
-  { key: 'sensory', label: 'Sensory' },
-  { key: 'visual_perceptual', label: 'Visual-Perceptual' },
-  { key: 'home_safety', label: 'Home Safety' },
+const OT_OBJECTIVE_FIELDS: ObjectiveFieldDef[] = [
+  { key: 'adl_assessment', label: 'ADL Assessment', fieldType: 'textarea' },
+  { key: 'hand_function', label: 'Hand Function', fieldType: 'textarea' },
+  { key: 'cognition_screening', label: 'Cognition Screening', fieldType: 'textarea' },
+  { key: 'sensory', label: 'Sensory', fieldType: 'textarea' },
+  { key: 'visual_perceptual', label: 'Visual-Perceptual', fieldType: 'textarea' },
+  { key: 'home_safety', label: 'Home Safety', fieldType: 'textarea' },
 ];
 
-const ST_OBJECTIVE_FIELDS: Array<{ key: keyof STObjectiveAssessment; label: string }> = [
-  { key: 'speech_intelligibility', label: 'Speech Intelligibility' },
-  { key: 'language_comprehension', label: 'Language Comprehension' },
-  { key: 'language_expression', label: 'Language Expression' },
-  { key: 'voice', label: 'Voice' },
-  { key: 'fluency', label: 'Fluency' },
-  { key: 'swallowing_dysphagia', label: 'Swallowing / Dysphagia' },
-  { key: 'cognition_communication', label: 'Cognition-Communication' },
+const ST_OBJECTIVE_FIELDS: ObjectiveFieldDef[] = [
+  { key: 'speech_intelligibility', label: 'Speech Intelligibility', fieldType: 'textarea' },
+  { key: 'language_comprehension', label: 'Language Comprehension', fieldType: 'textarea' },
+  { key: 'language_expression', label: 'Language Expression', fieldType: 'textarea' },
+  { key: 'voice', label: 'Voice', fieldType: 'textarea' },
+  { key: 'fluency', label: 'Fluency', fieldType: 'textarea' },
+  { key: 'swallowing_dysphagia', label: 'Swallowing / Dysphagia', fieldType: 'textarea' },
+  { key: 'cognition_communication', label: 'Cognition-Communication', fieldType: 'textarea' },
 ];
 
-const MFT_OBJECTIVE_FIELDS: Array<{ key: keyof MFTObjectiveAssessment; label: string }> = [
-  { key: 'presenting_problem', label: 'Presenting Problem' },
-  { key: 'mental_status', label: 'Mental Status Exam' },
-  { key: 'risk_assessment', label: 'Risk Assessment (SI/HI/Abuse)' },
-  { key: 'relationship_dynamics', label: 'Relationship / Family Dynamics' },
-  { key: 'functional_impairment', label: 'Functional Impairment' },
-  { key: 'diagnostic_impressions', label: 'Diagnostic Impressions' },
+const MFT_OBJECTIVE_FIELDS: ObjectiveFieldDef[] = [
+  { key: 'presenting_problem', label: 'Presenting Problem', fieldType: 'textarea' },
+  { key: 'mental_status', label: 'Mental Status Exam', fieldType: 'textarea' },
+  { key: 'risk_assessment', label: 'Risk Assessment (SI/HI/Abuse)', fieldType: 'textarea' },
+  { key: 'relationship_dynamics', label: 'Relationship / Family Dynamics', fieldType: 'textarea' },
+  { key: 'functional_impairment', label: 'Functional Impairment', fieldType: 'textarea' },
+  { key: 'diagnostic_impressions', label: 'Diagnostic Impressions', fieldType: 'textarea' },
 ];
 
-function getObjectiveFields(discipline: Discipline) {
+function getObjectiveFields(discipline: Discipline): ObjectiveFieldDef[] {
   switch (discipline) {
     case 'PT': return PT_OBJECTIVE_FIELDS;
     case 'OT': return OT_OBJECTIVE_FIELDS;
     case 'ST': return ST_OBJECTIVE_FIELDS;
     case 'MFT': return MFT_OBJECTIVE_FIELDS;
   }
+}
+
+/** Pain scale component — 0-10 colored buttons + optional notes */
+function PainScaleInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  // Parse existing value: "6/10 - some notes" or just "6/10" or free text
+  const match = value.match(/^(\d+)\/10(?:\s*-\s*(.*))?$/s);
+  const currentRating = match ? parseInt(match[1], 10) : null;
+  const currentNotes = match ? (match[2] || '') : (value || '');
+
+  const handleRatingClick = (rating: number) => {
+    const notes = currentNotes.trim();
+    onChange(notes ? `${rating}/10 - ${notes}` : `${rating}/10`);
+  };
+
+  const handleNotesChange = (notes: string) => {
+    if (currentRating !== null) {
+      onChange(notes.trim() ? `${currentRating}/10 - ${notes}` : `${currentRating}/10`);
+    } else {
+      onChange(notes);
+    }
+  };
+
+  const getButtonColor = (n: number) => {
+    if (n <= 3) return currentRating === n ? 'bg-emerald-500 text-white' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100';
+    if (n <= 6) return currentRating === n ? 'bg-amber-500 text-white' : 'bg-amber-50 text-amber-700 hover:bg-amber-100';
+    return currentRating === n ? 'bg-red-500 text-white' : 'bg-red-50 text-red-700 hover:bg-red-100';
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-1">
+        {Array.from({ length: 11 }, (_, i) => (
+          <button
+            key={i}
+            type="button"
+            onClick={() => handleRatingClick(i)}
+            className={`w-8 h-8 rounded-lg text-xs font-bold transition-colors border ${getButtonColor(i)} ${currentRating === i ? 'ring-2 ring-offset-1 ring-blue-400 border-transparent' : 'border-gray-200'}`}
+          >
+            {i}
+          </button>
+        ))}
+        {currentRating !== null && (
+          <span className="ml-2 text-sm font-semibold text-[var(--color-text)]">{currentRating}/10</span>
+        )}
+      </div>
+      <textarea
+        className="textarea"
+        rows={2}
+        placeholder="Additional pain notes (location, quality, aggravating factors...)"
+        value={currentNotes}
+        onChange={(e) => handleNotesChange(e.target.value)}
+      />
+    </div>
+  );
 }
 
 const DISCIPLINE_LABELS: Record<Discipline, string> = {
@@ -355,7 +420,7 @@ function parseActiveReasons(text: string): string[] {
   return REHAB_REASON_CHIPS.filter((r) => text.toLowerCase().includes(r.toLowerCase()));
 }
 
-function RehabPotentialSection({
+const RehabPotentialSection = React.memo(function RehabPotentialSection({
   value,
   onChange,
   evalType = 'initial',
@@ -473,7 +538,7 @@ function RehabPotentialSection({
       {innerContent}
     </div>
   );
-}
+});
 
 // ── Component ──
 
@@ -495,7 +560,13 @@ export default function EvalFormPage() {
   );
   const [priorFieldKeys, setPriorFieldKeys] = useState<Set<string>>(new Set());
 
+  // Appointment context (when opening eval from calendar)
+  const appointmentId = (location.state as any)?.appointmentId as number | undefined;
+  const appointmentDate = (location.state as any)?.appointmentDate as string | undefined;
+
   const [client, setClient] = useState<Client | null>(null);
+  const disciplineRef = useRef<Discipline>('PT');
+  if (client) disciplineRef.current = client.discipline as Discipline;
   const [practiceInfo, setPracticeInfo] = useState<{ license_number?: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -503,7 +574,7 @@ export default function EvalFormPage() {
   const [signDialogOpen, setSignDialogOpen] = useState(false);
   const [signDialogIssues, setSignDialogIssues] = useState<ValidationIssue[]>([]);
 
-  const [evalDate, setEvalDate] = useState(todayISO());
+  const [evalDate, setEvalDate] = useState(appointmentDate || todayISO());
   const [content, setContent] = useState<EvalContent | null>(null);
   const [signatureImage, setSignatureImage] = useState('');
   const [signatureTyped, setSignatureTyped] = useState('');
@@ -517,6 +588,15 @@ export default function EvalFormPage() {
   // Goal pattern state
   const [expandedGoalIdx, setExpandedGoalIdx] = useState<number | null>(null);
   const [patternOverrides, setPatternOverrides] = useState<PatternOverride[]>([]);
+  const [customGoalPatterns, setCustomGoalPatterns] = useState<GoalPattern[]>([]);
+  // Refs for stable goal handler callbacks
+  const patternOverridesRef = useRef(patternOverrides);
+  patternOverridesRef.current = patternOverrides;
+  const customGoalPatternsRef = useRef(customGoalPatterns);
+  customGoalPatternsRef.current = customGoalPatterns;
+
+  // Objective assessment checkbox state
+  const [enabledObjectiveFields, setEnabledObjectiveFields] = useState<Set<string>>(new Set());
 
   // Session Note & Billing state
   const [sessionNote, setSessionNote] = useState<SessionNoteData>({ ...EMPTY_SESSION_NOTE });
@@ -591,6 +671,14 @@ export default function EvalFormPage() {
         console.error('Failed to load pattern overrides:', err);
       }
 
+      // Load custom patterns and convert to GoalPattern format
+      try {
+        const cps: CustomPattern[] = await window.api.customPatterns.list();
+        setCustomGoalPatterns(cps.map(customPatternToGoalPattern));
+      } catch (err) {
+        console.error('Failed to load custom patterns:', err);
+      }
+
       if (evalId) {
         const evaluation = await window.api.evaluations.get(parseInt(evalId, 10));
         setEvalDate(evaluation.eval_date || todayISO());
@@ -627,6 +715,19 @@ export default function EvalFormPage() {
               ...(parsed.objective_assessment || {}),
             },
           });
+
+          // Restore enabled objective fields from saved data or compute from non-empty values
+          if (parsed.enabled_objective_fields) {
+            setEnabledObjectiveFields(new Set(parsed.enabled_objective_fields));
+          } else {
+            // Backwards compatibility: auto-check any non-empty fields
+            const objData = parsed.objective_assessment as Record<string, string> | undefined;
+            if (objData) {
+              const nonEmpty = Object.entries(objData).filter(([_, v]) => v && v.trim()).map(([k]) => k);
+              setEnabledObjectiveFields(new Set(nonEmpty));
+            }
+          }
+
           // Load structured goal entries if present
           let loadedEntries: EvalGoalEntry[] = [];
           let alreadyCreatedIds: number[] = [];
@@ -899,37 +1000,49 @@ export default function EvalFormPage() {
     goalEntries.map((entry, idx) => {
       const goalId = (content?.created_goal_ids || [])[idx] || null;
       const history = goalId ? (goalHistories[goalId] || []) : [];
-      return evalEntryToCardData(entry, idx, goalId, history, patternOverrides);
+      return evalEntryToCardData(entry, idx, goalId, history, patternOverrides, customGoalPatterns);
     }),
-    [goalEntries, content?.created_goal_ids, goalHistories, patternOverrides]
+    [goalEntries, content?.created_goal_ids, goalHistories, patternOverrides, customGoalPatterns]
   );
 
-  // ── Auto-Save ──
+  // ── Auto-Save (ref-based to avoid re-render cascade) ──
+
+  // Store all auto-save inputs as refs so performAutoSave is stable
+  const autoSaveDataRef = useRef({
+    clientId, client, content, goalEntries, evalDate, savedEvalId,
+    existingSignedAt, evalType, enabledObjectiveFields, appointmentId,
+    sessionNote, snModifiers,
+  });
+  autoSaveDataRef.current = {
+    clientId, client, content, goalEntries, evalDate, savedEvalId,
+    existingSignedAt, evalType, enabledObjectiveFields, appointmentId,
+    sessionNote, snModifiers,
+  };
 
   const performAutoSave = useCallback(async () => {
-    if (!clientId || !client || !content || existingSignedAt) return;
-    // Don't autosave until user has actually edited something
-    if (!isDirty.current && !savedEvalId) return;
+    const d = autoSaveDataRef.current;
+    if (!d.clientId || !d.client || !d.content || d.existingSignedAt) return;
+    if (!isDirty.current && !d.savedEvalId) return;
 
     try {
-      const cid = parseInt(clientId, 10);
+      const cid = parseInt(d.clientId as string, 10);
 
       // Sync goal records to the goals table on every autosave
-      let updatedGoalIds: number[] = [...(content.created_goal_ids || [])];
+      let updatedGoalIds: number[] = [...(d.content.created_goal_ids || [])];
 
       // Delete any orphaned goals (IDs beyond current goalEntries length)
-      if (updatedGoalIds.length > goalEntries.length) {
-        const orphanedIds = updatedGoalIds.slice(goalEntries.length);
+      if (updatedGoalIds.length > d.goalEntries.length) {
+        const orphanedIds = updatedGoalIds.slice(d.goalEntries.length);
         for (const oid of orphanedIds) {
           if (oid) {
             try { await window.api.goals.delete(oid); } catch (err) { console.error('Auto-save: failed to delete orphaned goal:', err); }
           }
         }
-        updatedGoalIds = updatedGoalIds.slice(0, goalEntries.length);
+        updatedGoalIds = updatedGoalIds.slice(0, d.goalEntries.length);
       }
 
-      for (let i = 0; i < goalEntries.length; i++) {
-        const entry = goalEntries[i];
+      for (let i = 0; i < d.goalEntries.length; i++) {
+        const entry = d.goalEntries[i];
         if (!entry.goal_text.trim()) continue;
         const existingId = i < updatedGoalIds.length ? updatedGoalIds[i] : null;
         if (existingId) {
@@ -980,53 +1093,63 @@ export default function EvalFormPage() {
       }
 
       // Update content state with any newly created goal IDs
-      if (JSON.stringify(updatedGoalIds) !== JSON.stringify(content.created_goal_ids || [])) {
+      if (JSON.stringify(updatedGoalIds) !== JSON.stringify(d.content.created_goal_ids || [])) {
         setContent(prev => prev ? { ...prev, created_goal_ids: updatedGoalIds } : prev);
       }
 
       const contentToSave = {
-        ...content,
-        goal_entries: goalEntries,
+        ...d.content,
+        goal_entries: d.goalEntries,
         created_goal_ids: updatedGoalIds,
-        session_note: { ...sessionNote, cpt_modifiers: snModifiers },
+        session_note: { ...d.sessionNote, cpt_modifiers: d.snModifiers },
+        enabled_objective_fields: [...d.enabledObjectiveFields],
       };
 
       const evalData: any = {
         client_id: cid,
-        eval_date: evalDate,
-        discipline: client.discipline,
+        eval_date: d.evalDate,
+        discipline: d.client.discipline,
         content: JSON.stringify(contentToSave),
         signature_image: '',
         signature_typed: '',
         signed_at: null,
-        eval_type: evalType,
+        eval_type: d.evalType,
       };
 
-      if (savedEvalId) {
-        await window.api.evaluations.update(savedEvalId, evalData);
+      if (d.savedEvalId) {
+        await window.api.evaluations.update(d.savedEvalId, evalData);
       } else {
         const created = await window.api.evaluations.create(evalData);
-        if (created?.id) setSavedEvalId(created.id);
+        if (created?.id) {
+          setSavedEvalId(created.id);
+          // Link eval back to appointment if we opened from calendar
+          if (d.appointmentId) {
+            try {
+              await window.api.appointments.linkEval(d.appointmentId, created.id);
+            } catch (err) {
+              console.error('Failed to link eval to appointment:', err);
+            }
+          }
+        }
       }
       setLastAutoSaved(new Date().toLocaleTimeString());
     } catch (err) {
       console.error('Auto-save failed:', err);
     }
-  }, [clientId, client, content, goalEntries, evalDate, savedEvalId, existingSignedAt, evalType]);
+  }, []); // Stable — reads from ref
 
-  // Debounced auto-save: triggers 3 seconds after any user change
+  // Debounced auto-save: triggers 5 seconds after any user change
   useEffect(() => {
     if (loading || !content || existingSignedAt) return;
-    // Skip autosave until user has actually edited something
     if (!isDirty.current && !savedEvalId) return;
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(() => {
       performAutoSave();
-    }, 3000);
+    }, 5000);
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
-  }, [content, goalEntries, evalDate, performAutoSave, loading, existingSignedAt, savedEvalId]);
+  }, [content, goalEntries, evalDate, loading, existingSignedAt, savedEvalId]);
 
   // Keep a ref to the latest performAutoSave so useBlocker can call it
   const performAutoSaveRef = useRef(performAutoSave);
@@ -1108,19 +1231,21 @@ export default function EvalFormPage() {
   };
 
   // Wrapper to mark dirty when goal entries change inline
-  const updateGoalEntries = (updater: React.SetStateAction<EvalGoalEntry[]>) => {
+  const updateGoalEntries = useCallback((updater: React.SetStateAction<EvalGoalEntry[]>) => {
     isDirty.current = true;
     setGoalEntries(updater);
-  };
+  }, []);
 
   /** Auto-compose goal text from structured fields (pattern-based or custom) */
-  const composeGoalText = (entry: EvalGoalEntry): string => {
-    let pattern = entry.pattern_id ? getPatternById(entry.pattern_id) : undefined;
-    if (pattern && patternOverrides.length > 0) pattern = applyOverrides(pattern, patternOverrides);
+  const composeGoalText = useCallback((entry: EvalGoalEntry): string => {
+    const cgp = customGoalPatternsRef.current;
+    const po = patternOverridesRef.current;
+    let pattern = entry.pattern_id ? (getPatternById(entry.pattern_id) || cgp.find(p => p.id === entry.pattern_id)) : undefined;
+    if (pattern && po.length > 0) pattern = applyOverrides(pattern, po);
     if (pattern && pattern.id !== 'custom_freeform') {
       return sharedComposeGoalText({
         pattern,
-        discipline: discipline as Discipline,
+        discipline: disciplineRef.current,
         components: entry.components || {},
         measurement_type: entry.measurement_type || 'percentage',
         baseline_value: entry.baseline_value || `${entry.baseline ?? 0}`,
@@ -1131,15 +1256,10 @@ export default function EvalFormPage() {
     }
     // Custom/legacy: return existing text as-is (user writes it manually)
     return entry.goal_text || '';
-  };
-
-  /** Check if goal text looks auto-composed (matches our pattern) */
-  const isAutoComposed = (text: string): boolean => {
-    return isAutoComposedGoalText(text);
-  };
+  }, []);
 
   /** Update a goal entry field and auto-compose text if appropriate */
-  const updateGoalField = (idx: number, field: Partial<EvalGoalEntry>) => {
+  const updateGoalField = useCallback((idx: number, field: Partial<EvalGoalEntry>) => {
     updateGoalEntries(prev =>
       prev.map((g, i) => {
         if (i !== idx) return g;
@@ -1160,14 +1280,74 @@ export default function EvalFormPage() {
         // Auto-compose if pattern-based goal, or if text was previously auto-composed
         if (updated.pattern_id && updated.pattern_id !== 'custom_freeform') {
           updated.goal_text = composeGoalText(updated);
-        } else if (!g.goal_text.trim() || isAutoComposed(g.goal_text)) {
+        } else if (!g.goal_text.trim() || isAutoComposedGoalText(g.goal_text)) {
           // Legacy: only recompose if it was auto-composed before
           updated.goal_text = composeGoalText(updated);
         }
         return updated;
       })
     );
-  };
+  }, [composeGoalText, updateGoalEntries]);
+
+  // Stable goal card handler callbacks (avoid re-creating on every render)
+  const handleGoalCollapse = useCallback(() => setExpandedGoalIdx(null), []);
+  const handleGoalExpand = useCallback((idx: number) => setExpandedGoalIdx(idx), []);
+
+  const contentRef = useRef(content);
+  contentRef.current = content;
+
+  const handleGoalComponentChange = useCallback((idx: number, key: string, value: any) => {
+    // Use functional updater to read current components and merge
+    setGoalEntries(prev => {
+      const entry = prev[idx];
+      if (!entry) return prev;
+      const updatedComps = { ...(entry.components || {}), [key]: value };
+      return prev.map((g, i) => i !== idx ? g : { ...g, components: updatedComps });
+    });
+    isDirty.current = true;
+  }, []);
+
+  const handleGoalDelete = useCallback(async (idx: number) => {
+    const c = contentRef.current;
+    const goalId = (c?.created_goal_ids || [])[idx];
+    if (goalId) {
+      try { await window.api.goals.delete(goalId); } catch (err) { console.error('Failed to delete linked goal:', err); }
+    }
+    setContent(prev => {
+      if (!prev) return prev;
+      const ids = [...(prev.created_goal_ids || [])];
+      ids.splice(idx, 1);
+      return { ...prev, created_goal_ids: ids };
+    });
+    updateGoalEntries(prev => prev.filter((_, i) => i !== idx));
+    setExpandedGoalIdx(null);
+  }, [updateGoalEntries]);
+
+  const handleGoalPatternSelect = useCallback((idx: number, pattern: GoalPattern) => {
+    const defaultComponents: Record<string, any> = {};
+    for (const comp of pattern.components) {
+      if (comp.defaultValue !== undefined) {
+        defaultComponents[comp.key] = comp.defaultValue;
+      }
+    }
+    const mt = pattern.measurement_type || 'percentage';
+    const inst = pattern.instrument || (mt === 'standardized_score' ? (DEFAULT_INSTRUMENTS[pattern.category] || '') : '');
+    updateGoalField(idx, {
+      pattern_id: pattern.id,
+      components: defaultComponents,
+      category: pattern.category,
+      measurement_type: mt as MeasurementType,
+      instrument: inst,
+    });
+  }, [updateGoalField]);
+
+  const handleGoalPatternClear = useCallback((idx: number) => {
+    updateGoalField(idx, { pattern_id: undefined, components: undefined });
+  }, [updateGoalField]);
+
+  const handleGoalCustomPattern = useCallback((idx: number) => {
+    updateGoalField(idx, { pattern_id: 'custom_freeform', components: undefined });
+  }, [updateGoalField]);
 
   // ── Session Note SOAP helpers ──
 
@@ -1631,7 +1811,7 @@ export default function EvalFormPage() {
   }
 
   const discipline = client.discipline as Discipline;
-  const objectiveFields = getObjectiveFields(discipline);
+  const objectiveFields = useMemo(() => getObjectiveFields(discipline), [discipline]);
 
   return (
     <div className="overflow-y-auto h-full p-6" ref={scrollContainerRef}>
@@ -1840,19 +2020,73 @@ export default function EvalFormPage() {
           sectionRef={(el) => { sectionRefs.current['objectiveAssessment'] = el; }}
           badge={<span className={`badge badge-${discipline.toLowerCase()} ml-1`}>{discipline}</span>}
         >
-          <div className="space-y-4">
-            {objectiveFields.map((field) => (
-              <div key={field.key}>
-                <label className="label">{field.label}</label>
-                <textarea
-                  className="textarea"
-                  rows={3}
-                  placeholder={`Enter ${field.label.toLowerCase()} findings...`}
-                  value={(content.objective_assessment as unknown as Record<string, string>)[field.key] || ''}
-                  onChange={(e) => updateObjectiveField(field.key, e.target.value)}
-                />
-              </div>
-            ))}
+          <div className="space-y-3">
+            {/* Checkbox row to select which fields to fill */}
+            <div className="flex flex-wrap gap-2 pb-3 border-b border-gray-200">
+              {objectiveFields.map((field) => {
+                const isChecked = enabledObjectiveFields.has(field.key);
+                const fieldValue = (content.objective_assessment as unknown as Record<string, string>)[field.key] || '';
+                return (
+                  <label
+                    key={field.key}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors border ${
+                      isChecked
+                        ? 'bg-violet-50 border-violet-300 text-violet-800'
+                        : 'bg-gray-50 border-gray-200 text-gray-500 hover:border-gray-300'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="rounded border-gray-300 text-violet-600 focus:ring-violet-500"
+                      checked={isChecked}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setEnabledObjectiveFields(prev => new Set([...prev, field.key]));
+                          isDirty.current = true;
+                        } else if (!fieldValue.trim()) {
+                          setEnabledObjectiveFields(prev => {
+                            const next = new Set(prev);
+                            next.delete(field.key);
+                            return next;
+                          });
+                          isDirty.current = true;
+                        }
+                      }}
+                    />
+                    {field.label}
+                  </label>
+                );
+              })}
+            </div>
+
+            {/* Only render checked fields */}
+            {objectiveFields
+              .filter((field) => enabledObjectiveFields.has(field.key))
+              .map((field) => (
+                <div key={field.key}>
+                  <label className="label">{field.label}</label>
+                  {field.fieldType === 'pain_scale' ? (
+                    <PainScaleInput
+                      value={(content.objective_assessment as unknown as Record<string, string>)[field.key] || ''}
+                      onChange={(v) => updateObjectiveField(field.key, v)}
+                    />
+                  ) : (
+                    <textarea
+                      className="textarea"
+                      rows={3}
+                      placeholder={`Enter ${field.label.toLowerCase()} findings...`}
+                      value={(content.objective_assessment as unknown as Record<string, string>)[field.key] || ''}
+                      onChange={(e) => updateObjectiveField(field.key, e.target.value)}
+                    />
+                  )}
+                </div>
+              ))}
+
+            {enabledObjectiveFields.size === 0 && (
+              <p className="text-sm text-[var(--color-text-secondary)] italic py-2 text-center">
+                Check the fields above to add objective assessment data
+              </p>
+            )}
           </div>
         </EvalSectionWrapper>
 
@@ -1983,48 +2217,15 @@ export default function EvalFormPage() {
                     data={card}
                     discipline={discipline as Discipline}
                     patternOverrides={patternOverrides}
+                    customPatterns={customGoalPatterns}
                     disabled={!!existingSignedAt}
-                    onCollapse={() => setExpandedGoalIdx(null)}
+                    onCollapse={handleGoalCollapse}
                     onFieldChange={(field) => updateGoalField(idx, field)}
-                    onComponentChange={(key, value) => {
-                      const updatedComps = { ...(goalEntries[idx].components || {}), [key]: value };
-                      updateGoalField(idx, { components: updatedComps });
-                    }}
-                    onDelete={!existingSignedAt ? async () => {
-                      const goalId = (content?.created_goal_ids || [])[idx];
-                      if (goalId) {
-                        try { await window.api.goals.delete(goalId); } catch (err) { console.error('Failed to delete linked goal:', err); }
-                      }
-                      setContent(prev => {
-                        if (!prev) return prev;
-                        const ids = [...(prev.created_goal_ids || [])];
-                        ids.splice(idx, 1);
-                        return { ...prev, created_goal_ids: ids };
-                      });
-                      updateGoalEntries(prev => prev.filter((_, i) => i !== idx));
-                      setExpandedGoalIdx(null);
-                    } : undefined}
-                    onPatternSelect={(pattern) => {
-                      const defaultComponents: Record<string, any> = {};
-                      for (const comp of pattern.components) {
-                        if (comp.defaultValue !== undefined) {
-                          defaultComponents[comp.key] = comp.defaultValue;
-                        }
-                      }
-                      const mt = pattern.measurement_type || 'percentage';
-                      const inst = pattern.instrument || (mt === 'standardized_score' ? (DEFAULT_INSTRUMENTS[pattern.category] || '') : '');
-                      updateGoalField(idx, {
-                        pattern_id: pattern.id,
-                        components: defaultComponents,
-                        category: pattern.category,
-                        measurement_type: mt as MeasurementType,
-                        baseline_value: goalEntries[idx].baseline_value || '',
-                        target_value: goalEntries[idx].target_value || '',
-                        instrument: inst,
-                      });
-                    }}
-                    onPatternClear={() => updateGoalField(idx, { pattern_id: undefined, components: undefined })}
-                    onCustomPattern={() => updateGoalField(idx, { pattern_id: 'custom_freeform', components: undefined })}
+                    onComponentChange={(key, value) => handleGoalComponentChange(idx, key, value)}
+                    onDelete={!existingSignedAt ? () => handleGoalDelete(idx) : undefined}
+                    onPatternSelect={(pattern) => handleGoalPatternSelect(idx, pattern)}
+                    onPatternClear={() => handleGoalPatternClear(idx)}
+                    onCustomPattern={() => handleGoalCustomPattern(idx)}
                     categoryOptions={CATEGORY_OPTIONS[discipline] || []}
                     usedCategories={usedCategories}
                   />

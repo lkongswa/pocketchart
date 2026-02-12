@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { ClipboardList, Lock, Shield, ArrowRight, ScrollText, Stethoscope } from 'lucide-react';
+import { ClipboardList, Lock, Shield, ArrowRight, ScrollText, Stethoscope, KeyRound, Eye, EyeOff, Loader2, HardDrive } from 'lucide-react';
 import type { Discipline } from '@shared/types';
+import RecoveryKeyCeremony from './RecoveryKeyCeremony';
+import RestoreScreen from './RestoreScreen';
 
 const US_STATES = [
   'AL','AK','AZ','AR','CA','CO','CT','DE','DC','FL','GA','HI','ID','IL','IN',
@@ -21,12 +23,20 @@ interface OnboardingScreenProps {
 }
 
 export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) {
-  const [step, setStep] = useState<'terms' | 'welcome' | 'practice' | 'pin'>('terms');
+  const [step, setStep] = useState<'terms' | 'welcome' | 'practice' | 'passphrase' | 'recovery' | 'pin'>('terms');
+  const [showRestore, setShowRestore] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [newPin, setNewPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [pinError, setPinError] = useState('');
   const [saving, setSaving] = useState(false);
+
+  // Encryption passphrase state
+  const [encPassphrase, setEncPassphrase] = useState('');
+  const [encConfirmPassphrase, setEncConfirmPassphrase] = useState('');
+  const [encPassError, setEncPassError] = useState('');
+  const [showEncPass, setShowEncPass] = useState(false);
+  const [recoveryKey, setRecoveryKey] = useState('');
 
   // Practice setup fields
   const [discipline, setDiscipline] = useState<Discipline | ''>('');
@@ -45,8 +55,9 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
     }
   }, [discipline]);
 
-  const handleAcceptTerms = async () => {
-    await window.api.settings.set('terms_accepted', new Date().toISOString());
+  const handleAcceptTerms = () => {
+    // Don't save to DB yet — DB doesn't exist until after passphrase setup.
+    // We'll save terms_accepted after the DB is created.
     setStep('welcome');
   };
 
@@ -67,41 +78,78 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
     return sum % 10 === 0;
   };
 
-  const handleSavePractice = async () => {
+  const handleSavePractice = () => {
     // Validate NPI if provided
     if (npi && !validateNpi(npi)) {
       setNpiError('Invalid NPI. Must be 10 digits with valid check digit.');
       return;
     }
     setNpiError('');
-    setSaving(true);
+    // Don't save to DB yet — DB doesn't exist until after passphrase setup.
+    // Advance to the passphrase step; we'll save practice data after DB creation.
+    setStep('passphrase');
+  };
 
+  /**
+   * After the DB is created (via encryption:setup), save all the deferred data:
+   * terms acceptance, practice info, note format, fee schedule.
+   */
+  const saveDeferredData = async () => {
     try {
-      // Save practice info
-      await window.api.practice.save({
-        discipline: discipline || undefined,
-        state: practiceState || undefined,
-        npi: npi || undefined,
-        taxonomy_code: taxonomyCode || undefined,
-        license_number: licenseNumber || undefined,
-      } as any);
+      await window.api.settings.set('terms_accepted', new Date().toISOString());
 
-      // Also store in settings for quick access
+      if (discipline || practiceState || npi || taxonomyCode || licenseNumber) {
+        await window.api.practice.save({
+          discipline: discipline || undefined,
+          state: practiceState || undefined,
+          npi: npi || undefined,
+          taxonomy_code: taxonomyCode || undefined,
+          license_number: licenseNumber || undefined,
+        } as any);
+      }
+
       if (discipline) await window.api.settings.set('provider_discipline', discipline);
       if (practiceState) await window.api.settings.set('provider_state', practiceState);
 
-      // Auto-set note format based on discipline (DAP for MFT, SOAP for others)
       const defaultFormat = discipline === 'MFT' ? 'DAP' : 'SOAP';
       await window.api.settings.set('note_format', defaultFormat);
 
-      // Reset fee schedule to match the chosen discipline
       if (discipline) {
         try { await window.api.feeSchedule.reset(discipline); } catch { /* ignore */ }
       }
-
-      setStep('pin');
     } catch (err) {
-      console.error('Failed to save practice info:', err);
+      console.error('Failed to save deferred onboarding data:', err);
+    }
+  };
+
+  /**
+   * Handle encryption passphrase setup.
+   * Creates the encrypted DB, saves deferred data, then advances to recovery ceremony.
+   */
+  const handleSetupEncryption = async () => {
+    setEncPassError('');
+    if (encPassphrase.length < 8) {
+      setEncPassError('Passphrase must be at least 8 characters');
+      return;
+    }
+    if (encPassphrase !== encConfirmPassphrase) {
+      setEncPassError('Passphrases do not match');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const result = await window.api.encryption.setup(encPassphrase);
+      if (result.success && result.recoveryKey) {
+        // DB is now created and open — save all deferred onboarding data
+        await saveDeferredData();
+        setRecoveryKey(result.recoveryKey);
+        setStep('recovery');
+      } else {
+        setEncPassError('Failed to set up encryption. Please try again.');
+      }
+    } catch {
+      setEncPassError('An error occurred. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -136,44 +184,16 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
     }
   };
 
-  const handleSavePartial = async () => {
+  const handleSavePartial = () => {
     // Validate NPI if provided
     if (npi && !validateNpi(npi)) {
       setNpiError('Invalid NPI. Must be 10 digits with valid check digit.');
       return;
     }
     setNpiError('');
-    setSaving(true);
-
-    try {
-      const hasAnyData = discipline || practiceState || npi || taxonomyCode || licenseNumber;
-
-      if (hasAnyData) {
-        await window.api.practice.save({
-          discipline: discipline || undefined,
-          state: practiceState || undefined,
-          npi: npi || undefined,
-          taxonomy_code: taxonomyCode || undefined,
-          license_number: licenseNumber || undefined,
-        } as any);
-
-        if (discipline) await window.api.settings.set('provider_discipline', discipline);
-        if (practiceState) await window.api.settings.set('provider_state', practiceState);
-
-        if (discipline) {
-          const defaultFormat = discipline === 'MFT' ? 'DAP' : 'SOAP';
-          await window.api.settings.set('note_format', defaultFormat);
-          try { await window.api.feeSchedule.reset(discipline); } catch { /* ignore */ }
-        }
-      }
-
-      await window.api.settings.set('onboarding_complete', 'true');
-      onComplete();
-    } catch (err) {
-      console.error('Failed to save partial practice info:', err);
-    } finally {
-      setSaving(false);
-    }
+    // Don't save to DB yet — advance to passphrase step.
+    // Whatever data was entered will be saved after DB creation.
+    setStep('passphrase');
   };
 
   const handleSkip = async () => {
@@ -206,12 +226,29 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
 
             <p className="font-medium text-[var(--color-text)]">1. Local Data Storage</p>
             <p>
-              PocketChart stores all clinical data exclusively on your local device (or in a folder
-              location you designate). PocketChart does not transmit, host, or store your data on
-              any external server. You are the sole custodian of your data.
+              PocketChart stores all data locally on the device where the software is installed.
+              The User is solely responsible for the physical security of their device, the
+              security of their operating system and user account, and any decisions regarding
+              the storage location of PocketChart data files, including but not limited to the
+              use of cloud-synced folders, external drives, or network storage. PocketChart, LLC
+              does not control, access, or monitor the User's data storage environment.
             </p>
 
-            <p className="font-medium text-[var(--color-text)]">2. Your Responsibilities</p>
+            <p className="font-medium text-[var(--color-text)]">2. Cloud Storage Disclaimer</p>
+            <p>
+              If the User chooses to store PocketChart data files in a location that is
+              synchronized with a cloud storage service (including but not limited to Google
+              Drive, Microsoft OneDrive, Dropbox, or Apple iCloud), the User acknowledges that
+              their data, which may include Protected Health Information (PHI), will be
+              transmitted to and stored on the servers of that cloud service provider. The User
+              is solely responsible for ensuring compliance with all applicable regulations,
+              including but not limited to the Health Insurance Portability and Accountability
+              Act (HIPAA), with respect to any cloud storage provider they choose to use.
+              PocketChart, LLC is not a party to any agreement between the User and their cloud
+              storage provider.
+            </p>
+
+            <p className="font-medium text-[var(--color-text)]">3. Your Responsibilities</p>
             <p>
               You are solely responsible for: (a) maintaining regular backups of your data;
               (b) securing your device with a strong operating system password, full-disk encryption,
@@ -227,7 +264,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
               application interface.
             </p>
 
-            <p className="font-medium text-[var(--color-text)]">3. No Warranty of Data Preservation</p>
+            <p className="font-medium text-[var(--color-text)]">4. No Warranty of Data Preservation</p>
             <p>
               PocketChart provides tools to help you protect and back up your data (PIN lock,
               auto-lock timeout, database export, soft deletes). However, PocketChart is provided
@@ -235,7 +272,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
               deletion, operating system issues, or any other event outside the application's control.
             </p>
 
-            <p className="font-medium text-[var(--color-text)]">4. Limitation of Liability</p>
+            <p className="font-medium text-[var(--color-text)]">5. Limitation of Liability</p>
             <p>
               To the maximum extent permitted by applicable law, PocketChart and its developers shall
               not be liable for any indirect, incidental, special, consequential, or punitive damages,
@@ -244,14 +281,14 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
               inability to use the software.
             </p>
 
-            <p className="font-medium text-[var(--color-text)]">5. Clinical Responsibility</p>
+            <p className="font-medium text-[var(--color-text)]">6. Clinical Responsibility</p>
             <p>
               PocketChart is a documentation tool, not a medical device. All clinical decisions,
               treatment plans, and documentation accuracy are your professional responsibility.
               PocketChart does not provide clinical advice.
             </p>
 
-            <p className="font-medium text-[var(--color-text)]">6. Record Retention & Preservation</p>
+            <p className="font-medium text-[var(--color-text)]">7. Record Retention & Preservation</p>
             <p>
               PocketChart uses soft-delete technology so that deleted records are hidden but not
               permanently erased, in support of HIPAA record-retention guidelines. However, it is
@@ -266,7 +303,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
               destruction of records by the user.
             </p>
 
-            <p className="font-medium text-[var(--color-text)]">7. Regulatory Compliance & Direct Access</p>
+            <p className="font-medium text-[var(--color-text)]">8. Regulatory Compliance & Direct Access</p>
             <p>
               PocketChart includes features that prompt for physician referrals and track compliance
               based on state direct-access rules. These prompts are provided as informational guidance
@@ -278,13 +315,31 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
               built-in rules are current, complete, or applicable to your specific practice situation.
             </p>
 
-            <p className="font-medium text-[var(--color-text)]">8. Updates & Changes</p>
+            <p className="font-medium text-[var(--color-text)]">9. No Business Associate Relationship</p>
+            <p>
+              PocketChart, LLC does not access, receive, maintain, or transmit Protected Health
+              Information (PHI) through its servers or services. The User retains exclusive
+              custody of all clinical data. Accordingly, PocketChart, LLC does not meet the
+              definition of a Business Associate under 45 CFR 160.103, and no Business Associate
+              Agreement is required or offered.
+            </p>
+
+            <p className="font-medium text-[var(--color-text)]">10. Encryption and Key Management</p>
+            <p>
+              PocketChart offers database encryption protected by a user-chosen passphrase and
+              a one-time recovery key. PocketChart, LLC does not store, transmit, or have access
+              to the User's encryption passphrase or recovery key. If the User loses both their
+              passphrase and their recovery key, PocketChart, LLC cannot recover the User's data.
+              The User is solely responsible for the secure storage of their recovery key.
+            </p>
+
+            <p className="font-medium text-[var(--color-text)]">11. Updates & Changes</p>
             <p>
               These terms may be updated with new versions of PocketChart. Continued use after an
               update constitutes acceptance of the revised terms.
             </p>
 
-            <p className="font-medium text-[var(--color-text)]">9. Data Integrity & Audit Trail</p>
+            <p className="font-medium text-[var(--color-text)]">12. Data Integrity & Audit Trail</p>
             <p>
               PocketChart maintains an audit trail that records clinical document creation, signing,
               modification, and deletion events. This audit trail is a critical component of
@@ -339,8 +394,18 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
     );
   }
 
-  // --- Step 2: Welcome ---
+  // --- Step 2: Welcome (or Restore) ---
   if (step === 'welcome') {
+    // If user chose to restore, render RestoreScreen
+    if (showRestore) {
+      return (
+        <RestoreScreen
+          onComplete={onComplete}
+          onBack={() => setShowRestore(false)}
+        />
+      );
+    }
+
     return (
       <div className="fixed inset-0 z-[200] flex items-center justify-center bg-[var(--color-bg)]">
         <div className="flex flex-col items-center gap-8 max-w-md text-center px-8">
@@ -369,13 +434,23 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
             </div>
           </div>
 
-          <button
-            className="btn-primary w-full justify-center gap-2 py-3"
-            onClick={() => setStep('practice')}
-          >
-            Set Up Practice Info
-            <ArrowRight className="w-4 h-4" />
-          </button>
+          <div className="w-full space-y-3">
+            <button
+              className="btn-primary w-full justify-center gap-2 py-3"
+              onClick={() => setStep('practice')}
+            >
+              Start Fresh
+              <ArrowRight className="w-4 h-4" />
+            </button>
+
+            <button
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-lg border-2 border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 hover:border-blue-300 transition-colors font-medium"
+              onClick={() => setShowRestore(true)}
+            >
+              <HardDrive className="w-4 h-4" />
+              Restore from Backup
+            </button>
+          </div>
 
           <button
             className="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
@@ -526,7 +601,129 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
     );
   }
 
-  // --- Step 4: PIN Setup ---
+  // --- Step 4: Encryption Passphrase Setup ---
+  if (step === 'passphrase') {
+    return (
+      <div className="fixed inset-0 z-[200] flex items-center justify-center bg-[var(--color-bg)] overflow-y-auto">
+        <div className="flex flex-col items-center gap-6 max-w-md text-center px-8 py-8">
+          <div className="w-16 h-16 rounded-2xl bg-emerald-600 flex items-center justify-center">
+            <Shield className="w-8 h-8 text-white" />
+          </div>
+          <h1 className="text-2xl font-bold text-[var(--color-text)]">
+            Protect Your Data
+          </h1>
+          <p className="text-sm text-[var(--color-text-secondary)] max-w-sm">
+            PocketChart encrypts your clinical records with AES-256 encryption.
+            Choose a strong passphrase that you'll remember — you'll enter it each
+            time you open the app.
+          </p>
+
+          <div className="w-full text-left space-y-3">
+            <div className="relative">
+              <input
+                type={showEncPass ? 'text' : 'password'}
+                value={encPassphrase}
+                onChange={(e) => setEncPassphrase(e.target.value)}
+                placeholder="Encryption passphrase (8+ characters)"
+                className="w-full px-4 py-3 pr-12 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:border-[var(--color-primary)]"
+                autoFocus
+              />
+              <button
+                type="button"
+                onClick={() => setShowEncPass(!showEncPass)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+              >
+                {showEncPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+
+            {/* Strength indicator */}
+            <div>
+              <div className="flex gap-1">
+                {[1, 2, 3, 4].map((i) => (
+                  <div
+                    key={i}
+                    className={`h-1 flex-1 rounded-full transition-colors ${
+                      encPassphrase.length >= i * 4
+                        ? encPassphrase.length >= 12
+                          ? 'bg-emerald-500'
+                          : encPassphrase.length >= 8
+                          ? 'bg-amber-500'
+                          : 'bg-red-400'
+                        : 'bg-gray-200'
+                    }`}
+                  />
+                ))}
+              </div>
+              <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+                {encPassphrase.length < 8
+                  ? `${8 - encPassphrase.length} more characters needed`
+                  : encPassphrase.length >= 12
+                  ? 'Strong passphrase'
+                  : 'Good — 12+ characters recommended'}
+              </p>
+            </div>
+
+            <input
+              type={showEncPass ? 'text' : 'password'}
+              value={encConfirmPassphrase}
+              onChange={(e) => setEncConfirmPassphrase(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSetupEncryption(); }}
+              placeholder="Confirm passphrase"
+              className="w-full px-4 py-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:border-[var(--color-primary)]"
+            />
+
+            {encPassError && (
+              <p className="text-sm text-red-600">{encPassError}</p>
+            )}
+          </div>
+
+          <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-left w-full">
+            <p className="text-xs text-amber-800">
+              <strong>Important:</strong> This passphrase is separate from your PIN.
+              The passphrase encrypts your data on disk. PocketChart does not store
+              your passphrase and cannot recover it if forgotten. You'll receive a
+              recovery key in the next step.
+            </p>
+          </div>
+
+          <button
+            onClick={handleSetupEncryption}
+            disabled={saving || encPassphrase.length < 8 || encPassphrase !== encConfirmPassphrase}
+            className="w-full btn-primary py-3 flex items-center justify-center gap-2"
+          >
+            {saving ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Encrypting Database...
+              </>
+            ) : (
+              <>
+                Encrypt & Continue
+                <ArrowRight className="w-4 h-4" />
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- Step 5: Recovery Key Ceremony ---
+  if (step === 'recovery') {
+    return (
+      <div className="fixed inset-0 z-[200] flex items-center justify-center bg-[var(--color-bg)] overflow-y-auto">
+        <div className="py-8 px-4">
+          <RecoveryKeyCeremony
+            recoveryKey={recoveryKey}
+            onComplete={() => setStep('pin')}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // --- Step 6: PIN Setup ---
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-[var(--color-bg)]">
       <div className="flex flex-col items-center gap-8 max-w-sm text-center px-8">

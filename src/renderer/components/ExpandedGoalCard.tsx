@@ -35,6 +35,7 @@ interface ExpandedGoalCardProps {
   data: GoalCardData;
   discipline: Discipline;
   patternOverrides: PatternOverride[];
+  customPatterns?: GoalPattern[];
   disabled?: boolean;
   onCollapse: () => void;
   onFieldChange: (field: GoalCardFieldUpdate) => void;
@@ -77,6 +78,7 @@ const ExpandedGoalCard: React.FC<ExpandedGoalCardProps> = ({
   data,
   discipline,
   patternOverrides,
+  customPatterns,
   disabled = false,
   onCollapse,
   onFieldChange,
@@ -229,6 +231,7 @@ const ExpandedGoalCard: React.FC<ExpandedGoalCardProps> = ({
             discipline={discipline}
             category={data.category || undefined}
             overrides={patternOverrides}
+            customPatterns={customPatterns}
             onSelect={(pattern) => {
               onPatternSelect(pattern);
               setShowPatternPicker(false);
@@ -349,7 +352,7 @@ const ExpandedGoalCard: React.FC<ExpandedGoalCardProps> = ({
             <span className="text-[9px] font-semibold text-amber-700">Current</span>
             {mt === 'standardized_score' && (
               <select
-                className="select text-xs py-0.5 w-24"
+                className="select-bare text-xs py-0.5 w-24"
                 disabled={disabled}
                 value={data.instrument || DEFAULT_INSTRUMENTS[data.category || ''] || ''}
                 onChange={(e) => onFieldChange({ instrument: e.target.value })}
@@ -362,7 +365,7 @@ const ExpandedGoalCard: React.FC<ExpandedGoalCardProps> = ({
             )}
             {METRIC_OPTIONS[mt] ? (
               <select
-                className="select text-xs py-0.5"
+                className="select-bare text-xs py-0.5"
                 disabled={disabled}
                 value={data.baseline_value || `${data.baseline ?? 0}`}
                 onChange={(e) => {
@@ -393,7 +396,7 @@ const ExpandedGoalCard: React.FC<ExpandedGoalCardProps> = ({
             <span className="text-[9px] font-semibold text-blue-700">Target</span>
             {METRIC_OPTIONS[mt] ? (
               <select
-                className="select text-xs py-0.5"
+                className="select-bare text-xs py-0.5"
                 disabled={disabled}
                 value={data.target_value || `${data.target ?? 0}`}
                 onChange={(e) => {
@@ -449,4 +452,4 @@ const ExpandedGoalCard: React.FC<ExpandedGoalCardProps> = ({
   );
 };
 
-export default ExpandedGoalCard;
+export default React.memo(ExpandedGoalCard);

@@ -6,6 +6,43 @@ const api = {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
   },
 
+  // Encryption (available before DB is open)
+  encryption: {
+    getStatus: () => ipcRenderer.invoke('encryption:getStatus') as Promise<{ needsSetup: boolean; needsPassphrase: boolean; needsMigration: boolean }>,
+    setup: (passphrase: string) => ipcRenderer.invoke('encryption:setup', passphrase) as Promise<{ success: boolean; recoveryKey?: string }>,
+    unlock: (passphrase: string) => ipcRenderer.invoke('encryption:unlock', passphrase) as Promise<{ success: boolean; error?: string }>,
+    unlockWithRecovery: (recoveryKey: string) => ipcRenderer.invoke('encryption:unlockWithRecovery', recoveryKey) as Promise<{ success: boolean; error?: string }>,
+    changePassphrase: (current: string, newPass: string) => ipcRenderer.invoke('encryption:changePassphrase', current, newPass) as Promise<{ success: boolean; error?: string }>,
+    regenerateRecoveryKey: (passphrase: string) => ipcRenderer.invoke('encryption:regenerateRecoveryKey', passphrase) as Promise<{ success: boolean; recoveryKey?: string; error?: string }>,
+    verifyPassphrase: (passphrase: string) => ipcRenderer.invoke('encryption:verifyPassphrase', passphrase) as Promise<boolean>,
+    migrateAndSetup: (passphrase: string) => ipcRenderer.invoke('encryption:migrateAndSetup', passphrase) as Promise<{ success: boolean; recoveryKey?: string; error?: string }>,
+    onDbReady: (callback: () => void) => {
+      ipcRenderer.on('db:ready', callback);
+      return () => ipcRenderer.removeListener('db:ready', callback);
+    },
+  },
+
+  // Restore (available before DB is open — used by RestoreScreen)
+  restore: {
+    pickFile: () => ipcRenderer.invoke('restore:pickFile') as Promise<string | null>,
+    validateAndSummarize: (filePath: string, passphrase: string) =>
+      ipcRenderer.invoke('restore:validateAndSummarize', filePath, passphrase) as Promise<{ summary?: any; error?: string }>,
+    execute: (filePath: string, passphrase: string) =>
+      ipcRenderer.invoke('restore:execute', filePath, passphrase) as Promise<{ success: boolean; recoveryKey?: string; error?: string }>,
+    executeFromSettings: (filePath: string, passphrase: string) =>
+      ipcRenderer.invoke('restore:executeFromSettings', filePath, passphrase) as Promise<{ success: boolean; error?: string }>,
+    getBackupClients: (filePath: string, passphrase: string) =>
+      ipcRenderer.invoke('restore:getBackupClients', filePath, passphrase) as Promise<{ clients?: any[]; error?: string }>,
+    importClients: (filePath: string, passphrase: string, clientIds: number[]) =>
+      ipcRenderer.invoke('restore:importClients', filePath, passphrase, clientIds) as Promise<any>,
+    getCurrentSummary: () =>
+      ipcRenderer.invoke('restore:getCurrentSummary') as Promise<any>,
+    getPendingRecoveryKey: () =>
+      ipcRenderer.invoke('restore:getPendingRecoveryKey') as Promise<string | null>,
+    clearPendingRecoveryKey: () =>
+      ipcRenderer.invoke('restore:clearPendingRecoveryKey') as Promise<void>,
+  },
+
   // Practice
   practice: {
     get: () => ipcRenderer.invoke('practice:get'),
@@ -82,6 +119,7 @@ const api = {
     createBatch: (items: any[]) => ipcRenderer.invoke('appointments:createBatch', items),
     update: (id: number, data: any) => ipcRenderer.invoke('appointments:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('appointments:delete', id),
+    linkEval: (appointmentId: number, evaluationId: number) => ipcRenderer.invoke('appointments:linkEval', appointmentId, evaluationId),
   },
 
   // Note Bank
@@ -103,6 +141,14 @@ const api = {
       ipcRenderer.invoke('patternOverrides:delete', patternId, componentKey),
     deleteAll: (patternId: string) =>
       ipcRenderer.invoke('patternOverrides:deleteAll', patternId),
+  },
+
+  // Custom Patterns
+  customPatterns: {
+    list: () => ipcRenderer.invoke('customPatterns:list'),
+    create: (data: any) => ipcRenderer.invoke('customPatterns:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('customPatterns:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('customPatterns:delete', id),
   },
 
   // Settings
@@ -187,6 +233,10 @@ const api = {
     open: (data: { documentId: number }) => ipcRenderer.invoke('documents:open', data),
     delete: (data: { documentId: number }) => ipcRenderer.invoke('documents:delete', data),
     getPath: (data: { documentId: number }) => ipcRenderer.invoke('documents:getPath', data),
+  },
+  // Feedback
+  feedback: {
+    submit: (data: any) => ipcRenderer.invoke('feedback:submit', data),
   },
   // License
   license: {
@@ -397,6 +447,7 @@ const api = {
   integrity: {
     runCheck: () => ipcRenderer.invoke('integrity:runCheck'),
     verifyAuditChain: () => ipcRenderer.invoke('integrity:verifyAuditChain'),
+    startupCheck: () => ipcRenderer.invoke('integrity:startupCheck'),
   },
 
   // ── Reports (Pro) ──
@@ -460,6 +511,11 @@ const api = {
     create: (data: any) => ipcRenderer.invoke('quickLinks:create', data),
     update: (id: number, data: any) => ipcRenderer.invoke('quickLinks:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('quickLinks:delete', id),
+  },
+
+  // Dev tools (temporary)
+  dev: {
+    seedDemoData: () => ipcRenderer.invoke('dev:seedDemoData'),
   },
 };
 

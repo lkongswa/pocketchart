@@ -12,7 +12,7 @@
     "dev:electron": "wait-on http://localhost:3000 && cross-env NODE_ENV=development electron .",
     "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:electron\"",
     "start": "electron .",
-    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "rebuild": "electron-rebuild -f -w @journeyapps/sqlcipher",
     "dist": "npm run build && electron-builder --win",
     "dist:dir": "npm run build && electron-builder --win --dir",
     "deploy": "npm run dist:dir && xcopy /E /Y /I release\\win-unpacked\\* C:\\PocketChart\\ && copy /Y build\\icon.ico C:\\PocketChart\\icon.ico"
@@ -75,8 +75,9 @@
     ]
   },
   "dependencies": {
+    "@journeyapps/sqlcipher": "^5.3.1",
+    "adm-zip": "^0.5.16",
     "archiver": "^7.0.1",
-    "better-sqlite3": "^12.6.2",
     "date-fns": "^4.1.0",
     "electron-store": "^11.0.2",
     "electron-updater": "^6.7.3",
@@ -91,6 +92,7 @@
   "devDependencies": {
     "@electron/rebuild": "^4.0.3",
     "@tailwindcss/postcss": "^4.1.18",
+    "@types/adm-zip": "^0.5.7",
     "@types/archiver": "^7.0.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/react": "^19.2.10",

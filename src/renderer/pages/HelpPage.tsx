@@ -217,6 +217,24 @@ const allSections: HelpSectionData[] = [
             place it in a cloud-synced folder.
           </li>
           <li>
+            <B>Database Encryption</B> — PocketChart encrypts your entire database using
+            AES-256 encryption, protected by a passphrase that only you know. Your passphrase
+            is never stored or transmitted — it is used to derive an encryption key locally on
+            your device.
+          </li>
+          <li>
+            <B>Recovery Key</B> — During setup, PocketChart generates a one-time recovery key.
+            This is the <B>only way</B> to regain access to your data if you forget your
+            passphrase. Store your recovery key in a secure location such as a fireproof safe,
+            locked filing cabinet, or practice succession plan. PocketChart cannot recover your
+            data without either your passphrase or recovery key.
+          </li>
+          <li>
+            <B>Change Passphrase & Recovery Key</B> — You can change your encryption passphrase
+            or generate a new recovery key at any time from <B>Settings &gt; Security</B>.
+            Changing your passphrase does not require re-encrypting the entire database.
+          </li>
+          <li>
             <B>PIN Recovery</B> — If you forget your PIN, click <B>Forgot PIN?</B> on the lock
             screen. PocketChart will create a recovery file in your data folder. Open the file,
             copy the 8-character code, and enter it to reset your PIN. This proves you have access
@@ -227,6 +245,12 @@ const allSections: HelpSectionData[] = [
 
         <p className="font-medium text-[var(--color-text)] mt-3">What you are responsible for:</p>
         <ul className="list-disc list-inside space-y-1.5 ml-1">
+          <li>
+            <B>Passphrase & Recovery Key</B> — Choose a strong passphrase (12+ characters
+            recommended) and store your recovery key securely. If you lose both your passphrase
+            and recovery key, your data <B>cannot be recovered</B> by anyone — including
+            PocketChart.
+          </li>
           <li>
             <B>Device Security</B> — Use a strong Windows/Mac login password, enable full-disk
             encryption (BitLocker on Windows, FileVault on Mac), and keep your operating system
@@ -251,6 +275,41 @@ const allSections: HelpSectionData[] = [
             association to confirm your overall workflow meets all applicable regulations.
           </li>
         </ul>
+
+        <p className="font-medium text-[var(--color-text)] mt-3">Cloud backup guidance:</p>
+        <p>
+          PocketChart stores all data on your computer and never sends clinical data to external
+          servers. If you want to back up your data to a cloud service, you may choose to place
+          your PocketChart data folder inside a cloud-synced directory. Before doing so:
+        </p>
+        <ul className="list-disc list-inside space-y-1.5 ml-1 mt-1.5">
+          <li>
+            Your cloud provider must support HIPAA compliance (Google Workspace, Dropbox Business,
+            Microsoft 365 Business, or similar business-tier plans).
+          </li>
+          <li>
+            You must sign a <B>Business Associate Agreement (BAA)</B> with your cloud provider
+            through their admin console.
+          </li>
+          <li>
+            Apple iCloud does <B>not</B> support BAAs and should not be used to store clinical data.
+          </li>
+          <li>
+            Free-tier cloud accounts (personal Gmail, free Dropbox, etc.) cannot be HIPAA-compliant.
+          </li>
+          <li>
+            PocketChart will detect cloud-synced folders and provide guidance, but ultimately
+            compliance is your responsibility.
+          </li>
+        </ul>
+
+        <p className="font-medium text-[var(--color-text)] mt-3">Export security note:</p>
+        <p>
+          When you export PDFs, superbills, CMS-1500 forms, or database backups, these files are
+          saved outside the PocketChart database. If your data folder is synced to a cloud service,
+          exported files will also be synced. Ensure any location where you save exports meets the
+          same HIPAA compliance standards as your main data storage.
+        </p>
       </>
     ),
   },
@@ -378,16 +437,52 @@ const allSections: HelpSectionData[] = [
         <p className="font-medium text-[var(--color-text)] mt-3">Moving to a new computer</p>
         <ul className="list-disc list-inside space-y-1.5 ml-1">
           <li>
-            Use <B>Settings &gt; Backup & Export &gt; Export Database</B> to create a backup file
-            (.db) on your old computer.
+            Use <B>Settings &gt; Backup & Export &gt; Export Database</B> to create a .pcbackup file
+            on your old computer. This contains your encrypted database and keystore.
           </li>
           <li>
-            Copy the backup file (and your uploaded documents folder) to the new computer via USB
-            drive, cloud storage, or any file transfer method.
+            Copy the .pcbackup file to the new computer via USB drive, cloud storage, or any file
+            transfer method.
           </li>
           <li>
-            Install PocketChart on the new computer, then place the backup file in the data folder
-            or use a cloud-synced folder that both machines can access.
+            Install PocketChart on the new computer. On the welcome screen, choose{' '}
+            <B>Restore from Backup</B>, select your .pcbackup file, and enter your passphrase.
+          </li>
+          <li>
+            You can also restore from <B>Settings &gt; Backup & Export &gt; Restore Database from Backup</B>{' '}
+            at any time after setup.
+          </li>
+        </ul>
+
+        <p className="font-medium text-[var(--color-text)] mt-3">Importing specific clients</p>
+        <ul className="list-disc list-inside space-y-1.5 ml-1">
+          <li>
+            Use <B>Settings &gt; Backup & Export &gt; Import Clients from Backup</B> to bring specific
+            clients (and all their notes, evaluations, goals, appointments, and billing data) from a
+            backup into your current database.
+          </li>
+          <li>
+            This is useful if you need to merge data from two PocketChart databases — for example,
+            receiving client records from a colleague.
+          </li>
+          <li>
+            Imported clients are added as new records; they will not overwrite any existing clients.
+          </li>
+        </ul>
+
+        <p className="font-medium text-[var(--color-text)] mt-3">What if I lose my computer?</p>
+        <ul className="list-disc list-inside space-y-1.5 ml-1">
+          <li>
+            Install PocketChart on a new computer.
+          </li>
+          <li>
+            On the welcome screen, choose <B>Restore from Backup</B>.
+          </li>
+          <li>
+            Select your .pcbackup file and enter the passphrase that was active when the backup was created.
+          </li>
+          <li>
+            A new recovery key will be generated — write it down and store it securely.
           </li>
         </ul>
 
@@ -405,16 +500,23 @@ const allSections: HelpSectionData[] = [
         <ul className="list-disc list-inside space-y-1.5 ml-1">
           <li>
             <B>Back up regularly</B> — at least weekly, or after every session day. Use{' '}
-            <B>Export Database</B> in Settings.
+            <B>Export Database</B> in Settings. The .pcbackup format includes both your encrypted
+            database and the keystore needed to restore it.
           </li>
           <li>
             Store backup copies in a <B>separate location</B> from your computer (external drive,
             cloud storage, etc.) so you are protected if your hard drive fails.
           </li>
           <li>
-            For automatic off-site backup, set your PocketChart data folder to a cloud-synced
-            location (Google Drive, OneDrive, or Dropbox). The data will sync automatically every
-            time you use the app.
+            <B>Remember your passphrase.</B> You need your passphrase to restore from a backup. If you
+            forget it, your backup cannot be decrypted. Store your recovery key in a safe place as
+            a last resort.
+          </li>
+          <li>
+            If you choose to use a cloud-synced location for automatic off-site backup, your data
+            will be transmitted to that provider's servers. Ensure you have a signed BAA and a
+            business-tier account with the cloud provider before doing so. See the{' '}
+            <B>Security, Privacy & Your Responsibilities</B> section above for details.
           </li>
         </ul>
 
@@ -439,9 +541,9 @@ const allSections: HelpSectionData[] = [
             estate plan or succession documents.
           </li>
           <li>
-            Remember: anyone with access to your database file can open it in PocketChart on
-            another computer. The backup <B>is</B> the continuity plan — keep it current and keep
-            it accessible to the right person.
+            Remember: anyone with your .pcbackup file <B>and your passphrase</B> can restore your data.
+            The backup + passphrase <B>is</B> the continuity plan — keep both current and accessible
+            to the right person.
           </li>
         </ul>
       </>
@@ -1146,6 +1248,14 @@ const allSections: HelpSectionData[] = [
             support@pocketchart.app
           </button>.
         </p>
+        <div className="p-3 bg-red-50 rounded-lg border border-red-200">
+          <p className="text-xs text-red-800">
+            <B>Protect patient privacy:</B> When contacting support, please do not include patient
+            names, dates of birth, diagnosis codes, or other Protected Health Information (PHI) in
+            your message. If you need to share a screenshot, please blur or redact any
+            patient-identifying information before sending.
+          </p>
+        </div>
         <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
           <p className="text-xs text-amber-800">
             <B>Please note:</B> PocketChart support can help with how the software works — installation,

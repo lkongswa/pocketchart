@@ -1,4 +1,4 @@
-import type { Discipline, MeasurementType, PatternOverride } from './types';
+import type { Discipline, MeasurementType, PatternOverride, CustomPattern } from './types';
 
 /** A single component field within a goal pattern */
 export interface PatternComponent {
@@ -927,6 +927,40 @@ export function getPatternById(id: string): GoalPattern | undefined {
 export function getPatternCategories(discipline: Discipline): string[] {
   const cats = new Set(ALL_PATTERNS.filter(p => p.discipline === discipline).map(p => p.category));
   return [...cats].sort();
+}
+
+/**
+ * Convert a CustomPattern (from DB) to a GoalPattern for use in the picker and goal builder.
+ */
+export function customPatternToGoalPattern(cp: CustomPattern): GoalPattern {
+  const chips: string[] = (() => {
+    try {
+      return typeof cp.chips_json === 'string' ? JSON.parse(cp.chips_json) : cp.chips_json || [];
+    } catch { return []; }
+  })();
+
+  const components: PatternComponent[] = chips.length > 0
+    ? [{
+        key: 'items',
+        label: cp.label,
+        type: 'chip_multi' as const,
+        options: chips,
+      }]
+    : [];
+
+  return {
+    id: `custom_${cp.id}`,
+    discipline: cp.discipline,
+    category: cp.category || 'Custom',
+    label: cp.label,
+    icon: cp.icon || '🔧',
+    verb: '',
+    measurement_type: cp.measurement_type,
+    components,
+    compositionOrder: chips.length > 0
+      ? ['items', 'metric_target', 'timeframe']
+      : ['metric_target', 'timeframe'],
+  };
 }
 
 /**

@@ -1,6 +1,6 @@
 import React from 'react';
-import type { Appointment, AppointmentStatus, VisitType } from '../../../shared/types';
-import { VISIT_TYPE_LABELS } from '../../../shared/types';
+import type { Appointment, AppointmentStatus, VisitType, SessionType } from '../../../shared/types';
+import { VISIT_TYPE_LABELS, SESSION_TYPE_LABELS } from '../../../shared/types';
 
 export type PaymentIndicator = 'paid' | 'unpaid' | 'none';
 
@@ -18,6 +18,21 @@ interface AppointmentBlockProps {
 const STATUS_CLASSES: Record<AppointmentStatus, string> = {
   scheduled: 'border-l-4 border-l-blue-500 bg-blue-50',
   completed: 'border-l-4 border-l-emerald-500 bg-emerald-50',
+  cancelled: 'border-l-4 border-l-gray-400 bg-gray-50 opacity-60',
+  'no-show': 'border-l-4 border-l-red-500 bg-red-50',
+};
+
+// Session type color overrides (eval=violet, recert=amber)
+const EVAL_STATUS_CLASSES: Record<AppointmentStatus, string> = {
+  scheduled: 'border-l-4 border-l-violet-500 bg-violet-50',
+  completed: 'border-l-4 border-l-violet-600 bg-violet-50',
+  cancelled: 'border-l-4 border-l-gray-400 bg-gray-50 opacity-60',
+  'no-show': 'border-l-4 border-l-red-500 bg-red-50',
+};
+
+const RECERT_STATUS_CLASSES: Record<AppointmentStatus, string> = {
+  scheduled: 'border-l-4 border-l-amber-500 bg-amber-50',
+  completed: 'border-l-4 border-l-amber-600 bg-amber-50',
   cancelled: 'border-l-4 border-l-gray-400 bg-gray-50 opacity-60',
   'no-show': 'border-l-4 border-l-red-500 bg-red-50',
 };
@@ -69,6 +84,28 @@ export default function AppointmentBlock({
     ? `${baseName} — ${appointment.patient_name}`
     : baseName;
 
+  // Pick color set based on session type
+  const sessionType = (appointment.session_type || 'visit') as SessionType;
+  const statusClasses = isContractorAppt
+    ? CONTRACTOR_STATUS_CLASSES
+    : sessionType === 'eval'
+    ? EVAL_STATUS_CLASSES
+    : sessionType === 'recert'
+    ? RECERT_STATUS_CLASSES
+    : STATUS_CLASSES;
+
+  // Session type badge
+  const sessionBadge = sessionType !== 'visit' ? (
+    <span
+      className={`inline-flex items-center justify-center px-1.5 py-0 rounded text-[9px] font-bold flex-shrink-0 ${
+        sessionType === 'eval' ? 'bg-violet-200 text-violet-700' : 'bg-amber-200 text-amber-700'
+      }`}
+      title={SESSION_TYPE_LABELS[sessionType]}
+    >
+      {sessionType === 'eval' ? 'E' : 'RC'}
+    </span>
+  ) : null;
+
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>) => {
     e.dataTransfer.setData('text/plain', appointment.id.toString());
     e.dataTransfer.effectAllowed = 'move';
@@ -119,7 +156,7 @@ export default function AppointmentBlock({
   if (compact) {
     return (
       <div
-        className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-xs truncate cursor-pointer ${isContractorAppt ? CONTRACTOR_STATUS_CLASSES[appointment.status] : STATUS_CLASSES[appointment.status]}`}
+        className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-xs truncate cursor-pointer ${statusClasses[appointment.status]}`}
         draggable={true}
         onDragStart={handleDragStart}
         onClick={(e) => {
@@ -132,6 +169,7 @@ export default function AppointmentBlock({
           {formatTime12(appointment.scheduled_time)}
         </span>
         <span className="truncate">{clientName}</span>
+        {sessionBadge}
         {visitBadge}
         {dollarBadge}
       </div>
@@ -141,7 +179,7 @@ export default function AppointmentBlock({
   // Full mode: absolutely positioned for day/week time grid
   return (
     <div
-      className={`absolute left-0.5 right-0.5 rounded-md px-2 py-1 overflow-hidden cursor-pointer transition-shadow hover:shadow-md z-10 pointer-events-auto ${isContractorAppt ? CONTRACTOR_STATUS_CLASSES[appointment.status] : STATUS_CLASSES[appointment.status]}`}
+      className={`absolute left-0.5 right-0.5 rounded-md px-2 py-1 overflow-hidden cursor-pointer transition-shadow hover:shadow-md z-10 pointer-events-auto ${statusClasses[appointment.status]}`}
       style={{ top: topPx, height: heightPx }}
       draggable={true}
       onDragStart={handleDragStart}
@@ -154,12 +192,15 @@ export default function AppointmentBlock({
       onContextMenu={handleContextMenu}
       title={`${clientName} - ${formatTime12(appointment.scheduled_time)} (${appointment.duration_minutes}m)\nRight-click for options`}
     >
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-1">
         <div className="text-xs text-[var(--color-text-secondary)] leading-tight">
           {formatTime12(appointment.scheduled_time)}
         </div>
-        {visitBadge}
-        {dollarBadge}
+        <div className="flex items-center gap-0.5">
+          {sessionBadge}
+          {visitBadge}
+          {dollarBadge}
+        </div>
       </div>
       <div
         className={`text-sm font-medium truncate leading-tight ${

@@ -211,10 +211,32 @@ export default function CalendarPage() {
       })
     : appointments;
 
-  // Appointment click
+  // Appointment click — route by session type
   const handleAppointmentClick = (appt: Appointment) => {
+    const sessionType = appt.session_type || 'visit';
+
+    // If eval is already linked, go directly to it
+    if (appt.evaluation_id) {
+      navigate(`/clients/${appt.client_id}/eval/${appt.evaluation_id}`);
+      return;
+    }
+
     if (appt.status === 'completed' && appt.note_id) {
       navigate(`/clients/${appt.client_id}/note/${appt.note_id}`);
+    } else if (sessionType === 'eval' && appt.client_id) {
+      navigate(`/clients/${appt.client_id}/eval/new?type=initial`, {
+        state: {
+          appointmentId: appt.id,
+          appointmentDate: appt.scheduled_date,
+        },
+      });
+    } else if (sessionType === 'recert' && appt.client_id) {
+      navigate(`/clients/${appt.client_id}/eval/new?type=reassessment`, {
+        state: {
+          appointmentId: appt.id,
+          appointmentDate: appt.scheduled_date,
+        },
+      });
     } else if (appt.status === 'completed' || appt.status === 'scheduled') {
       navigate(`/clients/${appt.client_id}/note/new`, {
         state: {

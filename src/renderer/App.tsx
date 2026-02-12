@@ -17,7 +17,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Lock,
+  MessageSquare,
 } from 'lucide-react';
+import FeedbackModal from './components/FeedbackModal';
 import DashboardPage from './pages/DashboardPage';
 import ClientsPage from './pages/ClientsPage';
 import ClientDetailPage from './pages/ClientDetailPage';
@@ -36,8 +38,12 @@ import YearEndSummaryPage from './pages/YearEndSummaryPage';
 import NotesOverviewPage from './pages/NotesOverviewPage';
 import EvalsQueuePage from './pages/EvalsQueuePage';
 import PinLockScreen from './components/PinLockScreen';
+import PassphraseScreen from './components/PassphraseScreen';
+import MigrationScreen from './components/MigrationScreen';
 import ErrorBoundary from './components/ErrorBoundary';
 import OnboardingScreen from './components/OnboardingScreen';
+import IntegrityWarningDialog from './components/IntegrityWarningDialog';
+import RecoveryKeyCeremony from './components/RecoveryKeyCeremony';
 import UpdateNotification from './components/UpdateNotification';
 import FloatingWidget from './components/FloatingWidget';
 import UnlicensedLandingPage from './components/UnlicensedLandingPage';
@@ -118,6 +124,7 @@ const Sidebar: React.FC = () => {
   const location = useLocation();
   const [appVersion, setAppVersion] = useState('');
   const [logoHover, setLogoHover] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
 
   useEffect(() => {
     window.api.app.getVersion().then((v) => setAppVersion(v)).catch(() => {});
@@ -216,10 +223,18 @@ const Sidebar: React.FC = () => {
       {/* Trial Badge + Footer */}
       <div className="px-3 py-3 border-t border-[var(--color-border)] space-y-2">
         <TrialBadge />
+        <button
+          onClick={() => setShowFeedback(true)}
+          className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)] transition-colors"
+        >
+          <MessageSquare size={14} />
+          Report Issue
+        </button>
         <p className="text-xs text-[var(--color-text-secondary)] px-2">
           {appVersion ? `v${appVersion}` : ''}
         </p>
       </div>
+      {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
     </aside>
   );
 };
@@ -303,32 +318,89 @@ const App: React.FC = () => {
   const [timeoutMinutes, setTimeoutMinutes] = useState(0);
   const [initialLoading, setInitialLoading] = useState(true);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [encryptionStatus, setEncryptionStatus] = useState<'loading' | 'needs_setup' | 'needs_passphrase' | 'needs_migration' | 'unlocked'>('loading');
+  const [dbReady, setDbReady] = useState(false);
+  const [integrityWarning, setIntegrityWarning] = useState<{
+    quickCheckPassed: boolean;
+    quickCheckResult: string;
+    fullCheckPassed?: boolean;
+    fullCheckResult?: string;
+    fullCheckRan: boolean;
+  } | null>(null);
+  const [pendingRecoveryKey, setPendingRecoveryKey] = useState<string | null>(null);
   const lastActivityRef = useRef<number>(Date.now());
   const { tier, trialActive, trialExpired, loading: tierLoading } = useTier();
 
-  // Initialize lock state on mount
+  /**
+   * Load PIN/security state from the database.
+   * Called only after the DB is open (db:ready event).
+   */
+  const loadSecurityState = async () => {
+    try {
+      const enabled = await window.api.security.isPinEnabled();
+      const timeout = await window.api.security.getTimeoutMinutes();
+      setPinEnabled(enabled);
+      setTimeoutMinutes(timeout);
+      if (enabled) {
+        setIsLocked(true);
+      }
+    } catch (err) {
+      console.error('Failed to load security settings:', err);
+    }
+  };
+
+  // Initialize encryption state on mount
   useEffect(() => {
     const init = async () => {
       try {
-        const enabled = await window.api.security.isPinEnabled();
-        const timeout = await window.api.security.getTimeoutMinutes();
-        const onboardingDone = await window.api.settings.get('onboarding_complete');
-        setPinEnabled(enabled);
-        setTimeoutMinutes(timeout);
-        if (enabled) {
-          setIsLocked(true);
-        }
-        // Show onboarding on first launch (no onboarding flag and no PIN)
-        if (!onboardingDone && !enabled) {
+        const status = await window.api.encryption.getStatus();
+        if (status.needsSetup) {
+          // First run — no DB, no keystore. Show onboarding (which includes passphrase setup).
+          setEncryptionStatus('needs_setup');
           setShowOnboarding(true);
+        } else if (status.needsMigration) {
+          // Existing unencrypted DB — show migration flow
+          setEncryptionStatus('needs_migration');
+        } else {
+          // Encrypted DB exists — need passphrase to unlock
+          setEncryptionStatus('needs_passphrase');
         }
       } catch (err) {
-        console.error('Failed to load security settings:', err);
+        console.error('Failed to check encryption status:', err);
+        // Fallback: assume needs passphrase
+        setEncryptionStatus('needs_passphrase');
       } finally {
         setInitialLoading(false);
       }
     };
     init();
+
+    // Listen for DB ready signal from main process
+    const cleanup = window.api.encryption.onDbReady(async () => {
+      setDbReady(true);
+      setEncryptionStatus('unlocked');
+      loadSecurityState();
+
+      // Check for pending recovery key (from Settings restore + app restart)
+      try {
+        const key = await window.api.restore.getPendingRecoveryKey();
+        if (key) {
+          setPendingRecoveryKey(key);
+        }
+      } catch {}
+
+      // Run startup integrity checks
+      try {
+        const result = await window.api.integrity.startupCheck();
+        if (!result.quickCheckPassed || (result.fullCheckRan && !result.fullCheckPassed)) {
+          setIntegrityWarning(result);
+        }
+      } catch (err) {
+        console.error('Integrity check failed to run:', err);
+      }
+    });
+
+    return cleanup;
   }, []);
 
   // Listen for security settings changes from SettingsPage
@@ -415,6 +487,8 @@ const App: React.FC = () => {
 
   const handleOnboardingComplete = async () => {
     setShowOnboarding(false);
+    setEncryptionStatus('unlocked');
+    setDbReady(true);
     // Refresh security state in case user set a PIN during onboarding
     try {
       const enabled = await window.api.security.isPinEnabled();
@@ -424,6 +498,28 @@ const App: React.FC = () => {
         setIsLocked(false);
       }
     } catch {}
+  };
+
+  const handlePassphraseUnlock = () => {
+    setEncryptionStatus('unlocked');
+    setDbReady(true);
+    // Security state will be loaded via the db:ready listener
+  };
+
+  const handleMigrationComplete = async () => {
+    setEncryptionStatus('unlocked');
+    setDbReady(true);
+    loadSecurityState();
+
+    // Run startup integrity checks after migration
+    try {
+      const result = await window.api.integrity.startupCheck();
+      if (!result.quickCheckPassed || (result.fullCheckRan && !result.fullCheckPassed)) {
+        setIntegrityWarning(result);
+      }
+    } catch (err) {
+      console.error('Integrity check failed to run:', err);
+    }
   };
 
   // Unlicensed users see only the activation/export landing page
@@ -438,8 +534,54 @@ const App: React.FC = () => {
 
   return (
     <ErrorBoundary>
+      {/* Gate 1: First-run onboarding (includes passphrase setup + recovery ceremony + PIN) */}
       {showOnboarding && <OnboardingScreen onComplete={handleOnboardingComplete} />}
-      {isLocked && pinEnabled && !showOnboarding && <PinLockScreen onUnlock={handleUnlock} />}
+
+      {/* Gate 2: Passphrase unlock (returning user with encrypted DB) */}
+      {!showOnboarding && encryptionStatus === 'needs_passphrase' && (
+        <PassphraseScreen onUnlock={handlePassphraseUnlock} />
+      )}
+
+      {/* Gate 3: Migration screen (existing unencrypted DB) */}
+      {!showOnboarding && encryptionStatus === 'needs_migration' && (
+        <MigrationScreen onComplete={handleMigrationComplete} />
+      )}
+
+      {/* Gate 4: PIN lock screen (after DB is unlocked) */}
+      {isLocked && pinEnabled && !showOnboarding && encryptionStatus === 'unlocked' && (
+        <PinLockScreen onUnlock={handleUnlock} />
+      )}
+
+      {/* Gate 5: Pending recovery key ceremony (after Settings restore + app restart) */}
+      {pendingRecoveryKey && (
+        <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-[var(--color-bg)] overflow-y-auto">
+          <div className="max-w-lg w-full px-8 py-8">
+            <RecoveryKeyCeremony
+              recoveryKey={pendingRecoveryKey}
+              onComplete={async () => {
+                try {
+                  await window.api.restore.clearPendingRecoveryKey();
+                } catch {}
+                setPendingRecoveryKey(null);
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Gate 6: Integrity check warning */}
+      {integrityWarning && (
+        <IntegrityWarningDialog
+          quickCheckPassed={integrityWarning.quickCheckPassed}
+          quickCheckResult={integrityWarning.quickCheckResult}
+          fullCheckPassed={integrityWarning.fullCheckPassed}
+          fullCheckResult={integrityWarning.fullCheckResult}
+          fullCheckRan={integrityWarning.fullCheckRan}
+          onDismiss={() => setIntegrityWarning(null)}
+        />
+      )}
+
+      {/* Main app (only renders meaningful content after DB is ready) */}
       <RouterProvider router={router} />
       <FloatingWidget />
       <UpdateNotification />

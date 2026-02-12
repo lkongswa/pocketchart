@@ -7,8 +7,10 @@ import {
   RotateCcw,
   Target,
   Check,
+  Pencil,
+  Trash2,
 } from 'lucide-react';
-import type { Discipline, PatternOverride } from '../../shared/types';
+import type { Discipline, PatternOverride, CustomPattern, MeasurementType } from '../../shared/types';
 import { MEASUREMENT_TYPE_LABELS } from '../../shared/types';
 import {
   ALL_PATTERNS,
@@ -38,9 +40,23 @@ export default function GoalPatternSettingsPage({ embedded }: Props) {
   const [newOptionText, setNewOptionText] = useState('');
   const addInputRef = useRef<HTMLInputElement>(null);
 
-  // Load overrides on mount
+  // Custom patterns state
+  const [customPatterns, setCustomPatterns] = useState<CustomPattern[]>([]);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [editingCustomId, setEditingCustomId] = useState<number | null>(null);
+  const [customForm, setCustomForm] = useState({
+    label: '',
+    icon: '',
+    category: '',
+    measurement_type: 'percentage' as MeasurementType,
+    chips: [] as string[],
+    newChip: '',
+  });
+
+  // Load overrides and custom patterns on mount
   useEffect(() => {
     loadOverrides();
+    loadCustomPatterns();
   }, []);
 
   // Focus the add-option input when it appears
@@ -58,6 +74,72 @@ export default function GoalPatternSettingsPage({ embedded }: Props) {
       console.error('Failed to load pattern overrides:', e);
     }
   }, []);
+
+  const loadCustomPatterns = useCallback(async () => {
+    try {
+      const data = await window.api.customPatterns.list();
+      setCustomPatterns(data);
+    } catch (e) {
+      console.error('Failed to load custom patterns:', e);
+    }
+  }, []);
+
+  const resetCustomForm = () => {
+    setCustomForm({ label: '', icon: '', category: '', measurement_type: 'percentage', chips: [], newChip: '' });
+    setShowCreateForm(false);
+    setEditingCustomId(null);
+  };
+
+  const handleSaveCustomPattern = async () => {
+    if (!customForm.label.trim()) return;
+    const payload = {
+      discipline,
+      category: customForm.category.trim() || 'Custom',
+      label: customForm.label.trim(),
+      icon: customForm.icon.trim(),
+      measurement_type: customForm.measurement_type,
+      chips_json: JSON.stringify(customForm.chips),
+    };
+    if (editingCustomId) {
+      await window.api.customPatterns.update(editingCustomId, payload);
+    } else {
+      await window.api.customPatterns.create(payload);
+    }
+    await loadCustomPatterns();
+    resetCustomForm();
+  };
+
+  const handleEditCustomPattern = (cp: CustomPattern) => {
+    const chips = (() => {
+      try { return typeof cp.chips_json === 'string' ? JSON.parse(cp.chips_json) : []; } catch { return []; }
+    })();
+    setCustomForm({
+      label: cp.label,
+      icon: cp.icon,
+      category: cp.category,
+      measurement_type: cp.measurement_type,
+      chips,
+      newChip: '',
+    });
+    setEditingCustomId(cp.id);
+    setShowCreateForm(true);
+  };
+
+  const handleDeleteCustomPattern = async (id: number) => {
+    if (!confirm('Delete this custom pattern? Goals using it will still work but new goals won\'t find it.')) return;
+    await window.api.customPatterns.delete(id);
+    await loadCustomPatterns();
+  };
+
+  const addChipToForm = () => {
+    const val = customForm.newChip.trim();
+    if (!val || customForm.chips.includes(val)) return;
+    setCustomForm(prev => ({ ...prev, chips: [...prev.chips, val], newChip: '' }));
+  };
+
+  const removeChipFromForm = (chip: string) => {
+    setCustomForm(prev => ({ ...prev, chips: prev.chips.filter(c => c !== chip) }));
+  };
 
   const toggleExpanded = (patternId: string) => {
     setExpandedPatterns(prev => {
@@ -143,6 +225,7 @@ export default function GoalPatternSettingsPage({ embedded }: Props) {
 
   const patterns = getPatternsForDiscipline(discipline);
   const categories = getPatternCategories(discipline);
+  const customPatternsForDiscipline = customPatterns.filter(cp => cp.discipline === discipline);
 
   // Check if a pattern has any overrides
   const patternHasOverrides = (patternId: string) => {
@@ -187,7 +270,164 @@ export default function GoalPatternSettingsPage({ embedded }: Props) {
         ))}
       </div>
 
-      {/* Patterns by category */}
+      {/* Custom Patterns Section */}
+      <div className="mb-6 border border-emerald-200 rounded-lg overflow-hidden">
+        <div className="bg-emerald-50 px-4 py-2 border-b border-emerald-200 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-emerald-800 flex items-center gap-1.5">
+            <span>🔧</span> Custom Patterns ({customPatternsForDiscipline.length})
+          </h3>
+          {!showCreateForm && (
+            <button
+              onClick={() => { resetCustomForm(); setShowCreateForm(true); }}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+            >
+              <Plus size={12} /> Create Custom Pattern
+            </button>
+          )}
+        </div>
+
+        {/* Create/Edit form */}
+        {showCreateForm && (
+          <div className="p-4 bg-emerald-50/30 border-b border-emerald-200 space-y-3">
+            <div className="grid grid-cols-[1fr_auto_1fr] gap-2">
+              <div>
+                <label className="text-[10px] font-medium text-gray-500 uppercase tracking-wide">Label *</label>
+                <input
+                  type="text"
+                  className="input text-sm"
+                  placeholder="e.g. Oral Motor Exercises"
+                  value={customForm.label}
+                  onChange={e => setCustomForm(prev => ({ ...prev, label: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-medium text-gray-500 uppercase tracking-wide">Icon</label>
+                <input
+                  type="text"
+                  className="input text-sm w-16 text-center"
+                  placeholder="🔧"
+                  value={customForm.icon}
+                  onChange={e => setCustomForm(prev => ({ ...prev, icon: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-medium text-gray-500 uppercase tracking-wide">Category</label>
+                <input
+                  type="text"
+                  className="input text-sm"
+                  list="custom-categories"
+                  placeholder="e.g. Articulation"
+                  value={customForm.category}
+                  onChange={e => setCustomForm(prev => ({ ...prev, category: e.target.value }))}
+                />
+                <datalist id="custom-categories">
+                  {categories.map(c => <option key={c} value={c} />)}
+                </datalist>
+              </div>
+            </div>
+            <div>
+              <label className="text-[10px] font-medium text-gray-500 uppercase tracking-wide">Measurement Type</label>
+              <select
+                className="select text-sm"
+                value={customForm.measurement_type}
+                onChange={e => setCustomForm(prev => ({ ...prev, measurement_type: e.target.value as MeasurementType }))}
+              >
+                {Object.entries(MEASUREMENT_TYPE_LABELS).map(([k, v]) => (
+                  <option key={k} value={k}>{v}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] font-medium text-gray-500 uppercase tracking-wide">Chip Items (sub-items for quick selection)</label>
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {customForm.chips.map(chip => (
+                  <span key={chip} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs bg-emerald-50 border border-emerald-300 text-emerald-800">
+                    {chip}
+                    <button onClick={() => removeChipFromForm(chip)} className="text-emerald-400 hover:text-red-500">
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  className="input text-sm flex-1"
+                  placeholder="Type a chip item and press Enter..."
+                  value={customForm.newChip}
+                  onChange={e => setCustomForm(prev => ({ ...prev, newChip: e.target.value }))}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addChipToForm(); } }}
+                />
+                <button
+                  type="button"
+                  onClick={addChipToForm}
+                  className="px-3 py-1 rounded-md text-xs font-medium bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-colors"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button onClick={resetCustomForm} className="btn-secondary text-xs">Cancel</button>
+              <button
+                onClick={handleSaveCustomPattern}
+                disabled={!customForm.label.trim()}
+                className="btn-primary text-xs"
+              >
+                {editingCustomId ? 'Update Pattern' : 'Create Pattern'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* List of existing custom patterns for this discipline */}
+        {customPatternsForDiscipline.length > 0 ? (
+          <div className="divide-y divide-emerald-100">
+            {customPatternsForDiscipline.map(cp => {
+              const chips = (() => {
+                try { return typeof cp.chips_json === 'string' ? JSON.parse(cp.chips_json) : []; } catch { return []; }
+              })();
+              return (
+                <div key={cp.id} className="px-4 py-3 flex items-center gap-3 hover:bg-emerald-50/30">
+                  <span className="text-base">{cp.icon || '🔧'}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-[var(--color-text)]">{cp.label}</div>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[10px] text-[var(--color-text-secondary)]">{cp.category || 'Custom'}</span>
+                      <span className="text-[10px] px-1.5 py-0 rounded-full bg-blue-50 text-blue-700 font-medium">
+                        {MEASUREMENT_TYPE_LABELS[cp.measurement_type]?.split('(')[0]?.trim() || cp.measurement_type}
+                      </span>
+                      {chips.length > 0 && (
+                        <span className="text-[10px] text-[var(--color-text-secondary)]">{chips.length} chips</span>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleEditCustomPattern(cp)}
+                    className="p-1.5 rounded hover:bg-emerald-100 text-gray-400 hover:text-emerald-700 transition-colors"
+                    title="Edit"
+                  >
+                    <Pencil size={14} />
+                  </button>
+                  <button
+                    onClick={() => handleDeleteCustomPattern(cp.id)}
+                    className="p-1.5 rounded hover:bg-red-100 text-gray-400 hover:text-red-600 transition-colors"
+                    title="Delete"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="px-4 py-4 text-sm text-[var(--color-text-secondary)] italic text-center">
+            No custom patterns for {discipline} yet. Create one above!
+          </div>
+        )}
+      </div>
+
+      {/* Built-in Patterns by category */}
       <div className="space-y-4">
         {categories.map(category => {
           const categoryPatterns = patterns.filter(p => p.category === category);

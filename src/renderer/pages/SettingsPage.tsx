@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Settings, Building2, User, Stethoscope, Info, Save, CheckCircle, Database, Download, FileSpreadsheet, HardDrive, FolderOpen, RotateCcw, Upload, Trash2, Image, Clock, AlertTriangle, Shield, Lock, PenLine, BookOpen, ChevronDown, ShieldCheck, Key, Monitor, Loader2, DollarSign, Plus } from 'lucide-react';
+import { Settings, Building2, User, Stethoscope, Info, Save, CheckCircle, Database, Download, FileSpreadsheet, HardDrive, FolderOpen, RotateCcw, Upload, Trash2, Image, Clock, AlertTriangle, Shield, Lock, PenLine, BookOpen, ChevronDown, ShieldCheck, Key, Monitor, Loader2, DollarSign, Plus, Eye, EyeOff, KeyRound } from 'lucide-react';
 import type { Practice, Discipline, NoteFormat, CloudDetectionResult, AppTier, FeeScheduleEntry, DiscountTemplate, DiscountType } from '../../shared/types';
 import FeeScheduleModal from '../components/FeeScheduleModal';
 import { NOTE_FORMAT_LABELS, DISCIPLINE_DEFAULT_FORMAT } from '../../shared/types';
@@ -7,6 +7,9 @@ import SignaturePad from '../components/SignaturePad';
 import GoalPatternSettingsPage from './GoalPatternSettingsPage';
 import NoteBankPage from './NoteBankPage';
 import BAAComplianceModal from '../components/BAAComplianceModal';
+import RecoveryKeyCeremony from '../components/RecoveryKeyCeremony';
+import RestoreConfirmationModal from '../components/RestoreConfirmationModal';
+import ImportClientSelector from '../components/ImportClientSelector';
 import { useSectionColor } from '../hooks/useSectionColor';
 import { useTier } from '../hooks/useTier';
 
@@ -154,6 +157,36 @@ export default function SettingsPage() {
   const [confirmPinInput, setConfirmPinInput] = useState('');
   const [pinError, setPinError] = useState('');
   const [autoTimeoutMinutes, setAutoTimeoutMinutes] = useState(0);
+
+  // Encryption state
+  const [showChangePassphrase, setShowChangePassphrase] = useState(false);
+  const [encCurrentPass, setEncCurrentPass] = useState('');
+  const [encNewPass, setEncNewPass] = useState('');
+  const [encConfirmPass, setEncConfirmPass] = useState('');
+  const [encShowPass, setEncShowPass] = useState(false);
+  const [encError, setEncError] = useState('');
+  const [encLoading, setEncLoading] = useState(false);
+  const [showRegenRecovery, setShowRegenRecovery] = useState(false);
+  const [regenPassphrase, setRegenPassphrase] = useState('');
+  const [regenShowPass, setRegenShowPass] = useState(false);
+  const [regenError, setRegenError] = useState('');
+  const [regenLoading, setRegenLoading] = useState(false);
+  const [regenRecoveryKey, setRegenRecoveryKey] = useState('');
+  const [showRecoveryCeremony, setShowRecoveryCeremony] = useState(false);
+
+  // Restore state
+  const [restoreFilePath, setRestoreFilePath] = useState('');
+  const [restorePassphrase, setRestorePassphrase] = useState('');
+  const [restoreShowPass, setRestoreShowPass] = useState(false);
+  const [restoreSummary, setRestoreSummary] = useState<any>(null);
+  const [restoreError, setRestoreError] = useState('');
+  const [restoreLoading, setRestoreLoading] = useState(false);
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
+  const [restoreExecuting, setRestoreExecuting] = useState(false);
+  const [restoreStep, setRestoreStep] = useState<'idle' | 'passphrase' | 'confirm'>('idle');
+
+  // Import state
+  const [showImportSelector, setShowImportSelector] = useState(false);
 
   // Documentation Bank tab state
   const [bankTab, setBankTab] = useState<'goals' | 'notes'>('goals');
@@ -460,6 +493,129 @@ export default function SettingsPage() {
     } else {
       setPinError(result.error || 'Failed to remove PIN');
     }
+  };
+
+  // Encryption handlers
+  const resetEncForms = () => {
+    setShowChangePassphrase(false);
+    setEncCurrentPass('');
+    setEncNewPass('');
+    setEncConfirmPass('');
+    setEncShowPass(false);
+    setEncError('');
+    setEncLoading(false);
+    setShowRegenRecovery(false);
+    setRegenPassphrase('');
+    setRegenShowPass(false);
+    setRegenError('');
+    setRegenLoading(false);
+  };
+
+  const handleChangePassphrase = async () => {
+    setEncError('');
+    if (encNewPass.length < 8) {
+      setEncError('New passphrase must be at least 8 characters');
+      return;
+    }
+    if (encNewPass !== encConfirmPass) {
+      setEncError('New passphrases do not match');
+      return;
+    }
+    setEncLoading(true);
+    try {
+      const result = await window.api.encryption.changePassphrase(encCurrentPass, encNewPass);
+      if (result.success) {
+        resetEncForms();
+        setToast('Encryption passphrase changed successfully');
+      } else {
+        setEncError(result.error || 'Failed to change passphrase');
+      }
+    } catch {
+      setEncError('An error occurred while changing the passphrase');
+    } finally {
+      setEncLoading(false);
+    }
+  };
+
+  const handleRegenerateRecoveryKey = async () => {
+    setRegenError('');
+    if (!regenPassphrase) {
+      setRegenError('Please enter your current passphrase');
+      return;
+    }
+    setRegenLoading(true);
+    try {
+      const result = await window.api.encryption.regenerateRecoveryKey(regenPassphrase);
+      if (result.success && result.recoveryKey) {
+        setRegenRecoveryKey(result.recoveryKey);
+        setShowRecoveryCeremony(true);
+        setShowRegenRecovery(false);
+        setRegenPassphrase('');
+      } else {
+        setRegenError(result.error || 'Failed to generate new recovery key');
+      }
+    } catch {
+      setRegenError('An error occurred');
+    } finally {
+      setRegenLoading(false);
+    }
+  };
+
+  // ── Restore from Settings ──
+  const handleRestoreFromSettings = async () => {
+    const filePath = await window.api.restore.pickFile();
+    if (!filePath) return;
+    setRestoreFilePath(filePath);
+    setRestorePassphrase('');
+    setRestoreError('');
+    setRestoreStep('passphrase');
+  };
+
+  const handleRestoreValidate = async () => {
+    if (!restorePassphrase.trim()) {
+      setRestoreError('Please enter the backup passphrase.');
+      return;
+    }
+    setRestoreLoading(true);
+    setRestoreError('');
+    try {
+      const result = await window.api.restore.validateAndSummarize(restoreFilePath, restorePassphrase);
+      if (result.error) {
+        setRestoreError(result.error);
+      } else if (result.summary) {
+        setRestoreSummary(result.summary);
+        setRestoreStep('confirm');
+        setShowRestoreConfirm(true);
+      }
+    } catch (err: any) {
+      setRestoreError(err.message || 'Validation failed');
+    } finally {
+      setRestoreLoading(false);
+    }
+  };
+
+  const handleRestoreExecute = async () => {
+    setRestoreExecuting(true);
+    try {
+      const result = await window.api.restore.executeFromSettings(restoreFilePath, restorePassphrase);
+      if (!result.success) {
+        setRestoreError(result.error || 'Restore failed');
+        setRestoreExecuting(false);
+      }
+      // If success, the app will restart automatically
+    } catch (err: any) {
+      setRestoreError(err.message || 'Restore failed');
+      setRestoreExecuting(false);
+    }
+  };
+
+  const handleRestoreCancel = () => {
+    setRestoreStep('idle');
+    setRestoreFilePath('');
+    setRestorePassphrase('');
+    setRestoreSummary(null);
+    setRestoreError('');
+    setShowRestoreConfirm(false);
   };
 
   const handleTimeoutChange = async (minutes: number) => {
@@ -1481,8 +1637,169 @@ export default function SettingsPage() {
                 : 'Set up a PIN first to enable auto-lock.'}
             </p>
           </div>
+
+          {/* ── Encryption Controls ── */}
+          <div className="pt-4 border-t border-[var(--color-border)]">
+            <label className="label">Database Encryption</label>
+            <p className="text-xs text-[var(--color-text-secondary)] mb-3">
+              Your database is encrypted with AES-256 encryption. You can change your passphrase or
+              generate a new recovery key below.
+            </p>
+
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
+                <Shield className="w-3 h-3" />
+                AES-256 Encrypted
+              </span>
+              <button
+                className="btn-secondary text-sm px-3 py-1.5 inline-flex items-center gap-1.5"
+                onClick={() => { resetEncForms(); setShowChangePassphrase(true); }}
+              >
+                <Key className="w-3.5 h-3.5" />
+                Change Passphrase
+              </button>
+              <button
+                className="btn-secondary text-sm px-3 py-1.5 inline-flex items-center gap-1.5"
+                onClick={() => { resetEncForms(); setShowRegenRecovery(true); }}
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                New Recovery Key
+              </button>
+            </div>
+
+            {/* Change Passphrase Form */}
+            {showChangePassphrase && (
+              <div className="mt-3 p-4 bg-gray-50 rounded-lg space-y-3">
+                <div className="relative">
+                  <label className="label">Current Passphrase</label>
+                  <input
+                    type={encShowPass ? 'text' : 'password'}
+                    className="input pr-10"
+                    style={{ maxWidth: 350 }}
+                    placeholder="Enter current passphrase"
+                    value={encCurrentPass}
+                    onChange={(e) => setEncCurrentPass(e.target.value)}
+                    disabled={encLoading}
+                  />
+                </div>
+                <div>
+                  <label className="label">New Passphrase</label>
+                  <input
+                    type={encShowPass ? 'text' : 'password'}
+                    className="input"
+                    style={{ maxWidth: 350 }}
+                    placeholder="New passphrase (8+ characters)"
+                    value={encNewPass}
+                    onChange={(e) => setEncNewPass(e.target.value)}
+                    disabled={encLoading}
+                  />
+                  {encNewPass.length > 0 && (
+                    <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+                      {encNewPass.length < 8
+                        ? `${8 - encNewPass.length} more characters needed`
+                        : encNewPass.length >= 12
+                        ? 'Strong passphrase'
+                        : 'Good — 12+ characters recommended'}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label className="label">Confirm New Passphrase</label>
+                  <input
+                    type={encShowPass ? 'text' : 'password'}
+                    className="input"
+                    style={{ maxWidth: 350 }}
+                    placeholder="Confirm new passphrase"
+                    value={encConfirmPass}
+                    onChange={(e) => setEncConfirmPass(e.target.value)}
+                    disabled={encLoading}
+                  />
+                </div>
+                <label className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={encShowPass}
+                    onChange={() => setEncShowPass(!encShowPass)}
+                  />
+                  Show passphrases
+                </label>
+                {encError && <p className="text-xs text-red-500">{encError}</p>}
+                <div className="flex gap-2">
+                  <button
+                    className="btn-primary text-sm px-3 py-1.5 inline-flex items-center gap-1.5"
+                    onClick={handleChangePassphrase}
+                    disabled={encLoading || encNewPass.length < 8 || encNewPass !== encConfirmPass}
+                  >
+                    {encLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Key className="w-3.5 h-3.5" />}
+                    {encLoading ? 'Changing...' : 'Change Passphrase'}
+                  </button>
+                  <button className="btn-ghost text-sm px-3 py-1.5" onClick={resetEncForms}>Cancel</button>
+                </div>
+              </div>
+            )}
+
+            {/* Regenerate Recovery Key Form */}
+            {showRegenRecovery && (
+              <div className="mt-3 p-4 bg-gray-50 rounded-lg space-y-3">
+                <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
+                  <p className="text-xs text-amber-800">
+                    <strong>Warning:</strong> Generating a new recovery key will invalidate your
+                    current recovery key. Make sure to save the new one securely.
+                  </p>
+                </div>
+                <div>
+                  <label className="label">Enter Passphrase to Confirm</label>
+                  <div className="relative" style={{ maxWidth: 350 }}>
+                    <input
+                      type={regenShowPass ? 'text' : 'password'}
+                      className="input pr-10 w-full"
+                      placeholder="Enter your passphrase"
+                      value={regenPassphrase}
+                      onChange={(e) => setRegenPassphrase(e.target.value)}
+                      disabled={regenLoading}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setRegenShowPass(!regenShowPass)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)] hover:text-[var(--color-text)]"
+                    >
+                      {regenShowPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+                {regenError && <p className="text-xs text-red-500">{regenError}</p>}
+                <div className="flex gap-2">
+                  <button
+                    className="btn-primary text-sm px-3 py-1.5 inline-flex items-center gap-1.5"
+                    onClick={handleRegenerateRecoveryKey}
+                    disabled={regenLoading || !regenPassphrase}
+                  >
+                    {regenLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <KeyRound className="w-3.5 h-3.5" />}
+                    {regenLoading ? 'Generating...' : 'Generate New Recovery Key'}
+                  </button>
+                  <button className="btn-ghost text-sm px-3 py-1.5" onClick={resetEncForms}>Cancel</button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </CollapsibleSection>
+
+      {/* Recovery Key Ceremony Modal */}
+      {showRecoveryCeremony && regenRecoveryKey && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 overflow-y-auto">
+          <div className="py-8 px-4">
+            <RecoveryKeyCeremony
+              recoveryKey={regenRecoveryKey}
+              onComplete={() => {
+                setShowRecoveryCeremony(false);
+                setRegenRecoveryKey('');
+                setToast('New recovery key saved. Your old recovery key is now invalid.');
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Data Storage */}
       <CollapsibleSection
@@ -1512,13 +1829,16 @@ export default function SettingsPage() {
           <div className="p-3 bg-blue-50 rounded-lg">
             <div className="flex items-start gap-2 mb-1">
               <ShieldCheck className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
-              <p className="text-xs text-blue-700 font-medium">Cloud Backup</p>
+              <p className="text-xs text-blue-700 font-medium">Data Storage</p>
             </div>
             <p className="text-xs text-blue-600">
-              You can choose a cloud-synced folder for automatic off-site backup. If you do,
-              you are responsible for ensuring a Business Associate Agreement (BAA) is in place
-              with that cloud provider. PocketChart will detect cloud folders and guide you
-              through compliance requirements.
+              PocketChart stores all data locally on your computer. If you choose to place your
+              data folder inside a cloud-synced location (such as Google Drive, OneDrive, or
+              Dropbox), your clinical data will be transmitted to that provider's servers. You
+              are solely responsible for ensuring HIPAA compliance with any cloud provider,
+              including having a signed Business Associate Agreement (BAA) and using a
+              business-tier account. PocketChart can detect cloud-synced folders and will
+              provide guidance, but cannot verify your compliance status.
             </p>
           </div>
 
@@ -1599,11 +1919,106 @@ export default function SettingsPage() {
               <li>Export your database regularly (weekly or after major changes).</li>
               <li>Store backups on an external drive or cloud storage for safety.</li>
               <li>The CSV export is useful for importing client data into other systems.</li>
-              <li>You can also manually copy the database file from the location shown above.</li>
             </ul>
+          </div>
+
+          {/* ── Restore Section ── */}
+          <div className="border-t border-[var(--color-border)] pt-4 mt-4">
+            <h4 className="text-sm font-semibold text-[var(--color-text)] mb-3">Restore & Import</h4>
+            <div className="flex items-center gap-3 flex-wrap">
+              <button
+                className="btn-secondary gap-2"
+                onClick={handleRestoreFromSettings}
+                disabled={restoreLoading || restoreExecuting}
+              >
+                <RotateCcw className="w-4 h-4" />
+                Restore Database from Backup
+              </button>
+              <button
+                className="btn-secondary gap-2"
+                onClick={() => setShowImportSelector(true)}
+              >
+                <Upload className="w-4 h-4" />
+                Import Clients from Backup
+              </button>
+            </div>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-2">
+              <strong>Restore</strong> replaces your entire database. <strong>Import</strong> adds specific clients from a backup into your current database.
+            </p>
+
+            {/* Restore passphrase input (inline) */}
+            {restoreStep === 'passphrase' && (
+              <div className="mt-3 p-4 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg">
+                <p className="text-sm font-medium text-[var(--color-text)] mb-2">
+                  Enter the passphrase for: <span className="font-mono text-xs">{restoreFilePath.split(/[/\\]/).pop()}</span>
+                </p>
+                {restoreError && (
+                  <div className="flex items-center gap-2 p-2 bg-red-50 rounded-lg mb-3">
+                    <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
+                    <p className="text-xs text-red-700">{restoreError}</p>
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      type={restoreShowPass ? 'text' : 'password'}
+                      value={restorePassphrase}
+                      onChange={e => setRestorePassphrase(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleRestoreValidate()}
+                      className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-white text-sm pr-10"
+                      placeholder="Backup passphrase"
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setRestoreShowPass(!restoreShowPass)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)]"
+                    >
+                      {restoreShowPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                  <button
+                    className="btn-primary gap-1 py-2 text-sm"
+                    onClick={handleRestoreValidate}
+                    disabled={restoreLoading || !restorePassphrase.trim()}
+                  >
+                    {restoreLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                    Validate
+                  </button>
+                  <button
+                    className="btn-secondary py-2 text-sm"
+                    onClick={handleRestoreCancel}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </CollapsibleSection>
+
+      {/* Restore Confirmation Modal */}
+      {showRestoreConfirm && restoreSummary && (
+        <RestoreConfirmationModal
+          backupSummary={restoreSummary}
+          onConfirm={handleRestoreExecute}
+          onCancel={handleRestoreCancel}
+          executing={restoreExecuting}
+        />
+      )}
+
+      {/* Import Client Selector Modal */}
+      {showImportSelector && (
+        <ImportClientSelector
+          onClose={() => setShowImportSelector(false)}
+          onImportComplete={(result) => {
+            if (result.success) {
+              setToast(`Successfully imported ${result.clients} client${result.clients !== 1 ? 's' : ''} with ${result.notes} notes`);
+            }
+          }}
+        />
+      )}
 
       {/* ═══ ACCOUNT ═══ */}
       <div className="flex items-center gap-2 mt-6 mb-3">

@@ -118,7 +118,7 @@ const ClientsPage: React.FC = () => {
 
         {/* Status Filter */}
         <select
-          className="select w-auto"
+          className="select-bare w-auto text-xs py-1.5 px-3"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
         >
@@ -130,7 +130,7 @@ const ClientsPage: React.FC = () => {
 
         {/* Discipline Filter */}
         <select
-          className="select w-auto"
+          className="select-bare w-auto text-xs py-1.5 px-3"
           value={disciplineFilter}
           onChange={(e) => setDisciplineFilter(e.target.value)}
         >

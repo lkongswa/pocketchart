@@ -3,10 +3,14 @@ import path from 'path';
 import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
-import { initDatabase, getDatabase, getDataPath, setDataPath, resetDataPath, getDefaultDataPath } from './database';
+import { initDatabase, getDatabase, closeDatabase, getDataPath, setDataPath, resetDataPath, getDefaultDataPath, isDatabaseEncrypted, databaseFileExists, migrateToEncrypted, runQuickCheck, runIntegrityCheck, validateBackupFile, getBackupClients, restoreFullDatabase, importSelectedClients, getCurrentDbSummary } from './database';
+import { setupEncryption, unlockWithPassphrase, unlockWithRecoveryKey, changePassphrase, regenerateRecoveryKey, verifyPassphrase, keystoreExists, loadKeystore, unlockFromExternalKeystore, replaceKeystoreForRestore } from './keystore';
+import type { KeystoreData } from './keystore';
+import { seedDemoData } from './seedDemoData';
 import { jsPDF } from 'jspdf';
 import { v4 as uuidv4 } from 'uuid';
 import archiver from 'archiver';
+import AdmZip from 'adm-zip';
 import { autoUpdater } from 'electron-updater';
 import Stripe from 'stripe';
 import { requiresReferral as checkDirectAccess, getAllRules as getDirectAccessRules } from '../shared/directAccessRules';
@@ -279,8 +283,17 @@ function createWindow() {
 
 app.whenReady().then(() => {
   createSplashWindow();
-  initDatabase();
-  registerIpcHandlers();
+
+  // Phase 1: Register encryption IPC handlers BEFORE the DB is open.
+  // These allow the renderer to check encryption status and provide the passphrase.
+  registerEncryptionIpcHandlers();
+
+  // The main window loads and the renderer determines what screen to show:
+  // - First run (no DB): onboarding with passphrase setup
+  // - Existing encrypted DB: passphrase entry screen
+  // - Existing unencrypted DB: migration screen
+  // Once the passphrase is provided via IPC, completeDbStartup() is called
+  // which inits the DB and registers all data IPC handlers.
   createWindow();
 
   // Check for updates after a short delay (don't block startup)
@@ -298,6 +311,222 @@ app.whenReady().then(() => {
     }
   });
 });
+
+// ── Encryption IPC Handlers (registered before DB is open) ──
+
+let dbStartupComplete = false;
+
+/**
+ * Called after the renderer provides the correct passphrase.
+ * Registers all data IPC handlers and signals the renderer that the DB is ready.
+ */
+function completeDbStartup() {
+  if (dbStartupComplete) return; // prevent double-registration
+  dbStartupComplete = true;
+  registerIpcHandlers();
+  mainWindow?.webContents.send('db:ready');
+}
+
+function registerEncryptionIpcHandlers() {
+  // Determine the current encryption state for the renderer
+  ipcMain.handle('encryption:getStatus', () => {
+    const dbExists = databaseFileExists();
+    const hasKeystore = keystoreExists();
+
+    if (!dbExists && !hasKeystore) {
+      // Fresh install — needs full setup (onboarding)
+      return { needsSetup: true, needsPassphrase: false, needsMigration: false };
+    }
+
+    if (dbExists && !hasKeystore) {
+      // Existing unencrypted DB — needs migration
+      return { needsSetup: false, needsPassphrase: false, needsMigration: true };
+    }
+
+    // Encrypted DB exists — needs passphrase to unlock
+    return { needsSetup: false, needsPassphrase: true, needsMigration: false };
+  });
+
+  // First-time setup: generate keys, create encrypted DB
+  ipcMain.handle('encryption:setup', (_event, passphrase: string) => {
+    const { masterKeyHex, recoveryKey } = setupEncryption(passphrase);
+    initDatabase(masterKeyHex);
+    completeDbStartup();
+    return { success: true, recoveryKey };
+  });
+
+  // Unlock existing encrypted DB with passphrase
+  ipcMain.handle('encryption:unlock', (_event, passphrase: string) => {
+    try {
+      const masterKeyHex = unlockWithPassphrase(passphrase);
+      initDatabase(masterKeyHex);
+      completeDbStartup();
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Incorrect passphrase' };
+    }
+  });
+
+  // Unlock with recovery key (forgot passphrase flow)
+  ipcMain.handle('encryption:unlockWithRecovery', (_event, recoveryKey: string) => {
+    try {
+      const masterKeyHex = unlockWithRecoveryKey(recoveryKey);
+      initDatabase(masterKeyHex);
+      completeDbStartup();
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Incorrect recovery key' };
+    }
+  });
+
+  // Change passphrase (re-wraps master key, no DB change)
+  ipcMain.handle('encryption:changePassphrase', (_event, currentPassphrase: string, newPassphrase: string) => {
+    try {
+      changePassphrase(currentPassphrase, newPassphrase);
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // Generate new recovery key (invalidates old one)
+  ipcMain.handle('encryption:regenerateRecoveryKey', (_event, passphrase: string) => {
+    try {
+      const newRecoveryKey = regenerateRecoveryKey(passphrase);
+      return { success: true, recoveryKey: newRecoveryKey };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // Verify passphrase correctness (for Settings page)
+  ipcMain.handle('encryption:verifyPassphrase', (_event, passphrase: string) => {
+    return verifyPassphrase(passphrase);
+  });
+
+  // Migrate existing unencrypted DB to encrypted
+  ipcMain.handle('encryption:migrateAndSetup', (_event, passphrase: string) => {
+    try {
+      const { masterKeyHex, recoveryKey } = setupEncryption(passphrase);
+      migrateToEncrypted(masterKeyHex);
+      initDatabase(masterKeyHex);
+      completeDbStartup();
+      return { success: true, recoveryKey };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Migration failed' };
+    }
+  });
+
+  // ── Restore IPC Handlers (available before DB is open) ──
+
+  ipcMain.handle('restore:pickFile', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: 'Select PocketChart Backup',
+      filters: [
+        { name: 'PocketChart Backup', extensions: ['pcbackup', 'db'] },
+      ],
+      properties: ['openFile'],
+    });
+    if (canceled || !filePaths?.[0]) return null;
+    return filePaths[0];
+  });
+
+  ipcMain.handle('restore:validateAndSummarize', (_event, filePath: string, passphrase: string) => {
+    let tempDir: string | null = null;
+    try {
+      const extracted = extractBackupArchive(filePath);
+      tempDir = extracted.tempDir;
+
+      // Derive master key
+      let masterKeyHex: string;
+      if (extracted.keystoreData) {
+        masterKeyHex = unlockFromExternalKeystore(extracted.keystoreData, passphrase);
+      } else {
+        // Legacy .db — try current keystore if it exists
+        if (keystoreExists()) {
+          masterKeyHex = unlockWithPassphrase(passphrase);
+        } else {
+          return { error: 'This backup has no bundled keystore and no local keystore exists. Cannot decrypt.' };
+        }
+      }
+
+      const stats = fs.statSync(filePath);
+      const summary = validateBackupFile(extracted.dbPath, masterKeyHex);
+
+      if (!summary.validationPassed) {
+        return { error: 'Backup file failed validation — it may be corrupt or not a PocketChart database.' };
+      }
+
+      if (!summary.isCompatible) {
+        return { error: `This backup was created with a newer version of PocketChart (schema v${summary.schemaVersion}). Please update PocketChart first.` };
+      }
+
+      return {
+        summary: {
+          ...summary,
+          filePath,
+          fileSize: stats.size,
+          fileModified: stats.mtime.toISOString(),
+          isEncrypted: true,
+          currentSchemaVersion: 40,
+        },
+      };
+    } catch (err: any) {
+      return { error: err.message || 'Failed to validate backup' };
+    } finally {
+      cleanupTempDir(tempDir);
+    }
+  });
+
+  ipcMain.handle('restore:execute', (_event, filePath: string, passphrase: string) => {
+    let tempDir: string | null = null;
+    try {
+      const extracted = extractBackupArchive(filePath);
+      tempDir = extracted.tempDir;
+
+      // Derive master key
+      let masterKeyHex: string;
+      if (extracted.keystoreData) {
+        masterKeyHex = unlockFromExternalKeystore(extracted.keystoreData, passphrase);
+      } else {
+        if (keystoreExists()) {
+          masterKeyHex = unlockWithPassphrase(passphrase);
+        } else {
+          return { success: false, error: 'Cannot decrypt backup — no keystore available.' };
+        }
+      }
+
+      // Auto-backup current DB if it exists
+      const currentDbPath = path.join(getDataPath(), 'pocketchart.db');
+      if (fs.existsSync(currentDbPath)) {
+        const backupName = `pocketchart_pre_restore_backup_${Date.now()}.db`;
+        const backupPath = path.join(getDataPath(), backupName);
+        try {
+          fs.copyFileSync(currentDbPath, backupPath);
+        } catch {}
+      }
+
+      // Close existing DB if open
+      try { closeDatabase(); } catch {}
+
+      // Copy backup over current
+      restoreFullDatabase(extracted.dbPath);
+
+      // Replace keystore — re-wrap the master key with the passphrase and a new recovery key
+      const recoveryKey = replaceKeystoreForRestore(masterKeyHex, passphrase);
+
+      // Open restored DB and run migrations
+      initDatabase(masterKeyHex);
+      completeDbStartup();
+
+      return { success: true, recoveryKey };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Restore failed' };
+    } finally {
+      cleanupTempDir(tempDir);
+    }
+  });
+}
 
 // ── Auto-Updater Events ──
 // Forward update events to the renderer so we can show UI notifications
@@ -336,6 +565,7 @@ autoUpdater.on('error', (err) => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
+    closeDatabase();
     app.quit();
   }
 });
@@ -343,6 +573,73 @@ app.on('window-all-closed', () => {
 // ── Session & Audit ──
 const sessionId = crypto.randomUUID();
 const deviceIdentifier = os.hostname();
+
+// ── Backup Archive Helper ──
+
+/**
+ * Extract a backup file and return the database path + optional keystore data.
+ * Supports both .pcbackup (zip) and legacy .db formats.
+ *
+ * @returns { dbPath, keystoreData, tempDir } — tempDir should be cleaned up by the caller
+ */
+function extractBackupArchive(filePath: string): {
+  dbPath: string;
+  keystoreData: KeystoreData | null;
+  tempDir: string | null;
+} {
+  // Try to detect zip format by reading first bytes
+  let isZip = false;
+  try {
+    const fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(4);
+    fs.readSync(fd, buf, 0, 4, 0);
+    fs.closeSync(fd);
+    // ZIP magic number: PK\x03\x04
+    isZip = buf[0] === 0x50 && buf[1] === 0x4B && buf[2] === 0x03 && buf[3] === 0x04;
+  } catch {
+    isZip = false;
+  }
+
+  if (isZip) {
+    const zip = new AdmZip(filePath);
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pocketchart-restore-'));
+
+    // Extract DB file
+    const dbEntry = zip.getEntry('pocketchart.db');
+    if (!dbEntry) {
+      throw new Error('Backup archive does not contain pocketchart.db');
+    }
+    zip.extractEntryTo(dbEntry, tempDir, false, true);
+    const extractedDbPath = path.join(tempDir, 'pocketchart.db');
+
+    // Extract keystore (optional — might not exist in older backups)
+    let keystoreData: KeystoreData | null = null;
+    const keystoreEntry = zip.getEntry('keystore.json');
+    if (keystoreEntry) {
+      try {
+        const jsonStr = keystoreEntry.getData().toString('utf-8');
+        keystoreData = JSON.parse(jsonStr) as KeystoreData;
+      } catch {
+        keystoreData = null;
+      }
+    }
+
+    return { dbPath: extractedDbPath, keystoreData, tempDir };
+  }
+
+  // Legacy .db file — no keystore bundled
+  return { dbPath: filePath, keystoreData: null, tempDir: null };
+}
+
+/**
+ * Clean up a temporary directory created by extractBackupArchive.
+ */
+function cleanupTempDir(tempDir: string | null): void {
+  if (!tempDir) return;
+  try {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  } catch {}
+}
 
 function registerIpcHandlers() {
   const db = getDatabase();
@@ -1419,20 +1716,20 @@ function registerIpcHandlers() {
 
   safeHandle('appointments:create', (_event, data) => {
     const result = db.prepare(`
-      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate, patient_name, visit_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate, patient_name, visit_type, session_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(data.client_id || 0, data.scheduled_date, data.scheduled_time,
       data.duration_minutes || 60, data.status || 'scheduled',
       data.entity_id || null, data.entity_rate || null, data.patient_name || '',
-      data.visit_type || 'O');
+      data.visit_type || 'O', data.session_type || 'visit');
     return db.prepare(apptSelectQuery + ' AND a.id = ?').get(result.lastInsertRowid);
   });
 
   // Batch create for recurring appointments
   safeHandle('appointments:createBatch', (_event, items: any[]) => {
     const insert = db.prepare(`
-      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate, patient_name, visit_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate, patient_name, visit_type, session_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const created: any[] = [];
     const txn = db.transaction(() => {
@@ -1441,7 +1738,7 @@ function registerIpcHandlers() {
           data.client_id || 0, data.scheduled_date, data.scheduled_time,
           data.duration_minutes || 60, data.status || 'scheduled',
           data.entity_id || null, data.entity_rate || null, data.patient_name || '',
-          data.visit_type || 'O'
+          data.visit_type || 'O', data.session_type || 'visit'
         );
         const row = db.prepare(apptSelectQuery + ' AND a.id = ?').get(result.lastInsertRowid);
         if (row) created.push(row);
@@ -1455,12 +1752,12 @@ function registerIpcHandlers() {
     db.prepare(`
       UPDATE appointments SET client_id=?, scheduled_date=?, scheduled_time=?,
         duration_minutes=?, status=?, note_id=?, entity_id=?, entity_rate=?, patient_name=?,
-        visit_type=?
+        visit_type=?, session_type=?, evaluation_id=?
       WHERE id=? AND deleted_at IS NULL
     `).run(data.client_id, data.scheduled_date, data.scheduled_time,
       data.duration_minutes, data.status, data.note_id,
       data.entity_id || null, data.entity_rate || null, data.patient_name || '',
-      data.visit_type || 'O', id);
+      data.visit_type || 'O', data.session_type || 'visit', data.evaluation_id || null, id);
     return db.prepare(apptSelectQuery + ' AND a.id = ?').get(id);
   });
 
@@ -1469,6 +1766,15 @@ function registerIpcHandlers() {
     const appt = db.prepare('SELECT client_id FROM appointments WHERE id = ?').get(id) as any;
     db.prepare('UPDATE appointments SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL').run(id);
     auditLog({ actionType: 'appointment_deleted', entityType: 'appointment', entityId: id, clientId: appt?.client_id });
+    return true;
+  });
+
+  // Link evaluation to appointment (set evaluation_id and mark completed)
+  safeHandle('appointments:linkEval', (_event, appointmentId: number, evaluationId: number) => {
+    db.prepare(`
+      UPDATE appointments SET evaluation_id = ?, status = 'completed'
+      WHERE id = ? AND deleted_at IS NULL
+    `).run(evaluationId, appointmentId);
     return true;
   });
 
@@ -1561,6 +1867,39 @@ function registerIpcHandlers() {
 
   safeHandle('patternOverrides:deleteAll', (_event, patternId: string) => {
     db.prepare('DELETE FROM pattern_overrides WHERE pattern_id = ?').run(patternId);
+    return true;
+  });
+
+  // ── Custom Patterns ──
+  safeHandle('customPatterns:list', () => {
+    return db.prepare('SELECT * FROM custom_patterns WHERE deleted_at IS NULL ORDER BY discipline, category, label').all();
+  });
+
+  safeHandle('customPatterns:create', (_event, data: any) => {
+    const result = db.prepare(`
+      INSERT INTO custom_patterns (discipline, category, label, icon, measurement_type, chips_json)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      data.discipline, data.category || '', data.label, data.icon || '',
+      data.measurement_type || 'percentage', JSON.stringify(data.chips || [])
+    );
+    return db.prepare('SELECT * FROM custom_patterns WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('customPatterns:update', (_event, id: number, data: any) => {
+    db.prepare(`
+      UPDATE custom_patterns SET label=?, category=?, icon=?, measurement_type=?, chips_json=?
+      WHERE id=? AND deleted_at IS NULL
+    `).run(
+      data.label, data.category || '', data.icon || '',
+      data.measurement_type || 'percentage', JSON.stringify(data.chips || []),
+      id
+    );
+    return db.prepare('SELECT * FROM custom_patterns WHERE id = ?').get(id);
+  });
+
+  safeHandle('customPatterns:delete', (_event, id: number) => {
+    db.prepare("UPDATE custom_patterns SET deleted_at = datetime('now') WHERE id = ?").run(id);
     return true;
   });
 
@@ -1955,6 +2294,57 @@ function registerIpcHandlers() {
     }
 
     return { status: 'pending' };
+  });
+
+  // ── Feedback (Airtable) ──
+  const AIRTABLE_FEEDBACK_PAT = 'patdhgeybhMRMb4aG.b4fa8c6301aa78bd09ebc65ae5c248bc0eb285a7ec4077263f34f7abf5e95c16';
+  const AIRTABLE_FEEDBACK_BASE = 'appcWqWC6UTtB0T1O';
+  const AIRTABLE_FEEDBACK_TABLE = 'tblgF2plUJQvqDD6j';
+
+  safeHandle('feedback:submit', async (_event, data: {
+    description: string;
+    category: string;
+    appVersion: string;
+    discipline: string;
+    practiceName: string;
+    os: string;
+  }) => {
+    if (!AIRTABLE_FEEDBACK_PAT) {
+      throw new Error('Feedback submission is not configured. Please set AIRTABLE_FEEDBACK_PAT.');
+    }
+
+    const response = await fetch(
+      `https://api.airtable.com/v0/${AIRTABLE_FEEDBACK_BASE}/${AIRTABLE_FEEDBACK_TABLE}`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${AIRTABLE_FEEDBACK_PAT}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          records: [{
+            fields: {
+              'Description': data.description,
+              'Category': data.category,
+              'App Version': data.appVersion,
+              'Discipline': data.discipline,
+              'Practice Name': data.practiceName,
+              'OS': data.os,
+              'Submitted At': new Date().toISOString(),
+              'Status': 'New',
+            },
+          }],
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => 'Unknown error');
+      console.error('[Feedback] Airtable POST failed:', response.status, errText);
+      throw new Error('Failed to submit feedback. Please check your internet connection.');
+    }
+
+    return { success: true };
   });
 
   // ── License (Lemon Squeezy Integration) ──
@@ -2385,12 +2775,7 @@ function registerIpcHandlers() {
   // ── Graceful shutdown: close DB + clear intervals ──
   app.on('before-quit', () => {
     clearInterval(licenseIntervalId);
-    try {
-      const db = getDatabase();
-      db.close();
-    } catch (e) {
-      // DB may already be closed
-    }
+    closeDatabase();
   });
 
   // ── Tier-Gated Helper ──
@@ -2409,14 +2794,38 @@ function registerIpcHandlers() {
   safeHandle('backup:exportManual', async () => {
     const { canceled, filePath } = await dialog.showSaveDialog({
       title: 'Export Database Backup',
-      defaultPath: `pocketchart_backup_${new Date().toISOString().slice(0, 10)}.db`,
-      filters: [{ name: 'SQLite Database', extensions: ['db'] }],
+      defaultPath: `pocketchart_backup_${new Date().toISOString().slice(0, 10)}.pcbackup`,
+      filters: [
+        { name: 'PocketChart Backup', extensions: ['pcbackup'] },
+        { name: 'SQLite Database (legacy)', extensions: ['db'] },
+      ],
     });
     if (canceled || !filePath) return null;
-    fs.copyFileSync(dbPath, filePath);
+
+    if (filePath.endsWith('.pcbackup')) {
+      // Create zip archive containing DB + keystore
+      await new Promise<void>((resolve, reject) => {
+        const output = fs.createWriteStream(filePath);
+        const archive = archiver('zip', { zlib: { level: 1 } }); // minimal compression — DB is already encrypted
+        output.on('close', () => resolve());
+        archive.on('error', (err: Error) => reject(err));
+        archive.pipe(output);
+        archive.file(dbPath, { name: 'pocketchart.db' });
+        // Include keystore data
+        const keystoreData = loadKeystore();
+        if (keystoreData) {
+          archive.append(JSON.stringify(keystoreData, null, 2), { name: 'keystore.json' });
+        }
+        archive.finalize();
+      });
+    } else {
+      // Legacy .db export
+      fs.copyFileSync(dbPath, filePath);
+    }
+
     // Stamp the last backup date so the dashboard can show reminders
     db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_backup_date', ?)").run(new Date().toISOString());
-    auditLog({ actionType: 'bulk_export_performed', entityType: 'backup', detail: { export_type: 'database' } });
+    auditLog({ actionType: 'bulk_export_performed', entityType: 'backup', detail: { export_type: 'database', format: filePath.endsWith('.pcbackup') ? 'pcbackup' : 'legacy_db' } });
     return filePath;
   });
 
@@ -4069,6 +4478,218 @@ function registerIpcHandlers() {
     return { intact: true, checked: entries.length };
   });
 
+  safeHandle('integrity:startupCheck', () => {
+    const timestamp = new Date().toISOString();
+
+    // 1. Always run quick_check
+    const quickCheckResult = runQuickCheck();
+    const quickCheckPassed = quickCheckResult === 'ok';
+
+    auditLog({
+      actionType: quickCheckPassed ? 'integrity_quick_check_passed' : 'integrity_quick_check_failed',
+      entityType: 'system',
+      detail: { result: quickCheckResult },
+    });
+
+    // 2. Run full integrity_check if >7 days since last run (or never run)
+    let fullCheckPassed: boolean | undefined;
+    let fullCheckResult: string | undefined;
+    let fullCheckRan = false;
+
+    const lastFullCheck = getSetting('last_integrity_check');
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+    const shouldRunFull = !lastFullCheck || (Date.now() - new Date(lastFullCheck).getTime()) > sevenDaysMs;
+
+    if (shouldRunFull) {
+      fullCheckResult = runIntegrityCheck();
+      fullCheckPassed = fullCheckResult === 'ok';
+      fullCheckRan = true;
+
+      auditLog({
+        actionType: fullCheckPassed ? 'integrity_full_check_passed' : 'integrity_full_check_failed',
+        entityType: 'system',
+        detail: { result: fullCheckResult },
+      });
+
+      // Update last check timestamp
+      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_integrity_check', ?)").run(timestamp);
+    }
+
+    return {
+      quickCheckPassed,
+      quickCheckResult,
+      fullCheckPassed,
+      fullCheckResult,
+      fullCheckRan,
+      timestamp,
+    };
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // ── Restore & Import (Post-DB) ──
+  // ══════════════════════════════════════════════════════════════════════
+
+  safeHandle('restore:getCurrentSummary', () => {
+    return getCurrentDbSummary();
+  });
+
+  safeHandle('restore:getPendingRecoveryKey', () => {
+    const tempKeyPath = path.join(getDataPath(), '.pending_recovery_key');
+    try {
+      if (fs.existsSync(tempKeyPath)) {
+        return fs.readFileSync(tempKeyPath, 'utf-8');
+      }
+    } catch {}
+    return null;
+  });
+
+  safeHandle('restore:clearPendingRecoveryKey', () => {
+    const tempKeyPath = path.join(getDataPath(), '.pending_recovery_key');
+    try {
+      if (fs.existsSync(tempKeyPath)) {
+        fs.unlinkSync(tempKeyPath);
+      }
+    } catch {}
+  });
+
+  safeHandle('restore:getBackupClients', (_event, filePath: string, passphrase: string) => {
+    let tempDir: string | null = null;
+    try {
+      const extracted = extractBackupArchive(filePath);
+      tempDir = extracted.tempDir;
+
+      let masterKeyHex: string;
+      if (extracted.keystoreData) {
+        masterKeyHex = unlockFromExternalKeystore(extracted.keystoreData, passphrase);
+      } else {
+        if (keystoreExists()) {
+          masterKeyHex = unlockWithPassphrase(passphrase);
+        } else {
+          return { error: 'Cannot decrypt backup — no keystore available.' };
+        }
+      }
+
+      const clients = getBackupClients(extracted.dbPath, masterKeyHex);
+
+      // Also get basic backup info
+      const stats = fs.statSync(filePath);
+      const vResult = validateBackupFile(extracted.dbPath, masterKeyHex);
+
+      return {
+        clients,
+        backupInfo: {
+          filePath,
+          fileModified: stats.mtime.toISOString(),
+          schemaVersion: vResult.schemaVersion,
+        },
+      };
+    } catch (err: any) {
+      return { error: err.message || 'Failed to read backup clients' };
+    } finally {
+      cleanupTempDir(tempDir);
+    }
+  });
+
+  safeHandle('restore:importClients', (_event, filePath: string, passphrase: string, clientIds: number[]) => {
+    let tempDir: string | null = null;
+    try {
+      const extracted = extractBackupArchive(filePath);
+      tempDir = extracted.tempDir;
+
+      let masterKeyHex: string;
+      if (extracted.keystoreData) {
+        masterKeyHex = unlockFromExternalKeystore(extracted.keystoreData, passphrase);
+      } else {
+        if (keystoreExists()) {
+          masterKeyHex = unlockWithPassphrase(passphrase);
+        } else {
+          return { success: false, warnings: ['Cannot decrypt backup — no keystore available.'], clients: 0, notes: 0, evaluations: 0, goals: 0, appointments: 0, documents: 0, documentFilesMissing: 0, invoices: 0, payments: 0, entities: 0 };
+        }
+      }
+
+      const result = importSelectedClients(extracted.dbPath, masterKeyHex, clientIds);
+
+      if (result.success) {
+        auditLog({
+          actionType: 'client_import_from_backup',
+          entityType: 'system',
+          detail: {
+            source: filePath,
+            clientsImported: result.clients,
+            notesImported: result.notes,
+            evalsImported: result.evaluations,
+            goalsImported: result.goals,
+          },
+        });
+      }
+
+      return result;
+    } catch (err: any) {
+      return {
+        success: false,
+        clients: 0, notes: 0, evaluations: 0, goals: 0, appointments: 0,
+        documents: 0, documentFilesMissing: 0, invoices: 0, payments: 0, entities: 0,
+        warnings: [`Import failed: ${err.message || 'Unknown error'}`],
+      };
+    } finally {
+      cleanupTempDir(tempDir);
+    }
+  });
+
+  // Settings restore — triggers app restart
+  safeHandle('restore:executeFromSettings', async (_event, filePath: string, passphrase: string) => {
+    let tempDir: string | null = null;
+    try {
+      const extracted = extractBackupArchive(filePath);
+      tempDir = extracted.tempDir;
+
+      let masterKeyHex: string;
+      if (extracted.keystoreData) {
+        masterKeyHex = unlockFromExternalKeystore(extracted.keystoreData, passphrase);
+      } else {
+        if (keystoreExists()) {
+          masterKeyHex = unlockWithPassphrase(passphrase);
+        } else {
+          return { success: false, error: 'Cannot decrypt backup — no keystore available.' };
+        }
+      }
+
+      // Auto-backup current DB
+      const currentDbPath = path.join(getDataPath(), 'pocketchart.db');
+      if (fs.existsSync(currentDbPath)) {
+        const backupName = `pocketchart_pre_restore_backup_${Date.now()}.db`;
+        try { fs.copyFileSync(currentDbPath, path.join(getDataPath(), backupName)); } catch {}
+      }
+
+      // Close, restore, replace keystore
+      closeDatabase();
+      restoreFullDatabase(extracted.dbPath);
+      const recoveryKey = replaceKeystoreForRestore(masterKeyHex, passphrase);
+
+      // Store recovery key in a temp file so it can be shown after restart
+      const tempKeyPath = path.join(getDataPath(), '.pending_recovery_key');
+      fs.writeFileSync(tempKeyPath, recoveryKey, 'utf-8');
+
+      auditLog({
+        actionType: 'database_restored_from_settings',
+        entityType: 'system',
+        detail: { source: filePath },
+      });
+
+      // Schedule restart
+      setTimeout(() => {
+        app.relaunch();
+        app.exit(0);
+      }, 500);
+
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Restore failed' };
+    } finally {
+      cleanupTempDir(tempDir);
+    }
+  });
+
   // ══════════════════════════════════════════════════════════════════════
   // ── Contracted Entities (Pro Only) ──
   // ══════════════════════════════════════════════════════════════════════
@@ -5481,6 +6102,11 @@ function registerIpcHandlers() {
   safeHandle('quickLinks:delete', (_event, id: number) => {
     db.prepare('DELETE FROM quick_links WHERE id = ?').run(id);
     return true;
+  });
+
+  // ── Dev: Seed Demo Data (temporary) ──
+  safeHandle('dev:seedDemoData', () => {
+    return seedDemoData(db);
   });
 }
 

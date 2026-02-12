@@ -9,6 +9,7 @@ interface GoalPatternPickerProps {
   onSelect: (pattern: GoalPattern) => void;
   onCustom: () => void;        // "Write Custom Goal" selected
   overrides?: PatternOverride[];  // Pattern overrides from settings
+  customPatterns?: GoalPattern[];  // User-created custom patterns (already converted)
 }
 
 const GoalPatternPicker: React.FC<GoalPatternPickerProps> = ({
@@ -17,16 +18,28 @@ const GoalPatternPicker: React.FC<GoalPatternPickerProps> = ({
   onSelect,
   onCustom,
   overrides,
+  customPatterns = [],
 }) => {
   const [selectedCategory, setSelectedCategory] = useState(initialCategory || '');
-  const categories = getPatternCategories(discipline);
-  const rawPatterns = selectedCategory
+
+  // Merge built-in patterns with custom patterns for this discipline
+  const allCustomForDiscipline = customPatterns.filter(p => p.discipline === discipline);
+  const customCategories = [...new Set(allCustomForDiscipline.map(p => p.category))].filter(Boolean);
+  const builtInCategories = getPatternCategories(discipline);
+  const categories = [...builtInCategories, ...customCategories.filter(c => !builtInCategories.includes(c))];
+
+  const rawBuiltIn = selectedCategory
     ? getPatternsForCategory(discipline, selectedCategory)
     : getPatternsForDiscipline(discipline);
-  // Apply user overrides to patterns (adds/removes chip options)
-  const patterns = overrides
-    ? rawPatterns.map(p => applyOverrides(p, overrides))
-    : rawPatterns;
+  const rawCustom = selectedCategory
+    ? allCustomForDiscipline.filter(p => p.category === selectedCategory)
+    : allCustomForDiscipline;
+
+  // Apply user overrides to built-in patterns (adds/removes chip options)
+  const builtInPatterns = overrides
+    ? rawBuiltIn.map(p => applyOverrides(p, overrides))
+    : rawBuiltIn;
+  const patterns = [...builtInPatterns, ...rawCustom];
 
   return (
     <div className="space-y-3">
@@ -74,8 +87,15 @@ const GoalPatternPicker: React.FC<GoalPatternPickerProps> = ({
                 {pattern.label}
               </span>
             </div>
-            <div className="text-[10px] text-[var(--color-text-secondary)]">
-              {pattern.category}
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-[var(--color-text-secondary)]">
+                {pattern.category}
+              </span>
+              {pattern.id.startsWith('custom_') && (
+                <span className="text-[9px] px-1.5 py-0 rounded-full bg-emerald-100 text-emerald-700 font-semibold">
+                  Custom
+                </span>
+              )}
             </div>
           </button>
         ))}

@@ -1,10 +1,15 @@
-import Database from 'better-sqlite3';
+import type BetterSqlite3 from 'better-sqlite3';
+// @journeyapps/sqlcipher is a drop-in replacement for better-sqlite3 with SQLCipher encryption.
+// We use require() because the package doesn't have a default export, then cast to better-sqlite3 types.
+const SqlcipherDatabase = require('@journeyapps/sqlcipher').Database as typeof BetterSqlite3;
 import path from 'path';
+import fs from 'fs';
+import crypto from 'crypto';
 import { app } from 'electron';
 import Store from 'electron-store';
 import { seedDefaultData, seedDefaultQuickChips, seedPayers, seedFeeSchedule, seedMFTData, seedCategoryAlignedPhrases, autoFixFeeSchedule } from './seed';
 
-let db: Database.Database;
+let db: BetterSqlite3.Database;
 
 interface StoreSchema {
   dataPath?: string;
@@ -44,6 +49,7 @@ const VALID_TABLES = new Set([
   'note_amendments',
   // Dashboard workspace
   'dashboard_notes', 'dashboard_todos',
+  'custom_patterns',
 ]);
 
 export function getDataPath(): string {
@@ -63,17 +69,41 @@ export function getDefaultDataPath(): string {
   return app.getPath('userData');
 }
 
-export function getDatabase(): Database.Database {
+export function getDatabase(): BetterSqlite3.Database {
   if (!db) {
     throw new Error('Database not initialized. Call initDatabase first.');
   }
   return db;
 }
 
-export function initDatabase(): void {
+/** Flush WAL and close database cleanly. Safe to call multiple times. */
+export function closeDatabase(): void {
+  if (!db) return;
+  try {
+    db.pragma('wal_checkpoint(TRUNCATE)');
+  } catch (_) { /* already closed or no WAL */ }
+  try {
+    db.close();
+  } catch (_) { /* already closed */ }
+}
+
+/**
+ * Initialize the database connection. If masterKeyHex is provided, the database
+ * is opened with SQLCipher encryption using that key as the PRAGMA key.
+ *
+ * @param masterKeyHex - Optional 64-char hex string (32 bytes) for SQLCipher encryption.
+ *                       If omitted, the database is opened without encryption (legacy/migration).
+ */
+export function initDatabase(masterKeyHex?: string): void {
   const dataDir = getDataPath();
   const dbPath = path.join(dataDir, 'pocketchart.db');
-  db = new Database(dbPath);
+  db = new SqlcipherDatabase(dbPath);
+
+  // If an encryption key is provided, set it BEFORE any other operations.
+  // SQLCipher requires the key pragma to be the very first statement.
+  if (masterKeyHex) {
+    db.pragma(`key = "x'${masterKeyHex}'"`);
+  }
 
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
@@ -89,6 +119,110 @@ export function initDatabase(): void {
   seedPayers(db);
   seedFeeSchedule(db);
   autoFixFeeSchedule(db);
+}
+
+/**
+ * Check whether the database file on disk is encrypted (SQLCipher) or plaintext.
+ * Returns false if the database file doesn't exist yet (fresh install).
+ */
+export function isDatabaseEncrypted(): boolean {
+  const dbPath = path.join(getDataPath(), 'pocketchart.db');
+  if (!fs.existsSync(dbPath)) return false;
+
+  // Read the first 16 bytes of the file. An unencrypted SQLite database
+  // starts with the magic string "SQLite format 3\0". An encrypted file
+  // will have random bytes instead.
+  try {
+    const fd = fs.openSync(dbPath, 'r');
+    const header = Buffer.alloc(16);
+    fs.readSync(fd, header, 0, 16, 0);
+    fs.closeSync(fd);
+    return header.toString('utf8', 0, 15) !== 'SQLite format 3';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check whether a database file exists at the configured data path.
+ */
+export function databaseFileExists(): boolean {
+  const dbPath = path.join(getDataPath(), 'pocketchart.db');
+  return fs.existsSync(dbPath);
+}
+
+/**
+ * Migrate an existing unencrypted database to an encrypted one.
+ * Uses SQLCipher's ATTACH + sqlcipher_export pattern.
+ *
+ * 1. Opens the plaintext DB
+ * 2. ATTACHes a new encrypted DB file
+ * 3. Exports all data into the encrypted copy
+ * 4. Secure-deletes the original plaintext file
+ * 5. Renames the encrypted file to the original path
+ *
+ * @param masterKeyHex - The 64-char hex key for the new encrypted database
+ */
+export function migrateToEncrypted(masterKeyHex: string): void {
+  const dbPath = path.join(getDataPath(), 'pocketchart.db');
+  const tempPath = dbPath + '.encrypting';
+
+  // Close the current DB connection if one exists
+  closeDatabase();
+
+  // 1. Open existing plaintext DB without encryption key
+  const plainDb = new SqlcipherDatabase(dbPath);
+
+  // 2. Attach a new encrypted database
+  plainDb.exec(`ATTACH DATABASE '${tempPath.replace(/'/g, "''")}' AS encrypted KEY "x'${masterKeyHex}'"`);
+
+  // 3. Export all data from main to encrypted
+  plainDb.exec("SELECT sqlcipher_export('encrypted')");
+
+  // 4. Set WAL mode on the encrypted DB
+  plainDb.exec("PRAGMA encrypted.journal_mode = WAL");
+
+  // 5. Detach and close
+  plainDb.exec("DETACH DATABASE encrypted");
+  plainDb.close();
+
+  // 6. Secure-delete the original plaintext file (overwrite with random data)
+  try {
+    const fileSize = fs.statSync(dbPath).size;
+    const randomData = crypto.randomBytes(Math.min(fileSize, 64 * 1024 * 1024)); // Cap at 64MB per write
+    let offset = 0;
+    const fd = fs.openSync(dbPath, 'w');
+    while (offset < fileSize) {
+      const chunk = offset + randomData.length > fileSize
+        ? randomData.subarray(0, fileSize - offset)
+        : randomData;
+      fs.writeSync(fd, chunk, 0, chunk.length, offset);
+      offset += chunk.length;
+    }
+    fs.closeSync(fd);
+  } catch (err) {
+    console.error('Warning: could not securely overwrite plaintext DB:', err);
+  }
+  fs.unlinkSync(dbPath);
+
+  // 7. Clean up WAL/SHM files from the old plaintext DB
+  for (const ext of ['-wal', '-shm']) {
+    const f = dbPath + ext;
+    if (fs.existsSync(f)) {
+      try { fs.unlinkSync(f); } catch { /* ignore */ }
+    }
+  }
+
+  // 8. Rename encrypted file to the original path
+  fs.renameSync(tempPath, dbPath);
+
+  // Clean up temp WAL/SHM if any
+  for (const ext of ['-wal', '-shm']) {
+    const f = tempPath + ext;
+    if (fs.existsSync(f)) {
+      try { fs.unlinkSync(f); } catch { /* ignore */ }
+    }
+  }
 }
 
 function getSchemaVersion(): number {
@@ -1616,6 +1750,38 @@ function runMigrations(): void {
         }
       },
     },
+    {
+      version: 39,
+      description: 'Create custom_patterns table for user-defined goal patterns',
+      up: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS custom_patterns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            discipline TEXT NOT NULL,
+            category TEXT NOT NULL DEFAULT '',
+            label TEXT NOT NULL,
+            icon TEXT DEFAULT '',
+            measurement_type TEXT NOT NULL DEFAULT 'percentage',
+            chips_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            deleted_at TEXT DEFAULT NULL
+          )
+        `);
+      },
+    },
+    {
+      version: 40,
+      description: 'Add session_type and evaluation_id columns to appointments',
+      up: () => {
+        const cols = db.pragma('table_info(appointments)') as any[];
+        if (!cols.find((c: any) => c.name === 'session_type')) {
+          db.exec("ALTER TABLE appointments ADD COLUMN session_type TEXT DEFAULT 'visit'");
+        }
+        if (!cols.find((c: any) => c.name === 'evaluation_id')) {
+          db.exec("ALTER TABLE appointments ADD COLUMN evaluation_id INTEGER DEFAULT NULL");
+        }
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
@@ -1841,4 +2007,914 @@ function createTables(): void {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
+}
+
+// ── Backup, Restore & Integrity Functions ──
+
+const LATEST_SCHEMA_VERSION = 40;
+
+/**
+ * Run PRAGMA quick_check — a fast consistency check on every launch.
+ * Returns 'ok' on success or a description of the first error found.
+ */
+export function runQuickCheck(): string {
+  try {
+    const result = db.pragma('quick_check') as Array<Record<string, string>>;
+    const first = result[0];
+    if (!first) return 'ok';
+    const val = Object.values(first)[0];
+    return val || 'ok';
+  } catch (err: any) {
+    return err.message || 'quick_check failed';
+  }
+}
+
+/**
+ * Run PRAGMA integrity_check — a thorough check, suitable for weekly runs.
+ * Returns 'ok' on success or a description of errors.
+ */
+export function runIntegrityCheck(): string {
+  try {
+    const result = db.pragma('integrity_check') as Array<Record<string, string>>;
+    const first = result[0];
+    if (!first) return 'ok';
+    const val = Object.values(first)[0];
+    return val || 'ok';
+  } catch (err: any) {
+    return err.message || 'integrity_check failed';
+  }
+}
+
+/**
+ * Get a summary of the current database (for display in restore confirmation).
+ */
+export function getCurrentDbSummary(): {
+  clientCount: number;
+  activeClients: number;
+  noteCount: number;
+  signedNotes: number;
+  evalCount: number;
+  goalCount: number;
+  appointmentCount: number;
+  invoiceCount: number;
+  entityCount: number;
+  earliestDate: string;
+  latestDate: string;
+  schemaVersion: number;
+} {
+  const clientCount = (db.prepare("SELECT COUNT(*) as c FROM clients WHERE deleted_at IS NULL").get() as any)?.c || 0;
+  const activeClients = (db.prepare("SELECT COUNT(*) as c FROM clients WHERE deleted_at IS NULL AND status = 'active'").get() as any)?.c || 0;
+  const noteCount = (db.prepare("SELECT COUNT(*) as c FROM notes WHERE deleted_at IS NULL").get() as any)?.c || 0;
+  const signedNotes = (db.prepare("SELECT COUNT(*) as c FROM notes WHERE deleted_at IS NULL AND signed_at IS NOT NULL AND signed_at != ''").get() as any)?.c || 0;
+  const evalCount = (db.prepare("SELECT COUNT(*) as c FROM evaluations WHERE deleted_at IS NULL").get() as any)?.c || 0;
+  const goalCount = (db.prepare("SELECT COUNT(*) as c FROM goals WHERE deleted_at IS NULL").get() as any)?.c || 0;
+  const appointmentCount = (db.prepare("SELECT COUNT(*) as c FROM appointments WHERE deleted_at IS NULL").get() as any)?.c || 0;
+  const invoiceCount = (db.prepare("SELECT COUNT(*) as c FROM invoices WHERE deleted_at IS NULL").get() as any)?.c || 0;
+  const entityCount = (db.prepare("SELECT COUNT(*) as c FROM contracted_entities WHERE deleted_at IS NULL").get() as any)?.c || 0;
+  const dates = db.prepare("SELECT MIN(date_of_service) as earliest, MAX(date_of_service) as latest FROM notes WHERE deleted_at IS NULL").get() as any;
+  const schemaVersion = getSchemaVersion();
+
+  return {
+    clientCount,
+    activeClients,
+    noteCount,
+    signedNotes,
+    evalCount,
+    goalCount,
+    appointmentCount,
+    invoiceCount,
+    entityCount,
+    earliestDate: dates?.earliest || '',
+    latestDate: dates?.latest || '',
+    schemaVersion,
+  };
+}
+
+/**
+ * Validate a backup database file and return a summary of its contents.
+ * Opens the file as a separate read-only connection (does not affect the running DB).
+ *
+ * @param filePath - Path to the backup .db file
+ * @param masterKeyHex - 64-char hex string to decrypt the file (or empty for unencrypted)
+ * @returns BackupSummary-compatible object
+ */
+export function validateBackupFile(
+  filePath: string,
+  masterKeyHex: string
+): {
+  clientCount: number;
+  activeClients: number;
+  noteCount: number;
+  signedNotes: number;
+  evalCount: number;
+  goalCount: number;
+  appointmentCount: number;
+  invoiceCount: number;
+  entityCount: number;
+  earliestDate: string;
+  latestDate: string;
+  schemaVersion: number;
+  practiceInfo: { name?: string; discipline?: string } | null;
+  isCompatible: boolean;
+  validationPassed: boolean;
+} {
+  const backupDb = new SqlcipherDatabase(filePath, { readonly: true });
+
+  try {
+    // Set encryption key if provided
+    if (masterKeyHex) {
+      backupDb.pragma(`key = "x'${masterKeyHex}'"`);
+    }
+
+    // Quick check to validate the file
+    const qc = backupDb.pragma('quick_check') as Array<Record<string, string>>;
+    const qcResult = Object.values(qc[0] || {})[0] || 'ok';
+    if (qcResult !== 'ok') {
+      return {
+        clientCount: 0, activeClients: 0, noteCount: 0, signedNotes: 0,
+        evalCount: 0, goalCount: 0, appointmentCount: 0, invoiceCount: 0,
+        entityCount: 0, earliestDate: '', latestDate: '', schemaVersion: 0,
+        practiceInfo: null, isCompatible: false, validationPassed: false,
+      };
+    }
+
+    // Check required tables exist
+    const tables = backupDb.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>;
+    const tableNames = new Set(tables.map(t => t.name));
+    const required = ['clients', 'notes', 'evaluations', 'goals', 'appointments', 'settings'];
+    for (const t of required) {
+      if (!tableNames.has(t)) {
+        return {
+          clientCount: 0, activeClients: 0, noteCount: 0, signedNotes: 0,
+          evalCount: 0, goalCount: 0, appointmentCount: 0, invoiceCount: 0,
+          entityCount: 0, earliestDate: '', latestDate: '', schemaVersion: 0,
+          practiceInfo: null, isCompatible: false, validationPassed: false,
+        };
+      }
+    }
+
+    // Read schema version
+    const vRow = backupDb.prepare("SELECT value FROM settings WHERE key = 'schema_version'").get() as { value: string } | undefined;
+    const schemaVersion = vRow ? parseInt(vRow.value, 10) : 0;
+
+    // Counts (safely handle missing columns with try/catch)
+    const safeCount = (sql: string): number => {
+      try { return (backupDb.prepare(sql).get() as any)?.c || 0; } catch { return 0; }
+    };
+
+    const clientCount = safeCount("SELECT COUNT(*) as c FROM clients WHERE deleted_at IS NULL");
+    const activeClients = safeCount("SELECT COUNT(*) as c FROM clients WHERE deleted_at IS NULL AND status = 'active'");
+    const noteCount = safeCount("SELECT COUNT(*) as c FROM notes WHERE deleted_at IS NULL");
+    const signedNotes = safeCount("SELECT COUNT(*) as c FROM notes WHERE deleted_at IS NULL AND signed_at IS NOT NULL AND signed_at != ''");
+    const evalCount = safeCount("SELECT COUNT(*) as c FROM evaluations WHERE deleted_at IS NULL");
+    const goalCount = safeCount("SELECT COUNT(*) as c FROM goals WHERE deleted_at IS NULL");
+    const appointmentCount = safeCount("SELECT COUNT(*) as c FROM appointments WHERE deleted_at IS NULL");
+    const invoiceCount = tableNames.has('invoices') ? safeCount("SELECT COUNT(*) as c FROM invoices WHERE deleted_at IS NULL") : 0;
+    const entityCount = tableNames.has('contracted_entities') ? safeCount("SELECT COUNT(*) as c FROM contracted_entities WHERE deleted_at IS NULL") : 0;
+
+    // Date range
+    let earliestDate = '';
+    let latestDate = '';
+    try {
+      const dates = backupDb.prepare("SELECT MIN(date_of_service) as earliest, MAX(date_of_service) as latest FROM notes WHERE deleted_at IS NULL").get() as any;
+      earliestDate = dates?.earliest || '';
+      latestDate = dates?.latest || '';
+    } catch {}
+
+    // Practice info
+    let practiceInfo: { name?: string; discipline?: string } | null = null;
+    try {
+      const practice = backupDb.prepare("SELECT name, discipline FROM practice LIMIT 1").get() as any;
+      if (practice) {
+        practiceInfo = { name: practice.name, discipline: practice.discipline };
+      }
+    } catch {}
+
+    return {
+      clientCount,
+      activeClients,
+      noteCount,
+      signedNotes,
+      evalCount,
+      goalCount,
+      appointmentCount,
+      invoiceCount,
+      entityCount,
+      earliestDate,
+      latestDate,
+      schemaVersion,
+      practiceInfo,
+      isCompatible: schemaVersion <= LATEST_SCHEMA_VERSION,
+      validationPassed: true,
+    };
+  } finally {
+    try { backupDb.close(); } catch {}
+  }
+}
+
+/**
+ * Get a list of clients from a backup file for the selective import selector.
+ * Opens the backup read-only, queries clients with sub-counts.
+ */
+export function getBackupClients(
+  filePath: string,
+  masterKeyHex: string
+): Array<{
+  id: number;
+  first_name: string;
+  last_name: string;
+  dob: string;
+  status: string;
+  discipline: string;
+  noteCount: number;
+  signedNoteCount: number;
+  evalCount: number;
+  goalCount: number;
+  appointmentCount: number;
+  earliestService: string;
+  latestService: string;
+  existsInCurrent: boolean;
+}> {
+  const backupDb = new SqlcipherDatabase(filePath, { readonly: true });
+
+  try {
+    if (masterKeyHex) {
+      backupDb.pragma(`key = "x'${masterKeyHex}'"`);
+    }
+
+    // Get all clients (including soft-deleted for full picture)
+    const clients = backupDb.prepare(`
+      SELECT id, first_name, last_name, dob, status, discipline
+      FROM clients
+      WHERE deleted_at IS NULL
+      ORDER BY last_name, first_name
+    `).all() as Array<{
+      id: number; first_name: string; last_name: string;
+      dob: string; status: string; discipline: string;
+    }>;
+
+    const currentDb = db; // The running database
+
+    return clients.map(client => {
+      // Sub-counts
+      const noteCount = (backupDb.prepare("SELECT COUNT(*) as c FROM notes WHERE client_id = ? AND deleted_at IS NULL").get(client.id) as any)?.c || 0;
+      const signedNoteCount = (backupDb.prepare("SELECT COUNT(*) as c FROM notes WHERE client_id = ? AND deleted_at IS NULL AND signed_at IS NOT NULL AND signed_at != ''").get(client.id) as any)?.c || 0;
+      const evalCount = (backupDb.prepare("SELECT COUNT(*) as c FROM evaluations WHERE client_id = ? AND deleted_at IS NULL").get(client.id) as any)?.c || 0;
+      const goalCount = (backupDb.prepare("SELECT COUNT(*) as c FROM goals WHERE client_id = ? AND deleted_at IS NULL").get(client.id) as any)?.c || 0;
+      const appointmentCount = (backupDb.prepare("SELECT COUNT(*) as c FROM appointments WHERE client_id = ? AND deleted_at IS NULL").get(client.id) as any)?.c || 0;
+
+      // Date range
+      const dates = backupDb.prepare("SELECT MIN(date_of_service) as earliest, MAX(date_of_service) as latest FROM notes WHERE client_id = ? AND deleted_at IS NULL").get(client.id) as any;
+
+      // Check if same-name client exists in current DB
+      let existsInCurrent = false;
+      try {
+        const match = currentDb.prepare(
+          "SELECT id FROM clients WHERE LOWER(first_name) = LOWER(?) AND LOWER(last_name) = LOWER(?) AND deleted_at IS NULL"
+        ).get(client.first_name, client.last_name);
+        existsInCurrent = !!match;
+      } catch {}
+
+      return {
+        id: client.id,
+        first_name: client.first_name,
+        last_name: client.last_name,
+        dob: client.dob || '',
+        status: client.status || 'active',
+        discipline: client.discipline || '',
+        noteCount,
+        signedNoteCount,
+        evalCount,
+        goalCount,
+        appointmentCount,
+        earliestService: dates?.earliest || '',
+        latestService: dates?.latest || '',
+        existsInCurrent,
+      };
+    });
+  } finally {
+    try { backupDb.close(); } catch {}
+  }
+}
+
+/**
+ * Replace the current database file with a backup.
+ * MUST call closeDatabase() before this, and initDatabase() after.
+ */
+export function restoreFullDatabase(backupDbPath: string): void {
+  const dataPath = getDataPath();
+  const dbPath = path.join(dataPath, 'pocketchart.db');
+
+  // Ensure data directory exists
+  if (!fs.existsSync(dataPath)) {
+    fs.mkdirSync(dataPath, { recursive: true });
+  }
+
+  // Copy backup over current
+  fs.copyFileSync(backupDbPath, dbPath);
+
+  // Clean up stale WAL/SHM files
+  const walPath = dbPath + '-wal';
+  const shmPath = dbPath + '-shm';
+  if (fs.existsSync(walPath)) fs.unlinkSync(walPath);
+  if (fs.existsSync(shmPath)) fs.unlinkSync(shmPath);
+}
+
+/**
+ * Import selected clients from a backup into the current database.
+ * Performs a full deep copy with ID remapping across all FK relationships.
+ * All work is wrapped in a single transaction (all-or-nothing).
+ */
+export function importSelectedClients(
+  backupPath: string,
+  masterKeyHex: string,
+  clientIds: number[]
+): {
+  success: boolean;
+  clients: number;
+  notes: number;
+  evaluations: number;
+  goals: number;
+  appointments: number;
+  documents: number;
+  documentFilesMissing: number;
+  invoices: number;
+  payments: number;
+  entities: number;
+  warnings: string[];
+} {
+  const backupDb = new SqlcipherDatabase(backupPath, { readonly: true });
+  const warnings: string[] = [];
+  const counts = {
+    clients: 0, notes: 0, evaluations: 0, goals: 0, appointments: 0,
+    documents: 0, documentFilesMissing: 0, invoices: 0, payments: 0, entities: 0,
+  };
+
+  try {
+    if (masterKeyHex) {
+      backupDb.pragma(`key = "x'${masterKeyHex}'"`);
+    }
+
+    // ID remapping tables
+    const clientIdMap = new Map<number, number>();
+    const entityIdMap = new Map<number, number>();
+    const evalIdMap = new Map<number, number>();
+    const noteIdMap = new Map<number, number>();
+    const goalIdMap = new Map<number, number>();
+    const appointmentIdMap = new Map<number, number>();
+    const invoiceIdMap = new Map<number, number>();
+    const claimIdMap = new Map<number, number>();
+    const stagedGoalIdMap = new Map<number, number>();
+
+    // Helper: check if table exists in backup
+    const backupTableExists = (name: string): boolean => {
+      const row = backupDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name);
+      return !!row;
+    };
+
+    // Helper: check if column exists in backup table
+    const backupColumnExists = (table: string, col: string): boolean => {
+      try {
+        const cols = backupDb.pragma(`table_info(${table})`) as Array<{ name: string }>;
+        return cols.some(c => c.name === col);
+      } catch { return false; }
+    };
+
+    // Helper: remap a nullable FK
+    const remap = (map: Map<number, number>, oldId: number | null): number | null => {
+      if (oldId === null || oldId === undefined || oldId === 0) return null;
+      return map.get(oldId) ?? null;
+    };
+
+    const importTransaction = db.transaction(() => {
+      // 1. Collect entity IDs referenced by selected clients' records
+      const entityIdsNeeded = new Set<number>();
+      if (backupTableExists('contracted_entities')) {
+        for (const cid of clientIds) {
+          // Check notes, appointments, invoices for entity_id references
+          const noteEntities = backupDb.prepare(
+            "SELECT DISTINCT entity_id FROM notes WHERE client_id = ? AND entity_id IS NOT NULL AND deleted_at IS NULL"
+          ).all(cid) as Array<{ entity_id: number }>;
+          noteEntities.forEach(r => entityIdsNeeded.add(r.entity_id));
+
+          if (backupTableExists('appointments') && backupColumnExists('appointments', 'entity_id')) {
+            const apptEntities = backupDb.prepare(
+              "SELECT DISTINCT entity_id FROM appointments WHERE client_id = ? AND entity_id IS NOT NULL AND deleted_at IS NULL"
+            ).all(cid) as Array<{ entity_id: number }>;
+            apptEntities.forEach(r => entityIdsNeeded.add(r.entity_id));
+          }
+        }
+      }
+
+      // 2. Import entities (match by name or create new)
+      for (const oldEntityId of entityIdsNeeded) {
+        const entity = backupDb.prepare("SELECT * FROM contracted_entities WHERE id = ?").get(oldEntityId) as any;
+        if (!entity) continue;
+
+        const existing = db.prepare(
+          "SELECT id FROM contracted_entities WHERE LOWER(name) = LOWER(?) AND deleted_at IS NULL"
+        ).get(entity.name) as any;
+
+        if (existing) {
+          entityIdMap.set(oldEntityId, existing.id);
+        } else {
+          const result = db.prepare(`
+            INSERT INTO contracted_entities (name, contact_name, contact_email, contact_phone,
+              billing_address_street, billing_address_city, billing_address_state, billing_address_zip,
+              default_note_type, notes, created_at, updated_at, deleted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            entity.name, entity.contact_name || '', entity.contact_email || '', entity.contact_phone || '',
+            entity.billing_address_street || '', entity.billing_address_city || '', entity.billing_address_state || '', entity.billing_address_zip || '',
+            entity.default_note_type || 'soap', entity.notes || '', entity.created_at, entity.updated_at, entity.deleted_at
+          );
+          entityIdMap.set(oldEntityId, Number(result.lastInsertRowid));
+          counts.entities++;
+        }
+      }
+
+      // 3. Import clients
+      for (const oldClientId of clientIds) {
+        const client = backupDb.prepare("SELECT * FROM clients WHERE id = ?").get(oldClientId) as any;
+        if (!client) {
+          warnings.push(`Client ID ${oldClientId} not found in backup`);
+          continue;
+        }
+
+        const result = db.prepare(`
+          INSERT INTO clients (first_name, last_name, dob, phone, email, address, city, state, zip, gender,
+            primary_dx_code, primary_dx_description, secondary_dx, default_cpt_code,
+            insurance_payer, insurance_member_id, insurance_group, insurance_payer_id,
+            subscriber_relationship, subscriber_first_name, subscriber_last_name, subscriber_dob,
+            referring_physician, referring_npi, referring_physician_qualifier, referral_source,
+            stripe_customer_id, onset_date, onset_qualifier, employment_related, auto_accident,
+            auto_accident_state, other_accident, claim_accept_assignment, patient_signature_source,
+            insured_signature_source, prior_auth_number, additional_claim_info,
+            service_facility_name, service_facility_npi,
+            status, discipline, assigned_user_id, created_at, updated_at, deleted_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          client.first_name, client.last_name, client.dob || '', client.phone || '', client.email || '',
+          client.address || '', client.city || '', client.state || '', client.zip || '', client.gender || '',
+          client.primary_dx_code || '', client.primary_dx_description || '', client.secondary_dx || '[]', client.default_cpt_code || '',
+          client.insurance_payer || '', client.insurance_member_id || '', client.insurance_group || '', client.insurance_payer_id || '',
+          client.subscriber_relationship || '', client.subscriber_first_name || '', client.subscriber_last_name || '', client.subscriber_dob || '',
+          client.referring_physician || '', client.referring_npi || '', client.referring_physician_qualifier || '', client.referral_source || '',
+          client.stripe_customer_id || '', client.onset_date || '', client.onset_qualifier || '', client.employment_related || '',
+          client.auto_accident || '', client.auto_accident_state || '', client.other_accident || '', client.claim_accept_assignment || '',
+          client.patient_signature_source || '', client.insured_signature_source || '', client.prior_auth_number || '',
+          client.additional_claim_info || '', client.service_facility_name || '', client.service_facility_npi || '',
+          client.status || 'active', client.discipline || '', client.assigned_user_id, client.created_at, client.updated_at, client.deleted_at
+        );
+        clientIdMap.set(oldClientId, Number(result.lastInsertRowid));
+        counts.clients++;
+      }
+
+      // 4. Import evaluations
+      for (const oldClientId of clientIds) {
+        const newClientId = clientIdMap.get(oldClientId);
+        if (!newClientId) continue;
+
+        const evals = backupDb.prepare("SELECT * FROM evaluations WHERE client_id = ?").all(oldClientId) as any[];
+        for (const ev of evals) {
+          const result = db.prepare(`
+            INSERT INTO evaluations (client_id, eval_date, discipline, content, signature_image, signature_typed,
+              signed_at, created_by_user_id, created_at, updated_at, deleted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            newClientId, ev.eval_date, ev.discipline || '', ev.content || '', ev.signature_image || '',
+            ev.signature_typed || '', ev.signed_at || '', ev.created_by_user_id, ev.created_at, ev.updated_at, ev.deleted_at
+          );
+          evalIdMap.set(ev.id, Number(result.lastInsertRowid));
+          counts.evaluations++;
+        }
+      }
+
+      // 5. Import notes
+      for (const oldClientId of clientIds) {
+        const newClientId = clientIdMap.get(oldClientId);
+        if (!newClientId) continue;
+
+        const notes = backupDb.prepare("SELECT * FROM notes WHERE client_id = ?").all(oldClientId) as any[];
+        for (const note of notes) {
+          const result = db.prepare(`
+            INSERT INTO notes (client_id, date_of_service, time_in, time_out, units, cpt_code, cpt_codes,
+              cpt_modifiers, charge_amount, place_of_service, diagnosis_pointers, rendering_provider_npi,
+              subjective, objective, assessment, plan, goals_addressed,
+              signature_image, signature_typed, signed_at, created_by_user_id,
+              entity_id, rate_override, rate_override_reason,
+              frequency_per_week, duration_weeks, frequency_notes,
+              note_type, patient_name, progress_report_data, discharge_data,
+              created_at, updated_at, deleted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            newClientId, note.date_of_service || '', note.time_in || '', note.time_out || '',
+            note.units || 0, note.cpt_code || '', note.cpt_codes || '[]',
+            note.cpt_modifiers || '[]', note.charge_amount || 0, note.place_of_service || '',
+            note.diagnosis_pointers || '[]', note.rendering_provider_npi || '',
+            note.subjective || '', note.objective || '', note.assessment || '', note.plan || '',
+            note.goals_addressed || '[]',
+            note.signature_image || '', note.signature_typed || '', note.signed_at || '', note.created_by_user_id,
+            remap(entityIdMap, note.entity_id), note.rate_override, note.rate_override_reason || '',
+            note.frequency_per_week, note.duration_weeks, note.frequency_notes || '',
+            note.note_type || 'soap', note.patient_name || '', note.progress_report_data || '', note.discharge_data || '',
+            note.created_at, note.updated_at, note.deleted_at
+          );
+          noteIdMap.set(note.id, Number(result.lastInsertRowid));
+          counts.notes++;
+        }
+      }
+
+      // 6. Import goals
+      for (const oldClientId of clientIds) {
+        const newClientId = clientIdMap.get(oldClientId);
+        if (!newClientId) continue;
+
+        const goals = backupDb.prepare("SELECT * FROM goals WHERE client_id = ?").all(oldClientId) as any[];
+        for (const goal of goals) {
+          const sourceDocId = goal.source_document_type === 'eval'
+            ? remap(evalIdMap, goal.source_document_id)
+            : remap(noteIdMap, goal.source_document_id);
+
+          const result = db.prepare(`
+            INSERT INTO goals (client_id, goal_text, goal_type, category, status, target_date, met_date,
+              measurement_type, baseline, target, baseline_value, target_value, instrument,
+              pattern_id, components_json, created_by_user_id, source_document_id, source_document_type,
+              created_at, deleted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            newClientId, goal.goal_text || '', goal.goal_type || 'STG', goal.category || '',
+            goal.status || 'active', goal.target_date || '', goal.met_date || '',
+            goal.measurement_type || 'custom_text', goal.baseline || 0, goal.target || 0,
+            goal.baseline_value || '', goal.target_value || '', goal.instrument || '',
+            goal.pattern_id || '', goal.components_json || '', goal.created_by_user_id,
+            sourceDocId, goal.source_document_type || '', goal.created_at, goal.deleted_at
+          );
+          goalIdMap.set(goal.id, Number(result.lastInsertRowid));
+          counts.goals++;
+        }
+      }
+
+      // 6b. Update goals_addressed JSON in imported notes
+      for (const [oldNoteId, newNoteId] of noteIdMap.entries()) {
+        const note = backupDb.prepare("SELECT goals_addressed FROM notes WHERE id = ?").get(oldNoteId) as any;
+        if (!note?.goals_addressed) continue;
+        try {
+          const oldGoalIds: number[] = JSON.parse(note.goals_addressed);
+          if (!Array.isArray(oldGoalIds) || oldGoalIds.length === 0) continue;
+          const newGoalIds = oldGoalIds.map(id => goalIdMap.get(id)).filter(Boolean);
+          db.prepare("UPDATE notes SET goals_addressed = ? WHERE id = ?").run(
+            JSON.stringify(newGoalIds), newNoteId
+          );
+        } catch {}
+      }
+
+      // 7. Import appointments
+      for (const oldClientId of clientIds) {
+        const newClientId = clientIdMap.get(oldClientId);
+        if (!newClientId) continue;
+
+        const appts = backupDb.prepare("SELECT * FROM appointments WHERE client_id = ?").all(oldClientId) as any[];
+        for (const appt of appts) {
+          const result = db.prepare(`
+            INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status,
+              note_id, user_id, cancelled_at, cancellation_reason, late_cancel,
+              entity_id, entity_rate, rate_override_reason, patient_name,
+              visit_type, session_type, evaluation_id, created_at, deleted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            newClientId, appt.scheduled_date || '', appt.scheduled_time || '', appt.duration_minutes || 60,
+            appt.status || 'scheduled', remap(noteIdMap, appt.note_id), appt.user_id,
+            appt.cancelled_at, appt.cancellation_reason || '', appt.late_cancel ? 1 : 0,
+            remap(entityIdMap, appt.entity_id), appt.entity_rate, appt.rate_override_reason || '',
+            appt.patient_name || '', appt.visit_type || 'O', appt.session_type || 'visit',
+            remap(evalIdMap, appt.evaluation_id), appt.created_at, appt.deleted_at
+          );
+          appointmentIdMap.set(appt.id, Number(result.lastInsertRowid));
+          counts.appointments++;
+        }
+      }
+
+      // 8. Import invoices + invoice_items + payments
+      if (backupTableExists('invoices')) {
+        for (const oldClientId of clientIds) {
+          const newClientId = clientIdMap.get(oldClientId);
+          if (!newClientId) continue;
+
+          const invoices = backupDb.prepare("SELECT * FROM invoices WHERE client_id = ?").all(oldClientId) as any[];
+          for (const inv of invoices) {
+            const result = db.prepare(`
+              INSERT INTO invoices (client_id, entity_id, invoice_number, invoice_date, due_date,
+                subtotal, discount_amount, total_amount, status, notes,
+                stripe_invoice_id, stripe_payment_link_id, stripe_payment_link_url,
+                created_at, updated_at, deleted_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              newClientId, remap(entityIdMap, inv.entity_id), inv.invoice_number || '',
+              inv.invoice_date || '', inv.due_date || '', inv.subtotal || 0, inv.discount_amount || 0,
+              inv.total_amount || 0, inv.status || 'draft', inv.notes || '',
+              inv.stripe_invoice_id || '', inv.stripe_payment_link_id || '', inv.stripe_payment_link_url || '',
+              inv.created_at, inv.updated_at, inv.deleted_at
+            );
+            invoiceIdMap.set(inv.id, Number(result.lastInsertRowid));
+            counts.invoices++;
+
+            // Invoice items
+            if (backupTableExists('invoice_items')) {
+              const items = backupDb.prepare("SELECT * FROM invoice_items WHERE invoice_id = ?").all(inv.id) as any[];
+              for (const item of items) {
+                db.prepare(`
+                  INSERT INTO invoice_items (invoice_id, note_id, description, cpt_code, service_date, units, unit_price, amount, created_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `).run(
+                  invoiceIdMap.get(inv.id), remap(noteIdMap, item.note_id),
+                  item.description || '', item.cpt_code || '', item.service_date || '',
+                  item.units || 0, item.unit_price || 0, item.amount || 0, item.created_at
+                );
+              }
+            }
+          }
+
+          // Payments
+          if (backupTableExists('payments')) {
+            const payments = backupDb.prepare("SELECT * FROM payments WHERE client_id = ?").all(oldClientId) as any[];
+            for (const pmt of payments) {
+              db.prepare(`
+                INSERT INTO payments (client_id, invoice_id, payment_date, amount, payment_method, reference_number,
+                  stripe_payment_intent_id, notes, created_at, deleted_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              `).run(
+                newClientId, remap(invoiceIdMap, pmt.invoice_id), pmt.payment_date || '', pmt.amount || 0,
+                pmt.payment_method || 'cash', pmt.reference_number || '',
+                pmt.stripe_payment_intent_id || '', pmt.notes || '', pmt.created_at, pmt.deleted_at
+              );
+              counts.payments++;
+            }
+          }
+        }
+      }
+
+      // 9. Import remaining FK tables (authorizations, claims, compliance, communication_log, mileage, discounts, documents, staged goals, etc.)
+      for (const oldClientId of clientIds) {
+        const newClientId = clientIdMap.get(oldClientId);
+        if (!newClientId) continue;
+
+        // Authorizations
+        if (backupTableExists('authorizations')) {
+          const auths = backupDb.prepare("SELECT * FROM authorizations WHERE client_id = ?").all(oldClientId) as any[];
+          for (const auth of auths) {
+            db.prepare(`
+              INSERT INTO authorizations (client_id, entity_id, payer_name, payer_id, auth_number,
+                start_date, end_date, units_approved, units_used, cpt_codes, status, notes,
+                created_at, updated_at, deleted_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              newClientId, remap(entityIdMap, auth.entity_id), auth.payer_name || '', auth.payer_id || '',
+              auth.auth_number || '', auth.start_date || '', auth.end_date || '',
+              auth.units_approved || 0, auth.units_used || 0, auth.cpt_codes || '[]',
+              auth.status || 'active', auth.notes || '', auth.created_at, auth.updated_at, auth.deleted_at
+            );
+          }
+        }
+
+        // Claims + claim_lines
+        if (backupTableExists('claims')) {
+          const claims = backupDb.prepare("SELECT * FROM claims WHERE client_id = ?").all(oldClientId) as any[];
+          for (const claim of claims) {
+            const result = db.prepare(`
+              INSERT INTO claims (client_id, claim_number, clearinghouse_claim_id, payer_claim_number,
+                payer_name, payer_id, service_date_start, service_date_end, total_charge, status,
+                submitted_at, accepted_at, paid_at, rejection_codes, rejection_reasons,
+                paid_amount, adjustment_amount, patient_responsibility, era_id,
+                edi_837_content, edi_835_content, created_at, updated_at, deleted_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              newClientId, claim.claim_number || '', claim.clearinghouse_claim_id || '', claim.payer_claim_number || '',
+              claim.payer_name || '', claim.payer_id || '', claim.service_date_start || '', claim.service_date_end || '',
+              claim.total_charge || 0, claim.status || 'draft',
+              claim.submitted_at, claim.accepted_at, claim.paid_at, claim.rejection_codes || '[]',
+              claim.rejection_reasons || '[]', claim.paid_amount || 0, claim.adjustment_amount || 0,
+              claim.patient_responsibility || 0, claim.era_id,
+              claim.edi_837_content || '', claim.edi_835_content || '', claim.created_at, claim.updated_at, claim.deleted_at
+            );
+            claimIdMap.set(claim.id, Number(result.lastInsertRowid));
+
+            if (backupTableExists('claim_lines')) {
+              const lines = backupDb.prepare("SELECT * FROM claim_lines WHERE claim_id = ?").all(claim.id) as any[];
+              for (const line of lines) {
+                db.prepare(`
+                  INSERT INTO claim_lines (claim_id, note_id, line_number, service_date, cpt_code, modifiers,
+                    units, charge_amount, diagnosis_pointers, place_of_service,
+                    paid_amount, adjustment_amount, adjustment_reason_codes, patient_responsibility, created_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `).run(
+                  claimIdMap.get(claim.id), remap(noteIdMap, line.note_id), line.line_number || 0,
+                  line.service_date || '', line.cpt_code || '', line.modifiers || '[]',
+                  line.units || 0, line.charge_amount || 0, line.diagnosis_pointers || '[]',
+                  line.place_of_service || '', line.paid_amount || 0, line.adjustment_amount || 0,
+                  line.adjustment_reason_codes || '[]', line.patient_responsibility || 0, line.created_at
+                );
+              }
+            }
+          }
+        }
+
+        // Compliance tracking
+        if (backupTableExists('compliance_tracking')) {
+          const comp = backupDb.prepare("SELECT * FROM compliance_tracking WHERE client_id = ?").all(oldClientId) as any[];
+          for (const c of comp) {
+            db.prepare(`
+              INSERT INTO compliance_tracking (client_id, tracking_enabled, compliance_preset,
+                progress_visit_threshold, progress_day_threshold, recert_day_threshold,
+                visits_since_last_progress, last_progress_date, last_recert_date,
+                next_progress_due, next_recert_due, recert_md_signature_received,
+                physician_order_required, physician_order_expiration, physician_order_document_id,
+                created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              newClientId, c.tracking_enabled ? 1 : 0, c.compliance_preset || 'none',
+              c.progress_visit_threshold || 10, c.progress_day_threshold || 30, c.recert_day_threshold || 90,
+              c.visits_since_last_progress || 0, c.last_progress_date, c.last_recert_date,
+              c.next_progress_due, c.next_recert_due, c.recert_md_signature_received ? 1 : 0,
+              c.physician_order_required ? 1 : 0, c.physician_order_expiration, null,
+              c.created_at, c.updated_at
+            );
+          }
+        }
+
+        // Communication log
+        if (backupTableExists('communication_log')) {
+          const logs = backupDb.prepare("SELECT * FROM communication_log WHERE client_id = ?").all(oldClientId) as any[];
+          for (const log of logs) {
+            db.prepare(`
+              INSERT INTO communication_log (client_id, entity_id, communication_date, type, direction,
+                contact_name, summary, created_at, deleted_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              newClientId, remap(entityIdMap, log.entity_id), log.communication_date || '',
+              log.type || 'other', log.direction || 'outgoing', log.contact_name || '',
+              log.summary || '', log.created_at, log.deleted_at
+            );
+          }
+        }
+
+        // Mileage
+        if (backupTableExists('mileage_log')) {
+          const miles = backupDb.prepare("SELECT * FROM mileage_log WHERE client_id = ?").all(oldClientId) as any[];
+          for (const m of miles) {
+            db.prepare(`
+              INSERT INTO mileage_log (date, appointment_id, client_id, entity_id,
+                origin_address, destination_address, miles, reimbursement_rate, reimbursement_amount,
+                is_reimbursable, notes, created_at, deleted_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              m.date || '', remap(appointmentIdMap, m.appointment_id), newClientId,
+              remap(entityIdMap, m.entity_id), m.origin_address || '', m.destination_address || '',
+              m.miles || 0, m.reimbursement_rate, m.reimbursement_amount,
+              m.is_reimbursable ? 1 : 0, m.notes || '', m.created_at, m.deleted_at
+            );
+          }
+        }
+
+        // Client discounts
+        if (backupTableExists('client_discounts')) {
+          const discounts = backupDb.prepare("SELECT * FROM client_discounts WHERE client_id = ?").all(oldClientId) as any[];
+          for (const d of discounts) {
+            db.prepare(`
+              INSERT INTO client_discounts (client_id, discount_type, label, total_sessions, paid_sessions,
+                sessions_used, session_rate, flat_rate, flat_rate_sessions, flat_rate_sessions_used,
+                discount_percent, discount_fixed, start_date, end_date, status, notes,
+                created_at, updated_at, deleted_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              newClientId, d.discount_type || 'package', d.label || '', d.total_sessions, d.paid_sessions,
+              d.sessions_used || 0, d.session_rate, d.flat_rate, d.flat_rate_sessions, d.flat_rate_sessions_used || 0,
+              d.discount_percent, d.discount_fixed, d.start_date, d.end_date, d.status || 'active',
+              d.notes || '', d.created_at, d.updated_at, d.deleted_at
+            );
+          }
+        }
+
+        // Client documents (DB records only — physical file copying deferred)
+        const docs = backupDb.prepare("SELECT * FROM client_documents WHERE client_id = ?").all(oldClientId) as any[];
+        for (const doc of docs) {
+          db.prepare(`
+            INSERT INTO client_documents (client_id, filename, original_name, file_type, file_size, category, notes, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            newClientId, doc.filename || '', doc.original_name || '', doc.file_type || '',
+            doc.file_size || 0, doc.category || 'other', doc.notes || '', doc.created_at
+          );
+          counts.documents++;
+        }
+        if (docs.length > 0) {
+          const docClient = backupDb.prepare("SELECT first_name, last_name FROM clients WHERE id = ?").get(oldClientId) as any;
+          warnings.push(`${docs.length} document records imported for ${docClient?.first_name || 'client'} — physical files may need to be re-uploaded.`);
+        }
+
+        // Staged goals
+        if (backupTableExists('staged_goals')) {
+          const staged = backupDb.prepare("SELECT * FROM staged_goals WHERE client_id = ?").all(oldClientId) as any[];
+          for (const sg of staged) {
+            const result = db.prepare(`
+              INSERT INTO staged_goals (client_id, goal_text, goal_type, category, rationale,
+                flagged_at, flagged_from_note_id, status, promoted_at, promoted_in_note_id,
+                promoted_to_goal_id, dismissed_at, dismiss_reason, created_at, deleted_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              newClientId, sg.goal_text || '', sg.goal_type || 'STG', sg.category || '',
+              sg.rationale || '', sg.flagged_at || '', remap(noteIdMap, sg.flagged_from_note_id),
+              sg.status || 'staged', sg.promoted_at, remap(noteIdMap, sg.promoted_in_note_id),
+              remap(goalIdMap, sg.promoted_to_goal_id), sg.dismissed_at, sg.dismiss_reason || '',
+              sg.created_at, sg.deleted_at
+            );
+            stagedGoalIdMap.set(sg.id, Number(result.lastInsertRowid));
+          }
+        }
+
+        // Progress report goals
+        if (backupTableExists('progress_report_goals')) {
+          // Only import for notes that were imported
+          for (const [oldNoteId, newNoteId] of noteIdMap.entries()) {
+            const prGoals = backupDb.prepare("SELECT * FROM progress_report_goals WHERE note_id = ?").all(oldNoteId) as any[];
+            for (const prg of prGoals) {
+              // Only import if the referenced client matches
+              const noteClient = backupDb.prepare("SELECT client_id FROM notes WHERE id = ?").get(oldNoteId) as any;
+              if (!noteClient || noteClient.client_id !== oldClientId) continue;
+
+              db.prepare(`
+                INSERT INTO progress_report_goals (note_id, goal_id, status_at_report, performance_data,
+                  clinical_notes, goal_text_snapshot, measurement_type, current_value, current_numeric,
+                  baseline_value_snapshot, target_value_snapshot, baseline_snapshot, target_snapshot,
+                  is_new_goal, is_staged_promotion, staged_goal_id, created_at, deleted_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              `).run(
+                newNoteId, remap(goalIdMap, prg.goal_id), prg.status_at_report || 'progressing',
+                prg.performance_data || '', prg.clinical_notes || '', prg.goal_text_snapshot || '',
+                prg.measurement_type || 'custom_text', prg.current_value || '', prg.current_numeric || 0,
+                prg.baseline_value_snapshot || '', prg.target_value_snapshot || '',
+                prg.baseline_snapshot || 0, prg.target_snapshot || 0,
+                prg.is_new_goal ? 1 : 0, prg.is_staged_promotion ? 1 : 0,
+                remap(stagedGoalIdMap, prg.staged_goal_id), prg.created_at, prg.deleted_at
+              );
+            }
+          }
+        }
+
+        // Goal progress history
+        if (backupTableExists('goal_progress_history')) {
+          for (const [oldGoalId, newGoalId] of goalIdMap.entries()) {
+            const entries = backupDb.prepare("SELECT * FROM goal_progress_history WHERE goal_id = ?").all(oldGoalId) as any[];
+            for (const entry of entries) {
+              // Only import for goals belonging to this client
+              const goal = backupDb.prepare("SELECT client_id FROM goals WHERE id = ?").get(oldGoalId) as any;
+              if (!goal || goal.client_id !== oldClientId) continue;
+
+              db.prepare(`
+                INSERT INTO goal_progress_history (goal_id, client_id, recorded_date, measurement_type,
+                  value, numeric_value, instrument, source_type, source_document_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              `).run(
+                newGoalId, newClientId, entry.recorded_date || '', entry.measurement_type || '',
+                entry.value || '', entry.numeric_value || 0, entry.instrument || '',
+                entry.source_type || '', remap(noteIdMap, entry.source_document_id) ?? remap(evalIdMap, entry.source_document_id)
+              );
+            }
+          }
+        }
+
+        // Note amendments
+        if (backupTableExists('note_amendments')) {
+          for (const [oldNoteId, newNoteId] of noteIdMap.entries()) {
+            const noteClient = backupDb.prepare("SELECT client_id FROM notes WHERE id = ?").get(oldNoteId) as any;
+            if (!noteClient || noteClient.client_id !== oldClientId) continue;
+
+            const amendments = backupDb.prepare("SELECT * FROM note_amendments WHERE note_id = ?").all(oldNoteId) as any[];
+            for (const am of amendments) {
+              db.prepare(`
+                INSERT INTO note_amendments (note_id, amendment_text, reason, amended_by_name,
+                  signature_typed, signature_image, signed_at, content_hash, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              `).run(
+                newNoteId, am.amendment_text || '', am.reason || '', am.amended_by_name || '',
+                am.signature_typed || '', am.signature_image || '', am.signed_at || '',
+                am.content_hash || '', am.created_at
+              );
+            }
+          }
+        }
+      }
+    });
+
+    importTransaction();
+
+    return { success: true, ...counts, warnings };
+  } catch (err: any) {
+    return {
+      success: false, ...counts,
+      warnings: [...warnings, `Import failed: ${err.message || 'Unknown error'}`],
+    };
+  } finally {
+    try { backupDb.close(); } catch {}
+  }
 }
