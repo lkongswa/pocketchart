@@ -8,8 +8,9 @@ const api = {
 
   // Encryption (available before DB is open)
   encryption: {
-    getStatus: () => ipcRenderer.invoke('encryption:getStatus') as Promise<{ needsSetup: boolean; needsPassphrase: boolean; needsMigration: boolean }>,
+    getStatus: () => ipcRenderer.invoke('encryption:getStatus') as Promise<{ needsSetup: boolean; needsPassphrase: boolean; needsMigration: boolean; decryptionNeeded?: boolean }>,
     setup: (passphrase: string) => ipcRenderer.invoke('encryption:setup', passphrase) as Promise<{ success: boolean; recoveryKey?: string }>,
+    setupPlaintext: () => ipcRenderer.invoke('encryption:setupPlaintext') as Promise<{ success: boolean }>,
     unlock: (passphrase: string) => ipcRenderer.invoke('encryption:unlock', passphrase) as Promise<{ success: boolean; error?: string }>,
     unlockWithRecovery: (recoveryKey: string) => ipcRenderer.invoke('encryption:unlockWithRecovery', recoveryKey) as Promise<{ success: boolean; error?: string }>,
     changePassphrase: (current: string, newPass: string) => ipcRenderer.invoke('encryption:changePassphrase', current, newPass) as Promise<{ success: boolean; error?: string }>,

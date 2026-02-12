@@ -1,7 +1,8 @@
-import type BetterSqlite3 from 'better-sqlite3';
-// @journeyapps/sqlcipher is a drop-in replacement for better-sqlite3 with SQLCipher encryption.
-// We use require() because the package doesn't have a default export, then cast to better-sqlite3 types.
-const SqlcipherDatabase = require('@journeyapps/sqlcipher').Database as typeof BetterSqlite3;
+import Database from 'better-sqlite3';
+// V2: Using better-sqlite3 for plaintext mode. @journeyapps/sqlcipher is kept as a dependency
+// for future encryption re-enablement but is not used in V2.
+// Alias for compatibility with existing code that references SqlcipherDatabase
+const SqlcipherDatabase = Database;
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
@@ -9,7 +10,7 @@ import { app } from 'electron';
 import Store from 'electron-store';
 import { seedDefaultData, seedDefaultQuickChips, seedPayers, seedFeeSchedule, seedMFTData, seedCategoryAlignedPhrases, autoFixFeeSchedule } from './seed';
 
-let db: BetterSqlite3.Database;
+let db: InstanceType<typeof Database>;
 
 interface StoreSchema {
   dataPath?: string;
@@ -69,7 +70,7 @@ export function getDefaultDataPath(): string {
   return app.getPath('userData');
 }
 
-export function getDatabase(): BetterSqlite3.Database {
+export function getDatabase(): InstanceType<typeof Database> {
   if (!db) {
     throw new Error('Database not initialized. Call initDatabase first.');
   }
@@ -214,6 +215,78 @@ export function migrateToEncrypted(masterKeyHex: string): void {
   }
 
   // 8. Rename encrypted file to the original path
+  fs.renameSync(tempPath, dbPath);
+
+  // Clean up temp WAL/SHM if any
+  for (const ext of ['-wal', '-shm']) {
+    const f = tempPath + ext;
+    if (fs.existsSync(f)) {
+      try { fs.unlinkSync(f); } catch { /* ignore */ }
+    }
+  }
+}
+
+/**
+ * Decrypt an encrypted database back to plaintext.
+ * This is the reverse of migrateToEncrypted():
+ * 1. Opens the encrypted DB with the master key
+ * 2. Attaches a new plaintext database (no key)
+ * 3. Exports all data into the plaintext copy
+ * 4. Replaces the encrypted file with the plaintext one
+ *
+ * Used when bypassing encryption for V2 launch while preserving existing data.
+ *
+ * @param masterKeyHex - The 64-char hex key for the current encrypted database
+ */
+export function decryptToPlaintext(masterKeyHex: string): void {
+  const dbPath = path.join(getDataPath(), 'pocketchart.db');
+  const tempPath = dbPath + '.decrypting';
+
+  // Close the current DB connection if one exists
+  closeDatabase();
+
+  // 1. Open the encrypted DB with the key
+  const encDb = new SqlcipherDatabase(dbPath);
+  encDb.pragma(`key = "x'${masterKeyHex}'"`);
+
+  // Verify the DB is readable (will throw "file is not a database" if key is wrong)
+  try {
+    encDb.pragma('quick_check');
+  } catch (err: any) {
+    encDb.close();
+    throw new Error('Failed to decrypt database — incorrect key or corrupt file: ' + err.message);
+  }
+
+  // 2. Attach a new plaintext database (empty key = no encryption)
+  encDb.exec(`ATTACH DATABASE '${tempPath.replace(/'/g, "''")}' AS plaintext KEY ''`);
+
+  // 3. Export all data from encrypted to plaintext
+  encDb.exec("SELECT sqlcipher_export('plaintext')");
+
+  // 4. Set WAL mode on the plaintext DB
+  encDb.exec("PRAGMA plaintext.journal_mode = WAL");
+
+  // 5. Detach and close
+  encDb.exec("DETACH DATABASE plaintext");
+  encDb.close();
+
+  // Verify the plaintext file was actually created
+  if (!fs.existsSync(tempPath)) {
+    throw new Error('Decryption export failed — plaintext file was not created');
+  }
+
+  // 6. Remove the old encrypted file
+  fs.unlinkSync(dbPath);
+
+  // 7. Clean up WAL/SHM files from the old encrypted DB
+  for (const ext of ['-wal', '-shm']) {
+    const f = dbPath + ext;
+    if (fs.existsSync(f)) {
+      try { fs.unlinkSync(f); } catch { /* ignore */ }
+    }
+  }
+
+  // 8. Rename plaintext file to the original path
   fs.renameSync(tempPath, dbPath);
 
   // Clean up temp WAL/SHM if any

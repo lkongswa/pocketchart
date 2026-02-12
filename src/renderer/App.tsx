@@ -349,25 +349,25 @@ const App: React.FC = () => {
     }
   };
 
-  // Initialize encryption state on mount
+  // Initialize app state on mount
   useEffect(() => {
     const init = async () => {
       try {
         const status = await window.api.encryption.getStatus();
         if (status.needsSetup) {
-          // First run — no DB, no keystore. Show onboarding (which includes passphrase setup).
+          // First run — no DB. Show onboarding (practice info + PIN, no encryption).
           setEncryptionStatus('needs_setup');
           setShowOnboarding(true);
-        } else if (status.needsMigration) {
-          // Existing unencrypted DB — show migration flow
-          setEncryptionStatus('needs_migration');
-        } else {
-          // Encrypted DB exists — need passphrase to unlock
+        } else if (status.needsPassphrase) {
+          // V2: DB is still encrypted from a previous version — need one-time passphrase
+          // to decrypt it to plaintext. After this, passphrase will never be asked again.
           setEncryptionStatus('needs_passphrase');
+        } else {
+          // DB is already open as plaintext — db:ready event will fire
+          setEncryptionStatus('unlocked');
         }
       } catch (err) {
         console.error('Failed to check encryption status:', err);
-        // Fallback: assume needs passphrase
         setEncryptionStatus('needs_passphrase');
       } finally {
         setInitialLoading(false);
@@ -380,6 +380,9 @@ const App: React.FC = () => {
       setDbReady(true);
       setEncryptionStatus('unlocked');
       loadSecurityState();
+
+      // Trigger tier re-fetch now that license:getStatus IPC handler is registered
+      window.dispatchEvent(new Event('pocketchart:tier-changed'));
 
       // Check for pending recovery key (from Settings restore + app restart)
       try {
@@ -506,25 +509,10 @@ const App: React.FC = () => {
     // Security state will be loaded via the db:ready listener
   };
 
-  const handleMigrationComplete = async () => {
-    setEncryptionStatus('unlocked');
-    setDbReady(true);
-    loadSecurityState();
-
-    // Run startup integrity checks after migration
-    try {
-      const result = await window.api.integrity.startupCheck();
-      if (!result.quickCheckPassed || (result.fullCheckRan && !result.fullCheckPassed)) {
-        setIntegrityWarning(result);
-      }
-    } catch (err) {
-      console.error('Integrity check failed to run:', err);
-    }
-  };
-
   // Unlicensed users see only the activation/export landing page
   // Exception: trial-expired users get view-only mode (full app with creation blocked)
-  if (tier === 'unlicensed' && !trialExpired && !showOnboarding) {
+  // Only gate AFTER db is ready — before that, license status is unknown
+  if (dbReady && tier === 'unlicensed' && !trialExpired && !showOnboarding) {
     return (
       <ErrorBoundary>
         <UnlicensedLandingPage />
@@ -537,14 +525,9 @@ const App: React.FC = () => {
       {/* Gate 1: First-run onboarding (includes passphrase setup + recovery ceremony + PIN) */}
       {showOnboarding && <OnboardingScreen onComplete={handleOnboardingComplete} />}
 
-      {/* Gate 2: Passphrase unlock (returning user with encrypted DB) */}
+      {/* Gate 2: One-time passphrase for decrypting legacy encrypted DB */}
       {!showOnboarding && encryptionStatus === 'needs_passphrase' && (
         <PassphraseScreen onUnlock={handlePassphraseUnlock} />
-      )}
-
-      {/* Gate 3: Migration screen (existing unencrypted DB) */}
-      {!showOnboarding && encryptionStatus === 'needs_migration' && (
-        <MigrationScreen onComplete={handleMigrationComplete} />
       )}
 
       {/* Gate 4: PIN lock screen (after DB is unlocked) */}

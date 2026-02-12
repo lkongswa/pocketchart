@@ -151,6 +151,14 @@ function saveKeystore(data: KeystoreData): void {
   store.set('encryption', data);
 }
 
+/**
+ * Remove the encryption keystore entirely.
+ * Used when reverting from encrypted to plaintext mode.
+ */
+export function clearKeystore(): void {
+  store.delete('encryption');
+}
+
 // ── High-Level Operations ──
 
 /**

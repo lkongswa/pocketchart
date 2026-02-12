@@ -78,16 +78,26 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
     return sum % 10 === 0;
   };
 
-  const handleSavePractice = () => {
-    // Validate NPI if provided
-    if (npi && !validateNpi(npi)) {
-      setNpiError('Invalid NPI. Must be 10 digits with valid check digit.');
+  const handleSavePractice = async () => {
+    // Validate NPI only if a complete 10-digit NPI was entered
+    if (npi && npi.length === 10 && !validateNpi(npi)) {
+      setNpiError('Invalid NPI checksum. Please double-check your NPI number.');
       return;
     }
     setNpiError('');
-    // Don't save to DB yet — DB doesn't exist until after passphrase setup.
-    // Advance to the passphrase step; we'll save practice data after DB creation.
-    setStep('passphrase');
+
+    // V2: Create plaintext DB now (no encryption), then save deferred data, then go to PIN
+    setSaving(true);
+    try {
+      await window.api.encryption.setupPlaintext();
+      await saveDeferredData();
+      setStep('pin');
+    } catch (err) {
+      console.error('Failed to create database:', err);
+      setNpiError('Failed to set up database. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   /**
@@ -184,20 +194,36 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
     }
   };
 
-  const handleSavePartial = () => {
-    // Validate NPI if provided
-    if (npi && !validateNpi(npi)) {
-      setNpiError('Invalid NPI. Must be 10 digits with valid check digit.');
-      return;
-    }
+  const handleSavePartial = async () => {
+    // Skip NPI validation for partial saves — user can fix it later in Settings
     setNpiError('');
-    // Don't save to DB yet — advance to passphrase step.
-    // Whatever data was entered will be saved after DB creation.
-    setStep('passphrase');
+
+    // V2: Create plaintext DB now (no encryption), then save deferred data, then go to PIN
+    setSaving(true);
+    try {
+      await window.api.encryption.setupPlaintext();
+      await saveDeferredData();
+      setStep('pin');
+    } catch (err) {
+      console.error('Failed to create database:', err);
+      setNpiError('Failed to set up database. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleSkip = async () => {
-    await window.api.settings.set('onboarding_complete', 'true');
+    // V2: Create plaintext DB if it doesn't exist yet (user skipping from welcome)
+    try {
+      await window.api.encryption.setupPlaintext();
+    } catch (err) {
+      console.error('setupPlaintext failed (may already be open):', err);
+    }
+    try {
+      await window.api.settings.set('onboarding_complete', 'true');
+    } catch (err) {
+      console.error('Failed to set onboarding_complete:', err);
+    }
     onComplete();
   };
 
@@ -576,7 +602,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
           <button
             className="btn-primary w-full justify-center gap-2 py-3"
             onClick={handleSavePractice}
-            disabled={saving || !discipline || !practiceState || !npi}
+            disabled={saving || !discipline || !practiceState}
           >
             {saving ? 'Saving...' : 'Continue to PIN Setup'}
             <ArrowRight className="w-4 h-4" />
@@ -592,7 +618,16 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
 
           <button
             className="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
-            onClick={() => setStep('pin')}
+            onClick={async () => {
+              // V2: Create plaintext DB before skipping to PIN
+              setSaving(true);
+              try {
+                await window.api.encryption.setupPlaintext();
+                await saveDeferredData();
+              } catch { /* DB may already exist */ }
+              setSaving(false);
+              setStep('pin');
+            }}
           >
             Skip for now
           </button>

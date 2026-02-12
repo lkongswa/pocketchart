@@ -1660,8 +1660,9 @@ export interface PocketChartAPI {
   };
   // ── Encryption ──
   encryption: {
-    getStatus: () => Promise<{ needsSetup: boolean; needsPassphrase: boolean; needsMigration: boolean }>;
+    getStatus: () => Promise<{ needsSetup: boolean; needsPassphrase: boolean; needsMigration: boolean; decryptionNeeded?: boolean }>;
     setup: (passphrase: string) => Promise<{ success: boolean; recoveryKey?: string; error?: string }>;
+    setupPlaintext: () => Promise<{ success: boolean }>;
     unlock: (passphrase: string) => Promise<{ success: boolean; error?: string }>;
     unlockWithRecovery: (recoveryKey: string) => Promise<{ success: boolean; error?: string }>;
     changePassphrase: (current: string, newPass: string) => Promise<{ success: boolean; error?: string }>;

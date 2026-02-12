@@ -3,8 +3,8 @@ import path from 'path';
 import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
-import { initDatabase, getDatabase, closeDatabase, getDataPath, setDataPath, resetDataPath, getDefaultDataPath, isDatabaseEncrypted, databaseFileExists, migrateToEncrypted, runQuickCheck, runIntegrityCheck, validateBackupFile, getBackupClients, restoreFullDatabase, importSelectedClients, getCurrentDbSummary } from './database';
-import { setupEncryption, unlockWithPassphrase, unlockWithRecoveryKey, changePassphrase, regenerateRecoveryKey, verifyPassphrase, keystoreExists, loadKeystore, unlockFromExternalKeystore, replaceKeystoreForRestore } from './keystore';
+import { initDatabase, getDatabase, closeDatabase, getDataPath, setDataPath, resetDataPath, getDefaultDataPath, isDatabaseEncrypted, databaseFileExists, migrateToEncrypted, decryptToPlaintext, runQuickCheck, runIntegrityCheck, validateBackupFile, getBackupClients, restoreFullDatabase, importSelectedClients, getCurrentDbSummary } from './database';
+import { setupEncryption, unlockWithPassphrase, unlockWithRecoveryKey, changePassphrase, regenerateRecoveryKey, verifyPassphrase, keystoreExists, loadKeystore, clearKeystore, unlockFromExternalKeystore, replaceKeystoreForRestore } from './keystore';
 import type { KeystoreData } from './keystore';
 import { seedDemoData } from './seedDemoData';
 import { jsPDF } from 'jspdf';
@@ -328,36 +328,93 @@ function completeDbStartup() {
 }
 
 function registerEncryptionIpcHandlers() {
-  // Determine the current encryption state for the renderer
+  // Determine the current encryption state for the renderer.
+  // V2 LAUNCH: Encryption UI is bypassed. The DB always opens as plaintext.
+  // If we find an encrypted DB from a previous session, auto-decrypt it first.
+  // All encryption backend code remains in place for future re-enablement.
   ipcMain.handle('encryption:getStatus', () => {
     const dbExists = databaseFileExists();
     const hasKeystore = keystoreExists();
+    const isEncrypted = dbExists ? isDatabaseEncrypted() : false;
 
-    if (!dbExists && !hasKeystore) {
-      // Fresh install — needs full setup (onboarding)
+    console.log('[encryption:getStatus] V2 bypass mode', { dbExists, hasKeystore, isEncrypted });
+
+    if (!dbExists) {
+      // Fresh install — needs onboarding (practice info + PIN, no passphrase)
+      // Clean up any orphaned keystore
+      if (hasKeystore) {
+        try { clearKeystore(); } catch {}
+      }
       return { needsSetup: true, needsPassphrase: false, needsMigration: false };
     }
 
-    if (dbExists && !hasKeystore) {
-      // Existing unencrypted DB — needs migration
-      return { needsSetup: false, needsPassphrase: false, needsMigration: true };
+    // DB exists — check if it's encrypted
+    // V2: Encryption was never released to users, so an encrypted DB is only from dev/testing.
+    // Delete it and start fresh rather than attempting complex decryption.
+    if (isEncrypted) {
+      console.log('[encryption:getStatus] Found encrypted DB — deleting for V2 plaintext mode (dev data only)...');
+      try {
+        const dbDir = getDataPath();
+        const dbFile = require('path').join(dbDir, 'pocketchart.db');
+        for (const suffix of ['', '-wal', '-shm', '.decrypting', '.encrypting']) {
+          const f = dbFile + suffix;
+          if (require('fs').existsSync(f)) {
+            try { require('fs').unlinkSync(f); } catch {}
+          }
+        }
+        if (hasKeystore) {
+          try { clearKeystore(); } catch {}
+        }
+        console.log('[encryption:getStatus] Encrypted DB removed. Treating as fresh install.');
+      } catch (err: any) {
+        console.error('[encryption:getStatus] Failed to remove encrypted DB:', err);
+      }
+      return { needsSetup: true, needsPassphrase: false, needsMigration: false };
     }
 
-    // Encrypted DB exists — needs passphrase to unlock
-    return { needsSetup: false, needsPassphrase: true, needsMigration: false };
+    // DB exists and is plaintext — just open it and complete startup
+    try {
+      initDatabase(); // No key = plaintext
+      completeDbStartup();
+      // Clean up any orphaned keystore
+      if (hasKeystore) {
+        try { clearKeystore(); } catch {}
+      }
+    } catch (err: any) {
+      console.error('[encryption:getStatus] Failed to open plaintext DB:', err);
+    }
+    return { needsSetup: false, needsPassphrase: false, needsMigration: false };
   });
 
-  // First-time setup: generate keys, create encrypted DB
-  ipcMain.handle('encryption:setup', (_event, passphrase: string) => {
-    const { masterKeyHex, recoveryKey } = setupEncryption(passphrase);
-    initDatabase(masterKeyHex);
-    completeDbStartup();
-    return { success: true, recoveryKey };
+  // First-time setup: create DB.
+  // V2 BYPASS: Create a plaintext DB (no encryption). The passphrase parameter
+  // is accepted but ignored — the handler signature stays the same for compatibility.
+  // Also exposed as encryption:setupPlaintext for the V2 onboarding flow.
+  ipcMain.handle('encryption:setup', (_event, _passphrase: string) => {
+    if (!dbStartupComplete) {
+      initDatabase(); // No key = plaintext
+      completeDbStartup();
+    }
+    return { success: true, recoveryKey: '' };
   });
 
-  // Unlock existing encrypted DB with passphrase
+  // V2: Plaintext DB setup (no passphrase needed at all)
+  // Idempotent — safe to call multiple times (e.g., practice step then PIN step)
+  ipcMain.handle('encryption:setupPlaintext', () => {
+    if (!dbStartupComplete) {
+      initDatabase(); // No key = plaintext
+      completeDbStartup();
+    }
+    return { success: true };
+  });
+
+  // Unlock existing encrypted DB with passphrase.
+  // V2 BYPASS: If the DB is encrypted, decrypt it to plaintext permanently,
+  // clear the keystore, and open as plaintext. This is a one-time migration.
   ipcMain.handle('encryption:unlock', (_event, passphrase: string) => {
     try {
+      // V2: This handler should rarely be called since encrypted DBs are auto-deleted.
+      // Kept for safety — unlocks with passphrase, opens as plaintext.
       const masterKeyHex = unlockWithPassphrase(passphrase);
       initDatabase(masterKeyHex);
       completeDbStartup();
@@ -368,8 +425,10 @@ function registerEncryptionIpcHandlers() {
   });
 
   // Unlock with recovery key (forgot passphrase flow)
+  // V2 BYPASS: Same as above — decrypt to plaintext permanently.
   ipcMain.handle('encryption:unlockWithRecovery', (_event, recoveryKey: string) => {
     try {
+      // V2: Rarely called since encrypted DBs are auto-deleted on startup.
       const masterKeyHex = unlockWithRecoveryKey(recoveryKey);
       initDatabase(masterKeyHex);
       completeDbStartup();
