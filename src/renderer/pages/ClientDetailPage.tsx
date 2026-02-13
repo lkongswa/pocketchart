@@ -579,14 +579,12 @@ const ClientDetailPage: React.FC = () => {
     try {
       const noteIds = signedNotes.map(n => n.id);
       const result = await window.api.cms1500.generate({ clientId: client.id, noteIds });
-      // Go straight to save dialog (Electron blocks data: URI iframes)
-      const savedPath = await window.api.cms1500.save(result);
-      if (savedPath) {
-        setBillingToast('CMS-1500 saved successfully');
-      }
+      // Open in system PDF viewer for preview
+      await window.api.cms1500.openPreview(result);
+      setBillingToast('Claim form opened for preview');
     } catch (err: any) {
-      console.error('Failed to generate CMS-1500:', err);
-      setBillingToast(err.message || 'Failed to generate CMS-1500');
+      console.error('Failed to generate claim form:', err);
+      setBillingToast(err.message || 'Failed to generate claim form');
     } finally {
       setGeneratingCMS1500(false);
     }
@@ -1392,7 +1390,7 @@ const ClientDetailPage: React.FC = () => {
               ) : (
                 <ClipboardList size={14} />
               )}
-              CMS-1500
+              Claim Preview
               {claimReadiness.ready && signedNotes.length > 0 && (
                 <span className="w-2 h-2 rounded-full bg-emerald-400" />
               )}

@@ -49,7 +49,7 @@ export default function ClaimReadinessDialog({
         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
           <h3 className="text-lg font-semibold text-[var(--color-text)] flex items-center gap-2">
             <FileText size={20} className="text-indigo-500" />
-            CMS-1500 Pre-Flight Check
+            Claim Pre-Flight Check
           </h3>
           <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-100">
             <X size={20} className="text-[var(--color-text-secondary)]" />
@@ -139,7 +139,7 @@ export default function ClaimReadinessDialog({
             disabled={!readiness.ready || generating}
           >
             <FileText size={14} />
-            {generating ? 'Generating...' : 'Generate CMS-1500'}
+            {generating ? 'Generating...' : 'Preview Claim'}
           </button>
         </div>
       </div>

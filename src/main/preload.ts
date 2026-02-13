@@ -167,13 +167,15 @@ const api = {
 
   // CMS-1500 Claim Form
   cms1500: {
-    generate: (data: { clientId: number; noteIds: number[] }) => ipcRenderer.invoke('cms1500:generate', data),
+    generate: (data: { clientId: number; noteIds: number[]; printMode?: 'full' | 'data-only' }) => ipcRenderer.invoke('cms1500:generate', data),
     save: (data: { base64Pdf: string; filename: string }) => ipcRenderer.invoke('cms1500:save', data),
+    openPreview: (data: { base64Pdf: string; filename: string }) => ipcRenderer.invoke('cms1500:openPreview', data),
     getUnbilledClients: () => ipcRenderer.invoke('cms1500:getUnbilledClients'),
     generateBulk: (data: any) => ipcRenderer.invoke('cms1500:generateBulk', data),
     markBilled: (noteIds: number[]) => ipcRenderer.invoke('cms1500:markBilled', noteIds),
     clearBilled: (noteIds: number[]) => ipcRenderer.invoke('cms1500:clearBilled', noteIds),
     saveBulk: (data: { pdfs: Array<{ base64Pdf: string; filename: string }> }) => ipcRenderer.invoke('cms1500:saveBulk', data),
+    generateAlignmentTest: () => ipcRenderer.invoke('cms1500:generateAlignmentTest'),
   },
 
   // Backup & Export

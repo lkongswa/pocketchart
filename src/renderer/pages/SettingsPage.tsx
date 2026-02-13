@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Settings, Building2, User, Stethoscope, Info, Save, CheckCircle, Database, Download, FileSpreadsheet, HardDrive, FolderOpen, RotateCcw, Upload, Trash2, Image, Clock, AlertTriangle, Shield, Lock, PenLine, BookOpen, ChevronDown, ShieldCheck, Key, Monitor, Loader2, DollarSign, Plus, Eye, EyeOff, KeyRound } from 'lucide-react';
+import { Settings, Building2, User, Stethoscope, Info, Save, CheckCircle, Database, Download, FileSpreadsheet, HardDrive, FolderOpen, RotateCcw, Upload, Trash2, Image, Clock, AlertTriangle, Shield, Lock, PenLine, BookOpen, ChevronDown, ShieldCheck, Key, Monitor, Loader2, DollarSign, Plus, Eye, EyeOff, KeyRound, Printer } from 'lucide-react';
 import type { Practice, Discipline, NoteFormat, CloudDetectionResult, AppTier, FeeScheduleEntry, DiscountTemplate, DiscountType } from '../../shared/types';
 import FeeScheduleModal from '../components/FeeScheduleModal';
 import { NOTE_FORMAT_LABELS, DISCIPLINE_DEFAULT_FORMAT } from '../../shared/types';
@@ -142,6 +142,13 @@ export default function SettingsPage() {
   const [templatePercent, setTemplatePercent] = useState(10);
   const [templateFixed, setTemplateFixed] = useState(0);
 
+  // CMS-1500 Paper Claims state
+  const [cms1500PrintMode, setCms1500PrintMode] = useState<'full' | 'data-only'>('full');
+  const [cms1500OffsetX, setCms1500OffsetX] = useState('0');
+  const [cms1500OffsetY, setCms1500OffsetY] = useState('0');
+  const [cms1500Saving, setCms1500Saving] = useState(false);
+  const [cms1500TestPrinting, setCms1500TestPrinting] = useState(false);
+
   // Signature state
   const [signatureName, setSignatureName] = useState('');
   const [signatureCredentials, setSignatureCredentials] = useState('');
@@ -257,6 +264,10 @@ export default function SettingsPage() {
     window.api.settings.get('no_show_fee').then((val) => { if (val) setNoShowFee(val); }).catch(console.error);
     window.api.settings.get('prompt_pay_discount').then((val) => { if (val) setPromptPayDiscount(val); }).catch(console.error);
     window.api.discountTemplates.list().then(setDiscountTemplates).catch(console.error);
+    // Load CMS-1500 settings
+    window.api.settings.get('cms1500_print_mode').then((val) => { if (val === 'full' || val === 'data-only') setCms1500PrintMode(val); }).catch(console.error);
+    window.api.settings.get('cms1500_offset_x').then((val) => { if (val) setCms1500OffsetX(val); }).catch(console.error);
+    window.api.settings.get('cms1500_offset_y').then((val) => { if (val) setCms1500OffsetY(val); }).catch(console.error);
     // Load activation info
     loadActivationInfo();
   }, [loadLogoPreview]);
@@ -1505,6 +1516,127 @@ export default function SettingsPage() {
             <Plus className="w-3.5 h-3.5" /> New Template
           </button>
         )}
+      </CollapsibleSection>
+
+      {/* CMS-1500 Paper Claims */}
+      <CollapsibleSection
+        icon={<Printer className="w-5 h-5" />}
+        title="CMS-1500 Paper Claims"
+        description={cms1500PrintMode === 'data-only' ? 'Data-only mode' : 'Full form mode'}
+      >
+        <div className="space-y-6">
+          {/* Default Print Format */}
+          <div>
+            <label className="label">Default Print Format</label>
+            <p className="text-xs text-[var(--color-text-secondary)] mb-3">
+              Choose the default format when generating CMS-1500 claim forms. You can override this per-batch on the Claim Preview tab.
+            </p>
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="cms1500PrintMode"
+                  value="full"
+                  checked={cms1500PrintMode === 'full'}
+                  onChange={() => setCms1500PrintMode('full')}
+                  className="accent-[var(--color-primary)]"
+                />
+                <span className="text-sm text-[var(--color-text)]">Full Form</span>
+                <span className="text-xs text-[var(--color-text-secondary)]">— prints the complete red-ink CMS-1500</span>
+              </label>
+            </div>
+            <div className="flex items-center gap-4 mt-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="cms1500PrintMode"
+                  value="data-only"
+                  checked={cms1500PrintMode === 'data-only'}
+                  onChange={() => setCms1500PrintMode('data-only')}
+                  className="accent-[var(--color-primary)]"
+                />
+                <span className="text-sm text-[var(--color-text)]">Data Only</span>
+                <span className="text-xs text-[var(--color-text-secondary)]">— just the data, for pre-printed red CMS-1500 paper</span>
+              </label>
+            </div>
+          </div>
+
+          {/* Printer Alignment Offsets */}
+          <div>
+            <label className="label">Printer Alignment Offsets</label>
+            <p className="text-xs text-[var(--color-text-secondary)] mb-3">
+              Fine-tune data placement for data-only mode. Positive values shift right/down, negative shift left/up. Units are PDF points (72 = 1 inch).
+            </p>
+            <div className="grid grid-cols-2 gap-4 max-w-xs">
+              <div>
+                <label className="text-xs font-medium text-[var(--color-text-secondary)]">Horizontal (pts)</label>
+                <input
+                  type="number"
+                  className="input mt-1"
+                  min={-72}
+                  max={72}
+                  step={1}
+                  value={cms1500OffsetX}
+                  onChange={(e) => setCms1500OffsetX(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-[var(--color-text-secondary)]">Vertical (pts)</label>
+                <input
+                  type="number"
+                  className="input mt-1"
+                  min={-72}
+                  max={72}
+                  step={1}
+                  value={cms1500OffsetY}
+                  onChange={(e) => setCms1500OffsetY(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center gap-3">
+            <button
+              className="btn-primary btn-sm"
+              disabled={cms1500Saving}
+              onClick={async () => {
+                setCms1500Saving(true);
+                try {
+                  await window.api.settings.set('cms1500_print_mode', cms1500PrintMode);
+                  await window.api.settings.set('cms1500_offset_x', cms1500OffsetX || '0');
+                  await window.api.settings.set('cms1500_offset_y', cms1500OffsetY || '0');
+                  setToast('CMS-1500 settings saved');
+                } catch { setToast('Failed to save CMS-1500 settings'); }
+                finally { setCms1500Saving(false); }
+              }}
+            >
+              {cms1500Saving ? 'Saving...' : 'Save Settings'}
+            </button>
+            <button
+              className="btn-secondary btn-sm gap-1.5"
+              disabled={cms1500TestPrinting}
+              onClick={async () => {
+                setCms1500TestPrinting(true);
+                try {
+                  // Save current offsets first
+                  await window.api.settings.set('cms1500_offset_x', cms1500OffsetX || '0');
+                  await window.api.settings.set('cms1500_offset_y', cms1500OffsetY || '0');
+                  const result = await window.api.cms1500.generateAlignmentTest();
+                  await window.api.cms1500.save(result);
+                  setToast('Alignment test page saved');
+                } catch (err: any) {
+                  setToast(err.message || 'Failed to generate alignment test');
+                } finally {
+                  setCms1500TestPrinting(false);
+                }
+              }}
+            >
+              <Printer className="w-3.5 h-3.5" />
+              {cms1500TestPrinting ? 'Generating...' : 'Print Alignment Test Page'}
+            </button>
+          </div>
+        </div>
       </CollapsibleSection>
 
       {/* ═══ SECURITY & DATA ═══ */}

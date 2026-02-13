@@ -15,7 +15,8 @@ import { autoUpdater } from 'electron-updater';
 import Stripe from 'stripe';
 import { requiresReferral as checkDirectAccess, getAllRules as getDirectAccessRules } from '../shared/directAccessRules';
 import { detectCloudStorage } from './cloudDetection';
-import { generateCMS1500, assembleCMS1500Data, renderCMS1500Pages } from './cms1500Generator';
+import { generateCMS1500, assembleCMS1500Data, renderCMS1500Pages, generateAlignmentTestPage } from './cms1500Generator';
+import type { CMS1500Options, CMS1500PrintMode } from './cms1500Generator';
 import { parseCSVFile, autoDetectColumns as autoDetectCSVColumns, matchClients as matchCSVClients, prepareImportRows, executeImport as executeCSVImport } from './csvPaymentImport';
 import type { CSVColumnMapping, CSVPaymentRow } from './csvPaymentImport';
 import type { AppTier, NoteFormat, DischargeData, DischargeGoalStatus } from '../shared/types';
@@ -3396,7 +3397,27 @@ function registerIpcHandlers() {
   });
 
   // ── CMS-1500 Claim Form ──
-  safeHandle('cms1500:generate', (_event, data: { clientId: number; noteIds: number[] }) => {
+
+  // Helper to read CMS-1500 print options from settings
+  function getCMS1500Options(): CMS1500Options {
+    const printMode = (db.prepare("SELECT value FROM settings WHERE key = 'cms1500_print_mode'")
+      .get() as any)?.value || 'full';
+    const offsetX = parseFloat(
+      (db.prepare("SELECT value FROM settings WHERE key = 'cms1500_offset_x'")
+        .get() as any)?.value || '0'
+    );
+    const offsetY = parseFloat(
+      (db.prepare("SELECT value FROM settings WHERE key = 'cms1500_offset_y'")
+        .get() as any)?.value || '0'
+    );
+    return {
+      printMode: printMode as CMS1500PrintMode,
+      offsetX,
+      offsetY,
+    };
+  }
+
+  safeHandle('cms1500:generate', (_event, data: { clientId: number; noteIds: number[]; printMode?: 'full' | 'data-only' }) => {
     const client = db.prepare('SELECT * FROM clients WHERE id = ? AND deleted_at IS NULL').get(data.clientId) as any;
     if (!client) throw new Error('Client not found');
 
@@ -3411,7 +3432,9 @@ function registerIpcHandlers() {
     ).all(...data.noteIds, data.clientId) as any[];
 
     const cms1500Data = assembleCMS1500Data({ client, practice, notes: notesData });
-    const base64Pdf = generateCMS1500(cms1500Data);
+    const options = getCMS1500Options();
+    if (data.printMode) options.printMode = data.printMode;
+    const base64Pdf = generateCMS1500(cms1500Data, options);
 
     const dateStr = new Date().toISOString().slice(0, 10);
     const filename = `CMS1500_${client.last_name}_${client.first_name}_${dateStr}.pdf`;
@@ -3429,6 +3452,15 @@ function registerIpcHandlers() {
     const buffer = Buffer.from(data.base64Pdf, 'base64');
     fs.writeFileSync(filePath, buffer);
     return filePath;
+  });
+
+  safeHandle('cms1500:openPreview', async (_event, data: { base64Pdf: string; filename: string }) => {
+    const tempDir = path.join(os.tmpdir(), 'pocketchart-preview');
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+    const tempPath = path.join(tempDir, data.filename);
+    fs.writeFileSync(tempPath, Buffer.from(data.base64Pdf, 'base64'));
+    await shell.openPath(tempPath);
+    return tempPath;
   });
 
   safeHandle('cms1500:getUnbilledClients', () => {
@@ -3471,8 +3503,11 @@ function registerIpcHandlers() {
   safeHandle('cms1500:generateBulk', (_event, data: {
     entries: Array<{ clientId: number; noteIds: number[] }>;
     outputMode: 'combined' | 'separate';
+    printMode?: 'full' | 'data-only';
   }) => {
     const practice = db.prepare('SELECT * FROM practice WHERE id = 1').get() || {};
+    const options = getCMS1500Options();
+    if (data.printMode) options.printMode = data.printMode;
     const results: Array<{ base64Pdf: string; filename: string; clientId: number }> = [];
     const allNoteIds: number[] = [];
     const dateStr = new Date().toISOString().slice(0, 10);
@@ -3498,7 +3533,7 @@ function registerIpcHandlers() {
         if (!firstClient) doc.addPage();
         firstClient = false;
 
-        renderCMS1500Pages(doc, cms1500Data);
+        renderCMS1500Pages(doc, cms1500Data, options);
         allNoteIds.push(...entry.noteIds);
       }
 
@@ -3519,7 +3554,7 @@ function registerIpcHandlers() {
         if (!notesData.length) continue;
 
         const cms1500Data = assembleCMS1500Data({ client, practice, notes: notesData });
-        const base64Pdf = generateCMS1500(cms1500Data);
+        const base64Pdf = generateCMS1500(cms1500Data, options);
 
         results.push({
           base64Pdf,
@@ -3559,6 +3594,14 @@ function registerIpcHandlers() {
       fs.writeFileSync(path.join(folder, pdf.filename), buffer);
     }
     return folder;
+  });
+
+  safeHandle('cms1500:generateAlignmentTest', () => {
+    const base64Pdf = generateAlignmentTestPage();
+    return {
+      base64Pdf,
+      filename: 'CMS1500_Alignment_Test.pdf',
+    };
   });
 
   // ── Storage Location ──

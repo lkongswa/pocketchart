@@ -1692,13 +1692,15 @@ export interface PocketChartAPI {
   };
   // ── CMS-1500 Claim Form Generator ──
   cms1500: {
-    generate: (data: { clientId: number; noteIds: number[] }) => Promise<{ base64Pdf: string; filename: string }>;
+    generate: (data: { clientId: number; noteIds: number[]; printMode?: 'full' | 'data-only' }) => Promise<{ base64Pdf: string; filename: string }>;
     save: (data: { base64Pdf: string; filename: string }) => Promise<string | null>;
+    openPreview: (data: { base64Pdf: string; filename: string }) => Promise<string>;
     getUnbilledClients: () => Promise<CMS1500UnbilledClient[]>;
-    generateBulk: (data: CMS1500BulkRequest) => Promise<CMS1500BulkResult>;
+    generateBulk: (data: CMS1500BulkRequest & { printMode?: 'full' | 'data-only' }) => Promise<CMS1500BulkResult>;
     markBilled: (noteIds: number[]) => Promise<void>;
     clearBilled: (noteIds: number[]) => Promise<void>;
     saveBulk: (data: { pdfs: Array<{ base64Pdf: string; filename: string }> }) => Promise<string | null>;
+    generateAlignmentTest: () => Promise<{ base64Pdf: string; filename: string }>;
   };
   // ── Data Integrity ──
   integrity: {

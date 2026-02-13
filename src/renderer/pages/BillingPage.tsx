@@ -128,8 +128,11 @@ export default function BillingPage() {
   const [expandedClients, setExpandedClients] = useState<Set<number>>(new Set());
   const [selectedNotes, setSelectedNotes] = useState<Map<number, Set<number>>>(new Map());
   const [outputMode, setOutputMode] = useState<'combined' | 'separate'>('combined');
+  const [cms1500PrintMode, setCms1500PrintMode] = useState<'full' | 'data-only'>('full');
   const [cms1500Generating, setCms1500Generating] = useState(false);
   const [cms1500PendingNoteIds, setCms1500PendingNoteIds] = useState<number[]>([]);
+  const [cms1500Preview, setCms1500Preview] = useState<{ pdfs: Array<{ base64Pdf: string; filename: string; clientId: number }>; notesMarked: number[] } | null>(null);
+  const [cms1500Saving, setCms1500Saving] = useState(false);
 
   // Read URL params to pre-set filters (e.g. from dashboard stat card)
   useEffect(() => {
@@ -478,26 +481,26 @@ export default function BillingPage() {
     try {
       const data = await window.api.cms1500.getUnbilledClients();
       setUnbilledClients(data);
-      // Auto-select all clients and all their notes
-      const clientSet = new Set<number>();
-      const noteMap = new Map<number, Set<number>>();
-      for (const c of data) {
-        clientSet.add(c.id);
-        noteMap.set(c.id, new Set(c.unbilledNotes.map((n: any) => n.id)));
-      }
-      setSelectedClients(clientSet);
-      setSelectedNotes(noteMap);
+      // Start with nothing selected — user opts in
+      setSelectedClients(new Set());
+      setSelectedNotes(new Map());
     } catch (err) {
       console.error('Failed to load unbilled clients:', err);
-      setToast('Failed to load CMS-1500 data');
+      setToast('Failed to load claim data');
     } finally {
       setCms1500Loading(false);
     }
   }, []);
 
   useEffect(() => {
-    if (activeTab === 'cms1500' && !cms1500Loading && unbilledClients.length === 0) {
-      loadUnbilledClients();
+    if (activeTab === 'cms1500') {
+      // Load default print mode from settings
+      window.api.settings.get('cms1500_print_mode').then((val) => {
+        if (val === 'data-only' || val === 'full') setCms1500PrintMode(val);
+      }).catch(console.error);
+      if (!cms1500Loading && unbilledClients.length === 0) {
+        loadUnbilledClients();
+      }
     }
   }, [activeTab]);
 
@@ -598,47 +601,65 @@ export default function BillingPage() {
         return;
       }
 
-      const result = await window.api.cms1500.generateBulk({ entries, outputMode });
+      const result = await window.api.cms1500.generateBulk({ entries, outputMode, printMode: cms1500PrintMode });
 
       if (result.pdfs.length === 0) {
-        setToast('No CMS-1500 forms generated — check client data');
+        setToast('No claim forms generated — check client data');
         return;
       }
 
-      // Store pending note IDs for marking after save
-      setCms1500PendingNoteIds(result.notesMarked);
+      // Show preview modal instead of saving directly
+      setCms1500Preview(result);
+    } catch (err: any) {
+      console.error('Claim form generation failed:', err);
+      setToast(err.message || 'Failed to generate claim forms');
+    } finally {
+      setCms1500Generating(false);
+    }
+  };
 
+  const handlePreviewOpen = async () => {
+    if (!cms1500Preview || cms1500Preview.pdfs.length === 0) return;
+    try {
+      // Open the first (or combined) PDF in system viewer
+      await window.api.cms1500.openPreview(cms1500Preview.pdfs[0]);
+    } catch (err: any) {
+      setToast(err.message || 'Failed to open preview');
+    }
+  };
+
+  const handlePreviewSave = async () => {
+    if (!cms1500Preview) return;
+    setCms1500Saving(true);
+    try {
       if (outputMode === 'combined') {
-        // Save combined PDF via save dialog
-        const savedPath = await window.api.cms1500.save(result.pdfs[0]);
+        const savedPath = await window.api.cms1500.save(cms1500Preview.pdfs[0]);
         if (savedPath) {
-          await window.api.cms1500.markBilled(result.notesMarked);
-          setToast('CMS-1500 saved successfully');
-          setCms1500PendingNoteIds([]);
+          await window.api.cms1500.markBilled(cms1500Preview.notesMarked);
+          setToast('Claim form saved successfully');
+          setCms1500Preview(null);
           loadUnbilledClients();
         }
       } else {
-        // Save to folder
-        const folder = await window.api.cms1500.saveBulk({ pdfs: result.pdfs });
+        const folder = await window.api.cms1500.saveBulk({ pdfs: cms1500Preview.pdfs });
         if (folder) {
-          await window.api.cms1500.markBilled(result.notesMarked);
-          setToast(`${result.pdfs.length} CMS-1500 form(s) saved to folder`);
+          await window.api.cms1500.markBilled(cms1500Preview.notesMarked);
+          setToast(`${cms1500Preview.pdfs.length} claim form(s) saved to folder`);
+          setCms1500Preview(null);
           loadUnbilledClients();
         }
-        setCms1500PendingNoteIds([]);
       }
     } catch (err: any) {
-      console.error('CMS-1500 bulk generation failed:', err);
-      setToast(err.message || 'Failed to generate CMS-1500 forms');
+      setToast(err.message || 'Failed to save claim forms');
     } finally {
-      setCms1500Generating(false);
+      setCms1500Saving(false);
     }
   };
 
   const tabs: Array<{ id: BillingTab; label: string; icon: React.ReactNode; pro?: boolean }> = [
     { id: 'invoices', label: 'Invoices', icon: <FileText className="w-4 h-4" /> },
     { id: 'payments', label: 'Payments', icon: <DollarSign className="w-4 h-4" /> },
-    { id: 'cms1500', label: 'CMS-1500', icon: <ClipboardList className="w-4 h-4" /> },
+    { id: 'cms1500', label: 'Claim Preview', icon: <ClipboardList className="w-4 h-4" /> },
     { id: 'analytics', label: 'Analytics', icon: <BarChart3 className="w-4 h-4" />, pro: true },
     { id: 'stripe', label: 'Stripe Payments', icon: <Zap className="w-4 h-4" />, pro: true },
   ];
@@ -1004,7 +1025,7 @@ export default function BillingPage() {
         </div>
       )}
 
-      {/* CMS-1500 Tab */}
+      {/* Claim Preview Tab (CMS-1500 format) */}
       {activeTab === 'cms1500' && (
         <div className="space-y-4">
           {/* Header controls */}
@@ -1026,6 +1047,31 @@ export default function BillingPage() {
               </span>
             </div>
             <div className="flex items-center gap-3">
+              {/* Print mode toggle */}
+              <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5" title="CMS-1500 format">
+                <button
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    cms1500PrintMode === 'full'
+                      ? 'bg-white text-[var(--color-primary)] shadow-sm'
+                      : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
+                  }`}
+                  onClick={() => setCms1500PrintMode('full')}
+                  title="Full form with red chrome — prints the complete CMS-1500"
+                >
+                  Full Form
+                </button>
+                <button
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    cms1500PrintMode === 'data-only'
+                      ? 'bg-white text-[var(--color-primary)] shadow-sm'
+                      : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
+                  }`}
+                  onClick={() => setCms1500PrintMode('data-only')}
+                  title="Data only — for printing on pre-printed CMS-1500 paper"
+                >
+                  Data Only
+                </button>
+              </div>
               {/* Output mode toggle */}
               <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
                 <button
@@ -1059,7 +1105,7 @@ export default function BillingPage() {
                 ) : (
                   <ClipboardList size={14} />
                 )}
-                Generate{totalSelectedNotes > 0 ? ` (${totalSelectedNotes})` : ''}
+                Preview{totalSelectedNotes > 0 ? ` (${totalSelectedNotes})` : ''}
               </button>
             </div>
           </div>
@@ -1074,7 +1120,7 @@ export default function BillingPage() {
               <ClipboardList size={48} className="mx-auto text-gray-300 mb-4" />
               <h3 className="text-lg font-semibold text-[var(--color-text)] mb-2">No Unbilled Notes</h3>
               <p className="text-[var(--color-text-secondary)] text-sm max-w-md mx-auto">
-                All signed notes have been included in CMS-1500 forms. New signed notes will appear here automatically.
+                All signed notes have been included in claim forms. New signed notes will appear here automatically.
               </p>
             </div>
           ) : (
@@ -1642,6 +1688,78 @@ export default function BillingPage() {
         clients={clients}
         invoices={invoices}
       />
+
+      {/* CMS-1500 Preview Modal */}
+      {cms1500Preview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setCms1500Preview(null)} />
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
+              <h3 className="text-lg font-semibold text-[var(--color-text)] flex items-center gap-2">
+                <CheckCircle size={20} className="text-emerald-500" />
+                Claim Forms Generated
+              </h3>
+              <button onClick={() => setCms1500Preview(null)} className="p-1 rounded-lg hover:bg-gray-100">
+                <span className="text-[var(--color-text-secondary)] text-lg">&times;</span>
+              </button>
+            </div>
+
+            {/* Summary */}
+            <div className="px-6 py-4 space-y-3">
+              <div className="flex items-center gap-3 text-sm text-[var(--color-text)]">
+                <FileText size={16} className="text-indigo-500" />
+                <span>
+                  {cms1500Preview.pdfs.length === 1
+                    ? `1 claim form ready`
+                    : `${cms1500Preview.pdfs.length} claim forms ready`}
+                  {' '}({cms1500Preview.notesMarked.length} note{cms1500Preview.notesMarked.length !== 1 ? 's' : ''})
+                </span>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3 space-y-1.5">
+                {cms1500Preview.pdfs.map((pdf, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
+                    <ClipboardList size={12} />
+                    <span className="font-mono">{pdf.filename}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-[var(--color-text-secondary)]">
+                Open in your PDF viewer to review, then save when ready. Notes will be marked as billed after saving.
+              </p>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[var(--color-border)]">
+              <button
+                className="btn-ghost text-sm"
+                onClick={() => setCms1500Preview(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn-secondary gap-1.5"
+                onClick={handlePreviewOpen}
+              >
+                <Eye size={14} />
+                Open in Viewer
+              </button>
+              <button
+                className="btn-primary gap-1.5"
+                onClick={handlePreviewSave}
+                disabled={cms1500Saving}
+              >
+                {cms1500Saving ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Download size={14} />
+                )}
+                {cms1500Saving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Trial Expired Modal */}
       {showExpiredModal && <TrialExpiredModal onClose={dismissExpiredModal} />}
