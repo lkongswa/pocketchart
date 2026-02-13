@@ -284,7 +284,7 @@ const ClientDetailPage: React.FC = () => {
   const [showReadinessDialog, setShowReadinessDialog] = useState(false);
   const [generatingCMS1500, setGeneratingCMS1500] = useState(false);
   const [showCsvImportForClient, setShowCsvImportForClient] = useState(false);
-  const [cms1500Preview, setCms1500Preview] = useState<{ base64Pdf: string; filename: string } | null>(null);
+  // CMS-1500 preview removed — now saves directly via dialog
 
   // Document upload form state
   const [uploadCategory, setUploadCategory] = useState<ClientDocumentCategory>('other');
@@ -579,25 +579,16 @@ const ClientDetailPage: React.FC = () => {
     try {
       const noteIds = signedNotes.map(n => n.id);
       const result = await window.api.cms1500.generate({ clientId: client.id, noteIds });
-      setCms1500Preview(result);
+      // Go straight to save dialog (Electron blocks data: URI iframes)
+      const savedPath = await window.api.cms1500.save(result);
+      if (savedPath) {
+        setBillingToast('CMS-1500 saved successfully');
+      }
     } catch (err: any) {
       console.error('Failed to generate CMS-1500:', err);
       setBillingToast(err.message || 'Failed to generate CMS-1500');
     } finally {
       setGeneratingCMS1500(false);
-    }
-  };
-
-  const handleSaveCMS1500 = async () => {
-    if (!cms1500Preview) return;
-    try {
-      const savedPath = await window.api.cms1500.save(cms1500Preview);
-      if (savedPath) {
-        setBillingToast('CMS-1500 saved successfully');
-      }
-    } catch (err: any) {
-      console.error('Failed to save CMS-1500:', err);
-      setBillingToast(err.message || 'Failed to save CMS-1500');
     }
   };
 
@@ -1654,38 +1645,7 @@ const ClientDetailPage: React.FC = () => {
         </div>
       </div>
 
-      {/* ══════════ CMS-1500 PREVIEW ══════════ */}
-      {cms1500Preview && (
-        <div className="card">
-          <div className="flex items-center justify-between p-5 border-b border-[var(--color-border)]">
-            <h2 className="text-lg font-semibold text-[var(--color-text)] flex items-center gap-2">
-              <FileText size={20} className="text-indigo-500" />
-              CMS-1500 Preview
-            </h2>
-            <div className="flex items-center gap-2">
-              <button
-                className="btn-primary btn-sm gap-1.5"
-                onClick={handleSaveCMS1500}
-              >
-                <Download size={14} /> Save PDF
-              </button>
-              <button
-                className="btn-secondary btn-sm gap-1.5"
-                onClick={() => setCms1500Preview(null)}
-              >
-                <XCircle size={14} /> Close
-              </button>
-            </div>
-          </div>
-          <div className="p-5 flex justify-center bg-gray-100">
-            <iframe
-              src={`data:application/pdf;base64,${cms1500Preview.base64Pdf}`}
-              className="w-full max-w-[850px] h-[1100px] border border-[var(--color-border)] rounded-lg shadow-inner bg-white"
-              title="CMS-1500 Preview"
-            />
-          </div>
-        </div>
-      )}
+      {/* CMS-1500 now saves directly via dialog — no preview needed */}
 
       {/* ══════════ DISCOUNT MODAL ══════════ */}
       {showDiscountModal && (

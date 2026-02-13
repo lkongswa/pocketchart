@@ -15,7 +15,7 @@ import { autoUpdater } from 'electron-updater';
 import Stripe from 'stripe';
 import { requiresReferral as checkDirectAccess, getAllRules as getDirectAccessRules } from '../shared/directAccessRules';
 import { detectCloudStorage } from './cloudDetection';
-import { generateCMS1500, assembleCMS1500Data } from './cms1500Generator';
+import { generateCMS1500, assembleCMS1500Data, renderCMS1500Pages } from './cms1500Generator';
 import { parseCSVFile, autoDetectColumns as autoDetectCSVColumns, matchClients as matchCSVClients, prepareImportRows, executeImport as executeCSVImport } from './csvPaymentImport';
 import type { CSVColumnMapping, CSVPaymentRow } from './csvPaymentImport';
 import type { AppTier, NoteFormat, DischargeData, DischargeGoalStatus } from '../shared/types';
@@ -3429,6 +3429,136 @@ function registerIpcHandlers() {
     const buffer = Buffer.from(data.base64Pdf, 'base64');
     fs.writeFileSync(filePath, buffer);
     return filePath;
+  });
+
+  safeHandle('cms1500:getUnbilledClients', () => {
+    // Get all clients who have at least one signed note with NULL cms1500_generated_at
+    const clients = db.prepare(`
+      SELECT DISTINCT c.* FROM clients c
+      INNER JOIN notes n ON n.client_id = c.id
+      WHERE c.deleted_at IS NULL
+        AND n.deleted_at IS NULL
+        AND n.signed_at IS NOT NULL
+        AND n.cms1500_generated_at IS NULL
+      ORDER BY c.last_name, c.first_name
+    `).all() as any[];
+
+    return clients.map((client: any) => {
+      const unbilledNotes = db.prepare(`
+        SELECT id, date_of_service, cpt_code, cpt_codes, charge_amount, signed_at
+        FROM notes
+        WHERE client_id = ? AND deleted_at IS NULL
+          AND signed_at IS NOT NULL
+          AND cms1500_generated_at IS NULL
+        ORDER BY date_of_service
+      `).all(client.id) as any[];
+
+      return {
+        id: client.id,
+        first_name: client.first_name,
+        last_name: client.last_name,
+        insurance_payer: client.insurance_payer || '',
+        insurance_member_id: client.insurance_member_id || '',
+        primary_dx_code: client.primary_dx_code || '',
+        unbilledNoteCount: unbilledNotes.length,
+        unbilledNotes,
+        // Pass full client for renderer-side readiness computation
+        _fullClient: client,
+      };
+    });
+  });
+
+  safeHandle('cms1500:generateBulk', (_event, data: {
+    entries: Array<{ clientId: number; noteIds: number[] }>;
+    outputMode: 'combined' | 'separate';
+  }) => {
+    const practice = db.prepare('SELECT * FROM practice WHERE id = 1').get() || {};
+    const results: Array<{ base64Pdf: string; filename: string; clientId: number }> = [];
+    const allNoteIds: number[] = [];
+    const dateStr = new Date().toISOString().slice(0, 10);
+
+    if (data.outputMode === 'combined') {
+      // Create a single jsPDF document with all clients' CMS-1500 forms
+      const { jsPDF } = require('jspdf');
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
+      let firstClient = true;
+
+      for (const entry of data.entries) {
+        const client = db.prepare('SELECT * FROM clients WHERE id = ? AND deleted_at IS NULL').get(entry.clientId) as any;
+        if (!client || !entry.noteIds.length) continue;
+
+        const placeholders = entry.noteIds.map(() => '?').join(',');
+        const notesData = db.prepare(
+          `SELECT * FROM notes WHERE id IN (${placeholders}) AND client_id = ? AND deleted_at IS NULL ORDER BY date_of_service`
+        ).all(...entry.noteIds, entry.clientId) as any[];
+        if (!notesData.length) continue;
+
+        const cms1500Data = assembleCMS1500Data({ client, practice, notes: notesData });
+
+        if (!firstClient) doc.addPage();
+        firstClient = false;
+
+        renderCMS1500Pages(doc, cms1500Data);
+        allNoteIds.push(...entry.noteIds);
+      }
+
+      if (!firstClient) {
+        const base64Pdf = doc.output('datauristring').split(',')[1];
+        results.push({ base64Pdf, filename: `CMS1500_Batch_${dateStr}.pdf`, clientId: 0 });
+      }
+    } else {
+      // Generate separate PDFs per client
+      for (const entry of data.entries) {
+        const client = db.prepare('SELECT * FROM clients WHERE id = ? AND deleted_at IS NULL').get(entry.clientId) as any;
+        if (!client || !entry.noteIds.length) continue;
+
+        const placeholders = entry.noteIds.map(() => '?').join(',');
+        const notesData = db.prepare(
+          `SELECT * FROM notes WHERE id IN (${placeholders}) AND client_id = ? AND deleted_at IS NULL ORDER BY date_of_service`
+        ).all(...entry.noteIds, entry.clientId) as any[];
+        if (!notesData.length) continue;
+
+        const cms1500Data = assembleCMS1500Data({ client, practice, notes: notesData });
+        const base64Pdf = generateCMS1500(cms1500Data);
+
+        results.push({
+          base64Pdf,
+          filename: `CMS1500_${client.last_name}_${client.first_name}_${dateStr}.pdf`,
+          clientId: entry.clientId,
+        });
+        allNoteIds.push(...entry.noteIds);
+      }
+    }
+
+    return { pdfs: results, notesMarked: allNoteIds };
+  });
+
+  safeHandle('cms1500:markBilled', (_event, noteIds: number[]) => {
+    if (!noteIds.length) return;
+    const now = new Date().toISOString();
+    const placeholders = noteIds.map(() => '?').join(',');
+    db.prepare(`UPDATE notes SET cms1500_generated_at = ? WHERE id IN (${placeholders})`).run(now, ...noteIds);
+  });
+
+  safeHandle('cms1500:clearBilled', (_event, noteIds: number[]) => {
+    if (!noteIds.length) return;
+    const placeholders = noteIds.map(() => '?').join(',');
+    db.prepare(`UPDATE notes SET cms1500_generated_at = NULL WHERE id IN (${placeholders})`).run(...noteIds);
+  });
+
+  safeHandle('cms1500:saveBulk', async (_event, data: { pdfs: Array<{ base64Pdf: string; filename: string }> }) => {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: 'Choose Folder for CMS-1500 PDFs',
+      properties: ['openDirectory'],
+    });
+    if (canceled || !filePaths?.[0]) return null;
+
+    const folder = filePaths[0];
+    for (const pdf of data.pdfs) {
+      const buffer = Buffer.from(pdf.base64Pdf, 'base64');
+      fs.writeFileSync(path.join(folder, pdf.filename), buffer);
+    }
+    return folder;
   });
 
   // ── Storage Location ──

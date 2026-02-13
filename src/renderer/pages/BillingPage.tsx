@@ -31,6 +31,14 @@ import {
   CalendarRange,
   GripVertical,
   Upload,
+  ClipboardList,
+  ChevronDown,
+  ChevronRight,
+  CheckSquare,
+  Square,
+  Loader2,
+  Printer,
+  FolderOpen,
 } from 'lucide-react';
 import type {
   Invoice,
@@ -42,12 +50,16 @@ import type {
   InvoiceStatus,
   PaymentMethod,
   AnalyticsData,
+  Practice,
+  CMS1500UnbilledClient,
+  CMS1500Readiness,
 } from '../../shared/types';
+import { computeClaimReadiness } from '../hooks/useClaimReadiness';
 import InvoiceModal from '../components/InvoiceModal';
 import PaymentModal from '../components/PaymentModal';
 import CSVPaymentImportModal from '../components/CSVPaymentImportModal';
 
-type BillingTab = 'invoices' | 'payments' | 'analytics' | 'stripe';
+type BillingTab = 'invoices' | 'payments' | 'cms1500' | 'analytics' | 'stripe';
 
 const STATUS_COLORS: Record<InvoiceStatus, { bg: string; text: string }> = {
   draft: { bg: 'bg-gray-100', text: 'text-gray-700' },
@@ -108,13 +120,28 @@ export default function BillingPage() {
   const [showCsvImport, setShowCsvImport] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<(Invoice & { items: InvoiceItem[] }) | null>(null);
 
+  // CMS-1500 tab state
+  const [practice, setPractice] = useState<Practice | null>(null);
+  const [unbilledClients, setUnbilledClients] = useState<(CMS1500UnbilledClient & { _fullClient?: any })[]>([]);
+  const [cms1500Loading, setCms1500Loading] = useState(false);
+  const [selectedClients, setSelectedClients] = useState<Set<number>>(new Set());
+  const [expandedClients, setExpandedClients] = useState<Set<number>>(new Set());
+  const [selectedNotes, setSelectedNotes] = useState<Map<number, Set<number>>>(new Map());
+  const [outputMode, setOutputMode] = useState<'combined' | 'separate'>('combined');
+  const [cms1500Generating, setCms1500Generating] = useState(false);
+  const [cms1500PendingNoteIds, setCms1500PendingNoteIds] = useState<number[]>([]);
+
   // Read URL params to pre-set filters (e.g. from dashboard stat card)
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const filter = params.get('filter');
+    const tab = params.get('tab');
     if (filter === 'unpaid') {
       setActiveTab('invoices');
       setInvoiceFilter('unpaid');
+    }
+    if (tab === 'cms1500') {
+      setActiveTab('cms1500');
     }
   }, [location.search]);
 
@@ -136,6 +163,7 @@ export default function BillingPage() {
         entitiesData,
         secureAvailable,
         stripeMasked,
+        practiceData,
       ] = await Promise.all([
         window.api.invoices.list(),
         window.api.payments.list(),
@@ -144,6 +172,7 @@ export default function BillingPage() {
         window.api.contractedEntities.list().catch(() => [] as ContractedEntity[]),
         window.api.secureStorage.isAvailable(),
         window.api.secureStorage.getMasked('stripe_secret_key'),
+        window.api.practice.get(),
       ]);
 
       setInvoices(invoicesData);
@@ -153,6 +182,7 @@ export default function BillingPage() {
       setEntities(entitiesData);
       setSecureStorageAvailable(secureAvailable);
       setStripeKeyMasked(stripeMasked);
+      setPractice(practiceData);
     } catch (err) {
       console.error('Failed to load billing data:', err);
       setToast('Failed to load billing data');
@@ -441,9 +471,174 @@ export default function BillingPage() {
   });
 
   // Tab navigation items
+  // ── CMS-1500 Tab Logic ──
+
+  const loadUnbilledClients = useCallback(async () => {
+    setCms1500Loading(true);
+    try {
+      const data = await window.api.cms1500.getUnbilledClients();
+      setUnbilledClients(data);
+      // Auto-select all clients and all their notes
+      const clientSet = new Set<number>();
+      const noteMap = new Map<number, Set<number>>();
+      for (const c of data) {
+        clientSet.add(c.id);
+        noteMap.set(c.id, new Set(c.unbilledNotes.map((n: any) => n.id)));
+      }
+      setSelectedClients(clientSet);
+      setSelectedNotes(noteMap);
+    } catch (err) {
+      console.error('Failed to load unbilled clients:', err);
+      setToast('Failed to load CMS-1500 data');
+    } finally {
+      setCms1500Loading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'cms1500' && !cms1500Loading && unbilledClients.length === 0) {
+      loadUnbilledClients();
+    }
+  }, [activeTab]);
+
+  // Compute readiness per client
+  const clientReadiness = React.useMemo(() => {
+    const map = new Map<number, CMS1500Readiness>();
+    for (const uc of unbilledClients) {
+      const readiness = computeClaimReadiness(uc._fullClient || uc as any, practice);
+      map.set(uc.id, readiness);
+    }
+    return map;
+  }, [unbilledClients, practice]);
+
+  const toggleClientSelection = (clientId: number) => {
+    setSelectedClients(prev => {
+      const next = new Set(prev);
+      if (next.has(clientId)) {
+        next.delete(clientId);
+      } else {
+        next.add(clientId);
+      }
+      return next;
+    });
+    // Also toggle all notes for this client
+    setSelectedNotes(prev => {
+      const next = new Map(prev);
+      const uc = unbilledClients.find(c => c.id === clientId);
+      if (uc && selectedClients.has(clientId)) {
+        // Deselecting — clear all notes
+        next.delete(clientId);
+      } else if (uc) {
+        // Selecting — select all notes
+        next.set(clientId, new Set(uc.unbilledNotes.map(n => n.id)));
+      }
+      return next;
+    });
+  };
+
+  const toggleNoteSelection = (clientId: number, noteId: number) => {
+    setSelectedNotes(prev => {
+      const next = new Map(prev);
+      const current = new Set(next.get(clientId) || []);
+      if (current.has(noteId)) {
+        current.delete(noteId);
+      } else {
+        current.add(noteId);
+      }
+      next.set(clientId, current);
+      // Update client selection based on note selection
+      if (current.size === 0) {
+        setSelectedClients(p => { const s = new Set(p); s.delete(clientId); return s; });
+      } else {
+        setSelectedClients(p => { const s = new Set(p); s.add(clientId); return s; });
+      }
+      return next;
+    });
+  };
+
+  const toggleExpandClient = (clientId: number) => {
+    setExpandedClients(prev => {
+      const next = new Set(prev);
+      if (next.has(clientId)) next.delete(clientId);
+      else next.add(clientId);
+      return next;
+    });
+  };
+
+  const toggleAllClients = () => {
+    if (selectedClients.size === unbilledClients.length) {
+      // Deselect all
+      setSelectedClients(new Set());
+      setSelectedNotes(new Map());
+    } else {
+      // Select all
+      const clientSet = new Set<number>();
+      const noteMap = new Map<number, Set<number>>();
+      for (const c of unbilledClients) {
+        clientSet.add(c.id);
+        noteMap.set(c.id, new Set(c.unbilledNotes.map(n => n.id)));
+      }
+      setSelectedClients(clientSet);
+      setSelectedNotes(noteMap);
+    }
+  };
+
+  const totalSelectedNotes = Array.from(selectedNotes.values()).reduce((sum, set) => sum + set.size, 0);
+
+  const handleBulkGenerate = async () => {
+    setCms1500Generating(true);
+    try {
+      const entries = Array.from(selectedClients).map(clientId => ({
+        clientId,
+        noteIds: Array.from(selectedNotes.get(clientId) || []),
+      })).filter(e => e.noteIds.length > 0);
+
+      if (entries.length === 0) {
+        setToast('No notes selected');
+        return;
+      }
+
+      const result = await window.api.cms1500.generateBulk({ entries, outputMode });
+
+      if (result.pdfs.length === 0) {
+        setToast('No CMS-1500 forms generated — check client data');
+        return;
+      }
+
+      // Store pending note IDs for marking after save
+      setCms1500PendingNoteIds(result.notesMarked);
+
+      if (outputMode === 'combined') {
+        // Save combined PDF via save dialog
+        const savedPath = await window.api.cms1500.save(result.pdfs[0]);
+        if (savedPath) {
+          await window.api.cms1500.markBilled(result.notesMarked);
+          setToast('CMS-1500 saved successfully');
+          setCms1500PendingNoteIds([]);
+          loadUnbilledClients();
+        }
+      } else {
+        // Save to folder
+        const folder = await window.api.cms1500.saveBulk({ pdfs: result.pdfs });
+        if (folder) {
+          await window.api.cms1500.markBilled(result.notesMarked);
+          setToast(`${result.pdfs.length} CMS-1500 form(s) saved to folder`);
+          loadUnbilledClients();
+        }
+        setCms1500PendingNoteIds([]);
+      }
+    } catch (err: any) {
+      console.error('CMS-1500 bulk generation failed:', err);
+      setToast(err.message || 'Failed to generate CMS-1500 forms');
+    } finally {
+      setCms1500Generating(false);
+    }
+  };
+
   const tabs: Array<{ id: BillingTab; label: string; icon: React.ReactNode; pro?: boolean }> = [
     { id: 'invoices', label: 'Invoices', icon: <FileText className="w-4 h-4" /> },
     { id: 'payments', label: 'Payments', icon: <DollarSign className="w-4 h-4" /> },
+    { id: 'cms1500', label: 'CMS-1500', icon: <ClipboardList className="w-4 h-4" /> },
     { id: 'analytics', label: 'Analytics', icon: <BarChart3 className="w-4 h-4" />, pro: true },
     { id: 'stripe', label: 'Stripe Payments', icon: <Zap className="w-4 h-4" />, pro: true },
   ];
@@ -806,6 +1001,219 @@ export default function BillingPage() {
               </div>
             );
           })()}
+        </div>
+      )}
+
+      {/* CMS-1500 Tab */}
+      {activeTab === 'cms1500' && (
+        <div className="space-y-4">
+          {/* Header controls */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <button
+                className="btn-ghost btn-sm gap-1.5"
+                onClick={toggleAllClients}
+              >
+                {selectedClients.size === unbilledClients.length && unbilledClients.length > 0 ? (
+                  <CheckSquare size={14} className="text-emerald-500" />
+                ) : (
+                  <Square size={14} />
+                )}
+                {selectedClients.size === unbilledClients.length && unbilledClients.length > 0 ? 'Deselect All' : 'Select All'}
+              </button>
+              <span className="text-sm text-[var(--color-text-secondary)]">
+                {totalSelectedNotes} note{totalSelectedNotes !== 1 ? 's' : ''} across {selectedClients.size} client{selectedClients.size !== 1 ? 's' : ''}
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              {/* Output mode toggle */}
+              <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
+                <button
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    outputMode === 'combined'
+                      ? 'bg-white text-[var(--color-primary)] shadow-sm'
+                      : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
+                  }`}
+                  onClick={() => setOutputMode('combined')}
+                >
+                  <Printer size={12} className="inline mr-1" /> Combined PDF
+                </button>
+                <button
+                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    outputMode === 'separate'
+                      ? 'bg-white text-[var(--color-primary)] shadow-sm'
+                      : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
+                  }`}
+                  onClick={() => setOutputMode('separate')}
+                >
+                  <FolderOpen size={12} className="inline mr-1" /> Separate PDFs
+                </button>
+              </div>
+              <button
+                className="btn-primary btn-sm gap-1.5"
+                disabled={cms1500Generating || totalSelectedNotes === 0}
+                onClick={handleBulkGenerate}
+              >
+                {cms1500Generating ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <ClipboardList size={14} />
+                )}
+                Generate{totalSelectedNotes > 0 ? ` (${totalSelectedNotes})` : ''}
+              </button>
+            </div>
+          </div>
+
+          {/* Client list */}
+          {cms1500Loading ? (
+            <div className="flex items-center justify-center h-48">
+              <div className="text-[var(--color-text-secondary)]">Loading unbilled notes...</div>
+            </div>
+          ) : unbilledClients.length === 0 ? (
+            <div className="card p-12 text-center">
+              <ClipboardList size={48} className="mx-auto text-gray-300 mb-4" />
+              <h3 className="text-lg font-semibold text-[var(--color-text)] mb-2">No Unbilled Notes</h3>
+              <p className="text-[var(--color-text-secondary)] text-sm max-w-md mx-auto">
+                All signed notes have been included in CMS-1500 forms. New signed notes will appear here automatically.
+              </p>
+            </div>
+          ) : (
+            <div className="card overflow-hidden">
+              {/* Table header */}
+              <div className="grid grid-cols-[40px_1fr_200px_100px_80px_80px_40px] gap-2 px-4 py-2 bg-gray-50 border-b text-xs font-medium text-[var(--color-text-secondary)] uppercase tracking-wide">
+                <div></div>
+                <div>Client</div>
+                <div>Insurance</div>
+                <div>Diagnosis</div>
+                <div className="text-center">Notes</div>
+                <div className="text-center">Ready</div>
+                <div></div>
+              </div>
+
+              {unbilledClients.map((uc) => {
+                const isSelected = selectedClients.has(uc.id);
+                const isExpanded = expandedClients.has(uc.id);
+                const readiness = clientReadiness.get(uc.id);
+                const clientNoteIds = selectedNotes.get(uc.id);
+                const selectedCount = clientNoteIds?.size || 0;
+
+                return (
+                  <div key={uc.id} className="border-b last:border-b-0">
+                    {/* Client row */}
+                    <div
+                      className={`grid grid-cols-[40px_1fr_200px_100px_80px_80px_40px] gap-2 px-4 py-3 items-center hover:bg-gray-50 transition-colors cursor-pointer ${
+                        isSelected ? 'bg-emerald-50/40' : ''
+                      }`}
+                      onClick={() => toggleExpandClient(uc.id)}
+                    >
+                      <div onClick={(e) => { e.stopPropagation(); toggleClientSelection(uc.id); }}>
+                        {isSelected ? (
+                          <CheckSquare size={18} className="text-emerald-500 cursor-pointer" />
+                        ) : (
+                          <Square size={18} className="text-gray-400 cursor-pointer" />
+                        )}
+                      </div>
+                      <div className="font-medium text-[var(--color-text)]">
+                        {uc.last_name}, {uc.first_name}
+                      </div>
+                      <div className="text-sm text-[var(--color-text-secondary)] truncate">
+                        {uc.insurance_payer || <span className="text-red-400 italic">No payer</span>}
+                      </div>
+                      <div className="text-xs font-mono text-[var(--color-text-secondary)]">
+                        {uc.primary_dx_code || <span className="text-red-400">—</span>}
+                      </div>
+                      <div className="text-center">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                          selectedCount === uc.unbilledNoteCount && selectedCount > 0
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : selectedCount > 0
+                            ? 'bg-amber-100 text-amber-700'
+                            : 'bg-gray-100 text-gray-600'
+                        }`}>
+                          {selectedCount}/{uc.unbilledNoteCount}
+                        </span>
+                      </div>
+                      <div className="text-center">
+                        {readiness?.ready ? (
+                          <span className="inline-flex items-center gap-1 text-xs text-emerald-600">
+                            <span className="w-2 h-2 rounded-full bg-emerald-400" /> Ready
+                          </span>
+                        ) : readiness && readiness.failCount > 0 ? (
+                          <span className="inline-flex items-center gap-1 text-xs text-red-500">
+                            <span className="w-2 h-2 rounded-full bg-red-400" /> {readiness.failCount} req
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-xs text-amber-500">
+                            <span className="w-2 h-2 rounded-full bg-amber-400" /> Warn
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-center">
+                        {isExpanded ? (
+                          <ChevronDown size={16} className="text-gray-400" />
+                        ) : (
+                          <ChevronRight size={16} className="text-gray-400" />
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Expanded notes */}
+                    {isExpanded && (
+                      <div className="bg-gray-50/50 border-t px-4 py-2">
+                        {/* Readiness warnings */}
+                        {readiness && !readiness.ready && (
+                          <div className="mb-2 p-2 rounded bg-red-50 border border-red-200 text-xs text-red-600">
+                            <span className="font-medium">Missing required fields:</span>{' '}
+                            {readiness.checks
+                              .filter(c => c.status === 'fail')
+                              .map(c => c.label)
+                              .join(', ')}
+                          </div>
+                        )}
+                        {/* Note rows */}
+                        <div className="space-y-1">
+                          {uc.unbilledNotes.map((note: any) => {
+                            const noteSelected = clientNoteIds?.has(note.id) || false;
+                            // Parse CPT display
+                            let cptDisplay = note.cpt_code || '';
+                            try {
+                              const arr = JSON.parse(note.cpt_codes || '[]');
+                              if (arr.length > 0) cptDisplay = arr.map((c: any) => c.code || c).join(', ');
+                            } catch {}
+
+                            return (
+                              <div
+                                key={note.id}
+                                className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors cursor-pointer ${
+                                  noteSelected ? 'bg-white shadow-sm' : 'hover:bg-white/60'
+                                }`}
+                                onClick={() => toggleNoteSelection(uc.id, note.id)}
+                              >
+                                {noteSelected ? (
+                                  <CheckSquare size={14} className="text-emerald-500 shrink-0" />
+                                ) : (
+                                  <Square size={14} className="text-gray-400 shrink-0" />
+                                )}
+                                <span className="text-[var(--color-text-secondary)] w-24 shrink-0">
+                                  {note.date_of_service}
+                                </span>
+                                <span className="font-mono text-xs text-[var(--color-text-secondary)] w-24 shrink-0">
+                                  {cptDisplay || '—'}
+                                </span>
+                                <span className="text-[var(--color-text)]">
+                                  {note.charge_amount != null ? `$${Number(note.charge_amount).toFixed(2)}` : '—'}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

@@ -385,6 +385,7 @@ export interface Note {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  cms1500_generated_at: string | null;
   // Joined fields
   entity_name?: string;
 }
@@ -884,6 +885,38 @@ export interface CMS1500Readiness {
   passCount: number;
   failCount: number;
   warnCount: number;
+}
+
+// ── CMS-1500 Bulk Generation Types ──
+
+export interface CMS1500UnbilledNote {
+  id: number;
+  date_of_service: string;
+  cpt_code: string;
+  cpt_codes: string;
+  charge_amount: number;
+  signed_at: string;
+}
+
+export interface CMS1500UnbilledClient {
+  id: number;
+  first_name: string;
+  last_name: string;
+  insurance_payer: string;
+  insurance_member_id: string;
+  primary_dx_code: string;
+  unbilledNoteCount: number;
+  unbilledNotes: CMS1500UnbilledNote[];
+}
+
+export interface CMS1500BulkRequest {
+  entries: Array<{ clientId: number; noteIds: number[] }>;
+  outputMode: 'combined' | 'separate';
+}
+
+export interface CMS1500BulkResult {
+  pdfs: Array<{ base64Pdf: string; filename: string; clientId: number }>;
+  notesMarked: number[];
 }
 
 // ── Communication Log Types ──
@@ -1661,6 +1694,11 @@ export interface PocketChartAPI {
   cms1500: {
     generate: (data: { clientId: number; noteIds: number[] }) => Promise<{ base64Pdf: string; filename: string }>;
     save: (data: { base64Pdf: string; filename: string }) => Promise<string | null>;
+    getUnbilledClients: () => Promise<CMS1500UnbilledClient[]>;
+    generateBulk: (data: CMS1500BulkRequest) => Promise<CMS1500BulkResult>;
+    markBilled: (noteIds: number[]) => Promise<void>;
+    clearBilled: (noteIds: number[]) => Promise<void>;
+    saveBulk: (data: { pdfs: Array<{ base64Pdf: string; filename: string }> }) => Promise<string | null>;
   };
   // ── Data Integrity ──
   integrity: {

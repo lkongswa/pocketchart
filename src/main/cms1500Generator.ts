@@ -176,6 +176,30 @@ export function generateCMS1500(data: CMS1500Data): string {
   return doc.output('datauristring').split(',')[1]; // base64
 }
 
+/**
+ * Render a single CMS-1500 form onto an existing jsPDF document.
+ * Used by bulk generation to compose multi-client combined PDFs.
+ */
+export function renderCMS1500Pages(doc: jsPDF, data: CMS1500Data): void {
+  const pages = Math.max(1, Math.ceil(data.serviceLines.length / 6));
+
+  for (let page = 0; page < pages; page++) {
+    drawFormChrome(doc);
+    placePatientData(doc, data);
+    placeInsuranceData(doc, data);
+    placeClaimData(doc, data);
+    placeDiagnoses(doc, data);
+    placeServiceLines(doc, data, page);
+    placeTotals(doc, data);
+    placeProviderData(doc, data);
+
+    // Add page break between multi-page service lines for this client
+    if (page < pages - 1) {
+      doc.addPage();
+    }
+  }
+}
+
 // ── Form Chrome Drawing ──
 
 function drawFormChrome(doc: jsPDF) {

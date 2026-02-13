@@ -1880,6 +1880,15 @@ function runMigrations(): void {
         }
       },
     },
+    {
+      version: 42,
+      description: 'Add cms1500_generated_at tracking column to notes',
+      up: () => {
+        if (!columnExists('notes', 'cms1500_generated_at')) {
+          db.exec("ALTER TABLE notes ADD COLUMN cms1500_generated_at DATETIME DEFAULT NULL");
+        }
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
