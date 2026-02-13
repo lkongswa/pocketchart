@@ -191,13 +191,17 @@ export type PaymentMethod = 'card' | 'cash' | 'check' | 'insurance' | 'other';
 export type ClaimStatus =
   | 'draft'
   | 'ready'
+  | 'validated'
   | 'submitted'
+  | 'acknowledged'
   | 'accepted'
   | 'rejected'
   | 'pending'
   | 'paid'
+  | 'posted'
   | 'denied'
   | 'appealed'
+  | 'corrected'
   | 'void';
 
 // Authorization status
@@ -1080,8 +1084,15 @@ export interface Claim {
   total_charge: number;
   status: ClaimStatus;
   submitted_at: string | null;
+  validated_at: string | null;
+  acknowledged_at: string | null;
   accepted_at: string | null;
+  denied_at: string | null;
   paid_at: string | null;
+  appeal_submitted_at: string | null;
+  appeal_notes: string;
+  correction_notes: string;
+  original_claim_id: number | null;
   rejection_codes: string; // JSON array
   rejection_reasons: string; // JSON array
   paid_amount: number;
@@ -1093,6 +1104,8 @@ export interface Claim {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  // Joined fields
+  client_name?: string;
 }
 
 export interface ClaimLine {
@@ -1112,6 +1125,75 @@ export interface ClaimLine {
   adjustment_reason_codes: string; // JSON array
   patient_responsibility: number;
   created_at: string;
+}
+
+// Eligibility Check
+export interface EligibilityCheck {
+  id: number;
+  client_id: number;
+  payer_name: string;
+  payer_id: string;
+  check_date: string;
+  raw_response: string;
+  plan_name: string;
+  plan_type: string;
+  coverage_active: boolean;
+  copay_amount: number | null;
+  coinsurance_percent: number | null;
+  deductible_total: number | null;
+  deductible_met: number | null;
+  out_of_pocket_max: number | null;
+  out_of_pocket_met: number | null;
+  therapy_visits_allowed: number | null;
+  therapy_visits_used: number | null;
+  therapy_visits_remaining: number | null;
+  auth_required: boolean;
+  auth_number: string;
+  referral_required: boolean;
+  benefit_period_start: string;
+  benefit_period_end: string;
+  parsed_benefits: string; // JSON
+  notes: string;
+  created_at: string;
+  // Joined fields
+  client_name?: string;
+}
+
+// Denial Code reference
+export interface DenialCode {
+  id: number;
+  code: string;
+  group_code: string;
+  description: string;
+  plain_english: string;
+  what_to_do: string;
+  common_in_therapy: boolean;
+}
+
+// Clearinghouse config
+export interface ClearinghouseConfig {
+  submitterId: string;
+  receiverId: string;
+}
+
+export interface ClearinghouseConnectionStatus {
+  connected: boolean;
+  error?: string;
+}
+
+export interface ClaimSubmissionResult {
+  success: boolean;
+  claimId?: string;
+  clearinghouseClaimId?: string;
+  message: string;
+  errors?: string[];
+}
+
+export interface EligibilityRequestResult {
+  success: boolean;
+  eligibility?: EligibilityCheck;
+  message: string;
+  errors?: string[];
 }
 
 // Audit Log
@@ -1453,6 +1535,8 @@ export interface PocketChartAPI {
     list: (filters?: { clientId?: number; status?: ClaimStatus; startDate?: string; endDate?: string }) => Promise<Claim[]>;
     get: (id: number) => Promise<Claim & { lines: ClaimLine[] }>;
     create: (data: Partial<Claim>, lines: Partial<ClaimLine>[]) => Promise<Claim>;
+    createFromNotes: (clientId: number, noteIds: number[]) => Promise<Claim>;
+    generate837P: (claimId: number) => Promise<{ success: boolean; claimNumber: string; ediContent: string }>;
     update: (id: number, data: Partial<Claim>) => Promise<Claim>;
     delete: (id: number) => Promise<boolean>;
   };
@@ -1461,6 +1545,25 @@ export interface PocketChartAPI {
     create: (data: Partial<Payer>) => Promise<Payer>;
     update: (id: number, data: Partial<Payer>) => Promise<Payer>;
     delete: (id: number) => Promise<boolean>;
+  };
+  clearinghouse: {
+    setCredentials: (apiKey: string) => Promise<void>;
+    getConnectionStatus: () => Promise<ClearinghouseConnectionStatus>;
+    testConnection: () => Promise<{ success: boolean; message: string }>;
+    getPayerList: () => Promise<Payer[]>;
+    checkEnrollment: (payerId: string) => Promise<{ status: string; message: string }>;
+    submitClaim: (claimId: number) => Promise<ClaimSubmissionResult>;
+    checkClaimStatus: (claimId: number) => Promise<{ status: ClaimStatus; message: string }>;
+    checkEligibility: (clientId: number) => Promise<EligibilityRequestResult>;
+    getRemittance: (startDate: string, endDate: string) => Promise<any[]>;
+  };
+  eligibilityChecks: {
+    listByClient: (clientId: number) => Promise<EligibilityCheck[]>;
+    getLatest: (clientId: number) => Promise<EligibilityCheck | null>;
+  };
+  denialCodes: {
+    lookup: (code: string) => Promise<DenialCode | null>;
+    listCommon: () => Promise<DenialCode[]>;
   };
   auditLog: {
     list: (filters?: {

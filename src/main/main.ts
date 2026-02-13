@@ -16,6 +16,8 @@ import Stripe from 'stripe';
 import { requiresReferral as checkDirectAccess, getAllRules as getDirectAccessRules } from '../shared/directAccessRules';
 import { detectCloudStorage } from './cloudDetection';
 import { generateCMS1500, assembleCMS1500Data } from './cms1500Generator';
+import * as clearinghouse from './clearinghouse';
+import { generate837P, assemble837PInput } from './edi837Generator';
 import type { AppTier, NoteFormat, DischargeData, DischargeGoalStatus } from '../shared/types';
 import { NOTE_FORMAT_SECTIONS, DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS } from '../shared/types';
 
@@ -4234,39 +4236,56 @@ function registerIpcHandlers() {
 
   // ── Claims (V3) ──
   safeHandle('claims:list', (_event, filters?: { clientId?: number; status?: string; startDate?: string; endDate?: string }) => {
-    let query = 'SELECT * FROM claims WHERE deleted_at IS NULL';
+    let query = `SELECT c.*, (cl.first_name || ' ' || cl.last_name) AS client_name
+      FROM claims c
+      LEFT JOIN clients cl ON c.client_id = cl.id
+      WHERE c.deleted_at IS NULL`;
     const params: any[] = [];
 
     if (filters?.clientId) {
-      query += ' AND client_id = ?';
+      query += ' AND c.client_id = ?';
       params.push(filters.clientId);
     }
     if (filters?.status) {
-      query += ' AND status = ?';
+      query += ' AND c.status = ?';
       params.push(filters.status);
     }
     if (filters?.startDate) {
-      query += ' AND service_date_start >= ?';
+      query += ' AND c.service_date_start >= ?';
       params.push(filters.startDate);
     }
     if (filters?.endDate) {
-      query += ' AND service_date_end <= ?';
+      query += ' AND c.service_date_end <= ?';
       params.push(filters.endDate);
     }
 
-    query += ' ORDER BY created_at DESC';
+    query += ' ORDER BY c.created_at DESC';
     return db.prepare(query).all(...params);
   });
 
   safeHandle('claims:get', (_event, id: number) => {
-    const claim = db.prepare('SELECT * FROM claims WHERE id = ? AND deleted_at IS NULL').get(id) as any;
+    const claim = db.prepare(`
+      SELECT c.*, (cl.first_name || ' ' || cl.last_name) AS client_name
+      FROM claims c
+      LEFT JOIN clients cl ON c.client_id = cl.id
+      WHERE c.id = ? AND c.deleted_at IS NULL
+    `).get(id) as any;
     if (!claim) throw new Error('Claim not found');
     const lines = db.prepare('SELECT * FROM claim_lines WHERE claim_id = ? ORDER BY line_number').all(id);
     return { ...claim, lines };
   });
 
   safeHandle('claims:create', (_event, data: any, lines: any[]) => {
-    const claimNumber = `CLM-${Date.now().toString(36).toUpperCase()}`;
+    // Generate sequential claim number: PC-YYYY-NNNN
+    const year = new Date().getFullYear();
+    const lastClaim = db.prepare(`SELECT claim_number FROM claims WHERE claim_number LIKE ? ORDER BY id DESC LIMIT 1`).get(`PC-${year}-%`) as any;
+    let seq = 1;
+    if (lastClaim?.claim_number) {
+      const parts = lastClaim.claim_number.split('-');
+      const lastSeq = parseInt(parts[2], 10);
+      if (!isNaN(lastSeq)) seq = lastSeq + 1;
+    }
+    const claimNumber = `PC-${year}-${String(seq).padStart(4, '0')}`;
     const result = db.prepare(`
       INSERT INTO claims (client_id, claim_number, payer_name, payer_id, service_date_start, service_date_end, total_charge, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -4325,6 +4344,171 @@ function registerIpcHandlers() {
     return true;
   });
 
+  // Generate 837P for a claim and store it
+  safeHandle('claims:generate837P', (_event, claimId: number) => {
+    const claim = db.prepare('SELECT * FROM claims WHERE id = ? AND deleted_at IS NULL').get(claimId) as any;
+    if (!claim) throw new Error('Claim not found');
+
+    const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(claim.client_id) as any;
+    if (!client) throw new Error('Client not found');
+
+    const practice = db.prepare('SELECT * FROM practice LIMIT 1').get() as any;
+    if (!practice) throw new Error('Practice info not configured');
+
+    // Get notes linked to this claim via claim_lines
+    const claimLines = db.prepare('SELECT * FROM claim_lines WHERE claim_id = ? ORDER BY line_number').all(claimId) as any[];
+    const noteIds = claimLines.map((l: any) => l.note_id).filter(Boolean);
+    const notes = noteIds.length > 0
+      ? db.prepare(`SELECT * FROM notes WHERE id IN (${noteIds.map(() => '?').join(',')})`).all(...noteIds) as any[]
+      : [];
+
+    // Get clearinghouse config
+    const { apiKey } = clearinghouse.getCredentials();
+    const submitterId = practice.npi || '';
+    const receiverId = 'CLAIMMD'; // Claim.MD receiver ID
+
+    // Get control number
+    const ctrlRow = db.prepare("SELECT value FROM settings WHERE key = 'next_claim_control_number'").get() as any;
+    let controlNumber = 1;
+    if (ctrlRow?.value) controlNumber = parseInt(ctrlRow.value, 10) || 1;
+
+    // Assemble and generate
+    const input = assemble837PInput({
+      client,
+      practice,
+      notes,
+      claimNumber: claim.claim_number,
+      claimId: claim.id,
+      submitterId,
+      receiverId,
+    });
+
+    const ediContent = generate837P(input, controlNumber);
+
+    // Store and update status
+    db.prepare(`
+      UPDATE claims SET edi_837_content = ?, status = 'validated', validated_at = datetime('now'), updated_at = datetime('now')
+      WHERE id = ?
+    `).run(ediContent, claimId);
+
+    // Increment control number
+    const nextCtrl = controlNumber + 1;
+    const existing = db.prepare("SELECT key FROM settings WHERE key = 'next_claim_control_number'").get();
+    if (existing) {
+      db.prepare("UPDATE settings SET value = ? WHERE key = 'next_claim_control_number'").run(String(nextCtrl));
+    } else {
+      db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run('next_claim_control_number', String(nextCtrl));
+    }
+
+    auditLog({ actionType: 'claim_837p_generated', entityType: 'claim', entityId: claimId, clientId: claim.client_id });
+
+    return { success: true, claimNumber: claim.claim_number, ediContent };
+  });
+
+  // Create claim from signed notes (one-click workflow)
+  safeHandle('claims:createFromNotes', (_event, clientId: number, noteIds: number[]) => {
+    const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(clientId) as any;
+    if (!client) throw new Error('Client not found');
+
+    const practice = db.prepare('SELECT * FROM practice LIMIT 1').get() as any;
+
+    // Get notes
+    const notes = db.prepare(`SELECT * FROM notes WHERE id IN (${noteIds.map(() => '?').join(',')}) AND deleted_at IS NULL`).all(...noteIds) as any[];
+    if (notes.length === 0) throw new Error('No notes found');
+
+    // Calculate total charge and date range
+    let totalCharge = 0;
+    let minDate = '';
+    let maxDate = '';
+    const lines: any[] = [];
+
+    notes.forEach((note: any, idx: number) => {
+      let cptLines: Array<{ code: string; units: number }> = [];
+      try { cptLines = JSON.parse(note.cpt_codes || '[]'); } catch {}
+      if (cptLines.length === 0 && note.cpt_code) {
+        cptLines = [{ code: note.cpt_code, units: note.units || 1 }];
+      }
+
+      let modifiers: string[] = [];
+      try { modifiers = JSON.parse(note.cpt_modifiers || '[]'); } catch {}
+
+      let diagPointers: number[] = [];
+      try { diagPointers = JSON.parse(note.diagnosis_pointers || '[1]'); } catch {}
+
+      const mainCpt = cptLines[0] || { code: '', units: 1 };
+      const charge = note.charge_amount || 0;
+      totalCharge += charge;
+
+      const dos = note.date_of_service || '';
+      if (!minDate || dos < minDate) minDate = dos;
+      if (!maxDate || dos > maxDate) maxDate = dos;
+
+      lines.push({
+        note_id: note.id,
+        service_date: dos,
+        cpt_code: mainCpt.code,
+        modifiers,
+        units: mainCpt.units || 1,
+        charge_amount: charge,
+        diagnosis_pointers: diagPointers,
+        place_of_service: note.place_of_service || '11',
+      });
+    });
+
+    // Create the claim
+    const year = new Date().getFullYear();
+    const lastClaim = db.prepare(`SELECT claim_number FROM claims WHERE claim_number LIKE ? ORDER BY id DESC LIMIT 1`).get(`PC-${year}-%`) as any;
+    let seq = 1;
+    if (lastClaim?.claim_number) {
+      const parts = lastClaim.claim_number.split('-');
+      const lastSeq = parseInt(parts[2], 10);
+      if (!isNaN(lastSeq)) seq = lastSeq + 1;
+    }
+    const claimNumber = `PC-${year}-${String(seq).padStart(4, '0')}`;
+
+    const result = db.prepare(`
+      INSERT INTO claims (client_id, claim_number, payer_name, payer_id, service_date_start, service_date_end, total_charge, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      clientId,
+      claimNumber,
+      client.insurance_payer || '',
+      client.insurance_payer_id || '',
+      minDate,
+      maxDate,
+      totalCharge,
+      'draft'
+    );
+    const claimId = Number(result.lastInsertRowid);
+
+    const insertLine = db.prepare(`
+      INSERT INTO claim_lines (claim_id, note_id, line_number, service_date, cpt_code, modifiers, units, charge_amount, diagnosis_pointers, place_of_service)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    lines.forEach((line: any, idx: number) => {
+      insertLine.run(
+        claimId,
+        line.note_id || null,
+        idx + 1,
+        line.service_date || '',
+        line.cpt_code || '',
+        JSON.stringify(line.modifiers || []),
+        line.units || 1,
+        line.charge_amount || 0,
+        JSON.stringify(line.diagnosis_pointers || [1]),
+        line.place_of_service || '11'
+      );
+    });
+
+    auditLog({ actionType: 'claim_created_from_notes', entityType: 'claim', entityId: claimId, clientId, detail: { noteIds, claimNumber } });
+
+    return db.prepare(`
+      SELECT c.*, (cl.first_name || ' ' || cl.last_name) AS client_name
+      FROM claims c LEFT JOIN clients cl ON c.client_id = cl.id
+      WHERE c.id = ?
+    `).get(claimId);
+  });
+
   // ── Payers ──
   safeHandle('payers:list', () => {
     return db.prepare('SELECT * FROM payers ORDER BY name').all();
@@ -4375,6 +4559,89 @@ function registerIpcHandlers() {
     db.prepare('DELETE FROM payers WHERE id = ?').run(id);
     auditLog({ actionType: 'payer_deleted', entityType: 'payer', entityId: id, detail: { name: payer?.name } });
     return true;
+  });
+
+  // ── Clearinghouse (Claim.MD) ──
+  safeHandle('clearinghouse:setCredentials', (_event, apiKey: string) => {
+    clearinghouse.setCredentials(apiKey);
+    auditLog({ actionType: 'clearinghouse_credentials_set', entityType: 'clearinghouse', detail: { masked: clearinghouse.getMaskedApiKey() } });
+  });
+
+  safeHandle('clearinghouse:getConnectionStatus', async () => {
+    return clearinghouse.getConnectionStatus();
+  });
+
+  safeHandle('clearinghouse:testConnection', async () => {
+    const result = await clearinghouse.testConnection();
+    auditLog({ actionType: 'clearinghouse_connection_test', entityType: 'clearinghouse', detail: { success: result.success } });
+    return result;
+  });
+
+  safeHandle('clearinghouse:getPayerList', async () => {
+    return clearinghouse.getPayerList();
+  });
+
+  safeHandle('clearinghouse:checkEnrollment', async (_event, payerId: string) => {
+    return clearinghouse.checkEnrollment(payerId);
+  });
+
+  safeHandle('clearinghouse:submitClaim', async (_event, claimId: number) => {
+    // Get claim and generate 837P, then submit
+    const claim = db.prepare('SELECT * FROM claims WHERE id = ?').get(claimId) as any;
+    if (!claim) return { success: false, message: 'Claim not found' };
+
+    if (!claim.edi_837_content) {
+      return { success: false, message: 'No EDI content generated for this claim. Generate the 837P first.' };
+    }
+
+    const result = await clearinghouse.submitClaim(claim.edi_837_content);
+
+    if (result.success) {
+      db.prepare(`
+        UPDATE claims SET status = 'submitted', submitted_at = datetime('now'),
+        clearinghouse_claim_id = ?, updated_at = datetime('now') WHERE id = ?
+      `).run(result.clearinghouseClaimId || '', claimId);
+      auditLog({ actionType: 'claim_submitted', entityType: 'claim', entityId: claimId, clientId: claim.client_id, detail: { clearinghouseClaimId: result.clearinghouseClaimId } });
+    }
+
+    return result;
+  });
+
+  safeHandle('clearinghouse:checkClaimStatus', async (_event, claimId: number) => {
+    const claim = db.prepare('SELECT * FROM claims WHERE id = ?').get(claimId) as any;
+    if (!claim) return { status: 'error', message: 'Claim not found' };
+    if (!claim.clearinghouse_claim_id) return { status: 'error', message: 'Claim has no clearinghouse ID' };
+
+    const result = await clearinghouse.checkClaimStatus(claim.clearinghouse_claim_id);
+    return result;
+  });
+
+  safeHandle('clearinghouse:checkEligibility', async (_event, clientId: number) => {
+    // Placeholder — will use edi270Generator once built
+    return { success: false, message: 'Eligibility checking not yet implemented. Coming in Phase 2.' };
+  });
+
+  safeHandle('clearinghouse:getRemittance', async (_event, startDate: string, endDate: string) => {
+    const result = await clearinghouse.getRemittances(startDate, endDate);
+    return result.remittances;
+  });
+
+  // ── Eligibility Checks ──
+  safeHandle('eligibilityChecks:listByClient', (_event, clientId: number) => {
+    return db.prepare('SELECT * FROM eligibility_checks WHERE client_id = ? ORDER BY check_date DESC').all(clientId);
+  });
+
+  safeHandle('eligibilityChecks:getLatest', (_event, clientId: number) => {
+    return db.prepare('SELECT * FROM eligibility_checks WHERE client_id = ? ORDER BY check_date DESC LIMIT 1').get(clientId) || null;
+  });
+
+  // ── Denial Codes ──
+  safeHandle('denialCodes:lookup', (_event, code: string) => {
+    return db.prepare('SELECT * FROM denial_codes WHERE code = ?').get(code) || null;
+  });
+
+  safeHandle('denialCodes:listCommon', () => {
+    return db.prepare('SELECT * FROM denial_codes WHERE common_in_therapy = 1 ORDER BY code').all();
   });
 
   // ── Audit Log ──

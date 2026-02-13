@@ -11,6 +11,7 @@ const PRO_FEATURES = new Set([
   'batch_invoicing',
   'tax_summary',
   'quick_chips',
+  'insurance_billing',
 ]);
 
 export function useTier() {

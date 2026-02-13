@@ -303,6 +303,8 @@ const api = {
     list: (filters?: any) => ipcRenderer.invoke('claims:list', filters),
     get: (id: number) => ipcRenderer.invoke('claims:get', id),
     create: (data: any, lines: any[]) => ipcRenderer.invoke('claims:create', data, lines),
+    createFromNotes: (clientId: number, noteIds: number[]) => ipcRenderer.invoke('claims:createFromNotes', clientId, noteIds),
+    generate837P: (claimId: number) => ipcRenderer.invoke('claims:generate837P', claimId),
     update: (id: number, data: any) => ipcRenderer.invoke('claims:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('claims:delete', id),
   },
@@ -313,6 +315,31 @@ const api = {
     create: (data: any) => ipcRenderer.invoke('payers:create', data),
     update: (id: number, data: any) => ipcRenderer.invoke('payers:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('payers:delete', id),
+  },
+
+  // Clearinghouse (Claim.MD)
+  clearinghouse: {
+    setCredentials: (apiKey: string) => ipcRenderer.invoke('clearinghouse:setCredentials', apiKey),
+    getConnectionStatus: () => ipcRenderer.invoke('clearinghouse:getConnectionStatus'),
+    testConnection: () => ipcRenderer.invoke('clearinghouse:testConnection'),
+    getPayerList: () => ipcRenderer.invoke('clearinghouse:getPayerList'),
+    checkEnrollment: (payerId: string) => ipcRenderer.invoke('clearinghouse:checkEnrollment', payerId),
+    submitClaim: (claimId: number) => ipcRenderer.invoke('clearinghouse:submitClaim', claimId),
+    checkClaimStatus: (claimId: number) => ipcRenderer.invoke('clearinghouse:checkClaimStatus', claimId),
+    checkEligibility: (clientId: number) => ipcRenderer.invoke('clearinghouse:checkEligibility', clientId),
+    getRemittance: (startDate: string, endDate: string) => ipcRenderer.invoke('clearinghouse:getRemittance', startDate, endDate),
+  },
+
+  // Eligibility Checks
+  eligibilityChecks: {
+    listByClient: (clientId: number) => ipcRenderer.invoke('eligibilityChecks:listByClient', clientId),
+    getLatest: (clientId: number) => ipcRenderer.invoke('eligibilityChecks:getLatest', clientId),
+  },
+
+  // Denial Codes
+  denialCodes: {
+    lookup: (code: string) => ipcRenderer.invoke('denialCodes:lookup', code),
+    listCommon: () => ipcRenderer.invoke('denialCodes:listCommon'),
   },
 
   // Audit Log

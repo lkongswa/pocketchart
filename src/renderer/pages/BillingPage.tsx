@@ -30,6 +30,8 @@ import {
   Activity,
   CalendarRange,
   GripVertical,
+  Shield,
+  Lock,
 } from 'lucide-react';
 import type {
   Invoice,
@@ -44,7 +46,9 @@ import type {
 } from '../../shared/types';
 import InvoiceModal from '../components/InvoiceModal';
 import PaymentModal from '../components/PaymentModal';
+import InsuranceTab from '../components/InsuranceTab';
 
+type TopTab = 'direct_pay' | 'insurance';
 type BillingTab = 'invoices' | 'payments' | 'analytics' | 'stripe';
 
 const STATUS_COLORS: Record<InvoiceStatus, { bg: string; text: string }> = {
@@ -69,7 +73,24 @@ export default function BillingPage() {
   const location = useLocation();
   const { isPro } = useTier();
   const { guardAction, showExpiredModal, dismissExpiredModal } = useTrialGuard();
+
+  // Top-level tab: Direct Pay vs Insurance
+  const [topTab, setTopTab] = useState<TopTab>('direct_pay');
   const [activeTab, setActiveTab] = useState<BillingTab>('invoices');
+
+  // Persist top-level tab selection
+  useEffect(() => {
+    window.api.settings.get('billing_active_tab').then((saved: string | null) => {
+      if (saved === 'insurance' || saved === 'direct_pay') {
+        setTopTab(saved as TopTab);
+      }
+    }).catch(() => {});
+  }, []);
+
+  const handleTopTabChange = (tab: TopTab) => {
+    setTopTab(tab);
+    window.api.settings.set('billing_active_tab', tab).catch(() => {});
+  };
   const [toast, setToast] = useState<string | null>(null);
 
   // Data
@@ -470,12 +491,47 @@ export default function BillingPage() {
           <div>
             <h1 className="page-title">Billing</h1>
             <p className="text-sm text-[var(--color-text-secondary)]">
-              Manage invoices, payments, and billing analytics
+              Track payments and submit insurance claims
             </p>
           </div>
         </div>
       </div>
 
+      {/* Top-Level Tabs: Direct Pay / Insurance */}
+      <div className="flex items-center gap-3 mb-6">
+        <button
+          onClick={() => handleTopTabChange('direct_pay')}
+          className={`flex items-center gap-2.5 px-6 py-3 rounded-xl text-sm font-semibold transition-all cursor-pointer border-2 ${
+            topTab === 'direct_pay'
+              ? 'bg-violet-50 border-violet-300 text-violet-700 shadow-sm'
+              : 'bg-white border-gray-200 text-[var(--color-text-secondary)] hover:border-violet-200 hover:text-violet-600'
+          }`}
+        >
+          <DollarSign className="w-5 h-5" />
+          Direct Pay
+        </button>
+        <button
+          onClick={() => handleTopTabChange('insurance')}
+          className={`flex items-center gap-2.5 px-6 py-3 rounded-xl text-sm font-semibold transition-all cursor-pointer border-2 ${
+            topTab === 'insurance'
+              ? 'bg-violet-50 border-violet-300 text-violet-700 shadow-sm'
+              : 'bg-white border-gray-200 text-[var(--color-text-secondary)] hover:border-violet-200 hover:text-violet-600'
+          }`}
+        >
+          <Shield className="w-5 h-5" />
+          Insurance
+          {!isPro && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-600 font-semibold flex items-center gap-0.5 ml-1">
+              <Lock className="w-2.5 h-2.5" />
+              PRO
+            </span>
+          )}
+        </button>
+      </div>
+
+      {/* ── DIRECT PAY TAB ── */}
+      {topTab === 'direct_pay' && (
+      <>
       {/* Client Filter & Search */}
       <div className="flex items-center gap-3 mb-4">
         <div className="relative flex-1 max-w-md">
@@ -489,9 +545,10 @@ export default function BillingPage() {
           />
         </div>
         <div className="relative">
-          <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-secondary)]" />
+          <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-secondary)] pointer-events-none z-10" />
           <select
-            className="select pl-9"
+            className="select pl-9 pr-10 min-w-[220px] appearance-none bg-[length:16px_16px] bg-[position:right_12px_center] bg-no-repeat"
+            style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")` }}
             value={clientFilter}
             onChange={(e) => setClientFilter(e.target.value === 'all' ? 'all' : parseInt(e.target.value, 10))}
           >
@@ -1191,6 +1248,16 @@ export default function BillingPage() {
               </div>
             )}
           </div>
+        </ProFeatureGate>
+      )}
+
+      </>
+      )}
+
+      {/* ── INSURANCE TAB ── */}
+      {topTab === 'insurance' && (
+        <ProFeatureGate feature="insurance_billing" lockedMessage="Upgrade to Pro to submit electronic insurance claims, check eligibility, and manage remittances.">
+          <InsuranceTab />
         </ProFeatureGate>
       )}
 

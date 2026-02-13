@@ -12,6 +12,7 @@ import RestoreConfirmationModal from '../components/RestoreConfirmationModal';
 import ImportClientSelector from '../components/ImportClientSelector';
 import { useSectionColor } from '../hooks/useSectionColor';
 import { useTier } from '../hooks/useTier';
+import InsuranceSetup from '../components/InsuranceSetup';
 
 // ── Collapsible Section Component ──
 interface CollapsibleSectionProps {
@@ -1382,6 +1383,15 @@ export default function SettingsPage() {
             {feeSaving ? 'Saving...' : 'Save Fee Settings'}
           </button>
         </div>
+      </CollapsibleSection>
+
+      {/* Insurance Setup (Pro) */}
+      <CollapsibleSection
+        icon={<Shield className="w-5 h-5" />}
+        title="Insurance Setup"
+        description="Clearinghouse connection for electronic claims"
+      >
+        <InsuranceSetup />
       </CollapsibleSection>
 
       {/* Discount Templates */}

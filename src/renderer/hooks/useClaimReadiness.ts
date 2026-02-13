@@ -2,13 +2,16 @@ import { useMemo } from 'react';
 import type { Client, Practice, Note, CMS1500Readiness, CMS1500ReadinessCheck } from '../../shared/types';
 
 /**
- * useClaimReadiness — Pre-flight checklist for CMS-1500 claim generation.
+ * useClaimReadiness — Pre-flight checklist for CMS-1500 / 837P claim generation.
  * Returns a readiness object with pass/fail/warn checks for all required fields.
+ *
+ * Pass `mode = '837P'` for electronic claim validation (adds clearinghouse + EDI checks).
  */
 export function useClaimReadiness(
   client: Client | null,
   practice: Practice | null,
-  notes?: Note[]
+  notes?: Note[],
+  options?: { mode?: 'cms1500' | '837P'; clearinghouseConnected?: boolean }
 ): CMS1500Readiness {
   return useMemo(() => {
     if (!client) {
@@ -167,6 +170,30 @@ export function useClaimReadiness(
       });
     }
 
+    // --- 837P-specific checks ---
+    if (options?.mode === '837P') {
+      checks.push({
+        field: 'clearinghouse_connection',
+        label: 'Clearinghouse Connected',
+        status: options.clearinghouseConnected ? 'pass' : 'fail',
+        message: options.clearinghouseConnected ? 'Connected to Claim.MD' : 'Clearinghouse not connected — set up in Settings → Insurance Setup',
+      });
+
+      checks.push({
+        field: 'insurance_payer_id',
+        label: 'EDI Payer ID',
+        status: client.insurance_payer_id ? 'pass' : 'fail',
+        message: client.insurance_payer_id ? undefined : 'EDI Payer ID required for electronic claims. Check the Payer Directory for the correct ID.',
+      });
+
+      checks.push({
+        field: 'taxonomy_code',
+        label: 'Taxonomy Code',
+        status: practice?.taxonomy_code ? 'pass' : 'warn',
+        message: practice?.taxonomy_code ? undefined : 'Taxonomy code recommended for electronic claims. Set in Settings → Practice Information.',
+      });
+    }
+
     const passCount = checks.filter(c => c.status === 'pass').length;
     const failCount = checks.filter(c => c.status === 'fail').length;
     const warnCount = checks.filter(c => c.status === 'warn').length;
@@ -178,5 +205,5 @@ export function useClaimReadiness(
       failCount,
       warnCount,
     };
-  }, [client, practice, notes]);
+  }, [client, practice, notes, options?.mode, options?.clearinghouseConnected]);
 }
