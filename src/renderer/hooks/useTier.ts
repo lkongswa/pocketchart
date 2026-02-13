@@ -41,6 +41,12 @@ export function useTier() {
     return () => window.removeEventListener('pocketchart:tier-changed', handler);
   }, [refresh]);
 
+  // Listen for startup/background validation tier changes from main process
+  useEffect(() => {
+    const cleanup = window.api.license.onTierChanged(() => refresh());
+    return cleanup;
+  }, [refresh]);
+
   const hasFeature = useCallback((feature: string): boolean => {
     if (tier === 'unlicensed') return false;
     if (PRO_FEATURES.has(feature)) return tier === 'pro';

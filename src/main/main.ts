@@ -2489,12 +2489,24 @@ function registerIpcHandlers() {
 
       const data = await response.json() as any;
 
-      if (!data.valid && data.error) {
-        return { valid: false, tier: 'unlicensed', subscriptionStatus: null, subscriptionExpiresAt: null, error: data.error };
-      }
-
       if (!data.valid) {
-        return { valid: false, tier: 'unlicensed', subscriptionStatus: null, subscriptionExpiresAt: null, error: 'Invalid license key' };
+        // Check if this is an expired/cancelled Pro key — they should fall to basic, not unlicensed
+        const keyStatus = data.license_key?.status;
+        if (keyStatus === 'expired' || keyStatus === 'disabled') {
+          const pName = (data.meta?.product_name || '').toLowerCase();
+          const vName = (data.meta?.variant_name || '').toLowerCase();
+          const wasPro = pName.includes('pro') || vName.includes('pro');
+          return {
+            valid: false,
+            tier: 'basic',
+            subscriptionStatus: keyStatus === 'expired' ? 'expired' : 'cancelled',
+            subscriptionExpiresAt: data.license_key?.expires_at || null,
+            error: wasPro
+              ? `Pro subscription ${keyStatus === 'expired' ? 'expired' : 'cancelled'} — reverting to Basic`
+              : data.error || 'License expired',
+          };
+        }
+        return { valid: false, tier: 'unlicensed', subscriptionStatus: null, subscriptionExpiresAt: null, error: data.error || 'Invalid license key' };
       }
 
       // Determine tier from the product/variant name
@@ -2823,15 +2835,63 @@ function registerIpcHandlers() {
         setSetting('subscription_expires_at', result.subscriptionExpiresAt);
       }
     } else {
-      // License no longer valid — drop to unlicensed
-      setSetting('app_tier', 'unlicensed');
-      deleteSetting('subscription_status');
-      deleteSetting('subscription_expires_at');
+      // License no longer valid — use the tier from validation
+      // (expired/cancelled Pro keys return 'basic', truly invalid keys return 'unlicensed')
+      setSetting('app_tier', result.tier);
+      if (result.subscriptionStatus) {
+        setSetting('subscription_status', result.subscriptionStatus);
+      } else {
+        deleteSetting('subscription_status');
+      }
+      if (result.subscriptionExpiresAt) {
+        setSetting('subscription_expires_at', result.subscriptionExpiresAt);
+      } else {
+        deleteSetting('subscription_expires_at');
+      }
     }
   }
 
-  // Run background validation after 30 seconds, then every 6 hours
-  setTimeout(() => backgroundLicenseValidation(), 30000);
+  // Startup validation: always validate on every app launch (no day-gate).
+  // Runs after a short delay so the window is already up & network is likely ready.
+  async function startupLicenseValidation() {
+    const licenseKey = getSetting('license_key');
+    if (!licenseKey) return;
+
+    const result = await validateLemonSqueezyLicense(licenseKey);
+
+    if (result.error === 'network_error') {
+      // Offline — fall through to cached tier; grace period handled by background check
+      return;
+    }
+
+    // Apply the result (same logic as backgroundLicenseValidation)
+    setSetting('app_tier', result.tier);
+    setSetting('last_license_validation', new Date().toISOString());
+    if (result.valid) {
+      deleteSetting('license_grace_expired');
+    }
+    if (result.subscriptionStatus) {
+      setSetting('subscription_status', result.subscriptionStatus);
+    } else {
+      deleteSetting('subscription_status');
+    }
+    if (result.subscriptionExpiresAt) {
+      setSetting('subscription_expires_at', result.subscriptionExpiresAt);
+    } else {
+      deleteSetting('subscription_expires_at');
+    }
+
+    // Notify the renderer so the UI reflects the updated tier immediately
+    const wins = BrowserWindow.getAllWindows();
+    for (const w of wins) {
+      w.webContents.send('license:tierChanged', result.tier);
+    }
+  }
+
+  // Run startup validation after 5 seconds (window up, network ready)
+  setTimeout(() => startupLicenseValidation(), 5000);
+
+  // Background re-validation every 6 hours (the 7-day gate still applies for the periodic check)
   const licenseIntervalId = setInterval(() => backgroundLicenseValidation(), 6 * 60 * 60 * 1000);
 
   // ── Graceful shutdown: close DB + clear intervals ──

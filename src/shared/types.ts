@@ -1428,6 +1428,7 @@ export interface PocketChartAPI {
     activate: (licenseKey: string) => Promise<LicenseActivateResult>;
     deactivate: () => Promise<LicenseActivateResult>;
     getActivationInfo: () => Promise<{ activationUsage: number | null; activationLimit: number }>;
+    onTierChanged: (callback: (tier: string) => void) => () => void;
   };
   secureStorage: {
     /** Check if OS-level encryption is available */

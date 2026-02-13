@@ -252,6 +252,11 @@ const api = {
     activate: (licenseKey: string) => ipcRenderer.invoke('license:activate', licenseKey),
     deactivate: () => ipcRenderer.invoke('license:deactivate'),
     getActivationInfo: () => ipcRenderer.invoke('license:getActivationInfo'),
+    onTierChanged: (callback: (tier: string) => void) => {
+      const handler = (_event: unknown, tier: string) => callback(tier);
+      ipcRenderer.on('license:tierChanged', handler);
+      return () => { ipcRenderer.removeListener('license:tierChanged', handler); };
+    },
   },
 
   // Secure Storage (OS-level encryption for API keys, etc.)
