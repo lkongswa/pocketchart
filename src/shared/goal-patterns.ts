@@ -273,7 +273,7 @@ const ST_PATTERNS: GoalPattern[] = [
     label: 'Social Communication Skill',
     icon: '🤝',
     verb: 'demonstrate',
-    measurement_type: 'cue_level',
+    measurement_type: 'percentage',
     components: [
       {
         key: 'skill',
@@ -372,7 +372,7 @@ const ST_PATTERNS: GoalPattern[] = [
     label: 'Cognitive-Communication Task',
     icon: '🧠',
     verb: 'demonstrate',
-    measurement_type: 'cue_level',
+    measurement_type: 'percentage',
     components: [
       {
         key: 'domain',
@@ -405,7 +405,7 @@ const ST_PATTERNS: GoalPattern[] = [
     label: 'AAC Device/System Use',
     icon: '📱',
     verb: 'use',
-    measurement_type: 'cue_level',
+    measurement_type: 'percentage',
     components: [
       {
         key: 'system',
@@ -674,7 +674,7 @@ const OT_PATTERNS: GoalPattern[] = [
     label: 'Cognitive Strategy Use',
     icon: '🧠',
     verb: 'demonstrate',
-    measurement_type: 'cue_level',
+    measurement_type: 'percentage',
     components: [
       { key: 'domain', label: 'Domain', type: 'chip_single', options: ['task sequencing', 'safety awareness', 'problem-solving', 'time management', 'money management', 'medication management'] },
       { key: 'task', label: 'Specific Task', type: 'text', placeholder: 'e.g., 3-step morning routine, weekly medication setup' },
@@ -917,10 +917,15 @@ export function getPatternsForCategory(discipline: Discipline, category: string)
   return ALL_PATTERNS.filter(p => p.discipline === discipline && p.category === category);
 }
 
+/** Pre-built lookup map for O(1) pattern resolution */
+const PATTERN_MAP = new Map<string, GoalPattern>(
+  ALL_PATTERNS.map(p => [p.id, p])
+);
+
 /** Look up a pattern by its unique ID */
 export function getPatternById(id: string): GoalPattern | undefined {
   if (id === 'custom_freeform') return CUSTOM_PATTERN;
-  return ALL_PATTERNS.find(p => p.id === id);
+  return PATTERN_MAP.get(id);
 }
 
 /** Get unique categories for a discipline (from patterns) */

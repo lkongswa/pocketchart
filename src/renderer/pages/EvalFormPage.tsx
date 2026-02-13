@@ -108,6 +108,7 @@ interface EvalContent {
   goals: string; // legacy free-text
   goal_entries?: EvalGoalEntry[]; // structured goals
   created_goal_ids?: number[]; // IDs of created Goal records
+  carried_over_count?: number; // Number of goals carried from prior eval
   treatment_plan: string;
   frequency_duration: string;
   session_note?: SessionNoteData;
@@ -745,6 +746,7 @@ export default function EvalFormPage() {
               alreadyCreatedIds = parsed.created_goal_ids;
               setGoalsAlreadyCreated(true);
             }
+            // Note: is_carried_over is stamped on each EvalGoalEntry directly
           }
 
           // Two-way sync: merge client goals into draft eval
@@ -825,6 +827,7 @@ export default function EvalFormPage() {
         }
       } else if (isReassessment) {
         // ── Pre-populate from prior signed eval ──
+        // Performance: collect all async data first, then batch setState calls
         try {
           const prior = await window.api.evaluations.createReassessment(cid);
           if (prior && prior.priorContent) {
@@ -846,7 +849,6 @@ export default function EvalFormPage() {
               treatment_plan: parsed.treatment_plan || '',
               frequency_duration: parsed.frequency_duration || '',
             };
-            setContent(prePopulated);
 
             // Track which fields were pre-populated for UPDATE badges
             const prefilled = new Set<string>();
@@ -857,26 +859,31 @@ export default function EvalFormPage() {
             if (parsed.precautions?.trim()) prefilled.add('precautions');
             if (parsed.treatment_plan?.trim()) prefilled.add('treatment_plan');
             if (parsed.frequency_duration?.trim()) prefilled.add('frequency_duration');
-            setPriorFieldKeys(prefilled);
 
-            // Parse frequency/duration from prior
+            // Parse frequency/duration from prior (local vars)
+            let parsedFreq: number | null = null;
+            let parsedDur: number | null = null;
             if (parsed.frequency_duration) {
               const freqMatch = parsed.frequency_duration.match(/(\d+)x?\s*\/?\s*week/i);
               const durMatch = parsed.frequency_duration.match(/(\d+)\s*weeks/i);
-              if (freqMatch) setFreqValue(parseInt(freqMatch[1], 10));
-              if (durMatch) setDurValue(parseInt(durMatch[1], 10));
+              if (freqMatch) parsedFreq = parseInt(freqMatch[1], 10);
+              if (durMatch) parsedDur = parseInt(durMatch[1], 10);
             }
 
-            // Load met/completed goals for display
+            // Load met/completed goals for display (async)
+            let completedGoalsList: any[] = [];
             try {
               const allClientGoals = await window.api.goals.listByClient(cid);
-              const metOrDcGoals = allClientGoals.filter((g: any) => g.status === 'met' || g.status === 'discontinued');
-              setCompletedGoals(metOrDcGoals.map((g: any) => ({ id: g.id, goal_text: g.goal_text, goal_type: g.goal_type, status: g.status, met_date: g.met_date || '', category: g.category || '', baseline: g.baseline ?? 0, target: g.target ?? 0 })));
+              completedGoalsList = allClientGoals
+                .filter((g: any) => g.status === 'met' || g.status === 'discontinued')
+                .map((g: any) => ({ id: g.id, goal_text: g.goal_text, goal_type: g.goal_type, status: g.status, met_date: g.met_date || '', category: g.category || '', baseline: g.baseline ?? 0, target: g.target ?? 0 }));
             } catch { /* not critical */ }
 
-            // Load active goals if present — link them to existing Goal records
+            // Build active goal entries (local vars)
+            let entries: EvalGoalEntry[] = [];
+            let linkedIds: number[] = [];
             if (prior.activeGoals && Array.isArray(prior.activeGoals) && prior.activeGoals.length > 0) {
-              const entries: EvalGoalEntry[] = prior.activeGoals.map((g: any) => ({
+              entries = prior.activeGoals.map((g: any) => ({
                 goal_text: g.goal_text || '',
                 goal_type: g.goal_type || 'STG',
                 category: g.category || '',
@@ -889,14 +896,25 @@ export default function EvalFormPage() {
                 instrument: g.instrument || '',
                 pattern_id: g.pattern_id || '',
                 components: g.components_json ? JSON.parse(g.components_json) : undefined,
+                is_carried_over: true,
               }));
-              const linkedIds = prior.activeGoals.map((g: any) => g.id).filter(Boolean);
-              setGoalEntries(entries);
-              if (linkedIds.length > 0) {
-                setContent(prev => prev ? { ...prev, created_goal_ids: linkedIds } : prev);
-                setGoalsAlreadyCreated(true);
-              }
+              linkedIds = prior.activeGoals.map((g: any) => g.id).filter(Boolean);
             }
+
+            // Merge goal IDs into prePopulated content before setting state
+            if (linkedIds.length > 0) {
+              prePopulated.created_goal_ids = linkedIds;
+              prePopulated.carried_over_count = entries.length;
+            }
+
+            // ── BATCH: all setState calls in one synchronous block ──
+            setContent(prePopulated);
+            setPriorFieldKeys(prefilled);
+            if (parsedFreq !== null) setFreqValue(parsedFreq);
+            if (parsedDur !== null) setDurValue(parsedDur);
+            if (completedGoalsList.length > 0) setCompletedGoals(completedGoalsList);
+            if (entries.length > 0) setGoalEntries(entries);
+            if (linkedIds.length > 0) setGoalsAlreadyCreated(true);
 
             isDirty.current = true; // Mark dirty so autosave persists pre-populated data
             setToast('Pre-populated from prior evaluation — review and update fields');
@@ -928,16 +946,19 @@ export default function EvalFormPage() {
         // Auto-populate referral source from client record
         const refParts = [clientData.referring_physician, clientData.referral_source].filter(Boolean);
         if (refParts.length > 0) newContent.referral_source = refParts.join(' — ');
-        setContent(newContent);
 
-        // Load existing client goals into new eval
+        // Load existing client goals (async first, then batch setState)
+        let completedGoalsList: any[] = [];
+        let entries: EvalGoalEntry[] = [];
+        let linkedIds: number[] = [];
         try {
           const clientGoals = await window.api.goals.listByClient(cid);
           const activeClientGoals = clientGoals.filter((g: any) => g.status === 'active');
-          const metOrDcGoals = clientGoals.filter((g: any) => g.status === 'met' || g.status === 'discontinued');
-          setCompletedGoals(metOrDcGoals.map((g: any) => ({ id: g.id, goal_text: g.goal_text, goal_type: g.goal_type, status: g.status, met_date: g.met_date || '', category: g.category || '', baseline: g.baseline ?? 0, target: g.target ?? 0 })));
+          completedGoalsList = clientGoals
+            .filter((g: any) => g.status === 'met' || g.status === 'discontinued')
+            .map((g: any) => ({ id: g.id, goal_text: g.goal_text, goal_type: g.goal_type, status: g.status, met_date: g.met_date || '', category: g.category || '', baseline: g.baseline ?? 0, target: g.target ?? 0 }));
           if (activeClientGoals.length > 0) {
-            const entries: EvalGoalEntry[] = activeClientGoals.map((cg: any) => ({
+            entries = activeClientGoals.map((cg: any) => ({
               goal_text: cg.goal_text || '',
               goal_type: cg.goal_type || 'STG',
               category: cg.category || '',
@@ -950,15 +971,25 @@ export default function EvalFormPage() {
               instrument: cg.instrument || '',
               pattern_id: cg.pattern_id || '',
               components: cg.components_json ? JSON.parse(cg.components_json) : undefined,
+              is_carried_over: true,
             }));
-            const linkedIds = activeClientGoals.map((cg: any) => cg.id);
-            setGoalEntries(entries);
-            setContent(prev => prev ? { ...prev, created_goal_ids: linkedIds } : prev);
-            setGoalsAlreadyCreated(true);
+            linkedIds = activeClientGoals.map((cg: any) => cg.id);
           }
         } catch (err) {
           console.error('Failed to load client goals for new eval:', err);
         }
+
+        // Merge goal IDs into content before setting state
+        if (linkedIds.length > 0) {
+          newContent.created_goal_ids = linkedIds;
+          newContent.carried_over_count = entries.length;
+        }
+
+        // ── BATCH: all setState calls in one synchronous block ──
+        setContent(newContent);
+        if (completedGoalsList.length > 0) setCompletedGoals(completedGoalsList);
+        if (entries.length > 0) setGoalEntries(entries);
+        if (linkedIds.length > 0) setGoalsAlreadyCreated(true);
 
         // Pre-fill signature from settings
         const [sigName, sigCreds, sigImage] = await Promise.all([
@@ -1032,65 +1063,47 @@ export default function EvalFormPage() {
 
       // Delete any orphaned goals (IDs beyond current goalEntries length)
       if (updatedGoalIds.length > d.goalEntries.length) {
-        const orphanedIds = updatedGoalIds.slice(d.goalEntries.length);
-        for (const oid of orphanedIds) {
-          if (oid) {
-            try { await window.api.goals.delete(oid); } catch (err) { console.error('Auto-save: failed to delete orphaned goal:', err); }
-          }
+        const orphanedIds = updatedGoalIds.slice(d.goalEntries.length).filter(Boolean);
+        if (orphanedIds.length > 0) {
+          await Promise.all(orphanedIds.map(oid =>
+            window.api.goals.delete(oid).catch(err => console.error('Auto-save: failed to delete orphaned goal:', err))
+          ));
         }
         updatedGoalIds = updatedGoalIds.slice(0, d.goalEntries.length);
       }
 
-      for (let i = 0; i < d.goalEntries.length; i++) {
-        const entry = d.goalEntries[i];
-        if (!entry.goal_text.trim()) continue;
+      // Parallel goal sync — fire all updates/creates concurrently
+      const goalPromises = d.goalEntries.map(async (entry, i) => {
+        if (!entry.goal_text.trim()) return;
         const existingId = i < updatedGoalIds.length ? updatedGoalIds[i] : null;
+        const goalData = {
+          goal_text: entry.goal_text,
+          goal_type: entry.goal_type,
+          category: entry.category,
+          target_date: entry.target_date,
+          measurement_type: entry.measurement_type || 'percentage',
+          baseline: entry.baseline || 0,
+          target: entry.target || 0,
+          baseline_value: entry.baseline_value || '',
+          target_value: entry.target_value || '',
+          instrument: entry.instrument || '',
+          pattern_id: entry.pattern_id || '',
+          components_json: entry.components ? JSON.stringify(entry.components) : '',
+          status: 'active' as const,
+        };
         if (existingId) {
           try {
-            await window.api.goals.update(existingId, {
-              goal_text: entry.goal_text,
-              goal_type: entry.goal_type,
-              category: entry.category,
-              target_date: entry.target_date,
-              measurement_type: entry.measurement_type || 'percentage',
-              baseline: entry.baseline || 0,
-              target: entry.target || 0,
-              baseline_value: entry.baseline_value || '',
-              target_value: entry.target_value || '',
-              instrument: entry.instrument || '',
-              pattern_id: entry.pattern_id || '',
-              components_json: entry.components ? JSON.stringify(entry.components) : '',
-              status: 'active',
-              met_date: undefined,
-            });
-          } catch (err) {
-            console.error('Auto-save: failed to update linked goal:', err);
-          }
+            await window.api.goals.update(existingId, { ...goalData, met_date: undefined });
+          } catch (err) { console.error('Auto-save: failed to update linked goal:', err); }
         } else {
           try {
-            const goal = await window.api.goals.create({
-              client_id: cid,
-              goal_text: entry.goal_text,
-              goal_type: entry.goal_type,
-              category: entry.category,
-              target_date: entry.target_date,
-              measurement_type: entry.measurement_type || 'percentage',
-              baseline: entry.baseline || 0,
-              target: entry.target || 0,
-              baseline_value: entry.baseline_value || '',
-              target_value: entry.target_value || '',
-              instrument: entry.instrument || '',
-              pattern_id: entry.pattern_id || '',
-              components_json: entry.components ? JSON.stringify(entry.components) : '',
-              status: 'active',
-            });
+            const goal = await window.api.goals.create({ ...goalData, client_id: cid });
             while (updatedGoalIds.length <= i) updatedGoalIds.push(0);
             updatedGoalIds[i] = goal.id;
-          } catch (err) {
-            console.error('Auto-save: failed to create goal:', err);
-          }
+          } catch (err) { console.error('Auto-save: failed to create goal:', err); }
         }
-      }
+      });
+      await Promise.all(goalPromises);
 
       // Update content state with any newly created goal IDs
       if (JSON.stringify(updatedGoalIds) !== JSON.stringify(d.content.created_goal_ids || [])) {
@@ -1297,15 +1310,20 @@ export default function EvalFormPage() {
   contentRef.current = content;
 
   const handleGoalComponentChange = useCallback((idx: number, key: string, value: any) => {
-    // Use functional updater to read current components and merge
+    // Use functional updater to read current components and merge, then recompose text
     setGoalEntries(prev => {
       const entry = prev[idx];
       if (!entry) return prev;
       const updatedComps = { ...(entry.components || {}), [key]: value };
-      return prev.map((g, i) => i !== idx ? g : { ...g, components: updatedComps });
+      const updated = { ...entry, components: updatedComps };
+      // Recompose goal text so the narrative reflects the new component choice
+      if (updated.pattern_id && updated.pattern_id !== 'custom_freeform') {
+        updated.goal_text = composeGoalText(updated);
+      }
+      return prev.map((g, i) => i !== idx ? g : updated);
     });
     isDirty.current = true;
-  }, []);
+  }, [composeGoalText]);
 
   const handleGoalDelete = useCallback(async (idx: number) => {
     const c = contentRef.current;
@@ -1794,6 +1812,9 @@ export default function EvalFormPage() {
 
   // ── Render ──
 
+  const discipline = (client?.discipline || 'PT') as Discipline;
+  const objectiveFields = useMemo(() => getObjectiveFields(discipline), [discipline]);
+
   if (loading || !content) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -1809,9 +1830,6 @@ export default function EvalFormPage() {
       </div>
     );
   }
-
-  const discipline = client.discipline as Discipline;
-  const objectiveFields = useMemo(() => getObjectiveFields(discipline), [discipline]);
 
   return (
     <div className="overflow-y-auto h-full p-6" ref={scrollContainerRef}>
@@ -2226,8 +2244,6 @@ export default function EvalFormPage() {
                     onPatternSelect={(pattern) => handleGoalPatternSelect(idx, pattern)}
                     onPatternClear={() => handleGoalPatternClear(idx)}
                     onCustomPattern={() => handleGoalCustomPattern(idx)}
-                    categoryOptions={CATEGORY_OPTIONS[discipline] || []}
-                    usedCategories={usedCategories}
                   />
                 ) : (
                   <CollapsedGoalCard

@@ -32,6 +32,7 @@ export interface GoalCardData {
 
   status: GoalStatus | null;
   isSynced: boolean;
+  isCarriedOver: boolean;
   progressHistory: GoalProgressEntry[];
 
   context: 'eval' | 'client';
@@ -90,6 +91,7 @@ export function evalEntryToCardData(
     resolvedPattern: resolvePattern(entry.pattern_id, patternOverrides, customPatterns),
     status: null,
     isSynced: linkedGoalId != null && linkedGoalId > 0,
+    isCarriedOver: !!entry.is_carried_over,
     progressHistory: history,
     context: 'eval',
   };
@@ -124,6 +126,7 @@ export function goalToCardData(
     resolvedPattern: resolvePattern(goal.pattern_id, patternOverrides),
     status: goal.status,
     isSynced: !!goal.source_document_id,
+    isCarriedOver: false,
     progressHistory: history,
     context: 'client',
   };

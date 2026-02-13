@@ -290,6 +290,16 @@ const api = {
     delete: (id: number) => ipcRenderer.invoke('payments:delete', id),
   },
 
+  // CSV Payment Import
+  csvImport: {
+    pickFile: () => ipcRenderer.invoke('csvImport:pickFile') as Promise<string | null>,
+    parseFile: (filePath: string) => ipcRenderer.invoke('csvImport:parseFile', filePath),
+    autoDetectColumns: (headers: string[]) => ipcRenderer.invoke('csvImport:autoDetectColumns', headers),
+    matchClients: (data: any) => ipcRenderer.invoke('csvImport:matchClients', data),
+    prepareRows: (data: any) => ipcRenderer.invoke('csvImport:prepareRows', data),
+    execute: (data: any) => ipcRenderer.invoke('csvImport:execute', data),
+  },
+
   // V3 Insurance Billing - Authorizations
   authorizations: {
     listByClient: (clientId: number) => ipcRenderer.invoke('authorizations:listByClient', clientId),
@@ -517,6 +527,7 @@ const api = {
   // Dev tools (temporary)
   dev: {
     seedDemoData: () => ipcRenderer.invoke('dev:seedDemoData'),
+    setTier: (tier: string) => ipcRenderer.invoke('dev:setTier', tier),
   },
 };
 

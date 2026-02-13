@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronRight, RefreshCw, Lock } from 'lucide-react';
+import { ChevronRight, RefreshCw, Lock, History } from 'lucide-react';
 import type { GoalCardData } from '../../shared/goal-card-data';
 import type { MeasurementType, GoalProgressEntry } from '../../shared/types';
 import { formatMetricValue } from '../../shared/compose-goal-text';
@@ -67,10 +67,12 @@ const CollapsedGoalCard: React.FC<CollapsedGoalCardProps> = ({ data, fingerprint
   const typeBg = isSTG ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700';
   const isEstablished = data.context === 'client' && data.isSynced;
 
+  const cardBg = data.isCarriedOver ? 'bg-indigo-50/50' : 'bg-white';
+
   return (
     <div
       onClick={onClick}
-      className={`bg-white rounded-lg border border-[var(--color-border)] border-l-[3.5px] ${borderColor}
+      className={`${cardBg} rounded-lg border border-[var(--color-border)] border-l-[3.5px] ${borderColor}
         px-3 py-2.5 cursor-pointer hover:shadow-sm hover:border-gray-300 transition-all`}
     >
       {/* Row 1: Type + Pattern + Fingerprint + badges + date + chevron */}
@@ -91,6 +93,11 @@ const CollapsedGoalCard: React.FC<CollapsedGoalCardProps> = ({ data, fingerprint
         <span className="text-[11px] text-[var(--color-text-secondary)] truncate max-w-[200px]">{fingerprint}</span>
 
         <div className="ml-auto flex items-center gap-1.5 shrink-0">
+          {data.isCarriedOver && data.context === 'eval' && (
+            <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-indigo-100 text-indigo-600">
+              <History size={8} /> Prior
+            </span>
+          )}
           {isEstablished && (
             <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-blue-100 text-blue-600">
               <Lock size={8} /> Est.

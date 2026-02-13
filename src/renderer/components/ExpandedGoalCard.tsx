@@ -9,6 +9,7 @@ import {
   Flag,
   Edit,
   Trash2,
+  History,
 } from 'lucide-react';
 import type { GoalCardData, GoalCardFieldUpdate } from '../../shared/goal-card-data';
 import type { Discipline, GoalType, GoalStatus, MeasurementType, PatternOverride } from '../../shared/types';
@@ -47,8 +48,6 @@ interface ExpandedGoalCardProps {
   onStatusChange?: (status: GoalStatus) => void;
   onFlagCheckpoint?: () => void;
   onEditModal?: () => void;
-  categoryOptions: string[];
-  usedCategories: string[];
 }
 
 const TIMEFRAME_OPTIONS = [
@@ -90,8 +89,6 @@ const ExpandedGoalCard: React.FC<ExpandedGoalCardProps> = ({
   onStatusChange,
   onFlagCheckpoint,
   onEditModal,
-  categoryOptions,
-  usedCategories,
 }) => {
   const [showPatternPicker, setShowPatternPicker] = useState(false);
   const [editingText, setEditingText] = useState(false);
@@ -120,14 +117,51 @@ const ExpandedGoalCard: React.FC<ExpandedGoalCardProps> = ({
 
   const isEstablished = data.context === 'client' && data.isSynced;
 
+  const cardBg = data.isCarriedOver ? 'bg-indigo-50/50' : 'bg-white';
+
   return (
-    <div className={`bg-white rounded-xl border border-[var(--color-border)] border-l-[3.5px] ${borderColor} overflow-hidden shadow-sm`}>
+    <div className={`${cardBg} rounded-xl border border-[var(--color-border)] border-l-[3.5px] ${borderColor} overflow-hidden shadow-sm`}>
       {/* ══ ZONE 1: HEADER BAR ══ */}
-      <div className="flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-[var(--color-border)]">
+      <div className={`flex items-center justify-between px-4 py-2 ${data.isCarriedOver ? 'bg-indigo-50/60' : 'bg-gray-50'} border-b border-[var(--color-border)]`}>
         <div className="flex items-center gap-2">
           <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${typeBg}`}>
             GOAL {data.index + 1}
           </span>
+          <select
+            className={`text-[10px] font-bold py-0.5 px-1.5 pr-5 rounded border border-gray-200 cursor-pointer focus:outline-none focus:border-blue-300 ${typeBg}`}
+            value={data.goal_type}
+            disabled={disabled}
+            onChange={(e) => onFieldChange({ goal_type: e.target.value as GoalType })}
+          >
+            <option value="STG">STG</option>
+            <option value="LTG">LTG</option>
+          </select>
+          <select
+            className="text-[10px] font-medium py-0.5 px-1.5 pr-5 rounded border border-gray-200 cursor-pointer focus:outline-none focus:border-blue-300 bg-white text-[var(--color-text-secondary)]"
+            value={data.target_date}
+            disabled={disabled}
+            onChange={(e) => onFieldChange({ target_date: e.target.value })}
+          >
+            <option value="">Due date</option>
+            {TIMEFRAME_OPTIONS.map(({ label, days }) => {
+              const d = new Date();
+              d.setDate(d.getDate() + days);
+              const iso = d.toISOString().slice(0, 10);
+              return (
+                <option key={label} value={iso}>{label}</option>
+              );
+            })}
+          </select>
+          {data.target_date && (
+            <span className="text-[10px] text-[var(--color-text-secondary)]">
+              {formatShortDate(data.target_date)}
+            </span>
+          )}
+          {data.isCarriedOver && data.context === 'eval' && (
+            <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-indigo-100 text-indigo-600">
+              <History size={8} /> Prior
+            </span>
+          )}
           {isEstablished && (
             <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-blue-100 text-blue-600">
               <Lock size={8} /> Established
@@ -244,60 +278,9 @@ const ExpandedGoalCard: React.FC<ExpandedGoalCardProps> = ({
         </div>
       )}
 
-      {/* ══ ZONE 2: TOP ZONE — Metadata + Goal Text + Progress ══ */}
+      {/* ══ ZONE 2: TOP ZONE — Goal Text + Progress ══ */}
       <div className="px-4 py-3">
-        {/* Row A: Type / Category / Date — all on one line */}
-        <div className="flex items-center gap-2 mb-3">
-          <select
-            className="select text-xs py-1 w-16"
-            value={data.goal_type}
-            disabled={disabled}
-            onChange={(e) => onFieldChange({ goal_type: e.target.value as GoalType })}
-          >
-            <option value="STG">STG</option>
-            <option value="LTG">LTG</option>
-          </select>
-          <select
-            className="select text-xs py-1 flex-1 min-w-0"
-            value={data.category}
-            disabled={disabled}
-            onChange={(e) => onFieldChange({ category: e.target.value })}
-          >
-            <option value="">Category</option>
-            {usedCategories.length > 0 && (
-              <optgroup label="Current Goals">
-                {usedCategories.map(cat => (
-                  <option key={`used-${cat}`} value={cat}>{cat}</option>
-                ))}
-              </optgroup>
-            )}
-            <optgroup label={usedCategories.length > 0 ? 'All Categories' : ''}>
-              {categoryOptions
-                .filter(cat => !usedCategories.includes(cat))
-                .map(cat => (
-                  <option key={cat} value={cat}>{cat}</option>
-                ))}
-            </optgroup>
-          </select>
-          <select
-            className="select text-xs py-1 w-20"
-            value={data.target_date}
-            disabled={disabled}
-            onChange={(e) => onFieldChange({ target_date: e.target.value })}
-          >
-            <option value="">Date</option>
-            {TIMEFRAME_OPTIONS.map(({ label, days }) => {
-              const d = new Date();
-              d.setDate(d.getDate() + days);
-              const iso = d.toISOString().slice(0, 10);
-              return (
-                <option key={label} value={iso}>{label}</option>
-              );
-            })}
-          </select>
-        </div>
-
-        {/* Row B: Goal Text */}
+        {/* Goal Text */}
         <div className="p-3 rounded-lg bg-teal-50/40 border border-teal-200/60 mb-3">
           <div className="flex items-center justify-between mb-1">
             <span className="text-[9px] font-bold uppercase tracking-wide text-teal-600">Goal Text</span>

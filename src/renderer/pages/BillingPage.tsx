@@ -30,6 +30,7 @@ import {
   Activity,
   CalendarRange,
   GripVertical,
+  Upload,
 } from 'lucide-react';
 import type {
   Invoice,
@@ -44,6 +45,7 @@ import type {
 } from '../../shared/types';
 import InvoiceModal from '../components/InvoiceModal';
 import PaymentModal from '../components/PaymentModal';
+import CSVPaymentImportModal from '../components/CSVPaymentImportModal';
 
 type BillingTab = 'invoices' | 'payments' | 'analytics' | 'stripe';
 
@@ -103,6 +105,7 @@ export default function BillingPage() {
   // Modals
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showCsvImport, setShowCsvImport] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<(Invoice & { items: InvoiceItem[] }) | null>(null);
 
   // Read URL params to pre-set filters (e.g. from dashboard stat card)
@@ -640,6 +643,10 @@ export default function BillingPage() {
       {activeTab === 'payments' && (
         <div className="space-y-4">
           <div className="flex items-center justify-end gap-4">
+            <button className="btn-ghost gap-2 text-sm" onClick={() => setShowCsvImport(true)}>
+              <Upload className="w-4 h-4" />
+              Import CSV
+            </button>
             <button className="btn-primary gap-2" onClick={() => setShowPaymentModal(true)}>
               <Plus className="w-4 h-4" />
               Record Payment
@@ -1216,6 +1223,14 @@ export default function BillingPage() {
         onSave={() => {
           loadData();
         }}
+        clients={clients}
+        invoices={invoices}
+      />
+
+      <CSVPaymentImportModal
+        isOpen={showCsvImport}
+        onClose={() => setShowCsvImport(false)}
+        onComplete={() => loadData()}
         clients={clients}
         invoices={invoices}
       />

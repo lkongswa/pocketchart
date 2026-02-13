@@ -1855,6 +1855,31 @@ function runMigrations(): void {
         }
       },
     },
+    {
+      version: 41,
+      description: 'Fix cue_level → percentage for patterns that have separate cueing chips',
+      up: () => {
+        const patternIds = [
+          'st_social_communication',
+          'st_cognitive_task',
+          'st_aac_use',
+          'ot_cognitive_strategy',
+        ];
+        const stmt = db.prepare(
+          "UPDATE goals SET measurement_type = 'percentage' WHERE pattern_id = ? AND measurement_type = 'cue_level'"
+        );
+        for (const pid of patternIds) {
+          stmt.run(pid);
+        }
+        // Also fix any progress_report_goals that inherited the wrong type
+        const stmt2 = db.prepare(
+          "UPDATE progress_report_goals SET measurement_type = 'percentage' WHERE goal_id IN (SELECT id FROM goals WHERE pattern_id = ?) AND measurement_type = 'cue_level'"
+        );
+        for (const pid of patternIds) {
+          stmt2.run(pid);
+        }
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);

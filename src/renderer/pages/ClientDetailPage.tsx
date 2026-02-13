@@ -73,6 +73,7 @@ import CommunicationLogSection from '../components/CommunicationLogSection';
 import ProFeatureGate from '../components/ProFeatureGate';
 import ChartCompleteness from '../components/ChartCompleteness';
 import ClaimReadinessDialog from '../components/ClaimReadinessDialog';
+import CSVPaymentImportModal from '../components/CSVPaymentImportModal';
 import TrialExpiredModal from '../components/TrialExpiredModal';
 import { useTrialGuard } from '../hooks/useTrialGuard';
 import { useChartCompleteness } from '../hooks/useChartCompleteness';
@@ -282,6 +283,7 @@ const ClientDetailPage: React.FC = () => {
   const [practice, setPractice] = useState<Practice | null>(null);
   const [showReadinessDialog, setShowReadinessDialog] = useState(false);
   const [generatingCMS1500, setGeneratingCMS1500] = useState(false);
+  const [showCsvImportForClient, setShowCsvImportForClient] = useState(false);
   const [cms1500Preview, setCms1500Preview] = useState<{ base64Pdf: string; filename: string } | null>(null);
 
   // Document upload form state
@@ -1010,8 +1012,6 @@ const ClientDetailPage: React.FC = () => {
                             }
                           }}
                           onEditModal={!isEstablished ? () => openEditGoal(goal) : undefined}
-                          categoryOptions={[]}
-                          usedCategories={[]}
                         />
                       ) : (
                         <CollapsedGoalCard
@@ -1378,6 +1378,12 @@ const ClientDetailPage: React.FC = () => {
               onClick={() => { if (guardAction()) navigate(`/billing?newPayment=${clientId}`); }}
             >
               <CreditCard size={14} /> Record Payment
+            </button>
+            <button
+              className="btn-ghost btn-sm gap-1.5"
+              onClick={() => { if (guardAction()) setShowCsvImportForClient(true); }}
+            >
+              <Upload size={14} /> Import CSV
             </button>
             <button
               className="btn-secondary btn-sm gap-1.5"
@@ -1897,6 +1903,18 @@ const ClientDetailPage: React.FC = () => {
         onGenerate={handleGenerateCMS1500}
         generating={generatingCMS1500}
       />
+
+      {/* CSV Import for this client */}
+      {client && (
+        <CSVPaymentImportModal
+          isOpen={showCsvImportForClient}
+          onClose={() => setShowCsvImportForClient(false)}
+          onComplete={() => loadData()}
+          clients={[]}
+          fixedClientId={client.id}
+          fixedClientName={`${client.first_name} ${client.last_name}`}
+        />
+      )}
 
       {/* Trial Expired Modal */}
       {showExpiredModal && <TrialExpiredModal onClose={dismissExpiredModal} />}

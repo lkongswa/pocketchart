@@ -16,6 +16,8 @@ import Stripe from 'stripe';
 import { requiresReferral as checkDirectAccess, getAllRules as getDirectAccessRules } from '../shared/directAccessRules';
 import { detectCloudStorage } from './cloudDetection';
 import { generateCMS1500, assembleCMS1500Data } from './cms1500Generator';
+import { parseCSVFile, autoDetectColumns as autoDetectCSVColumns, matchClients as matchCSVClients, prepareImportRows, executeImport as executeCSVImport } from './csvPaymentImport';
+import type { CSVColumnMapping, CSVPaymentRow } from './csvPaymentImport';
 import type { AppTier, NoteFormat, DischargeData, DischargeGoalStatus } from '../shared/types';
 import { NOTE_FORMAT_SECTIONS, DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS } from '../shared/types';
 
@@ -4169,6 +4171,48 @@ function registerIpcHandlers() {
     return true;
   });
 
+  // ── CSV Payment Import ──
+
+  safeHandle('csvImport:pickFile', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: 'Select CSV Payment File',
+      filters: [
+        { name: 'CSV Files', extensions: ['csv', 'tsv', 'txt'] },
+      ],
+      properties: ['openFile'],
+    });
+    if (canceled || !filePaths?.[0]) return null;
+    return filePaths[0];
+  });
+
+  safeHandle('csvImport:parseFile', (_event, filePath: string) => {
+    return parseCSVFile(filePath);
+  });
+
+  safeHandle('csvImport:autoDetectColumns', (_event, headers: string[]) => {
+    return autoDetectCSVColumns(headers);
+  });
+
+  safeHandle('csvImport:matchClients', (_event, data: { filePath: string; mapping: CSVColumnMapping }) => {
+    const clients = db.prepare(
+      "SELECT id, first_name, last_name FROM clients WHERE deleted_at IS NULL ORDER BY last_name, first_name"
+    ).all() as Array<{ id: number; first_name: string; last_name: string }>;
+    return matchCSVClients(data.filePath, data.mapping, clients);
+  });
+
+  safeHandle('csvImport:prepareRows', (_event, data: {
+    filePath: string;
+    mapping: CSVColumnMapping;
+    clientMatches: Record<string, number>;
+    fixedClientId?: number;
+  }) => {
+    return prepareImportRows(data.filePath, data.mapping, data.clientMatches, db, data.fixedClientId);
+  });
+
+  safeHandle('csvImport:execute', (_event, data: { rows: CSVPaymentRow[]; skipDuplicates: boolean }) => {
+    return executeCSVImport(data.rows, db, data.skipDuplicates);
+  });
+
   // ── Authorizations ──
   safeHandle('authorizations:listByClient', (_event, clientId: number) => {
     return db.prepare(
@@ -6166,6 +6210,14 @@ function registerIpcHandlers() {
   // ── Dev: Seed Demo Data (temporary) ──
   safeHandle('dev:seedDemoData', () => {
     return seedDemoData(db);
+  });
+
+  // ── Dev: Force app tier (for demos) ──
+  safeHandle('dev:setTier', (_event, tier: string) => {
+    const valid = ['unlicensed', 'basic', 'pro'];
+    if (!valid.includes(tier)) return { success: false, message: `Invalid tier: ${tier}` };
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run('app_tier', tier);
+    return { success: true, tier };
   });
 }
 

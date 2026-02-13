@@ -224,6 +224,7 @@ export interface EvalGoalEntry {
   instrument: string;       // for standardized_score: "PHQ-9", "Berg"
   pattern_id?: string;      // Which goal pattern was used
   components?: Record<string, any>;  // Component selections for pattern-based goals
+  is_carried_over?: boolean;  // Carried from prior eval (reassessment/PR)
 }
 
 export interface Practice {
@@ -1441,6 +1442,68 @@ export interface PocketChartAPI {
     update: (id: number, data: Partial<Payment>) => Promise<Payment>;
     refund: (id: number) => Promise<Payment>;
     delete: (id: number) => Promise<boolean>;
+  };
+  // CSV Payment Import
+  csvImport: {
+    pickFile: () => Promise<string | null>;
+    parseFile: (filePath: string) => Promise<{
+      headers: string[];
+      previewRows: Record<string, string>[];
+      totalRows: number;
+      fileSizeBytes: number;
+      delimiter: string;
+    }>;
+    autoDetectColumns: (headers: string[]) => Promise<Record<string, string | undefined>>;
+    matchClients: (data: {
+      filePath: string;
+      mapping: {
+        dateColumn: string;
+        amountColumn: string;
+        clientNameColumn?: string;
+        clientFirstNameColumn?: string;
+        clientLastNameColumn?: string;
+        methodColumn?: string;
+        referenceColumn?: string;
+        notesColumn?: string;
+      };
+    }) => Promise<Array<{
+      csvName: string;
+      paymentCount: number;
+      totalAmount: number;
+      suggestedClientId: number | null;
+      suggestedClientName: string | null;
+      matchConfidence: 'exact' | 'high' | 'partial' | 'none';
+      allCandidates: Array<{ clientId: number; clientName: string; confidence: string }>;
+    }>>;
+    prepareRows: (data: {
+      filePath: string;
+      mapping: any;
+      clientMatches: Record<string, number>;
+      fixedClientId?: number;
+    }) => Promise<Array<{
+      rowIndex: number;
+      paymentDate: string;
+      amount: number;
+      csvName: string;
+      clientId: number | null;
+      clientName: string;
+      paymentMethod: string;
+      referenceNumber: string;
+      notes: string;
+      isDuplicate: boolean;
+      skipReason: string | null;
+    }>>;
+    execute: (data: {
+      rows: any[];
+      skipDuplicates: boolean;
+    }) => Promise<{
+      imported: number;
+      skipped: number;
+      duplicatesSkipped: number;
+      totalAmount: number;
+      errors: string[];
+      importTag: string;
+    }>;
   };
   // V3 Insurance Billing APIs
   authorizations: {

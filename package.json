@@ -76,6 +76,7 @@
   },
   "dependencies": {
     "@journeyapps/sqlcipher": "^5.3.1",
+    "@types/papaparse": "^5.5.2",
     "adm-zip": "^0.5.16",
     "archiver": "^7.0.1",
     "better-sqlite3": "^12.6.2",
@@ -84,6 +85,7 @@
     "electron-updater": "^6.7.3",
     "jspdf": "^4.0.0",
     "lucide-react": "^0.563.0",
+    "papaparse": "^5.5.3",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-router-dom": "^7.13.0",
