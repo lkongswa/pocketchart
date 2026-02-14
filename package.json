@@ -1,6 +1,6 @@
 {
   "name": "pocketchart",
-  "version": "1.0.0-beta.1",
+  "version": "1.0.0-beta.2",
   "description": "Local-first clinical documentation for solo practitioners",
   "main": "dist/main/main.js",
   "scripts": {
@@ -53,8 +53,10 @@
           ]
         }
       ],
-      "signAndEditExecutable": false,
-      "forceCodeSigning": false
+      "azureSignOptions": {
+        "endpoint": "https://wus.codesigning.azure.net/",
+        "certificateProfileName": "pocketchart-signing"
+      }
     },
     "nsis": {
       "oneClick": false,
