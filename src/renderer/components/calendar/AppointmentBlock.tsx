@@ -1,4 +1,5 @@
 import React from 'react';
+import { FileText } from 'lucide-react';
 import type { Appointment, AppointmentStatus, VisitType, SessionType } from '../../../shared/types';
 import { VISIT_TYPE_LABELS, SESSION_TYPE_LABELS } from '../../../shared/types';
 
@@ -9,6 +10,7 @@ interface AppointmentBlockProps {
   slotHeight: number;
   startHour: number;
   onClick: (appt: Appointment) => void;
+  onNoteClick?: (appt: Appointment) => void;
   onContextMenu?: (appt: Appointment, x: number, y: number) => void;
   onTodoDrop?: (todoId: number, date: string, time: string) => void;
   compact?: boolean;
@@ -64,6 +66,7 @@ export default function AppointmentBlock({
   slotHeight,
   startHour,
   onClick,
+  onNoteClick,
   onContextMenu,
   onTodoDrop,
   compact = false,
@@ -196,7 +199,7 @@ export default function AppointmentBlock({
         onClick(appointment);
       }}
       onContextMenu={handleContextMenu}
-      title={`${clientName} - ${formatTime12(appointment.scheduled_time)} (${appointment.duration_minutes}m)\nRight-click for options`}
+      title={`${clientName} - ${formatTime12(appointment.scheduled_time)} (${appointment.duration_minutes}m)`}
     >
       <div className="flex items-center justify-between gap-1">
         <div className="text-xs text-[var(--color-text-secondary)] leading-tight">
@@ -227,6 +230,24 @@ export default function AppointmentBlock({
             {appointment.client_discipline}
           </span>
         </div>
+      )}
+      {/* Note shortcut icon — full mode only */}
+      {onNoteClick && appointment.client_id && appointment.status !== 'cancelled' && heightPx >= 40 && (
+        <button
+          className={`absolute bottom-1 right-1 w-5 h-5 flex items-center justify-center rounded transition-all ${
+            (appointment as any).note_id || (appointment as any).evaluation_id
+              ? 'opacity-60 hover:opacity-100 hover:bg-white/60'
+              : 'opacity-40 hover:opacity-100 hover:bg-white/60'
+          }`}
+          title={(appointment as any).note_id ? 'View note' : 'Write note'}
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            onNoteClick(appointment);
+          }}
+        >
+          <FileText size={14} className="text-current" />
+        </button>
       )}
     </div>
   );

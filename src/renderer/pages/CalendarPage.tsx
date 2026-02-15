@@ -211,8 +211,17 @@ export default function CalendarPage() {
       })
     : appointments;
 
-  // Appointment click — route by session type
+  // Left-click appointment — open edit modal
   const handleAppointmentClick = (appt: Appointment) => {
+    if (!guardAction()) return;
+    setEditingAppointment(appt);
+    setSelectedDate(undefined);
+    setSelectedTime(undefined);
+    setModalOpen(true);
+  };
+
+  // Note icon click — route by session type (preserves all original navigation logic)
+  const handleNoteClick = (appt: Appointment) => {
     const sessionType = appt.session_type || 'visit';
 
     // If eval is already linked, go directly to it
@@ -551,6 +560,7 @@ export default function CalendarPage() {
               calendarBlocks={calendarBlocks}
               onSlotClick={handleSlotClickWithPaste}
               onAppointmentClick={handleAppointmentClick}
+              onNoteClick={handleNoteClick}
               onAppointmentDrop={handleAppointmentDrop}
               onTodoDrop={handleTodoDrop}
               onAppointmentContextMenu={handleAppointmentContextMenu}
@@ -566,6 +576,7 @@ export default function CalendarPage() {
               calendarBlocks={calendarBlocks}
               onSlotClick={handleSlotClickWithPaste}
               onAppointmentClick={handleAppointmentClick}
+              onNoteClick={handleNoteClick}
               onAppointmentDrop={handleAppointmentDrop}
               onTodoDrop={handleTodoDrop}
               onAppointmentContextMenu={handleAppointmentContextMenu}

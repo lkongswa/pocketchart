@@ -18,6 +18,7 @@ interface TimeGridProps {
   calendarBlocks?: CalendarBlock[];
   onSlotClick: (date: string, time: string) => void;
   onAppointmentClick: (appt: Appointment) => void;
+  onNoteClick?: (appt: Appointment) => void;
   onAppointmentDrop: (apptId: number, newDate: string, newTime: string) => void;
   onTodoDrop?: (todoId: number, date: string, time: string) => void;
   onAppointmentContextMenu?: (appt: Appointment, x: number, y: number) => void;
@@ -128,6 +129,7 @@ export default function TimeGrid({
   calendarBlocks = [],
   onSlotClick,
   onAppointmentClick,
+  onNoteClick,
   onAppointmentDrop,
   onTodoDrop,
   onAppointmentContextMenu,
@@ -343,6 +345,7 @@ export default function TimeGrid({
                       slotHeight={SLOT_HEIGHT}
                       startHour={startHour}
                       onClick={onAppointmentClick}
+                      onNoteClick={onNoteClick}
                       onContextMenu={onAppointmentContextMenu}
                       onTodoDrop={onTodoDrop}
                       paymentStatus={paymentStatusMap[appt.id] || 'none'}
