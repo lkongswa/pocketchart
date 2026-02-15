@@ -18,6 +18,24 @@ const POSITION_KEY = 'floatingWidgetPosition';
 const DEFAULT_POS = { x: -1, y: -1 }; // -1 signals "use default"
 
 export default function FloatingWidget() {
+  // Hide on calendar page — the calendar has its own integrated sidebar
+  const [currentHash, setCurrentHash] = useState(window.location.hash);
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      const newHash = window.location.hash;
+      setCurrentHash(newHash);
+      // Auto-close popup when navigating to calendar
+      if (newHash.startsWith('#/calendar')) {
+        setOpen(false);
+      }
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  const isCalendarPage = currentHash.startsWith('#/calendar');
+
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<WidgetTab>('tasks');
   const [position, setPosition] = useState(() => {
@@ -163,6 +181,9 @@ export default function FloatingWidget() {
     if (didDrag.current) return; // Don't toggle if we just dragged
     setOpen((prev) => !prev);
   };
+
+  // Hide entirely on calendar page (sidebar replaces the widget there)
+  if (isCalendarPage) return null;
 
   // Resolve position: if default (-1), use bottom-right
   const resolvedPos = position.x < 0 || position.y < 0

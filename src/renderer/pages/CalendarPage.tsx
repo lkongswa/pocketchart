@@ -10,8 +10,8 @@ import {
   endOfMonth,
 } from 'date-fns';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Copy, Clipboard, Edit3, Trash2, X, Ban, AlertTriangle, ListTodo, ChevronRight, GripVertical, CheckCircle2, Undo2 } from 'lucide-react';
-import type { Appointment, Invoice, InvoiceItem, DashboardTodo, CalendarBlock } from '../../shared/types';
+import { Copy, Clipboard, Edit3, Trash2, X, Ban, AlertTriangle, ListTodo, ChevronRight, GripVertical, CheckCircle2, Undo2, Plus, FileText, Link2, Check } from 'lucide-react';
+import type { Appointment, Invoice, InvoiceItem, DashboardTodo, CalendarBlock, QuickLink } from '../../shared/types';
 import type { PaymentIndicator } from '../components/calendar/AppointmentBlock';
 import AppointmentModal from '../components/AppointmentModal';
 import TrialExpiredModal from '../components/TrialExpiredModal';
@@ -76,6 +76,21 @@ export default function CalendarPage() {
   // Todo sidebar state
   const [todoSidebarOpen, setTodoSidebarOpen] = useState(false);
   const [incompleteTodos, setIncompleteTodos] = useState<DashboardTodo[]>([]);
+
+  // Sidebar tab state
+  type SidebarTab = 'tasks' | 'scratchpad' | 'links';
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('tasks');
+  const [newTodoText, setNewTodoText] = useState('');
+
+  // Scratchpad state
+  const [scratchpadContent, setScratchpadContent] = useState('');
+  const [scratchpadSaving, setScratchpadSaving] = useState(false);
+  const scratchpadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Links state
+  const [quickLinks, setQuickLinks] = useState<QuickLink[]>([]);
+  const [newLinkTitle, setNewLinkTitle] = useState('');
+  const [newLinkUrl, setNewLinkUrl] = useState('');
 
   // Calendar blocks (admin time blocks — separate from appointments)
   const [calendarBlocks, setCalendarBlocks] = useState<CalendarBlock[]>([]);
@@ -294,6 +309,78 @@ export default function CalendarPage() {
   useEffect(() => {
     if (todoSidebarOpen) loadIncompleteTodos();
   }, [todoSidebarOpen, loadIncompleteTodos]);
+
+  // ── Sidebar: Task CRUD ──
+  const handleAddTodo = async () => {
+    const text = newTodoText.trim();
+    if (!text) return;
+    await window.api.dashboardTodos.create(text);
+    setNewTodoText('');
+    await loadIncompleteTodos();
+  };
+
+  const handleToggleTodo = async (todo: DashboardTodo) => {
+    await window.api.dashboardTodos.update(todo.id, { completed: todo.completed ? 0 : 1 });
+    await loadIncompleteTodos();
+  };
+
+  const handleDeleteTodo = async (id: number) => {
+    await window.api.dashboardTodos.delete(id);
+    await loadIncompleteTodos();
+  };
+
+  // ── Sidebar: Scratchpad ──
+  const loadScratchpad = async () => {
+    const note = await window.api.scratchpad.get();
+    setScratchpadContent(note?.content || '');
+  };
+
+  const handleScratchpadChange = (val: string) => {
+    setScratchpadContent(val);
+    setScratchpadSaving(true);
+    if (scratchpadTimerRef.current) clearTimeout(scratchpadTimerRef.current);
+    scratchpadTimerRef.current = setTimeout(async () => {
+      await window.api.scratchpad.save(val);
+      setScratchpadSaving(false);
+    }, 500);
+  };
+
+  // ── Sidebar: Quick Links ──
+  const loadQuickLinks = async () => {
+    const result = await window.api.quickLinks.list();
+    setQuickLinks(result);
+  };
+
+  const handleAddLink = async () => {
+    let url = newLinkUrl.trim();
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    const title = newLinkTitle.trim();
+    await window.api.quickLinks.create({ title: title || url, url });
+    setNewLinkTitle('');
+    setNewLinkUrl('');
+    await loadQuickLinks();
+  };
+
+  const handleDeleteLink = async (id: number) => {
+    await window.api.quickLinks.delete(id);
+    await loadQuickLinks();
+  };
+
+  // Load sidebar data when sidebar opens or tab changes
+  useEffect(() => {
+    if (!todoSidebarOpen) return;
+    if (sidebarTab === 'tasks') loadIncompleteTodos();
+    if (sidebarTab === 'scratchpad') loadScratchpad();
+    if (sidebarTab === 'links') loadQuickLinks();
+  }, [todoSidebarOpen, sidebarTab]);
+
+  // Cleanup scratchpad timer on unmount
+  useEffect(() => {
+    return () => {
+      if (scratchpadTimerRef.current) clearTimeout(scratchpadTimerRef.current);
+    };
+  }, []);
 
   // Handle todo dropped onto calendar — create admin block (NOT an appointment)
   const handleTodoDrop = async (todoId: number, date: string, time?: string) => {
@@ -604,65 +691,220 @@ export default function CalendarPage() {
 
         {/* Todo sidebar toggle */}
         {!todoSidebarOpen && (
-          <button
-            type="button"
-            className="shrink-0 flex items-center justify-center w-8 bg-gray-50 hover:bg-gray-100 border-l border-[var(--color-border)] transition-colors"
-            onClick={() => setTodoSidebarOpen(true)}
-            title="Show tasks"
-          >
-            <ListTodo size={16} className="text-[var(--color-text-secondary)]" />
-          </button>
+          <div className="shrink-0 flex items-center justify-center w-12 relative">
+            <button
+              type="button"
+              className="w-9 h-9 rounded-full bg-teal-500 hover:bg-teal-600 text-white shadow-md flex items-center justify-center transition-colors"
+              onClick={() => setTodoSidebarOpen(true)}
+              title="Quick Tools"
+            >
+              <ListTodo size={18} />
+            </button>
+          </div>
         )}
 
-        {/* Todo sidebar */}
+        {/* Todo sidebar — full tabbed panel */}
         {todoSidebarOpen && (() => {
-          // Filter out todos that already have a calendar block (prevents duplicates)
           const blockedTodoIds = new Set(
             calendarBlocks.filter(b => b.source_todo_id).map(b => b.source_todo_id)
           );
           const sidebarTodos = incompleteTodos.filter(t => !blockedTodoIds.has(t.id));
 
           return (
-          <div className="shrink-0 w-56 border-l border-[var(--color-border)] bg-white flex flex-col overflow-hidden">
-            <div className="flex items-center gap-2 px-3 py-2.5 border-b border-[var(--color-border)]">
-              <ListTodo size={14} className="text-teal-500" />
-              <span className="text-xs font-semibold text-[var(--color-text)] flex-1">Tasks</span>
+          <div className="shrink-0 w-64 border-l border-[var(--color-border)] bg-white flex flex-col overflow-hidden">
+            {/* Tab bar */}
+            <div className="flex items-center gap-1 px-2 py-2 border-b border-[var(--color-border)] bg-gray-50/80">
+              {([
+                { key: 'tasks' as SidebarTab, label: 'Tasks', icon: <ListTodo size={13} /> },
+                { key: 'scratchpad' as SidebarTab, label: 'Pad', icon: <FileText size={13} /> },
+                { key: 'links' as SidebarTab, label: 'Links', icon: <Link2 size={13} /> },
+              ]).map((tab) => (
+                <button
+                  key={tab.key}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    sidebarTab === tab.key
+                      ? 'bg-teal-500 text-white'
+                      : 'text-[var(--color-text-secondary)] hover:bg-gray-100'
+                  }`}
+                  onClick={() => setSidebarTab(tab.key)}
+                >
+                  {tab.icon}
+                  {tab.label}
+                </button>
+              ))}
+              <div className="flex-1" />
               <button
                 type="button"
                 className="p-0.5 rounded hover:bg-gray-100 transition-colors"
                 onClick={() => setTodoSidebarOpen(false)}
-                title="Hide tasks"
+                title="Hide panel"
               >
                 <ChevronRight size={14} className="text-[var(--color-text-secondary)]" />
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5">
-              {sidebarTodos.length === 0 ? (
-                <div className="text-center text-[var(--color-text-secondary)] text-xs py-6">
-                  No pending tasks.
-                </div>
-              ) : (
-                sidebarTodos.map((todo) => (
-                  <div
-                    key={todo.id}
-                    className="group flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-gray-50 cursor-grab transition-colors"
-                    draggable
-                    onDragStart={(e) => {
-                      e.dataTransfer.setData('application/todo-id', todo.id.toString());
-                      e.dataTransfer.effectAllowed = 'move';
-                    }}
-                  >
-                    <GripVertical size={10} className="shrink-0 text-[var(--color-text-secondary)] opacity-40 group-hover:opacity-80" />
-                    <span className="text-xs text-[var(--color-text)] leading-tight flex-1 truncate">
-                      {todo.text}
-                    </span>
+
+            {/* ── Tasks Tab ── */}
+            {sidebarTab === 'tasks' && (
+              <>
+                {/* Add task input */}
+                <div className="px-2 py-2 border-b border-[var(--color-border)]">
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="text"
+                      className="flex-1 text-xs border border-[var(--color-border)] rounded px-2 py-1.5 focus:outline-none focus:border-teal-400"
+                      placeholder="Add a task..."
+                      value={newTodoText}
+                      onChange={(e) => setNewTodoText(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleAddTodo()}
+                    />
+                    <button
+                      className="px-2 py-1.5 bg-teal-500 text-white rounded text-xs hover:bg-teal-600 transition-colors disabled:opacity-40"
+                      onClick={handleAddTodo}
+                      disabled={!newTodoText.trim()}
+                    >
+                      <Plus size={14} />
+                    </button>
                   </div>
-                ))
-              )}
-            </div>
-            <div className="px-3 py-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-secondary)]">
-              Drag a task onto the calendar to block admin time
-            </div>
+                </div>
+
+                {/* Task list with drag handles */}
+                <div className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5">
+                  {sidebarTodos.length === 0 ? (
+                    <div className="text-center text-[var(--color-text-secondary)] text-xs py-6">
+                      No pending tasks.
+                    </div>
+                  ) : (
+                    sidebarTodos.map((todo) => (
+                      <div
+                        key={todo.id}
+                        className="group flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-gray-50 cursor-grab transition-colors"
+                        draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData('application/todo-id', todo.id.toString());
+                          e.dataTransfer.effectAllowed = 'move';
+                        }}
+                      >
+                        {/* Drag handle */}
+                        <GripVertical size={10} className="shrink-0 text-[var(--color-text-secondary)] opacity-40 group-hover:opacity-80" />
+
+                        {/* Checkbox */}
+                        <button
+                          className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 transition-colors ${
+                            todo.completed
+                              ? 'bg-teal-500 border-teal-500 text-white'
+                              : 'border-gray-300 hover:border-teal-400'
+                          }`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleToggleTodo(todo);
+                          }}
+                        >
+                          {todo.completed ? <Check size={10} /> : null}
+                        </button>
+
+                        {/* Task text */}
+                        <span className="text-xs text-[var(--color-text)] leading-tight flex-1 truncate">
+                          {todo.text}
+                        </span>
+
+                        {/* Delete */}
+                        <button
+                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-50 text-red-400 hover:text-red-500 transition-all"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteTodo(todo.id);
+                          }}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Drag hint footer */}
+                <div className="px-3 py-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-secondary)]">
+                  Drag a task onto the calendar to block admin time
+                </div>
+              </>
+            )}
+
+            {/* ── Scratchpad Tab ── */}
+            {sidebarTab === 'scratchpad' && (
+              <div className="flex-1 flex flex-col overflow-hidden">
+                <div className="flex items-center justify-end px-3 py-1 text-[10px] text-[var(--color-text-secondary)]">
+                  {scratchpadSaving ? 'Saving...' : 'Saved'}
+                </div>
+                <textarea
+                  className="flex-1 w-full px-3 pb-3 text-xs text-[var(--color-text)] resize-none focus:outline-none leading-relaxed"
+                  placeholder="Quick notes, reminders, anything..."
+                  value={scratchpadContent}
+                  onChange={(e) => handleScratchpadChange(e.target.value)}
+                />
+              </div>
+            )}
+
+            {/* ── Links Tab ── */}
+            {sidebarTab === 'links' && (
+              <div className="flex-1 flex flex-col overflow-hidden">
+                {/* Add link form */}
+                <div className="px-2 py-2 border-b border-[var(--color-border)] space-y-1">
+                  <input
+                    type="text"
+                    className="w-full text-xs border border-[var(--color-border)] rounded px-2 py-1.5 focus:outline-none focus:border-teal-400"
+                    placeholder="Title (optional)"
+                    value={newLinkTitle}
+                    onChange={(e) => setNewLinkTitle(e.target.value)}
+                  />
+                  <div className="flex gap-1">
+                    <input
+                      type="text"
+                      className="flex-1 text-xs border border-[var(--color-border)] rounded px-2 py-1.5 focus:outline-none focus:border-teal-400"
+                      placeholder="https://..."
+                      value={newLinkUrl}
+                      onChange={(e) => setNewLinkUrl(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleAddLink()}
+                    />
+                    <button
+                      className="px-2 py-1.5 bg-teal-500 text-white rounded text-xs hover:bg-teal-600 transition-colors"
+                      onClick={handleAddLink}
+                    >
+                      <Plus size={14} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Links list */}
+                <div className="flex-1 overflow-y-auto px-2 py-1 space-y-0.5">
+                  {quickLinks.length === 0 ? (
+                    <div className="text-center text-[var(--color-text-secondary)] text-xs py-6">
+                      No saved links.
+                    </div>
+                  ) : (
+                    quickLinks.map((link) => (
+                      <div
+                        key={link.id}
+                        className="group flex items-center gap-1.5 px-2 py-1.5 rounded hover:bg-gray-50 transition-colors"
+                      >
+                        <button
+                          className="flex-1 text-left text-xs text-teal-600 hover:text-teal-700 truncate"
+                          onClick={() => window.api.shell.openExternal(link.url)}
+                          title={link.url}
+                        >
+                          {link.title || link.url}
+                        </button>
+                        <button
+                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-50 text-red-400 hover:text-red-500 transition-all"
+                          onClick={() => handleDeleteLink(link.id)}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
           </div>
           );
         })()}
