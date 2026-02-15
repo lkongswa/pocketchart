@@ -6916,11 +6916,14 @@ function registerIpcHandlers() {
     return true;
   });
 
-  safeHandle('calendarBlocks:update', (_event, id: number, data: { completed?: number; title?: string }) => {
+  safeHandle('calendarBlocks:update', (_event, id: number, data: { completed?: number; title?: string; scheduled_date?: string; scheduled_time?: string; duration_minutes?: number }) => {
     const sets: string[] = [];
     const values: any[] = [];
     if (data.completed !== undefined) { sets.push('completed = ?'); values.push(data.completed); }
     if (data.title !== undefined) { sets.push('title = ?'); values.push(data.title); }
+    if (data.scheduled_date !== undefined) { sets.push('scheduled_date = ?'); values.push(data.scheduled_date); }
+    if (data.scheduled_time !== undefined) { sets.push('scheduled_time = ?'); values.push(data.scheduled_time); }
+    if (data.duration_minutes !== undefined) { sets.push('duration_minutes = ?'); values.push(data.duration_minutes); }
     if (sets.length === 0) return db.prepare('SELECT * FROM calendar_blocks WHERE id = ?').get(id);
     values.push(id);
     db.prepare(`UPDATE calendar_blocks SET ${sets.join(', ')} WHERE id = ?`).run(...values);
