@@ -1889,6 +1889,15 @@ function runMigrations(): void {
         }
       },
     },
+    {
+      version: 43,
+      description: 'Add appointment_id to invoice_items for bill-without-note flow',
+      up: () => {
+        if (!columnExists('invoice_items', 'appointment_id')) {
+          db.exec("ALTER TABLE invoice_items ADD COLUMN appointment_id INTEGER DEFAULT NULL REFERENCES appointments(id)");
+        }
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);

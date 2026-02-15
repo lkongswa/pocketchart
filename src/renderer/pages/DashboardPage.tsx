@@ -210,25 +210,18 @@ const DashboardPage: React.FC = () => {
 
   const statCards = [
     {
-      label: 'Incomplete Evals',
-      count: stats.incompleteEvals,
-      icon: <ClipboardList size={24} className="text-amber-500" />,
-      bgClass: 'bg-amber-50',
-      onClick: () => navigate('/evals'),
-    },
-    {
-      label: 'Notes This Week',
-      count: stats.notesThisWeek,
-      icon: <FileText size={24} className="text-teal-500" />,
-      bgClass: 'bg-teal-50',
-      onClick: () => navigate('/notes'),
-    },
-    {
       label: 'Upcoming Appointments',
       count: stats.upcomingAppointments,
       icon: <Calendar size={24} className="text-teal-500" />,
       bgClass: 'bg-teal-50',
       onClick: () => navigate('/calendar'),
+    },
+    {
+      label: 'Incomplete Evals',
+      count: stats.incompleteEvals,
+      icon: <ClipboardList size={24} className="text-amber-500" />,
+      bgClass: 'bg-amber-50',
+      onClick: () => navigate('/evals'),
     },
     {
       label: 'Unsigned Notes',
@@ -248,6 +241,13 @@ const DashboardPage: React.FC = () => {
       bgClass: 'bg-blue-50',
       hoverBorder: 'hover:border-blue-300',
       onClick: () => navigate('/billing?filter=unpaid'),
+    },
+    {
+      label: 'Notes This Week',
+      count: stats.notesThisWeek,
+      icon: <FileText size={24} className="text-teal-500" />,
+      bgClass: 'bg-teal-50',
+      onClick: () => navigate('/notes'),
     },
   ];
 

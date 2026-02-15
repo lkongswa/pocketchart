@@ -269,6 +269,15 @@ const api = {
     exists: (key: string) => ipcRenderer.invoke('secureStorage:exists', key),
   },
 
+  // System events (power, sleep, etc.)
+  system: {
+    onLock: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('system:lock', handler);
+      return () => { ipcRenderer.removeListener('system:lock', handler); };
+    },
+  },
+
   // V2 Billing - Fee Schedule
   feeSchedule: {
     list: () => ipcRenderer.invoke('feeSchedule:list'),
@@ -291,6 +300,16 @@ const api = {
     savePdf: (data: { base64Pdf: string; filename: string }) => ipcRenderer.invoke('invoices:savePdf', data),
     noteStatuses: () => ipcRenderer.invoke('invoices:noteStatuses'),
     createFeeInvoice: (data: { client_id?: number; entity_id?: number; description: string; amount: number; service_date: string }) => ipcRenderer.invoke('invoices:createFeeInvoice', data),
+  },
+
+  // Revenue Pipeline
+  billing: {
+    getPipelineData: (options?: { paidDays?: number }) =>
+      ipcRenderer.invoke('billing:getPipelineData', options),
+    quickInvoice: (data: { clientId: number; noteIds: number[]; entityId?: number }) =>
+      ipcRenderer.invoke('billing:quickInvoice', data),
+    quickInvoiceFromAppointment: (data: { appointmentId: number; clientId: number; entityId?: number; cptCode?: string }) =>
+      ipcRenderer.invoke('billing:quickInvoiceFromAppointment', data),
   },
 
   // V2 Billing - Payments
@@ -396,6 +415,9 @@ const api = {
     /** Check if an invoice's payment link has been paid (polling-based) */
     checkPaymentStatus: (invoiceId: number) =>
       ipcRenderer.invoke('stripe:checkPaymentStatus', invoiceId),
+    /** Check all outstanding payment links at once (background polling) */
+    checkAllPendingPayments: () =>
+      ipcRenderer.invoke('stripe:checkAllPendingPayments'),
   },
 
   // ── Contracted Entities (Pro) ──

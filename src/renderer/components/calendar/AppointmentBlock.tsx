@@ -143,9 +143,15 @@ export default function AppointmentBlock({
     : null;
 
   const vt = (appointment as any).visit_type as VisitType | undefined;
-  const visitBadge = vt && vt !== 'O' ? (
+  const VISIT_TYPE_BADGE_COLORS: Record<string, string> = {
+    O: 'bg-blue-100 text-blue-600',
+    T: 'bg-purple-100 text-purple-600',
+    H: 'bg-amber-100 text-amber-600',
+    C: 'bg-teal-100 text-teal-600',
+  };
+  const visitBadge = vt ? (
     <span
-      className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 text-gray-600 text-[9px] font-bold flex-shrink-0"
+      className={`inline-flex items-center justify-center w-4 h-4 rounded-full text-[9px] font-bold flex-shrink-0 ${VISIT_TYPE_BADGE_COLORS[vt] || 'bg-gray-200 text-gray-600'}`}
       title={VISIT_TYPE_LABELS[vt] || vt}
     >
       {vt}

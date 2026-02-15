@@ -185,7 +185,7 @@ export type CPTModifier =
 export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'partial' | 'void' | 'overdue';
 
 // Payment method
-export type PaymentMethod = 'card' | 'cash' | 'check' | 'insurance' | 'other';
+export type PaymentMethod = 'card' | 'cash' | 'check' | 'stripe' | 'insurance' | 'other';
 
 // Claim status
 export type ClaimStatus =
@@ -1068,6 +1068,90 @@ export interface Payment {
   deleted_at: string | null;
 }
 
+// Revenue Pipeline Types
+
+export interface PipelineData {
+  needsNote: Array<{
+    appointment_id: number;
+    client_id: number;
+    scheduled_date: string;
+    visit_type: string;
+    entity_id: number | null;
+    first_name: string;
+    last_name: string;
+    default_cpt_code: string | null;
+    entity_name: string | null;
+    days_old: number;
+    already_billed: number;
+  }>;
+  needsSignature: Array<{
+    note_id?: number;
+    eval_id?: number;
+    note_type: string;
+    client_id: number;
+    date_of_service: string;
+    cpt_code?: string;
+    cpt_codes?: string;
+    units?: number;
+    charge_amount?: number;
+    entity_id?: number | null;
+    first_name: string;
+    last_name: string;
+    entity_name?: string | null;
+    days_old: number;
+  }>;
+  readyToBill: Array<{
+    note_id: number;
+    note_type: string;
+    client_id: number;
+    date_of_service: string;
+    cpt_code: string;
+    cpt_codes: string;
+    units: number;
+    charge_amount: number;
+    signed_at: string;
+    entity_id: number | null;
+    first_name: string;
+    last_name: string;
+    entity_name: string | null;
+    days_uninvoiced: number;
+  }>;
+  awaitingPayment: Array<{
+    invoice_id: number;
+    invoice_number: string;
+    client_id: number;
+    invoice_date: string;
+    total_amount: number;
+    status: string;
+    stripe_payment_link_url: string | null;
+    entity_id: number | null;
+    first_name: string;
+    last_name: string;
+    entity_name: string | null;
+    days_since_sent: number;
+  }>;
+  draftInvoices: Array<{
+    invoice_id: number;
+    invoice_number: string;
+    client_id: number;
+    total_amount: number;
+    first_name: string;
+    last_name: string;
+  }>;
+  paid: Array<{
+    invoice_id: number;
+    invoice_number: string;
+    client_id: number;
+    total_amount: number;
+    entity_id: number | null;
+    first_name: string;
+    last_name: string;
+    entity_name: string | null;
+    payment_date: string;
+    payment_method: string;
+  }>;
+}
+
 // V3 Insurance Billing Interfaces
 
 export interface Payer {
@@ -1449,6 +1533,10 @@ export interface PocketChartAPI {
     /** Open a URL in the user's default browser (only http/https allowed) */
     openExternal: (url: string) => Promise<boolean>;
   };
+  // System events (power, sleep, etc.)
+  system: {
+    onLock: (callback: () => void) => () => void;
+  };
   // V2 Billing APIs
   feeSchedule: {
     list: () => Promise<FeeScheduleEntry[]>;
@@ -1469,6 +1557,11 @@ export interface PocketChartAPI {
     savePdf: (data: { base64Pdf: string; filename: string }) => Promise<string | null>;
     createFeeInvoice: (data: { client_id?: number; entity_id?: number; description: string; amount: number; service_date: string }) => Promise<Invoice>;
     noteStatuses: () => Promise<Record<number, { invoice_id: number; invoice_number: string; status: string }>>;
+  };
+  billing: {
+    getPipelineData: (options?: { paidDays?: number }) => Promise<PipelineData>;
+    quickInvoice: (data: { clientId: number; noteIds: number[]; entityId?: number }) => Promise<Invoice>;
+    quickInvoiceFromAppointment: (data: { appointmentId: number; clientId: number; entityId?: number; cptCode?: string }) => Promise<Invoice>;
   };
   payments: {
     list: (filters?: { clientId?: number; startDate?: string; endDate?: string }) => Promise<Payment[]>;
@@ -1602,6 +1695,11 @@ export interface PocketChartAPI {
       alreadyRecorded?: boolean;
       paymentIntentId?: string;
       amountPaid?: number;
+    }>;
+    /** Check all outstanding payment links at once (background polling) */
+    checkAllPendingPayments: () => Promise<{
+      checked: number;
+      paid: Array<{ invoiceId: number; invoiceNumber: string; amount: number }>;
     }>;
   };
   // ── Contracted Entities (Pro) ──

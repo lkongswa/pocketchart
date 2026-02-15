@@ -39,6 +39,8 @@ import {
   Loader2,
   Printer,
   FolderOpen,
+  Copy,
+  RefreshCw,
 } from 'lucide-react';
 import type {
   Invoice,
@@ -58,8 +60,9 @@ import { computeClaimReadiness } from '../hooks/useClaimReadiness';
 import InvoiceModal from '../components/InvoiceModal';
 import PaymentModal from '../components/PaymentModal';
 import CSVPaymentImportModal from '../components/CSVPaymentImportModal';
+import RevenuePipeline from '../components/RevenuePipeline';
 
-type BillingTab = 'invoices' | 'payments' | 'cms1500' | 'analytics' | 'stripe';
+type BillingTab = 'pipeline' | 'invoices' | 'payments' | 'cms1500' | 'analytics' | 'stripe';
 
 const STATUS_COLORS: Record<InvoiceStatus, { bg: string; text: string }> = {
   draft: { bg: 'bg-gray-100', text: 'text-gray-700' },
@@ -74,6 +77,7 @@ const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   card: 'Card',
   cash: 'Cash',
   check: 'Check',
+  stripe: 'Stripe',
   insurance: 'Insurance',
   other: 'Other',
 };
@@ -83,7 +87,7 @@ export default function BillingPage() {
   const location = useLocation();
   const { isPro } = useTier();
   const { guardAction, showExpiredModal, dismissExpiredModal } = useTrialGuard();
-  const [activeTab, setActiveTab] = useState<BillingTab>('invoices');
+  const [activeTab, setActiveTab] = useState<BillingTab>('pipeline');
   const [toast, setToast] = useState<string | null>(null);
 
   // Data
@@ -119,6 +123,14 @@ export default function BillingPage() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showCsvImport, setShowCsvImport] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<(Invoice & { items: InvoiceItem[] }) | null>(null);
+  const [pipelinePreSelectedClientId, setPipelinePreSelectedClientId] = useState<number | undefined>();
+
+  // Stripe payment link states
+  const [generatingPaymentLink, setGeneratingPaymentLink] = useState<number | null>(null);
+  const [checkingPaymentStatus, setCheckingPaymentStatus] = useState<number | null>(null);
+  const [newlyCreatedInvoice, setNewlyCreatedInvoice] = useState<Invoice | null>(null);
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<number>>(new Set());
+  const [batchGenerating, setBatchGenerating] = useState(false);
 
   // CMS-1500 tab state
   const [practice, setPractice] = useState<Practice | null>(null);
@@ -145,6 +157,8 @@ export default function BillingPage() {
     }
     if (tab === 'cms1500') {
       setActiveTab('cms1500');
+    } else if (tab === 'invoices') {
+      setActiveTab('invoices');
     }
   }, [location.search]);
 
@@ -227,6 +241,13 @@ export default function BillingPage() {
     loadData();
   }, [loadData]);
 
+  // Listen for background payment status updates
+  useEffect(() => {
+    const handler = () => loadData();
+    window.addEventListener('pocketchart:payments-received', handler);
+    return () => window.removeEventListener('pocketchart:payments-received', handler);
+  }, [loadData]);
+
   useEffect(() => {
     if (activeTab === 'analytics' && isPro) {
       loadAnalytics();
@@ -295,6 +316,96 @@ export default function BillingPage() {
       setToast('Invoice marked as sent');
     } catch (err) {
       console.error('Failed to update invoice:', err);
+    }
+  };
+
+  // ── Stripe payment link handlers ──
+  const handleGeneratePaymentLink = async (invoiceId: number) => {
+    setGeneratingPaymentLink(invoiceId);
+    try {
+      const result = await window.api.stripe.createPaymentLink(invoiceId);
+      if (result.url) {
+        await window.api.shell.openExternal(result.url);
+        setToast(result.existing
+          ? 'Payment link opened in browser'
+          : 'Payment link created and opened in browser');
+        loadData();
+      }
+    } catch (err: any) {
+      setToast(err.message || 'Failed to create payment link');
+    } finally {
+      setGeneratingPaymentLink(null);
+    }
+  };
+
+  const handleCopyPaymentLink = async (invoiceId: number) => {
+    setGeneratingPaymentLink(invoiceId);
+    try {
+      const result = await window.api.stripe.createPaymentLink(invoiceId);
+      if (result.url) {
+        await navigator.clipboard.writeText(result.url);
+        setToast(result.existing
+          ? 'Payment link copied to clipboard'
+          : 'Payment link created and copied to clipboard');
+        loadData();
+      }
+    } catch (err: any) {
+      setToast(err.message || 'Failed to create payment link');
+    } finally {
+      setGeneratingPaymentLink(null);
+    }
+  };
+
+  const handleCheckPaymentStatus = async (invoiceId: number) => {
+    setCheckingPaymentStatus(invoiceId);
+    try {
+      const result = await window.api.stripe.checkPaymentStatus(invoiceId);
+      if (result.status === 'paid') {
+        setToast('Payment received! Invoice marked as paid.');
+        loadData();
+      } else if (result.status === 'pending') {
+        setToast('Payment not yet received.');
+      } else if (result.status === 'no_payment_link') {
+        setToast('No payment link exists for this invoice.');
+      }
+    } catch (err: any) {
+      setToast(err.message || 'Failed to check payment status');
+    } finally {
+      setCheckingPaymentStatus(null);
+    }
+  };
+
+  const handleBatchGeneratePaymentLinks = async () => {
+    if (selectedInvoiceIds.size === 0) return;
+    setBatchGenerating(true);
+    let successCount = 0;
+    let failCount = 0;
+    const links: string[] = [];
+
+    for (const invoiceId of selectedInvoiceIds) {
+      try {
+        const result = await window.api.stripe.createPaymentLink(invoiceId);
+        if (result.url) {
+          links.push(result.url);
+          successCount++;
+        }
+      } catch {
+        failCount++;
+      }
+    }
+
+    if (links.length > 0) {
+      await navigator.clipboard.writeText(links.join('\n'));
+    }
+
+    loadData();
+    setSelectedInvoiceIds(new Set());
+    setBatchGenerating(false);
+
+    if (failCount > 0) {
+      setToast(`Generated ${successCount} links, ${failCount} failed. Links copied to clipboard.`);
+    } else {
+      setToast(`${successCount} payment link${successCount > 1 ? 's' : ''} generated and copied to clipboard`);
     }
   };
 
@@ -657,6 +768,7 @@ export default function BillingPage() {
   };
 
   const tabs: Array<{ id: BillingTab; label: string; icon: React.ReactNode; pro?: boolean }> = [
+    { id: 'pipeline', label: 'Pipeline', icon: <Activity className="w-4 h-4" /> },
     { id: 'invoices', label: 'Invoices', icon: <FileText className="w-4 h-4" /> },
     { id: 'payments', label: 'Payments', icon: <DollarSign className="w-4 h-4" /> },
     { id: 'cms1500', label: 'Claim Preview', icon: <ClipboardList className="w-4 h-4" /> },
@@ -752,6 +864,18 @@ export default function BillingPage() {
         ))}
       </div>
 
+      {/* Pipeline Tab */}
+      {activeTab === 'pipeline' && (
+        <RevenuePipeline
+          onOpenInvoiceModal={(opts) => {
+            setEditingInvoice(null);
+            setPipelinePreSelectedClientId(opts.clientId);
+            setShowInvoiceModal(true);
+          }}
+          onToast={setToast}
+        />
+      )}
+
       {/* Invoices Tab */}
       {activeTab === 'invoices' && (
         <div className="space-y-4">
@@ -785,10 +909,94 @@ export default function BillingPage() {
             </button>
           </div>
 
+          {/* Post-invoice payment link prompt banner */}
+          {newlyCreatedInvoice && stripeKeyMasked && (
+            <div className="card p-4 border-green-200 bg-green-50 flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-green-800">
+                  Invoice {newlyCreatedInvoice.invoice_number} created &mdash; {formatCurrency(newlyCreatedInvoice.total_amount)}
+                </p>
+                <p className="text-xs text-green-600">Send a payment link to collect now?</p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  className="btn-primary btn-sm gap-1"
+                  onClick={async () => {
+                    await handleGeneratePaymentLink(newlyCreatedInvoice.id);
+                    setNewlyCreatedInvoice(null);
+                  }}
+                  disabled={generatingPaymentLink === newlyCreatedInvoice.id}
+                >
+                  {generatingPaymentLink === newlyCreatedInvoice.id ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <CreditCard size={14} />
+                  )}
+                  Generate & Copy Link
+                </button>
+                <button
+                  className="btn-ghost btn-sm"
+                  onClick={() => setNewlyCreatedInvoice(null)}
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Batch action bar */}
+          {stripeKeyMasked && selectedInvoiceIds.size > 0 && (
+            <div className="card p-3 flex items-center justify-between bg-blue-50 border-blue-200">
+              <span className="text-sm font-medium text-blue-800">
+                {selectedInvoiceIds.size} invoice{selectedInvoiceIds.size > 1 ? 's' : ''} selected
+              </span>
+              <div className="flex gap-2">
+                <button
+                  className="btn-primary btn-sm gap-1"
+                  onClick={handleBatchGeneratePaymentLinks}
+                  disabled={batchGenerating}
+                >
+                  {batchGenerating ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <ExternalLink size={14} />
+                  )}
+                  Generate & Copy {selectedInvoiceIds.size > 1 ? 'Links' : 'Link'}
+                </button>
+                <button
+                  className="btn-ghost btn-sm"
+                  onClick={() => setSelectedInvoiceIds(new Set())}
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="card overflow-hidden">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-[var(--color-border)] bg-gray-50">
+                  {stripeKeyMasked && (
+                    <th className="w-10 px-4 py-3">
+                      <input
+                        type="checkbox"
+                        className="rounded"
+                        checked={
+                          filteredInvoices.filter(i => i.status !== 'paid' && i.status !== 'void').length > 0 &&
+                          filteredInvoices.filter(i => i.status !== 'paid' && i.status !== 'void').every(i => selectedInvoiceIds.has(i.id))
+                        }
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            const unpaid = filteredInvoices.filter(i => i.status !== 'paid' && i.status !== 'void');
+                            setSelectedInvoiceIds(new Set(unpaid.map(i => i.id)));
+                          } else {
+                            setSelectedInvoiceIds(new Set());
+                          }
+                        }}
+                      />
+                    </th>
+                  )}
                   <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">Invoice</th>
                   <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">Client / Agency</th>
                   <th className="text-left text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider px-4 py-3">CPTs</th>
@@ -801,6 +1009,23 @@ export default function BillingPage() {
               <tbody className="divide-y divide-[var(--color-border)]">
                 {filteredInvoices.map((invoice) => (
                   <tr key={invoice.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => handleViewInvoice(invoice.id)}>
+                    {stripeKeyMasked && (
+                      <td className="w-10 px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                        {invoice.status !== 'paid' && invoice.status !== 'void' && (
+                          <input
+                            type="checkbox"
+                            className="rounded"
+                            checked={selectedInvoiceIds.has(invoice.id)}
+                            onChange={(e) => {
+                              const next = new Set(selectedInvoiceIds);
+                              if (e.target.checked) next.add(invoice.id);
+                              else next.delete(invoice.id);
+                              setSelectedInvoiceIds(next);
+                            }}
+                          />
+                        )}
+                      </td>
+                    )}
                     <td className="px-4 py-3">
                       <span className="font-medium text-[var(--color-text)]">{invoice.invoice_number}</span>
                     </td>
@@ -824,6 +1049,49 @@ export default function BillingPage() {
                     </td>
                     <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-2">
+                        {/* Payment link actions — matches Client Detail pattern */}
+                        {stripeKeyMasked && invoice.status !== 'paid' && invoice.status !== 'void' && (
+                          <>
+                            <button
+                              className="p-1.5 rounded hover:bg-green-50 text-green-600"
+                              title={invoice.stripe_payment_link_url ? 'Open payment link' : 'Generate payment link'}
+                              onClick={() => handleGeneratePaymentLink(invoice.id)}
+                              disabled={generatingPaymentLink === invoice.id}
+                            >
+                              {generatingPaymentLink === invoice.id ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <ExternalLink className="w-4 h-4" />
+                              )}
+                            </button>
+                            {invoice.stripe_payment_link_url && (
+                              <button
+                                className="p-1.5 rounded hover:bg-gray-100 text-[var(--color-text-secondary)]"
+                                title="Copy payment link"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(invoice.stripe_payment_link_url);
+                                  setToast('Payment link copied');
+                                }}
+                              >
+                                <Copy className="w-4 h-4" />
+                              </button>
+                            )}
+                            {invoice.stripe_payment_link_url && (
+                              <button
+                                className="p-1.5 rounded hover:bg-blue-50 text-blue-500"
+                                title="Check payment status"
+                                onClick={() => handleCheckPaymentStatus(invoice.id)}
+                                disabled={checkingPaymentStatus === invoice.id}
+                              >
+                                {checkingPaymentStatus === invoice.id ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <RefreshCw className="w-4 h-4" />
+                                )}
+                              </button>
+                            )}
+                          </>
+                        )}
                         <button className="p-1.5 rounded hover:bg-gray-100 text-[var(--color-text-secondary)]" title="View/Edit" onClick={() => handleViewInvoice(invoice.id)}>
                           <Eye className="w-4 h-4" />
                         </button>
@@ -844,7 +1112,7 @@ export default function BillingPage() {
                 ))}
                 {filteredInvoices.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-12 text-center text-[var(--color-text-secondary)]">
+                    <td colSpan={stripeKeyMasked ? 8 : 7} className="px-4 py-12 text-center text-[var(--color-text-secondary)]">
                       {searchTerm ? `No invoices matching "${searchTerm}"` : 'No invoices found'}
                     </td>
                   </tr>
@@ -909,7 +1177,7 @@ export default function BillingPage() {
                       <td className="px-4 py-3 text-[var(--color-text)]">{getClientName(payment.client_id)}</td>
                       <td className="px-4 py-3">
                         <span className="inline-flex items-center gap-1.5 text-[var(--color-text-secondary)]">
-                          {payment.payment_method === 'card' && <CreditCard className="w-4 h-4" />}
+                          {(payment.payment_method === 'card' || payment.payment_method === 'stripe') && <CreditCard className="w-4 h-4" />}
                           {PAYMENT_METHOD_LABELS[payment.payment_method]}
                         </span>
                       </td>
@@ -1322,7 +1590,10 @@ export default function BillingPage() {
               <>
                 {/* Stat Cards */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                  <div className="card p-5">
+                  <div
+                    className="card p-5 cursor-pointer hover:shadow-md transition-all"
+                    onClick={() => { setActiveTab('invoices'); setInvoiceFilter('unpaid'); }}
+                  >
                     <div className="flex items-center justify-between mb-3">
                       <span className="text-sm text-[var(--color-text-secondary)]">Outstanding</span>
                       <AlertCircle className="w-5 h-5 text-blue-600" />
@@ -1330,7 +1601,10 @@ export default function BillingPage() {
                     <p className="text-2xl font-bold text-[var(--color-text)]">{formatCurrency(analytics.stats.outstanding)}</p>
                     <p className="text-xs text-[var(--color-text-secondary)] mt-1">Unpaid invoices</p>
                   </div>
-                  <div className="card p-5">
+                  <div
+                    className="card p-5 cursor-pointer hover:shadow-md transition-all"
+                    onClick={() => setActiveTab('payments')}
+                  >
                     <div className="flex items-center justify-between mb-3">
                       <span className="text-sm text-[var(--color-text-secondary)]">Paid This Month</span>
                       <TrendingUp className="w-5 h-5 text-emerald-600" />
@@ -1628,11 +1902,11 @@ export default function BillingPage() {
               <div className="card">
                 <div className="flex items-center gap-2 p-4 border-b border-[var(--color-border)]">
                   <CreditCard className="w-5 h-5 text-purple-500" />
-                  <h3 className="font-semibold text-[var(--color-text)]">Recent Card Payments</h3>
+                  <h3 className="font-semibold text-[var(--color-text)]">Recent Stripe Payments</h3>
                 </div>
                 <div className="divide-y divide-[var(--color-border)]">
                   {payments
-                    .filter(p => p.payment_method === 'card')
+                    .filter(p => p.payment_method === 'stripe' || (p.payment_method === 'card' && p.stripe_payment_intent_id))
                     .slice(0, 10)
                     .map((payment) => (
                       <div key={payment.id} className="flex items-center justify-between p-4 hover:bg-gray-50">
@@ -1643,9 +1917,9 @@ export default function BillingPage() {
                         <p className="font-medium text-emerald-600">+{formatCurrency(payment.amount)}</p>
                       </div>
                     ))}
-                  {payments.filter(p => p.payment_method === 'card').length === 0 && (
+                  {payments.filter(p => p.payment_method === 'stripe' || (p.payment_method === 'card' && p.stripe_payment_intent_id)).length === 0 && (
                     <div className="p-8 text-center text-[var(--color-text-secondary)]">
-                      No card payments recorded yet
+                      No Stripe payments recorded yet
                     </div>
                   )}
                 </div>
@@ -1661,14 +1935,20 @@ export default function BillingPage() {
         onClose={() => {
           setShowInvoiceModal(false);
           setEditingInvoice(null);
+          setPipelinePreSelectedClientId(undefined);
         }}
-        onSave={() => {
+        onSave={(invoice) => {
           loadData();
+          // Only show payment link prompt for new invoices (not edits)
+          if (!editingInvoice && stripeKeyMasked && invoice.status !== 'paid') {
+            setNewlyCreatedInvoice(invoice);
+          }
         }}
         clients={clients}
         entities={entities}
         feeSchedule={feeSchedule}
         invoice={editingInvoice || undefined}
+        preSelectedClientId={pipelinePreSelectedClientId}
       />
 
       <PaymentModal

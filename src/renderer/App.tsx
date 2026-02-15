@@ -18,6 +18,7 @@ import {
   ChevronRight,
   Lock,
   MessageSquare,
+  CheckCircle,
 } from 'lucide-react';
 import FeedbackModal from './components/FeedbackModal';
 import DashboardPage from './pages/DashboardPage';
@@ -330,6 +331,7 @@ const App: React.FC = () => {
   const [pendingRecoveryKey, setPendingRecoveryKey] = useState<string | null>(null);
   const lastActivityRef = useRef<number>(Date.now());
   const { tier, trialActive, trialExpired, loading: tierLoading } = useTier();
+  const [globalToast, setGlobalToast] = useState<string | null>(null);
 
   /**
    * Load PIN/security state from the database.
@@ -433,6 +435,15 @@ const App: React.FC = () => {
     return () => window.removeEventListener('pocketchart:lock', handleLock);
   }, [pinEnabled]);
 
+  // Lock on system suspend / screen lock (laptop lid close, etc.)
+  useEffect(() => {
+    if (!pinEnabled) return;
+    const cleanup = window.api.system.onLock(() => {
+      setIsLocked(true);
+    });
+    return cleanup;
+  }, [pinEnabled]);
+
   // Ctrl+L keyboard shortcut to lock
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -474,6 +485,52 @@ const App: React.FC = () => {
       clearInterval(intervalId);
     };
   }, [pinEnabled, timeoutMinutes, isLocked]);
+
+  // Global toast auto-dismiss
+  useEffect(() => {
+    if (globalToast) {
+      const timer = setTimeout(() => setGlobalToast(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [globalToast]);
+
+  // Background payment status polling (every 5 minutes)
+  useEffect(() => {
+    if (!dbReady) return;
+
+    let interval: ReturnType<typeof setInterval> | null = null;
+
+    const checkPendingPayments = async () => {
+      try {
+        const hasStripe = await window.api.secureStorage.exists('stripe_secret_key');
+        if (!hasStripe) return;
+
+        const result = await window.api.stripe.checkAllPendingPayments();
+        if (result.paid && result.paid.length > 0) {
+          for (const payment of result.paid) {
+            setGlobalToast(
+              `Payment received: ${payment.invoiceNumber} — $${payment.amount.toFixed(2)}`
+            );
+          }
+          // Notify open pages to refresh
+          window.dispatchEvent(new Event('pocketchart:payments-received'));
+        }
+      } catch (err) {
+        console.error('Background payment check failed:', err);
+      }
+    };
+
+    // Check shortly after app loads (5 second delay to not compete with startup)
+    const startTimer = setTimeout(() => {
+      checkPendingPayments();
+      interval = setInterval(checkPendingPayments, 5 * 60 * 1000);
+    }, 5000);
+
+    return () => {
+      clearTimeout(startTimer);
+      if (interval) clearInterval(interval);
+    };
+  }, [dbReady]);
 
   const handleUnlock = () => {
     setIsLocked(false);
@@ -568,6 +625,14 @@ const App: React.FC = () => {
       <RouterProvider router={router} />
       <FloatingWidget />
       <UpdateNotification />
+
+      {/* Global payment toast */}
+      {globalToast && (
+        <div className="fixed top-4 right-4 z-[9999] flex items-center gap-2 bg-emerald-600 text-white px-4 py-3 rounded-lg shadow-lg animate-fade-in">
+          <CheckCircle className="w-4 h-4" />
+          <span className="text-sm font-medium">{globalToast}</span>
+        </div>
+      )}
     </ErrorBoundary>
   );
 };

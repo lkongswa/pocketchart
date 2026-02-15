@@ -11,6 +11,7 @@ interface InvoiceModalProps {
   entities?: ContractedEntity[];
   feeSchedule: FeeScheduleEntry[];
   invoice?: Invoice & { items: InvoiceItem[] };
+  preSelectedClientId?: number;
 }
 
 type BillToType = 'client' | 'entity';
@@ -23,9 +24,10 @@ export default function InvoiceModal({
   entities = [],
   feeSchedule,
   invoice,
+  preSelectedClientId,
 }: InvoiceModalProps) {
   const [billToType, setBillToType] = useState<BillToType>('client');
-  const [clientId, setClientId] = useState<number | ''>(invoice?.client_id || '');
+  const [clientId, setClientId] = useState<number | ''>(invoice?.client_id || preSelectedClientId || '');
   const [entityId, setEntityId] = useState<number | ''>(invoice?.entity_id || '');
   const [invoiceDate, setInvoiceDate] = useState(
     invoice?.invoice_date || new Date().toISOString().slice(0, 10)
@@ -92,7 +94,7 @@ export default function InvoiceModal({
       }
     } else {
       setBillToType('client');
-      setClientId('');
+      setClientId(preSelectedClientId || '');
       setEntityId('');
       setInvoiceDate(new Date().toISOString().slice(0, 10));
       setDueDate('');
@@ -102,7 +104,7 @@ export default function InvoiceModal({
       setUnbilledNotes([]);
       setSelectedNoteIds(new Set());
     }
-  }, [invoice]);
+  }, [invoice, preSelectedClientId]);
 
   // Load unbilled notes when client/entity changes
   useEffect(() => {

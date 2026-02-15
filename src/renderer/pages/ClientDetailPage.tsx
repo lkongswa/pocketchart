@@ -46,7 +46,9 @@ import type {
   ClientDocument,
   ClientDocumentCategory,
   ClientDiscount,
+  ContractedEntity,
   Discipline,
+  FeeScheduleEntry,
   Note,
   Evaluation,
   Goal,
@@ -74,6 +76,7 @@ import ProFeatureGate from '../components/ProFeatureGate';
 import ChartCompleteness from '../components/ChartCompleteness';
 import ClaimReadinessDialog from '../components/ClaimReadinessDialog';
 import CSVPaymentImportModal from '../components/CSVPaymentImportModal';
+import InvoiceModal from '../components/InvoiceModal';
 import TrialExpiredModal from '../components/TrialExpiredModal';
 import { useTrialGuard } from '../hooks/useTrialGuard';
 import { useChartCompleteness } from '../hooks/useChartCompleteness';
@@ -120,6 +123,7 @@ const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   card: 'Card',
   cash: 'Cash',
   check: 'Check',
+  stripe: 'Stripe',
   insurance: 'Insurance',
   other: 'Other',
 };
@@ -273,6 +277,12 @@ const ClientDetailPage: React.FC = () => {
   const [generatingPaymentLink, setGeneratingPaymentLink] = useState<number | null>(null);
   const [checkingPaymentStatus, setCheckingPaymentStatus] = useState<number | null>(null);
   const [billingToast, setBillingToast] = useState<string | null>(null);
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [newlyCreatedInvoice, setNewlyCreatedInvoice] = useState<Invoice | null>(null);
+  const [feeSchedule, setFeeSchedule] = useState<FeeScheduleEntry[]>([]);
+  const [entities, setEntities] = useState<ContractedEntity[]>([]);
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<number>>(new Set());
+  const [batchGenerating, setBatchGenerating] = useState(false);
 
   // Discount state
   const [clientDiscounts, setClientDiscounts] = useState<ClientDiscount[]>([]);
@@ -321,7 +331,7 @@ const ClientDetailPage: React.FC = () => {
     if (!clientId) return;
     setLoading(true);
     try {
-      const [clientData, notesData, evalsData, goalsData, docsData, invoicesData, paymentsData, discountsData, activeDiscountsData, practiceData] = await Promise.all([
+      const [clientData, notesData, evalsData, goalsData, docsData, invoicesData, paymentsData, discountsData, activeDiscountsData, practiceData, feeScheduleData, entitiesData] = await Promise.all([
         window.api.clients.get(clientId),
         window.api.notes.listByClient(clientId),
         window.api.evaluations.listByClient(clientId),
@@ -332,6 +342,8 @@ const ClientDetailPage: React.FC = () => {
         window.api.clientDiscounts.listByClient(clientId).catch(() => []),
         window.api.clientDiscounts.getActive(clientId).catch(() => []),
         window.api.practice.get().catch(() => null),
+        window.api.feeSchedule.list().catch(() => []),
+        window.api.contractedEntities.list().catch(() => []),
       ]);
       setClient(clientData);
       setPractice(practiceData);
@@ -365,6 +377,8 @@ const ClientDetailPage: React.FC = () => {
       setPayments(safePayments);
       setClientDiscounts(discountsData || []);
       setActiveDiscounts(activeDiscountsData || []);
+      setFeeSchedule(feeScheduleData || []);
+      setEntities(entitiesData || []);
     } catch (err) {
       console.error('Failed to load client data:', err);
     } finally {
@@ -374,6 +388,13 @@ const ClientDetailPage: React.FC = () => {
 
   useEffect(() => {
     loadData();
+  }, [loadData]);
+
+  // Listen for background payment status updates
+  useEffect(() => {
+    const handler = () => loadData();
+    window.addEventListener('pocketchart:payments-received', handler);
+    return () => window.removeEventListener('pocketchart:payments-received', handler);
   }, [loadData]);
 
   useEffect(() => {
@@ -567,6 +588,61 @@ const ClientDetailPage: React.FC = () => {
       setBillingToast('Payment link copied to clipboard');
     } catch (err) {
       console.error('Failed to copy link:', err);
+    }
+  };
+
+  const handleGenerateAndCopyPaymentLink = async (invoiceId: number) => {
+    setGeneratingPaymentLink(invoiceId);
+    try {
+      const result = await window.api.stripe.createPaymentLink(invoiceId);
+      if (result.url) {
+        await navigator.clipboard.writeText(result.url);
+        setBillingToast(result.existing
+          ? 'Payment link copied to clipboard'
+          : 'Payment link created and copied to clipboard');
+        const invoicesData = await window.api.invoices.list({ clientId });
+        setInvoices(invoicesData);
+      }
+    } catch (err: any) {
+      console.error('Failed to create payment link:', err);
+      setBillingToast(err.message || 'Failed to create payment link');
+    } finally {
+      setGeneratingPaymentLink(null);
+    }
+  };
+
+  const handleBatchGeneratePaymentLinks = async () => {
+    if (selectedInvoiceIds.size === 0) return;
+    setBatchGenerating(true);
+    let successCount = 0;
+    let failCount = 0;
+    const links: string[] = [];
+
+    for (const invoiceId of selectedInvoiceIds) {
+      try {
+        const result = await window.api.stripe.createPaymentLink(invoiceId);
+        if (result.url) {
+          links.push(result.url);
+          successCount++;
+        }
+      } catch {
+        failCount++;
+      }
+    }
+
+    if (links.length > 0) {
+      await navigator.clipboard.writeText(links.join('\n'));
+    }
+
+    const invoicesData = await window.api.invoices.list({ clientId });
+    setInvoices(invoicesData);
+    setSelectedInvoiceIds(new Set());
+    setBatchGenerating(false);
+
+    if (failCount > 0) {
+      setBillingToast(`Generated ${successCount} links, ${failCount} failed. Links copied.`);
+    } else {
+      setBillingToast(`${successCount} payment link${successCount > 1 ? 's' : ''} generated and copied to clipboard`);
     }
   };
 
@@ -1358,7 +1434,7 @@ const ClientDetailPage: React.FC = () => {
           <div className="flex items-center gap-2">
             <button
               className="btn-primary btn-sm gap-1.5"
-              onClick={() => { if (guardAction()) navigate(`/billing?newInvoice=${clientId}`); }}
+              onClick={() => { if (guardAction()) setShowInvoiceModal(true); }}
             >
               <Plus size={14} /> New Invoice
             </button>
@@ -1438,6 +1514,70 @@ const ClientDetailPage: React.FC = () => {
             </div>
           </div>
 
+          {/* Post-invoice payment link prompt banner */}
+          {newlyCreatedInvoice && (
+            <div className="mb-4 rounded-lg p-4 border border-green-200 bg-green-50 flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-green-800">
+                  Invoice {newlyCreatedInvoice.invoice_number} created &mdash; ${newlyCreatedInvoice.total_amount.toFixed(2)}
+                </p>
+                <p className="text-xs text-green-600">Send a payment link to collect now?</p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  className="btn-primary btn-sm gap-1"
+                  onClick={async () => {
+                    await handleGenerateAndCopyPaymentLink(newlyCreatedInvoice.id);
+                    setNewlyCreatedInvoice(null);
+                  }}
+                  disabled={generatingPaymentLink === newlyCreatedInvoice.id}
+                >
+                  {generatingPaymentLink === newlyCreatedInvoice.id ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <CreditCard size={14} />
+                  )}
+                  Generate & Copy Link
+                </button>
+                <button
+                  className="btn-ghost btn-sm"
+                  onClick={() => setNewlyCreatedInvoice(null)}
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Batch action bar for invoices */}
+          {selectedInvoiceIds.size > 0 && (
+            <div className="mb-4 rounded-lg p-3 flex items-center justify-between bg-blue-50 border border-blue-200">
+              <span className="text-sm font-medium text-blue-800">
+                {selectedInvoiceIds.size} invoice{selectedInvoiceIds.size > 1 ? 's' : ''} selected
+              </span>
+              <div className="flex gap-2">
+                <button
+                  className="btn-primary btn-sm gap-1"
+                  onClick={handleBatchGeneratePaymentLinks}
+                  disabled={batchGenerating}
+                >
+                  {batchGenerating ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <ExternalLink size={14} />
+                  )}
+                  Generate & Copy {selectedInvoiceIds.size > 1 ? 'Links' : 'Link'}
+                </button>
+                <button
+                  className="btn-ghost btn-sm"
+                  onClick={() => setSelectedInvoiceIds(new Set())}
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Recent Invoices - Clickable */}
           <div className="mb-6">
             <div className="flex items-center justify-between mb-3">
@@ -1459,6 +1599,22 @@ const ClientDetailPage: React.FC = () => {
                     onClick={() => navigate(`/billing?tab=invoices&invoiceId=${invoice.id}`)}
                   >
                     <div className="flex items-center gap-4">
+                      {/* Checkbox for batch selection */}
+                      {invoice.status !== 'paid' && invoice.status !== 'void' && (
+                        <div onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            className="rounded"
+                            checked={selectedInvoiceIds.has(invoice.id)}
+                            onChange={(e) => {
+                              const next = new Set(selectedInvoiceIds);
+                              if (e.target.checked) next.add(invoice.id);
+                              else next.delete(invoice.id);
+                              setSelectedInvoiceIds(next);
+                            }}
+                          />
+                        </div>
+                      )}
                       <div>
                         <p className="text-sm font-medium text-[var(--color-text)]">{invoice.invoice_number}</p>
                         <p className="text-xs text-[var(--color-text-secondary)]">
@@ -1871,6 +2027,31 @@ const ClientDetailPage: React.FC = () => {
           clients={[]}
           fixedClientId={client.id}
           fixedClientName={`${client.first_name} ${client.last_name}`}
+        />
+      )}
+
+      {/* Invoice Modal */}
+      {showInvoiceModal && client && (
+        <InvoiceModal
+          isOpen={showInvoiceModal}
+          onClose={() => setShowInvoiceModal(false)}
+          onSave={async (invoice) => {
+            setShowInvoiceModal(false);
+            const invoicesData = await window.api.invoices.list({ clientId });
+            setInvoices(invoicesData);
+            setBillingToast('Invoice created');
+            // Check if Stripe is connected to offer payment link
+            try {
+              const hasSk = await window.api.secureStorage.exists('stripe_secret_key');
+              if (hasSk && invoice.status !== 'paid') {
+                setNewlyCreatedInvoice(invoice);
+              }
+            } catch { /* no stripe */ }
+          }}
+          clients={client ? [client] : []}
+          entities={entities}
+          feeSchedule={feeSchedule}
+          preSelectedClientId={client.id}
         />
       )}
 

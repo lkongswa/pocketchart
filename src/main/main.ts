@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, safeStorage } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, powerMonitor } from 'electron';
 import path from 'path';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -71,7 +71,7 @@ let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
 
 const isDev = process.env.NODE_ENV === 'development';
-const FORCE_PRO = false; // Toggle to false when done workshopping Pro features
+const FORCE_PRO = true; // Toggle to false when done workshopping Pro features
 
 // ── Auto-Updater Configuration ──
 autoUpdater.autoDownload = false;       // Don't download until user says yes
@@ -312,6 +312,14 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
     }
+  });
+
+  // Lock the app when system suspends (laptop lid closed) or screen locks
+  powerMonitor.on('suspend', () => {
+    mainWindow?.webContents.send('system:lock');
+  });
+  powerMonitor.on('lock-screen', () => {
+    mainWindow?.webContents.send('system:lock');
   });
 });
 
@@ -2321,7 +2329,7 @@ function registerIpcHandlers() {
             INSERT INTO payments (
               client_id, invoice_id, payment_date, amount,
               payment_method, stripe_payment_intent_id, notes
-            ) VALUES (?, ?, ?, ?, 'card', ?, ?)
+            ) VALUES (?, ?, ?, ?, 'stripe', ?, ?)
           `).run(
             invoice.client_id,
             invoiceId,
@@ -2356,6 +2364,77 @@ function registerIpcHandlers() {
     }
 
     return { status: 'pending' };
+  });
+
+  // Check ALL outstanding payment links at once (for background polling)
+  safeHandle('stripe:checkAllPendingPayments', async () => {
+    const stripe = getStripeClient();
+    if (!stripe) return { checked: 0, paid: [] };
+
+    const pendingInvoices = db.prepare(`
+      SELECT id, invoice_number, stripe_payment_link_id, client_id, total_amount
+      FROM invoices
+      WHERE status NOT IN ('paid', 'void')
+      AND stripe_payment_link_id IS NOT NULL
+    `).all() as any[];
+
+    const paidInvoices: any[] = [];
+
+    for (const invoice of pendingInvoices) {
+      try {
+        const sessions = await stripe.checkout.sessions.list({
+          payment_link: invoice.stripe_payment_link_id,
+          limit: 5,
+        });
+
+        for (const session of sessions.data) {
+          if (session.payment_status === 'paid') {
+            const existingPayment = db.prepare(
+              'SELECT id FROM payments WHERE stripe_payment_intent_id = ?'
+            ).get(session.payment_intent as string);
+
+            if (!existingPayment) {
+              db.prepare(`
+                INSERT INTO payments (
+                  client_id, invoice_id, payment_date, amount,
+                  payment_method, stripe_payment_intent_id, notes
+                ) VALUES (?, ?, ?, ?, 'stripe', ?, ?)
+              `).run(
+                invoice.client_id,
+                invoice.id,
+                new Date().toISOString().slice(0, 10),
+                invoice.total_amount,
+                session.payment_intent,
+                'Paid via Stripe Payment Link'
+              );
+
+              db.prepare('UPDATE invoices SET status = ? WHERE id = ?')
+                .run('paid', invoice.id);
+
+              db.prepare(`
+                INSERT INTO audit_log (entity_type, entity_id, action, client_id, amount, description)
+                VALUES ('payment', ?, 'stripe_payment_received', ?, ?, ?)
+              `).run(
+                invoice.id,
+                invoice.client_id,
+                invoice.total_amount,
+                `Payment received via Stripe for Invoice ${invoice.invoice_number}`
+              );
+
+              paidInvoices.push({
+                invoiceId: invoice.id,
+                invoiceNumber: invoice.invoice_number,
+                amount: invoice.total_amount,
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.error(`Failed to check payment for invoice ${invoice.id}:`, err);
+      }
+    }
+
+    return { checked: pendingInvoices.length, paid: paidInvoices };
   });
 
   // ── Feedback (Airtable) ──
@@ -4295,6 +4374,457 @@ function registerIpcHandlers() {
       INSERT INTO invoice_items (invoice_id, description, service_date, units, unit_price, amount)
       VALUES (?, ?, ?, 1, ?, ?)
     `).run(invoiceId, data.description, data.service_date, data.amount, data.amount);
+    return db.prepare('SELECT * FROM invoices WHERE id = ?').get(invoiceId);
+  });
+
+  // ── Revenue Pipeline ──
+
+  safeHandle('billing:getPipelineData', async (_event, options?: { paidDays?: number }) => {
+    const paidDays = options?.paidDays || 30;
+    const paidCutoff = new Date();
+    paidCutoff.setDate(paidCutoff.getDate() - paidDays);
+    const paidCutoffStr = paidCutoff.toISOString().slice(0, 10);
+
+    // Column 1: Completed appointments without a note
+    // Also detect if already billed (via invoice_items.appointment_id) and get default CPT
+    const needsNote = db.prepare(`
+      SELECT
+        a.id as appointment_id,
+        a.client_id,
+        a.scheduled_date,
+        a.visit_type,
+        a.entity_id,
+        c.first_name,
+        c.last_name,
+        c.default_cpt_code,
+        e.name as entity_name,
+        CAST(julianday('now') - julianday(a.scheduled_date) AS INTEGER) as days_old,
+        CASE WHEN EXISTS (
+          SELECT 1 FROM invoice_items ii
+          JOIN invoices i ON i.id = ii.invoice_id AND i.status != 'void' AND i.deleted_at IS NULL
+          WHERE ii.appointment_id = a.id
+        ) THEN 1 ELSE 0 END as already_billed
+      FROM appointments a
+      LEFT JOIN clients c ON c.id = a.client_id AND c.deleted_at IS NULL
+      LEFT JOIN contracted_entities e ON e.id = a.entity_id
+      WHERE a.status = 'completed'
+        AND a.deleted_at IS NULL
+        AND a.note_id IS NULL
+        AND c.id IS NOT NULL
+      ORDER BY a.scheduled_date DESC
+    `).all();
+
+    // Column 2: Unsigned notes (drafts)
+    const needsSignature = db.prepare(`
+      SELECT
+        n.id as note_id,
+        n.note_type,
+        n.client_id,
+        n.date_of_service,
+        n.cpt_code,
+        n.cpt_codes,
+        n.units,
+        n.charge_amount,
+        n.entity_id,
+        c.first_name,
+        c.last_name,
+        e.name as entity_name,
+        CAST(julianday('now') - julianday(n.date_of_service) AS INTEGER) as days_old
+      FROM notes n
+      LEFT JOIN clients c ON c.id = n.client_id AND c.deleted_at IS NULL
+      LEFT JOIN contracted_entities e ON e.id = n.entity_id
+      WHERE (n.signed_at IS NULL OR n.signed_at = '')
+        AND n.deleted_at IS NULL
+        AND c.id IS NOT NULL
+      ORDER BY n.date_of_service DESC
+    `).all();
+
+    // Also get unsigned evaluations
+    const unsignedEvals = db.prepare(`
+      SELECT
+        ev.id as eval_id,
+        'evaluation' as note_type,
+        ev.client_id,
+        ev.eval_date as date_of_service,
+        c.first_name,
+        c.last_name,
+        CAST(julianday('now') - julianday(ev.eval_date) AS INTEGER) as days_old
+      FROM evaluations ev
+      LEFT JOIN clients c ON c.id = ev.client_id AND c.deleted_at IS NULL
+      WHERE (ev.signed_at IS NULL OR ev.signed_at = '')
+        AND ev.deleted_at IS NULL
+        AND c.id IS NOT NULL
+      ORDER BY ev.eval_date DESC
+    `).all();
+
+    // Column 3: Signed notes without an invoice
+    const readyToBill = db.prepare(`
+      SELECT
+        n.id as note_id,
+        n.note_type,
+        n.client_id,
+        n.date_of_service,
+        n.cpt_code,
+        n.cpt_codes,
+        n.units,
+        n.charge_amount,
+        n.signed_at,
+        n.entity_id,
+        c.first_name,
+        c.last_name,
+        e.name as entity_name,
+        CAST(julianday('now') - julianday(n.signed_at) AS INTEGER) as days_uninvoiced
+      FROM notes n
+      LEFT JOIN clients c ON c.id = n.client_id AND c.deleted_at IS NULL
+      LEFT JOIN contracted_entities e ON e.id = n.entity_id
+      WHERE n.signed_at IS NOT NULL AND n.signed_at != ''
+        AND n.deleted_at IS NULL
+        AND c.id IS NOT NULL
+        AND n.id NOT IN (
+          SELECT DISTINCT ii.note_id
+          FROM invoice_items ii
+          JOIN invoices i ON i.id = ii.invoice_id
+          WHERE ii.note_id IS NOT NULL
+            AND i.status != 'void'
+            AND i.deleted_at IS NULL
+        )
+      ORDER BY n.signed_at DESC
+    `).all();
+
+    // Column 4: Unpaid invoices (excluding drafts and void)
+    const awaitingPayment = db.prepare(`
+      SELECT
+        i.id as invoice_id,
+        i.invoice_number,
+        i.client_id,
+        i.invoice_date,
+        i.total_amount,
+        i.status,
+        i.stripe_payment_link_url,
+        i.entity_id,
+        c.first_name,
+        c.last_name,
+        e.name as entity_name,
+        CAST(julianday('now') - julianday(i.invoice_date) AS INTEGER) as days_since_sent
+      FROM invoices i
+      LEFT JOIN clients c ON c.id = i.client_id AND c.deleted_at IS NULL
+      LEFT JOIN contracted_entities e ON e.id = i.entity_id
+      WHERE i.status IN ('sent', 'outstanding', 'partial', 'overdue')
+        AND i.deleted_at IS NULL
+      ORDER BY i.invoice_date DESC
+    `).all();
+
+    // Draft invoices (for the "unsent drafts" indicator in column 3)
+    const draftInvoices = db.prepare(`
+      SELECT
+        i.id as invoice_id,
+        i.invoice_number,
+        i.client_id,
+        i.total_amount,
+        c.first_name,
+        c.last_name
+      FROM invoices i
+      LEFT JOIN clients c ON c.id = i.client_id AND c.deleted_at IS NULL
+      WHERE i.status = 'draft'
+        AND i.deleted_at IS NULL
+      ORDER BY i.created_at DESC
+    `).all();
+
+    // Column 5: Recently paid
+    const paid = db.prepare(`
+      SELECT
+        i.id as invoice_id,
+        i.invoice_number,
+        i.client_id,
+        i.total_amount,
+        i.entity_id,
+        c.first_name,
+        c.last_name,
+        e.name as entity_name,
+        p.payment_date,
+        p.payment_method
+      FROM invoices i
+      LEFT JOIN clients c ON c.id = i.client_id AND c.deleted_at IS NULL
+      LEFT JOIN contracted_entities e ON e.id = i.entity_id
+      LEFT JOIN payments p ON p.invoice_id = i.id AND p.deleted_at IS NULL
+      WHERE i.status = 'paid'
+        AND i.deleted_at IS NULL
+        AND p.payment_date >= ?
+      ORDER BY p.payment_date DESC
+    `).all(paidCutoffStr);
+
+    return {
+      needsNote,
+      needsSignature: [...needsSignature, ...unsignedEvals],
+      readyToBill,
+      awaitingPayment,
+      draftInvoices,
+      paid,
+    };
+  });
+
+  safeHandle('billing:quickInvoice', async (_event, data: {
+    clientId: number;
+    noteIds: number[];
+    entityId?: number;
+  }) => {
+    const { clientId, noteIds, entityId } = data;
+
+    // Reuse the existing generateFromNotes logic
+    const feeSchedule = db.prepare('SELECT * FROM fee_schedule WHERE deleted_at IS NULL').all() as any[];
+    const feeMap = new Map(feeSchedule.map((f: any) => [f.cpt_code, f]));
+
+    let entityFeeMap = new Map<string, any>();
+    if (entityId) {
+      const entityFees = db.prepare('SELECT * FROM entity_fee_schedules WHERE entity_id = ? AND deleted_at IS NULL').all(entityId) as any[];
+      entityFeeMap = new Map(entityFees.filter((f: any) => f.cpt_code).map((f: any) => [f.cpt_code, f]));
+    }
+
+    // Load active client discounts (for non-entity invoices)
+    let activeDiscounts: any[] = [];
+    if (clientId && !entityId) {
+      db.prepare(`
+        UPDATE client_discounts SET status = 'expired', updated_at = CURRENT_TIMESTAMP
+        WHERE client_id = ? AND status = 'active' AND end_date IS NOT NULL AND end_date < date('now') AND deleted_at IS NULL
+      `).run(clientId);
+      activeDiscounts = db.prepare(
+        "SELECT * FROM client_discounts WHERE client_id = ? AND status = 'active' AND deleted_at IS NULL ORDER BY created_at DESC"
+      ).all(clientId) as any[];
+    }
+
+    const placeholders = noteIds.map(() => '?').join(',');
+    const notes = db.prepare(
+      `SELECT * FROM notes WHERE id IN (${placeholders}) AND deleted_at IS NULL`
+    ).all(...noteIds) as any[];
+
+    let subtotal = 0;
+    let discountAmount = 0;
+    const items: any[] = [];
+    const discountUsage = new Map<number, number>();
+
+    for (const note of notes) {
+      let cptLines: { code: string; units: number }[] = [];
+      try {
+        const parsed = JSON.parse(note.cpt_codes || '[]');
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          cptLines = parsed.filter((l: any) => l.code && l.code.trim());
+        }
+      } catch { /* ignore */ }
+
+      if (cptLines.length === 0) {
+        cptLines = [{ code: note.cpt_code || '', units: note.units || 1 }];
+      }
+
+      for (const cptLine of cptLines) {
+        const lineCode = cptLine.code;
+        const lineUnits = cptLine.units || 1;
+
+        const entityFee = entityFeeMap.get(lineCode);
+        const fee = feeMap.get(lineCode);
+        let unitPrice = entityFee?.default_rate || note.rate_override || fee?.amount || note.charge_amount || 0;
+        const basePrice = unitPrice;
+
+        if (activeDiscounts.length > 0) {
+          let applied = false;
+          for (const disc of activeDiscounts) {
+            if (applied) break;
+            const usedSoFar = discountUsage.get(disc.id) || 0;
+            if (disc.discount_type === 'package') {
+              const remaining = disc.total_sessions - (disc.sessions_used + usedSoFar);
+              if (remaining > 0) {
+                unitPrice = (disc.paid_sessions * disc.session_rate) / disc.total_sessions;
+                discountUsage.set(disc.id, usedSoFar + 1);
+                applied = true;
+              }
+            } else if (disc.discount_type === 'flat_rate') {
+              const remaining = disc.flat_rate_sessions ? disc.flat_rate_sessions - (disc.flat_rate_sessions_used + usedSoFar) : Infinity;
+              if (remaining > 0) {
+                unitPrice = disc.flat_rate;
+                discountUsage.set(disc.id, usedSoFar + 1);
+                applied = true;
+              }
+            }
+          }
+          if (!applied) {
+            for (const disc of activeDiscounts) {
+              if (disc.discount_type === 'persistent') {
+                if (disc.discount_percent) unitPrice = unitPrice * (1 - disc.discount_percent / 100);
+                else if (disc.discount_fixed) unitPrice = Math.max(0, unitPrice - disc.discount_fixed);
+              }
+            }
+          }
+          discountAmount += (basePrice - unitPrice) * lineUnits;
+        }
+
+        const amount = unitPrice * lineUnits;
+        subtotal += amount;
+        items.push({
+          note_id: note.id,
+          description: entityFee?.description || fee?.description || `Service on ${note.date_of_service}`,
+          cpt_code: lineCode,
+          service_date: note.date_of_service,
+          units: lineUnits,
+          unit_price: Math.round(unitPrice * 100) / 100,
+          amount: Math.round(amount * 100) / 100,
+        });
+      }
+    }
+
+    // Increment discount usage
+    for (const disc of activeDiscounts) {
+      const sessionsApplied = discountUsage.get(disc.id) || 0;
+      if (sessionsApplied > 0) {
+        if (disc.discount_type === 'package') {
+          const newUsed = disc.sessions_used + sessionsApplied;
+          const newStatus = newUsed >= disc.total_sessions ? 'exhausted' : 'active';
+          db.prepare('UPDATE client_discounts SET sessions_used = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newUsed, newStatus, disc.id);
+        } else if (disc.discount_type === 'flat_rate') {
+          const newUsed = disc.flat_rate_sessions_used + sessionsApplied;
+          const newStatus = disc.flat_rate_sessions && newUsed >= disc.flat_rate_sessions ? 'exhausted' : 'active';
+          db.prepare('UPDATE client_discounts SET flat_rate_sessions_used = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(newUsed, newStatus, disc.id);
+        }
+      }
+    }
+
+    let invoiceNotes = '';
+    const appliedLabels = activeDiscounts.filter(d => {
+      if (d.discount_type === 'persistent') return true;
+      return (discountUsage.get(d.id) || 0) > 0;
+    }).map(d => d.label || d.discount_type);
+    if (appliedLabels.length > 0) {
+      invoiceNotes = `Discounts applied: ${appliedLabels.join(', ')}`;
+    }
+
+    const invoiceNumber = generateInvoiceNumber();
+    const totalAmount = Math.round(subtotal * 100) / 100;
+    // Quick invoice starts as 'sent' — the act of clicking "Bill Now" implies intent to collect
+    const result = db.prepare(`
+      INSERT INTO invoices (client_id, entity_id, invoice_number, invoice_date, subtotal, discount_amount, total_amount, status, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'sent', ?)
+    `).run(clientId || null, entityId || null, invoiceNumber, new Date().toISOString().slice(0, 10),
+      totalAmount + Math.round(discountAmount * 100) / 100, Math.round(discountAmount * 100) / 100, totalAmount, invoiceNotes);
+    const invoiceId = result.lastInsertRowid;
+
+    const insertItem = db.prepare(`
+      INSERT INTO invoice_items (invoice_id, note_id, description, cpt_code, service_date, units, unit_price, amount)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const item of items) {
+      insertItem.run(invoiceId, item.note_id, item.description, item.cpt_code, item.service_date, item.units, item.unit_price, item.amount);
+    }
+
+    return db.prepare('SELECT * FROM invoices WHERE id = ?').get(invoiceId);
+  });
+
+  // Bill from appointment without a note — uses client's default_cpt_code + fee schedule
+  safeHandle('billing:quickInvoiceFromAppointment', async (_event, data: {
+    appointmentId: number;
+    clientId: number;
+    entityId?: number;
+    cptCode?: string;
+  }) => {
+    const { appointmentId, clientId, entityId } = data;
+
+    // Get appointment
+    const appointment = db.prepare('SELECT * FROM appointments WHERE id = ? AND deleted_at IS NULL').get(appointmentId) as any;
+    if (!appointment) throw new Error('Appointment not found');
+
+    // Use provided CPT code or fall back to client's default
+    let cptCode = data.cptCode;
+    if (!cptCode) {
+      const client = db.prepare('SELECT default_cpt_code FROM clients WHERE id = ? AND deleted_at IS NULL').get(clientId) as any;
+      cptCode = client?.default_cpt_code;
+    }
+    if (!cptCode) throw new Error('No CPT code provided and client has no default CPT code.');
+
+    // Look up fee schedule for rate
+    const feeSchedule = db.prepare('SELECT * FROM fee_schedule WHERE deleted_at IS NULL').all() as any[];
+    const feeMap = new Map(feeSchedule.map((f: any) => [f.cpt_code, f]));
+
+    let entityFeeMap = new Map<string, any>();
+    if (entityId) {
+      const entityFees = db.prepare('SELECT * FROM entity_fee_schedules WHERE entity_id = ? AND deleted_at IS NULL').all(entityId) as any[];
+      entityFeeMap = new Map(entityFees.filter((f: any) => f.cpt_code).map((f: any) => [f.cpt_code, f]));
+    }
+
+    const entityFee = entityFeeMap.get(cptCode);
+    const fee = feeMap.get(cptCode);
+    const unitPrice = entityFee?.default_rate || fee?.amount || 0;
+    const units = fee?.default_units || 1;
+
+    if (unitPrice === 0) throw new Error(`No rate found for CPT ${cptCode} in fee schedule.`);
+
+    // Load active client discounts
+    let activeDiscounts: any[] = [];
+    let discountAmount = 0;
+    let finalPrice = unitPrice;
+
+    if (clientId && !entityId) {
+      db.prepare(`
+        UPDATE client_discounts SET status = 'expired', updated_at = CURRENT_TIMESTAMP
+        WHERE client_id = ? AND status = 'active' AND end_date IS NOT NULL AND end_date < date('now') AND deleted_at IS NULL
+      `).run(clientId);
+      activeDiscounts = db.prepare(
+        "SELECT * FROM client_discounts WHERE client_id = ? AND status = 'active' AND deleted_at IS NULL ORDER BY created_at DESC"
+      ).all(clientId) as any[];
+
+      if (activeDiscounts.length > 0) {
+        let applied = false;
+        for (const disc of activeDiscounts) {
+          if (applied) break;
+          if (disc.discount_type === 'package') {
+            const remaining = disc.total_sessions - disc.sessions_used;
+            if (remaining > 0) {
+              finalPrice = (disc.paid_sessions * disc.session_rate) / disc.total_sessions;
+              db.prepare('UPDATE client_discounts SET sessions_used = sessions_used + 1, status = CASE WHEN sessions_used + 1 >= total_sessions THEN \'exhausted\' ELSE \'active\' END, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(disc.id);
+              applied = true;
+            }
+          } else if (disc.discount_type === 'flat_rate') {
+            const remaining = disc.flat_rate_sessions ? disc.flat_rate_sessions - disc.flat_rate_sessions_used : Infinity;
+            if (remaining > 0) {
+              finalPrice = disc.flat_rate;
+              db.prepare('UPDATE client_discounts SET flat_rate_sessions_used = flat_rate_sessions_used + 1, status = CASE WHEN flat_rate_sessions IS NOT NULL AND flat_rate_sessions_used + 1 >= flat_rate_sessions THEN \'exhausted\' ELSE \'active\' END, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(disc.id);
+              applied = true;
+            }
+          }
+        }
+        if (!applied) {
+          for (const disc of activeDiscounts) {
+            if (disc.discount_type === 'persistent') {
+              if (disc.discount_percent) finalPrice = finalPrice * (1 - disc.discount_percent / 100);
+              else if (disc.discount_fixed) finalPrice = Math.max(0, finalPrice - disc.discount_fixed);
+            }
+          }
+        }
+        discountAmount = (unitPrice - finalPrice) * units;
+      }
+    }
+
+    const amount = Math.round(finalPrice * units * 100) / 100;
+    const subtotal = Math.round((unitPrice * units) * 100) / 100;
+    const discRounded = Math.round(discountAmount * 100) / 100;
+
+    let invoiceNotes = '';
+    const appliedLabels = activeDiscounts.filter(d => d.discount_type === 'persistent' || d.discount_type === 'package' || d.discount_type === 'flat_rate').map(d => d.label || d.discount_type);
+    if (appliedLabels.length > 0 && discRounded > 0) {
+      invoiceNotes = `Discounts applied: ${appliedLabels.join(', ')}`;
+    }
+
+    const invoiceNumber = generateInvoiceNumber();
+    const description = entityFee?.description || fee?.description || `Service on ${appointment.scheduled_date}`;
+
+    const result = db.prepare(`
+      INSERT INTO invoices (client_id, entity_id, invoice_number, invoice_date, subtotal, discount_amount, total_amount, status, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'sent', ?)
+    `).run(clientId, entityId || null, invoiceNumber, new Date().toISOString().slice(0, 10),
+      subtotal, discRounded, amount, invoiceNotes);
+    const invoiceId = result.lastInsertRowid;
+
+    db.prepare(`
+      INSERT INTO invoice_items (invoice_id, appointment_id, description, cpt_code, service_date, units, unit_price, amount)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(invoiceId, appointmentId, description, cptCode, appointment.scheduled_date, units, Math.round(finalPrice * 100) / 100, amount);
+
     return db.prepare('SELECT * FROM invoices WHERE id = ?').get(invoiceId);
   });
 
