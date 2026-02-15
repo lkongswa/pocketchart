@@ -143,6 +143,7 @@ export default function TimeGrid({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [dragOverSlot, setDragOverSlot] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [draggingBlockId, setDraggingBlockId] = useState<number | null>(null);
 
   // Auto-scroll to ~8 AM on mount
   useEffect(() => {
@@ -195,6 +196,7 @@ export default function TimeGrid({
     (dateStr: string, timeStr: string) => (e: React.DragEvent<HTMLDivElement>) => {
       e.preventDefault();
       setDragOverSlot(null);
+      setDraggingBlockId(null);
       // Check for todo drop first
       const todoId = e.dataTransfer.getData('application/todo-id');
       if (todoId && onTodoDrop) {
@@ -382,13 +384,22 @@ export default function TimeGrid({
                         ? 'bg-slate-50 border-l-2 border-l-emerald-400 text-slate-400'
                         : 'bg-slate-100 border-l-2 border-l-slate-400 text-slate-600 hover:bg-slate-200/70'
                     }`}
-                    style={{ top: topPx, height: heightPx }}
+                    style={{
+                      top: topPx,
+                      height: heightPx,
+                      // Disable pointer events on ALL blocks while dragging a block,
+                      // so the drop falls through to the underlying slot div
+                      pointerEvents: draggingBlockId !== null ? 'none' : undefined,
+                    }}
                     title={`Admin: ${block.title}${isDone ? ' (Done)' : ''}`}
                     draggable
                     onDragStart={(e) => {
                       e.dataTransfer.setData('application/block-id', block.id.toString());
                       e.dataTransfer.effectAllowed = 'move';
+                      // Use setTimeout so the drag ghost is captured before pointer-events: none kicks in
+                      setTimeout(() => setDraggingBlockId(block.id), 0);
                     }}
+                    onDragEnd={() => setDraggingBlockId(null)}
                     onDragOver={(e) => {
                       if (e.dataTransfer.types.includes('application/todo-id') || e.dataTransfer.types.includes('application/block-id')) {
                         e.preventDefault();
