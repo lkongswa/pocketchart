@@ -1827,7 +1827,7 @@ export interface PocketChartAPI {
     list: (filters?: { startDate?: string; endDate?: string }) => Promise<CalendarBlock[]>;
     create: (data: { title: string; scheduled_date: string; scheduled_time?: string; duration_minutes?: number; source_todo_id?: number }) => Promise<CalendarBlock>;
     delete: (id: number) => Promise<boolean>;
-    update: (id: number, data: { completed?: number; title?: string }) => Promise<CalendarBlock>;
+    update: (id: number, data: { completed?: number; title?: string; scheduled_date?: string; scheduled_time?: string; duration_minutes?: number }) => Promise<CalendarBlock>;
     deleteAndRestore: (id: number) => Promise<boolean>;
   };
   // ── Quick Links ──

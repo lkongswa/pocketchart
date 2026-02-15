@@ -20,6 +20,7 @@ interface TimeGridProps {
   onAppointmentClick: (appt: Appointment) => void;
   onNoteClick?: (appt: Appointment) => void;
   onAppointmentDrop: (apptId: number, newDate: string, newTime: string) => void;
+  onBlockDrop?: (blockId: number, newDate: string, newTime: string) => void;
   onTodoDrop?: (todoId: number, date: string, time: string) => void;
   onAppointmentContextMenu?: (appt: Appointment, x: number, y: number) => void;
   onBlockContextMenu?: (block: CalendarBlock, x: number, y: number) => void;
@@ -131,6 +132,7 @@ export default function TimeGrid({
   onAppointmentClick,
   onNoteClick,
   onAppointmentDrop,
+  onBlockDrop,
   onTodoDrop,
   onAppointmentContextMenu,
   onBlockContextMenu,
@@ -199,12 +201,18 @@ export default function TimeGrid({
         onTodoDrop(parseInt(todoId, 10), dateStr, timeStr);
         return;
       }
+      // Check for calendar block drag
+      const blockId = e.dataTransfer.getData('application/block-id');
+      if (blockId && onBlockDrop) {
+        onBlockDrop(parseInt(blockId, 10), dateStr, timeStr);
+        return;
+      }
       const apptId = parseInt(e.dataTransfer.getData('text/plain'), 10);
       if (!isNaN(apptId)) {
         onAppointmentDrop(apptId, dateStr, timeStr);
       }
     },
-    [onAppointmentDrop, onTodoDrop]
+    [onAppointmentDrop, onBlockDrop, onTodoDrop]
   );
 
   const handleSlotClick = useCallback(
@@ -369,15 +377,20 @@ export default function TimeGrid({
                 return (
                   <div
                     key={`block-${block.id}`}
-                    className={`group/block absolute left-1 right-1 z-10 rounded px-2 py-1 overflow-visible cursor-default ${
+                    className={`group/block absolute left-1 right-1 z-10 rounded px-2 py-1 overflow-visible cursor-grab ${
                       isDone
                         ? 'bg-slate-50 border-l-2 border-l-emerald-400 text-slate-400'
                         : 'bg-slate-100 border-l-2 border-l-slate-400 text-slate-600 hover:bg-slate-200/70'
                     }`}
                     style={{ top: topPx, height: heightPx }}
                     title={`Admin: ${block.title}${isDone ? ' (Done)' : ''}`}
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData('application/block-id', block.id.toString());
+                      e.dataTransfer.effectAllowed = 'move';
+                    }}
                     onDragOver={(e) => {
-                      if (e.dataTransfer.types.includes('application/todo-id')) {
+                      if (e.dataTransfer.types.includes('application/todo-id') || e.dataTransfer.types.includes('application/block-id')) {
                         e.preventDefault();
                         e.dataTransfer.dropEffect = 'move';
                       }
@@ -388,6 +401,13 @@ export default function TimeGrid({
                         e.preventDefault();
                         e.stopPropagation();
                         onTodoDrop(parseInt(todoId, 10), col.dateStr, block.scheduled_time);
+                        return;
+                      }
+                      const blockDragId = e.dataTransfer.getData('application/block-id');
+                      if (blockDragId && onBlockDrop) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onBlockDrop(parseInt(blockDragId, 10), col.dateStr, block.scheduled_time);
                       }
                     }}
                     onContextMenu={(e) => {

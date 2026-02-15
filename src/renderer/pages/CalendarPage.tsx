@@ -400,6 +400,15 @@ export default function CalendarPage() {
     await loadIncompleteTodos();
   };
 
+  // Drag calendar block to new time/date
+  const handleBlockDrop = async (blockId: number, newDate: string, newTime: string) => {
+    await window.api.calendarBlocks.update(blockId, {
+      scheduled_date: newDate,
+      scheduled_time: newTime,
+    });
+    await loadCalendarBlocks();
+  };
+
   // Drag and drop
   const handleAppointmentDrop = async (apptId: number, newDate: string, newTime?: string) => {
     const appt = appointments.find((a) => a.id === apptId);
@@ -649,6 +658,7 @@ export default function CalendarPage() {
               onAppointmentClick={handleAppointmentClick}
               onNoteClick={handleNoteClick}
               onAppointmentDrop={handleAppointmentDrop}
+              onBlockDrop={handleBlockDrop}
               onTodoDrop={handleTodoDrop}
               onAppointmentContextMenu={handleAppointmentContextMenu}
               onBlockContextMenu={handleBlockContextMenu}
@@ -665,6 +675,7 @@ export default function CalendarPage() {
               onAppointmentClick={handleAppointmentClick}
               onNoteClick={handleNoteClick}
               onAppointmentDrop={handleAppointmentDrop}
+              onBlockDrop={handleBlockDrop}
               onTodoDrop={handleTodoDrop}
               onAppointmentContextMenu={handleAppointmentContextMenu}
               onBlockContextMenu={handleBlockContextMenu}
