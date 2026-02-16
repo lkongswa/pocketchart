@@ -59,8 +59,10 @@ import type {
   Payment,
   PaymentMethod,
   Practice,
+  Appointment,
+  AppointmentStatus,
 } from '../../shared/types';
-import { CLIENT_DOCUMENT_CATEGORY_LABELS } from '../../shared/types';
+import { CLIENT_DOCUMENT_CATEGORY_LABELS, SESSION_TYPE_LABELS, VISIT_TYPE_LABELS } from '../../shared/types';
 import ClientFormModal from '../components/ClientFormModal';
 import GoalFormModal from '../components/GoalFormModal';
 import GoalBuilderModal from '../components/GoalBuilderModal';
@@ -252,6 +254,9 @@ const ClientDetailPage: React.FC = () => {
   const [client, setClient] = useState<Client | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
   const [evaluations, setEvaluations] = useState<Evaluation[]>([]);
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [apptStatusFilter, setApptStatusFilter] = useState<'all' | AppointmentStatus>('all');
+  const [showAllAppointments, setShowAllAppointments] = useState(false);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [goalHistories, setGoalHistories] = useState<Record<number, GoalProgressEntry[]>>({});
   const [documents, setDocuments] = useState<ClientDocument[]>([]);
@@ -331,7 +336,7 @@ const ClientDetailPage: React.FC = () => {
     if (!clientId) return;
     setLoading(true);
     try {
-      const [clientData, notesData, evalsData, goalsData, docsData, invoicesData, paymentsData, discountsData, activeDiscountsData, practiceData, feeScheduleData, entitiesData] = await Promise.all([
+      const [clientData, notesData, evalsData, goalsData, docsData, invoicesData, paymentsData, discountsData, activeDiscountsData, practiceData, feeScheduleData, entitiesData, appointmentsData] = await Promise.all([
         window.api.clients.get(clientId),
         window.api.notes.listByClient(clientId),
         window.api.evaluations.listByClient(clientId),
@@ -344,11 +349,13 @@ const ClientDetailPage: React.FC = () => {
         window.api.practice.get().catch(() => null),
         window.api.feeSchedule.list().catch(() => []),
         window.api.contractedEntities.list().catch(() => []),
+        window.api.appointments.list({ clientId }).catch(() => []),
       ]);
       setClient(clientData);
       setPractice(practiceData);
       setNotes(notesData || []);
       setEvaluations(evalsData || []);
+      setAppointments(appointmentsData || []);
       setGoals(goalsData || []);
       // Load progress histories for all goals
       if (goalsData?.length) {
@@ -1297,6 +1304,130 @@ const ClientDetailPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* ══════════ APPOINTMENTS ══════════ */}
+      {(() => {
+        const filteredAppts = apptStatusFilter === 'all'
+          ? appointments
+          : appointments.filter(a => a.status === apptStatusFilter);
+        const displayAppts = showAllAppointments ? filteredAppts : filteredAppts.slice(0, 10);
+        const statusCounts = appointments.reduce((acc, a) => { acc[a.status] = (acc[a.status] || 0) + 1; return acc; }, {} as Record<string, number>);
+        const fmt12 = (t: string) => { const [h, m] = t.split(':'); const hr = parseInt(h, 10); return `${hr === 0 ? 12 : hr > 12 ? hr - 12 : hr}:${m} ${hr >= 12 ? 'PM' : 'AM'}`; };
+        const statusBadge = (s: AppointmentStatus) => {
+          const map: Record<AppointmentStatus, { bg: string; text: string; label: string }> = {
+            scheduled: { bg: 'bg-blue-100', text: 'text-blue-700', label: 'Scheduled' },
+            completed: { bg: 'bg-emerald-100', text: 'text-emerald-700', label: 'Attended' },
+            cancelled: { bg: 'bg-gray-100', text: 'text-gray-500', label: 'Cancelled' },
+            'no-show': { bg: 'bg-red-100', text: 'text-red-600', label: 'No-Show' },
+          };
+          const c = map[s];
+          return <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${c.bg} ${c.text}`}>{c.label}</span>;
+        };
+        const filterChips: Array<{ value: 'all' | AppointmentStatus; label: string }> = [
+          { value: 'all', label: `All (${appointments.length})` },
+          { value: 'scheduled', label: `Scheduled (${statusCounts.scheduled || 0})` },
+          { value: 'completed', label: `Attended (${statusCounts.completed || 0})` },
+          { value: 'cancelled', label: `Cancelled (${statusCounts.cancelled || 0})` },
+          { value: 'no-show', label: `No-Show (${statusCounts['no-show'] || 0})` },
+        ];
+        return (
+          <div className="card">
+            <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
+              <h3 className="font-semibold text-[var(--color-text)] flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-blue-400" />
+                Appointments
+                <span className="text-xs font-normal text-[var(--color-text-secondary)]">({appointments.length})</span>
+              </h3>
+            </div>
+            {/* Filter chips */}
+            <div className="flex items-center gap-1.5 px-4 py-2 border-b border-[var(--color-border)] bg-gray-50/50">
+              {filterChips.map(chip => (
+                <button
+                  key={chip.value}
+                  className={`text-xs px-2.5 py-1 rounded-full font-medium transition-colors ${
+                    apptStatusFilter === chip.value
+                      ? 'bg-[var(--color-primary)] text-white'
+                      : 'bg-white text-[var(--color-text-secondary)] border border-[var(--color-border)] hover:bg-gray-100'
+                  }`}
+                  onClick={() => setApptStatusFilter(chip.value)}
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
+            {filteredAppts.length === 0 ? (
+              <div className="p-8 text-center text-sm text-[var(--color-text-secondary)]">
+                {appointments.length === 0 ? 'No appointments yet.' : 'No appointments match this filter.'}
+              </div>
+            ) : (
+              <div className="divide-y divide-[var(--color-border)]">
+                {displayAppts.map(appt => {
+                  const sessionType = (appt.session_type || 'visit') as keyof typeof SESSION_TYPE_LABELS;
+                  const visitType = appt.visit_type as keyof typeof VISIT_TYPE_LABELS | undefined;
+                  return (
+                    <div
+                      key={appt.id}
+                      className={`flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors ${
+                        appt.note_id || appt.evaluation_id ? 'cursor-pointer' : ''
+                      }`}
+                      onClick={() => {
+                        if (appt.evaluation_id) navigate(`/clients/${clientId}/eval/${appt.evaluation_id}`);
+                        else if (appt.note_id) navigate(`/clients/${clientId}/note/${appt.note_id}`);
+                      }}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="text-sm font-medium text-[var(--color-text)] w-24 shrink-0">
+                          {formatDate(appt.scheduled_date)}
+                        </span>
+                        <span className="text-xs text-[var(--color-text-secondary)] w-16 shrink-0">
+                          {appt.scheduled_time ? fmt12(appt.scheduled_time) : ''}
+                        </span>
+                        <span className="badge bg-gray-100 text-gray-600 text-xs">
+                          {appt.duration_minutes}m
+                        </span>
+                        {sessionType !== 'visit' && (
+                          <span className={`text-xs px-1.5 py-0.5 rounded font-bold ${
+                            sessionType === 'eval' ? 'bg-violet-200 text-violet-700' : 'bg-amber-200 text-amber-700'
+                          }`}>
+                            {sessionType === 'eval' ? 'Eval' : 'Recert'}
+                          </span>
+                        )}
+                        {visitType && (
+                          <span className="text-xs text-[var(--color-text-tertiary)]">
+                            {VISIT_TYPE_LABELS[visitType] || visitType}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {statusBadge(appt.status)}
+                        {appt.note_id && (
+                          <span className="text-xs text-emerald-500" title="Note linked">
+                            <FileText size={13} />
+                          </span>
+                        )}
+                        {appt.evaluation_id && (
+                          <span className="text-xs text-violet-500" title="Eval linked">
+                            <ClipboardList size={13} />
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {filteredAppts.length > 10 && (
+              <button
+                className="w-full py-2 text-xs text-[var(--color-primary)] font-medium hover:bg-gray-50 flex items-center justify-center gap-1"
+                onClick={() => setShowAllAppointments(!showAllAppointments)}
+              >
+                {showAllAppointments ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                {showAllAppointments ? 'Show less' : `Show all ${filteredAppts.length} appointments`}
+              </button>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ══════════ ORDERS & CERTIFICATIONS ══════════ */}
       <div className="card">

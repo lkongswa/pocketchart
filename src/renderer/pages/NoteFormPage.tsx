@@ -115,6 +115,7 @@ export default function NoteFormPage() {
 
   // Appointment context passed from calendar or discharge navigation
   const apptState = (location.state as {
+    appointmentId?: number;
     appointmentDate?: string;
     appointmentTime?: string;
     appointmentDuration?: number;
@@ -125,6 +126,9 @@ export default function NoteFormPage() {
   const isStandaloneDischarge = apptState.standalone === true && apptState.noteMode === 'discharge';
   const [searchParams] = useSearchParams();
   const queryType = searchParams.get('type'); // 'progress_report' | 'discharge' | null
+
+  // Appointment ID from state (calendar click) or query param (pipeline "Write Note")
+  const appointmentId = apptState.appointmentId || (searchParams.get('appointmentId') ? parseInt(searchParams.get('appointmentId')!, 10) : undefined);
 
   // Data
   const [client, setClient] = useState<Client | null>(null);
@@ -672,7 +676,13 @@ export default function NoteFormPage() {
         await window.api.notes.update(savedNoteId, noteData);
       } else {
         const created = await window.api.notes.create(noteData);
-        if (created?.id) setSavedNoteId(created.id);
+        if (created?.id) {
+          setSavedNoteId(created.id);
+          // Link note back to appointment on first auto-save too
+          if (appointmentId) {
+            try { await window.api.appointments.linkNote(appointmentId, created.id); } catch {}
+          }
+        }
       }
       setLastAutoSaved(new Date().toLocaleTimeString());
     } catch (err) {
@@ -706,10 +716,9 @@ export default function NoteFormPage() {
     setToast('Pre-filled Objective and Plan from last note');
   };
 
-  const insertAtCursor = (
+  const insertAtCursor = useCallback((
     textareaRef: React.RefObject<HTMLTextAreaElement | null>,
     setter: React.Dispatch<React.SetStateAction<string>>,
-    currentValue: string,
     phrase: string
   ) => {
     const textarea = textareaRef.current;
@@ -718,6 +727,7 @@ export default function NoteFormPage() {
       setter((prev) => (prev ? prev + ' ' + phrase : phrase));
       return;
     }
+    const currentValue = textarea.value;
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
     const before = currentValue.slice(0, start);
@@ -731,25 +741,20 @@ export default function NoteFormPage() {
       textarea.focus();
       textarea.setSelectionRange(pos, pos);
     }, 0);
-  };
+  }, []);
+
+  const noteBankInsertS = useCallback((phrase: string) => insertAtCursor(subjectiveRef, setSubjective, phrase), [insertAtCursor]);
+  const noteBankInsertO = useCallback((phrase: string) => insertAtCursor(objectiveRef, setObjective, phrase), [insertAtCursor]);
+  const noteBankInsertA = useCallback((phrase: string) => insertAtCursor(assessmentRef, setAssessment, phrase), [insertAtCursor]);
+  const noteBankInsertP = useCallback((phrase: string) => insertAtCursor(planRef, setPlan, phrase), [insertAtCursor]);
 
   const getNoteBankInsertHandler = (section: SOAPSection) => {
-    return (phrase: string) => {
-      switch (section) {
-        case 'S':
-          insertAtCursor(subjectiveRef, setSubjective, subjective, phrase);
-          break;
-        case 'O':
-          insertAtCursor(objectiveRef, setObjective, objective, phrase);
-          break;
-        case 'A':
-          insertAtCursor(assessmentRef, setAssessment, assessment, phrase);
-          break;
-        case 'P':
-          insertAtCursor(planRef, setPlan, plan, phrase);
-          break;
-      }
-    };
+    switch (section) {
+      case 'S': return noteBankInsertS;
+      case 'O': return noteBankInsertO;
+      case 'A': return noteBankInsertA;
+      case 'P': return noteBankInsertP;
+    }
   };
 
   const getNoteBankButtonRef = (section: SOAPSection) => {
@@ -1162,6 +1167,14 @@ export default function NoteFormPage() {
       } else {
         const created = await window.api.notes.create(noteData);
         resultNoteId = created?.id ?? null;
+        // Link note back to appointment (marks appointment completed + sets note_id)
+        if (resultNoteId && appointmentId) {
+          try {
+            await window.api.appointments.linkNote(appointmentId, resultNoteId);
+          } catch (err) {
+            console.error('Failed to link note to appointment:', err);
+          }
+        }
       }
 
       // Save progress report goals and update goal statuses

@@ -1083,6 +1083,7 @@ export interface PipelineData {
     entity_name: string | null;
     days_old: number;
     already_billed: number;
+    billed_invoice_id: number | null;
   }>;
   needsSignature: Array<{
     note_id?: number;
@@ -1422,6 +1423,7 @@ export interface PocketChartAPI {
     update: (id: number, data: Partial<Appointment>) => Promise<Appointment>;
     delete: (id: number) => Promise<boolean>;
     linkEval: (appointmentId: number, evaluationId: number) => Promise<boolean>;
+    linkNote: (appointmentId: number, noteId: number) => Promise<boolean>;
   };
   customPatterns: {
     list: () => Promise<CustomPattern[]>;

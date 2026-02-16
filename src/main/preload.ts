@@ -121,6 +121,7 @@ const api = {
     update: (id: number, data: any) => ipcRenderer.invoke('appointments:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('appointments:delete', id),
     linkEval: (appointmentId: number, evaluationId: number) => ipcRenderer.invoke('appointments:linkEval', appointmentId, evaluationId),
+    linkNote: (appointmentId: number, noteId: number) => ipcRenderer.invoke('appointments:linkNote', appointmentId, noteId),
   },
 
   // Note Bank

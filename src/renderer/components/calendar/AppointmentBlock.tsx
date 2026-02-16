@@ -25,16 +25,17 @@ const STATUS_CLASSES: Record<AppointmentStatus, string> = {
 };
 
 // Session type color overrides (eval=violet, recert=amber)
+// Completed/cancelled/no-show use universal colors across all types
 const EVAL_STATUS_CLASSES: Record<AppointmentStatus, string> = {
   scheduled: 'border-l-4 border-l-violet-500 bg-violet-50',
-  completed: 'border-l-4 border-l-violet-600 bg-violet-50',
+  completed: 'border-l-4 border-l-emerald-500 bg-emerald-50',
   cancelled: 'border-l-4 border-l-gray-400 bg-gray-50 opacity-60',
   'no-show': 'border-l-4 border-l-red-500 bg-red-50',
 };
 
 const RECERT_STATUS_CLASSES: Record<AppointmentStatus, string> = {
   scheduled: 'border-l-4 border-l-amber-500 bg-amber-50',
-  completed: 'border-l-4 border-l-amber-600 bg-amber-50',
+  completed: 'border-l-4 border-l-emerald-500 bg-emerald-50',
   cancelled: 'border-l-4 border-l-gray-400 bg-gray-50 opacity-60',
   'no-show': 'border-l-4 border-l-red-500 bg-red-50',
 };
@@ -42,7 +43,7 @@ const RECERT_STATUS_CLASSES: Record<AppointmentStatus, string> = {
 // Override colors for contractor appointments
 const CONTRACTOR_STATUS_CLASSES: Record<AppointmentStatus, string> = {
   scheduled: 'border-l-4 border-l-purple-500 bg-purple-50',
-  completed: 'border-l-4 border-l-purple-600 bg-purple-50',
+  completed: 'border-l-4 border-l-emerald-500 bg-emerald-50',
   cancelled: 'border-l-4 border-l-gray-400 bg-gray-50 opacity-60',
   'no-show': 'border-l-4 border-l-red-500 bg-red-50',
 };

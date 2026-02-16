@@ -264,6 +264,7 @@ export default function CalendarPage() {
     } else if (appt.status === 'completed' || appt.status === 'scheduled') {
       navigate(`/clients/${appt.client_id}/note/new`, {
         state: {
+          appointmentId: appt.id,
           appointmentDate: appt.scheduled_date,
           appointmentTime: appt.scheduled_time,
           appointmentDuration: appt.duration_minutes,
@@ -943,6 +944,17 @@ export default function CalendarPage() {
           <div className="border-t border-[var(--color-border)] my-1" />
           {contextMenu.appointment.status === 'scheduled' && (
             <>
+              <button
+                className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-50 text-emerald-700 flex items-center gap-2 transition-colors"
+                onClick={async () => {
+                  const appt = contextMenu.appointment;
+                  setContextMenu(null);
+                  await window.api.appointments.update(appt.id, { ...appt, status: 'completed' });
+                  await loadAppointments();
+                }}
+              >
+                <CheckCircle2 size={14} /> Mark Attended
+              </button>
               <button
                 className="w-full text-left px-3 py-2 text-sm hover:bg-amber-50 text-amber-700 flex items-center gap-2 transition-colors"
                 onClick={() => handleCancelAppointment(contextMenu.appointment)}

@@ -1369,10 +1369,9 @@ export default function EvalFormPage() {
 
   // ── Session Note SOAP helpers ──
 
-  const snInsertAtCursor = (
+  const snInsertAtCursor = useCallback((
     textareaRef: React.RefObject<HTMLTextAreaElement | null>,
     field: keyof SessionNoteData,
-    currentValue: string,
     phrase: string,
   ) => {
     const textarea = textareaRef.current;
@@ -1380,6 +1379,7 @@ export default function EvalFormPage() {
       setSessionNote(prev => ({ ...prev, [field]: prev[field as keyof SessionNoteData] ? prev[field as keyof SessionNoteData] + ' ' + phrase : phrase }));
       return;
     }
+    const currentValue = textarea.value;
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
     const before = currentValue.slice(0, start);
@@ -1392,17 +1392,20 @@ export default function EvalFormPage() {
       textarea.focus();
       textarea.setSelectionRange(pos, pos);
     }, 0);
-  };
+  }, []);
+
+  const snInsertS = useCallback((phrase: string) => snInsertAtCursor(snSubjectiveRef, 'subjective', phrase), [snInsertAtCursor]);
+  const snInsertO = useCallback((phrase: string) => snInsertAtCursor(snObjectiveRef, 'objective', phrase), [snInsertAtCursor]);
+  const snInsertA = useCallback((phrase: string) => snInsertAtCursor(snAssessmentRef, 'assessment', phrase), [snInsertAtCursor]);
+  const snInsertP = useCallback((phrase: string) => snInsertAtCursor(snPlanRef, 'plan', phrase), [snInsertAtCursor]);
 
   const getSnInsertHandler = (section: SOAPSection) => {
-    return (phrase: string) => {
-      switch (section) {
-        case 'S': snInsertAtCursor(snSubjectiveRef, 'subjective', sessionNote.subjective, phrase); break;
-        case 'O': snInsertAtCursor(snObjectiveRef, 'objective', sessionNote.objective, phrase); break;
-        case 'A': snInsertAtCursor(snAssessmentRef, 'assessment', sessionNote.assessment, phrase); break;
-        case 'P': snInsertAtCursor(snPlanRef, 'plan', sessionNote.plan, phrase); break;
-      }
-    };
+    switch (section) {
+      case 'S': return snInsertS;
+      case 'O': return snInsertO;
+      case 'A': return snInsertA;
+      case 'P': return snInsertP;
+    }
   };
 
   const getSnBtnRef = (section: SOAPSection) => {
@@ -1717,6 +1720,10 @@ export default function EvalFormPage() {
         if (created?.id) {
           setSavedEvalId(created.id);
           finalEvalId = created.id;
+          // Link eval back to appointment (marks appointment completed)
+          if (appointmentId) {
+            try { await window.api.appointments.linkEval(appointmentId, created.id); } catch {}
+          }
         }
       }
 

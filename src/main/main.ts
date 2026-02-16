@@ -1576,6 +1576,8 @@ function registerIpcHandlers() {
     if (!note) throw new Error('Note not found');
     if (note.signed_at) throw new Error('Cannot delete a signed note. Signed documents are part of the permanent medical record.');
     db.prepare('UPDATE notes SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL').run(id);
+    // Clear note_id on any appointment that referenced this deleted note
+    db.prepare('UPDATE appointments SET note_id = NULL WHERE note_id = ? AND deleted_at IS NULL').run(id);
     auditLog({ actionType: 'note_deleted', entityType: 'note', entityId: id, clientId: note.client_id });
     return true;
   });
@@ -1695,6 +1697,8 @@ function registerIpcHandlers() {
     if (!evalRecord) throw new Error('Evaluation not found');
     if (evalRecord.signed_at) throw new Error('Cannot delete a signed evaluation. Signed documents are part of the permanent medical record.');
     db.prepare('UPDATE evaluations SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL').run(id);
+    // Clear evaluation_id on any appointment that referenced this deleted eval
+    db.prepare('UPDATE appointments SET evaluation_id = NULL WHERE evaluation_id = ? AND deleted_at IS NULL').run(id);
     auditLog({ actionType: 'evaluation_deleted', entityType: 'evaluation', entityId: id, clientId: evalRecord.client_id });
     return true;
   });
@@ -1845,6 +1849,15 @@ function registerIpcHandlers() {
       UPDATE appointments SET evaluation_id = ?, status = 'completed'
       WHERE id = ? AND deleted_at IS NULL
     `).run(evaluationId, appointmentId);
+    return true;
+  });
+
+  // Link note to appointment (set note_id and mark completed)
+  safeHandle('appointments:linkNote', (_event, appointmentId: number, noteId: number) => {
+    db.prepare(`
+      UPDATE appointments SET note_id = ?, status = 'completed'
+      WHERE id = ? AND deleted_at IS NULL
+    `).run(noteId, appointmentId);
     return true;
   });
 
@@ -4172,21 +4185,65 @@ function registerIpcHandlers() {
   });
 
   // Get invoice status for notes (which notes are invoiced and paid)
+  // Also detects invoices created from appointments (via quickInvoiceFromAppointment)
   safeHandle('invoices:noteStatuses', (_event) => {
-    const rows = db.prepare(`
+    const map: Record<number, { invoice_id: number; invoice_number: string; status: string }> = {};
+
+    // 1) Direct note → invoice linkage
+    const noteRows = db.prepare(`
       SELECT ii.note_id, i.id as invoice_id, i.invoice_number, i.status
       FROM invoice_items ii
-      JOIN invoices i ON i.id = ii.invoice_id AND i.deleted_at IS NULL
+      JOIN invoices i ON i.id = ii.invoice_id AND i.deleted_at IS NULL AND i.status != 'void'
       WHERE ii.note_id IS NOT NULL
     `).all() as Array<{ note_id: number; invoice_id: number; invoice_number: string; status: string }>;
-    const map: Record<number, { invoice_id: number; invoice_number: string; status: string }> = {};
-    for (const row of rows) {
+    for (const row of noteRows) {
       map[row.note_id] = { invoice_id: row.invoice_id, invoice_number: row.invoice_number, status: row.status };
     }
+
+    // 2) Appointment → invoice linkage (for invoices created from pipeline $ button)
+    // Match notes to appointments by client_id + date, then check if that appointment has an invoice
+    const apptRows = db.prepare(`
+      SELECT n.id as note_id, i.id as invoice_id, i.invoice_number, i.status
+      FROM notes n
+      JOIN appointments a ON a.client_id = n.client_id AND a.scheduled_date = n.date_of_service AND a.deleted_at IS NULL
+      JOIN invoice_items ii ON ii.appointment_id = a.id
+      JOIN invoices i ON i.id = ii.invoice_id AND i.deleted_at IS NULL AND i.status != 'void'
+      WHERE n.deleted_at IS NULL AND n.signed_at IS NOT NULL
+    `).all() as Array<{ note_id: number; invoice_id: number; invoice_number: string; status: string }>;
+    for (const row of apptRows) {
+      if (!map[row.note_id]) {
+        map[row.note_id] = { invoice_id: row.invoice_id, invoice_number: row.invoice_number, status: row.status };
+      }
+    }
+
     return map;
   });
 
   safeHandle('invoices:generateFromNotes', (_event, clientId: number, noteIds: number[], entityId?: number) => {
+    // Guard: check if any of these notes (or their linked appointments) already have an invoice
+    for (const nid of noteIds) {
+      // Check direct note linkage
+      const directInvoice = db.prepare(`
+        SELECT i.invoice_number FROM invoice_items ii
+        JOIN invoices i ON i.id = ii.invoice_id AND i.deleted_at IS NULL AND i.status != 'void'
+        WHERE ii.note_id = ?
+      `).get(nid) as any;
+      if (directInvoice) {
+        throw new Error(`Note already has invoice ${directInvoice.invoice_number}`);
+      }
+      // Check appointment linkage (invoice created via pipeline $ button)
+      const apptInvoice = db.prepare(`
+        SELECT i.invoice_number FROM notes n
+        JOIN appointments a ON a.client_id = n.client_id AND a.scheduled_date = n.date_of_service AND a.deleted_at IS NULL
+        JOIN invoice_items ii ON ii.appointment_id = a.id
+        JOIN invoices i ON i.id = ii.invoice_id AND i.deleted_at IS NULL AND i.status != 'void'
+        WHERE n.id = ? AND n.deleted_at IS NULL
+      `).get(nid) as any;
+      if (apptInvoice) {
+        throw new Error(`Session already invoiced (${apptInvoice.invoice_number})`);
+      }
+    }
+
     const feeSchedule = db.prepare('SELECT * FROM fee_schedule WHERE deleted_at IS NULL').all() as any[];
     const feeMap = new Map(feeSchedule.map(f => [f.cpt_code, f]));
 
@@ -4403,13 +4460,18 @@ function registerIpcHandlers() {
           SELECT 1 FROM invoice_items ii
           JOIN invoices i ON i.id = ii.invoice_id AND i.status != 'void' AND i.deleted_at IS NULL
           WHERE ii.appointment_id = a.id
-        ) THEN 1 ELSE 0 END as already_billed
+        ) THEN 1 ELSE 0 END as already_billed,
+        (SELECT i.id FROM invoice_items ii
+          JOIN invoices i ON i.id = ii.invoice_id AND i.status != 'void' AND i.deleted_at IS NULL
+          WHERE ii.appointment_id = a.id
+          LIMIT 1) as billed_invoice_id
       FROM appointments a
       LEFT JOIN clients c ON c.id = a.client_id AND c.deleted_at IS NULL
       LEFT JOIN contracted_entities e ON e.id = a.entity_id
       WHERE a.status = 'completed'
         AND a.deleted_at IS NULL
         AND a.note_id IS NULL
+        AND a.evaluation_id IS NULL
         AND c.id IS NOT NULL
       ORDER BY a.scheduled_date DESC
     `).all();
@@ -4724,6 +4786,16 @@ function registerIpcHandlers() {
     cptCode?: string;
   }) => {
     const { appointmentId, clientId, entityId } = data;
+
+    // Guard: check if this appointment already has an invoice
+    const existingInvoice = db.prepare(`
+      SELECT i.invoice_number FROM invoice_items ii
+      JOIN invoices i ON i.id = ii.invoice_id AND i.deleted_at IS NULL AND i.status != 'void'
+      WHERE ii.appointment_id = ?
+    `).get(appointmentId) as any;
+    if (existingInvoice) {
+      throw new Error(`Appointment already invoiced (${existingInvoice.invoice_number})`);
+    }
 
     // Get appointment
     const appointment = db.prepare('SELECT * FROM appointments WHERE id = ? AND deleted_at IS NULL').get(appointmentId) as any;
