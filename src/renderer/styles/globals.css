@@ -15,6 +15,50 @@
     --color-success: #22c55e;
     --color-warning: #eab308;
     --color-danger: #ef4444;
+    --color-hover: #f8fafc;
+  }
+
+  /* ── Font Size Scaling ── */
+  html[data-font-size="small"] { font-size: 14px; }
+  html[data-font-size="default"] { font-size: 16px; }
+  html[data-font-size="large"] { font-size: 18px; }
+  html[data-font-size="xl"] { font-size: 20px; }
+
+  /* ── Dark Mode ── */
+  html[data-theme="dark"] {
+    --color-primary: #2dd4bf;
+    --color-primary-light: #5eead4;
+    --color-primary-dark: #14b8a6;
+    --color-accent: #fb923c;
+    --color-accent-light: #fdba74;
+    --color-bg: #0f172a;
+    --color-surface: #1e293b;
+    --color-border: #334155;
+    --color-text: #f1f5f9;
+    --color-text-secondary: #94a3b8;
+    --color-success: #4ade80;
+    --color-warning: #fbbf24;
+    --color-danger: #f87171;
+    --color-hover: #283548;
+  }
+
+  /* ── High Contrast ── */
+  html[data-high-contrast="true"] {
+    --color-border: #94a3b8;
+    --color-text-secondary: #475569;
+  }
+  html[data-high-contrast="true"][data-theme="dark"] {
+    --color-border: #64748b;
+    --color-text-secondary: #cbd5e1;
+  }
+
+  /* ── Reduce Motion ── */
+  html[data-reduce-motion="true"] *,
+  html[data-reduce-motion="true"] *::before,
+  html[data-reduce-motion="true"] *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 
   body {
@@ -43,7 +87,7 @@
   }
 
   .btn-secondary {
-    @apply inline-flex items-center justify-center px-4 py-2 rounded-lg font-medium text-sm transition-colors duration-150 cursor-pointer bg-white text-[var(--color-text)] border border-[var(--color-border)] hover:bg-gray-50;
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-lg font-medium text-sm transition-colors duration-150 cursor-pointer bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-hover)];
   }
   .btn-secondary:disabled {
     @apply opacity-50 cursor-not-allowed;
@@ -64,7 +108,7 @@
   }
 
   .btn-ghost {
-    @apply inline-flex items-center justify-center px-4 py-2 rounded-lg font-medium text-sm transition-colors duration-150 cursor-pointer bg-transparent text-[var(--color-text-secondary)] hover:bg-gray-100;
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-lg font-medium text-sm transition-colors duration-150 cursor-pointer bg-transparent text-[var(--color-text-secondary)] hover:bg-[var(--color-hover)];
   }
   .btn-ghost:disabled {
     @apply opacity-50 cursor-not-allowed;
@@ -83,7 +127,7 @@
   }
 
   .input {
-    @apply w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-white text-[var(--color-text)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent transition-shadow;
+    @apply w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent transition-shadow;
   }
   .input::placeholder {
     @apply text-[var(--color-text-secondary)];
@@ -94,21 +138,21 @@
   }
 
   .textarea {
-    @apply w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-white text-[var(--color-text)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent transition-shadow resize-y min-h-[80px];
+    @apply w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent transition-shadow resize-y min-h-[80px];
   }
   .textarea::placeholder {
     @apply text-[var(--color-text-secondary)];
   }
 
   .select {
-    @apply w-full pl-3 pr-8 py-2 rounded-lg border border-[var(--color-border)] bg-white text-[var(--color-text)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent transition-shadow appearance-none;
+    @apply w-full pl-3 pr-8 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent transition-shadow appearance-none;
     background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2012%2012%22%3E%3Cpath%20d%3D%22M2%204l4%204%204-4%22%20fill%3D%22none%22%20stroke%3D%22%2364748b%22%20stroke-width%3D%222%22%2F%3E%3C%2Fsvg%3E');
     background-repeat: no-repeat;
     background-position: right 0.75rem center;
   }
 
   .select-bare {
-    @apply w-full px-2 py-1 rounded-lg border border-[var(--color-border)] bg-white text-[var(--color-text)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent transition-shadow appearance-none;
+    @apply w-full px-2 py-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent transition-shadow appearance-none;
   }
 
   .badge {
@@ -147,11 +191,13 @@
     @apply flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-[var(--color-text-secondary)] transition-colors cursor-pointer;
   }
   .sidebar-link:hover {
-    @apply bg-teal-50 text-[var(--color-primary)];
+    @apply text-[var(--color-primary)];
+    background-color: var(--color-hover);
   }
 
   .sidebar-link-active {
-    @apply flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium bg-teal-50 text-[var(--color-primary)] cursor-pointer;
+    @apply flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-[var(--color-primary)] cursor-pointer;
+    background-color: var(--color-hover);
   }
 
   .page-header {
@@ -231,6 +277,13 @@
 
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
+}
+
+html[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: #475569;
+}
+html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
 }
 
 /* Drag region for Electron title bar */

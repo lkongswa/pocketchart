@@ -77,6 +77,7 @@ import { goalToCardData, generateGoalFingerprint } from '../../shared/goal-card-
 import type { PatternOverride } from '../../shared/types';
 import ComplianceSection from '../components/ComplianceSection';
 import CommunicationLogSection from '../components/CommunicationLogSection';
+import SectionCard from '../components/SectionCard';
 import ProFeatureGate from '../components/ProFeatureGate';
 import ChartCompleteness from '../components/ChartCompleteness';
 import ClaimReadinessDialog from '../components/ClaimReadinessDialog';
@@ -1058,14 +1059,12 @@ const ClientDetailPage: React.FC = () => {
         {/* LEFT COLUMN: Evaluations + Goals (5 cols) */}
         <div className="col-span-5 space-y-6">
           {/* Evaluations */}
-          <div className="card">
-            <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
-              <h3 className="font-semibold text-[var(--color-text)] flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-violet-400" />
-                Evaluations
-                <span className="text-xs font-normal text-[var(--color-text-secondary)]">({evaluations.length})</span>
-              </h3>
-              <div className="flex items-center gap-2">
+          <SectionCard
+            color="violet"
+            icon={<ClipboardList size={18} />}
+            title="Evaluations"
+            count={evaluations.length}
+            actions={<div className="flex items-center gap-2">
                 {evaluations.some(e => e.signed_at) && (
                   <button
                     className="btn-secondary btn-sm gap-1.5"
@@ -1080,8 +1079,8 @@ const ClientDetailPage: React.FC = () => {
                 >
                   <Plus size={14} /> New Eval
                 </button>
-              </div>
-            </div>
+              </div>}
+          >
             {evaluations.length === 0 ? (
               <div className="p-6 text-center text-sm text-[var(--color-text-secondary)]">
                 No evaluations yet.
@@ -1130,22 +1129,19 @@ const ClientDetailPage: React.FC = () => {
                 ))}
               </div>
             )}
-          </div>
+          </SectionCard>
 
           {/* Goals */}
-          <div className="card">
-            <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
-              <h3 className="font-semibold text-[var(--color-text)] flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-amber-400" />
-                Goals
-                <span className="text-xs font-normal text-[var(--color-text-secondary)]">
-                  ({establishedActive.length} established{pendingActive.length > 0 ? `, ${pendingActive.length} pending` : ''} / {goals.length} total)
-                </span>
-              </h3>
-              <button className="btn-primary btn-sm gap-1.5" onClick={() => { if (guardAction()) openAddGoal(); }}>
+          <SectionCard
+            color="amber"
+            icon={<Target size={18} />}
+            title="Goals"
+            count={goals.length}
+            badge={establishedActive.length > 0 ? <span className="text-xs text-[var(--color-text-secondary)]">{establishedActive.length} established{pendingActive.length > 0 ? `, ${pendingActive.length} pending` : ''}</span> : undefined}
+            actions={<button className="btn-primary btn-sm gap-1.5" onClick={() => { if (guardAction()) openAddGoal(); }}>
                 <Plus size={14} /> Add Goal
-              </button>
-            </div>
+              </button>}
+          >
             {goals.length === 0 ? (
               <div className="p-6 text-center text-sm text-[var(--color-text-secondary)]">
                 No goals set yet. Add one to track progress.
@@ -1333,21 +1329,18 @@ const ClientDetailPage: React.FC = () => {
                 )}
               </>
             )}
-          </div>
+          </SectionCard>
         </div>
 
         {/* RIGHT COLUMN: SOAP Notes (7 cols) */}
         <div className="col-span-7">
-          <div className="card">
-            <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
-              <h3 className="font-semibold text-[var(--color-text)] flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-blue-400" />
-                SOAP Notes
-                <span className="text-xs font-normal text-[var(--color-text-secondary)]">({notes.length})</span>
-                {unsignedNotes.length > 0 && (
-                  <span className="badge bg-red-100 text-red-600 text-xs">{unsignedNotes.length} unsigned</span>
-                )}
-              </h3>
+          <SectionCard
+            color="blue"
+            icon={<FileText size={18} />}
+            title="SOAP Notes"
+            count={notes.length}
+            badge={unsignedNotes.length > 0 ? <span className="badge bg-red-100 text-red-600 text-xs">{unsignedNotes.length} unsigned</span> : undefined}
+            actions={
               <div className="flex items-center gap-2">
                 <div className="flex items-center bg-gray-100 rounded-md p-0.5">
                   <button
@@ -1372,7 +1365,8 @@ const ClientDetailPage: React.FC = () => {
                   <Plus size={14} /> New Note
                 </button>
               </div>
-            </div>
+            }
+          >
             {notes.length === 0 ? (
               <div className="p-8 text-center text-sm text-[var(--color-text-secondary)]">
                 No SOAP notes yet. Create one to get started.
@@ -1483,7 +1477,7 @@ const ClientDetailPage: React.FC = () => {
                 {showAllNotes ? 'Show less' : `Show all ${notes.length} notes`}
               </button>
             )}
-          </div>
+          </SectionCard>
         </div>
       </div>
 
@@ -1513,19 +1507,15 @@ const ClientDetailPage: React.FC = () => {
           { value: 'no-show', label: `No-Show (${statusCounts['no-show'] || 0})` },
         ];
         return (
-          <div className="card">
-            <div
-              className="flex items-center justify-between p-4 border-b border-[var(--color-border)] cursor-pointer hover:bg-gray-50/50 transition-colors"
-              onClick={() => setAppointmentsExpanded(!appointmentsExpanded)}
-            >
-              <h3 className="font-semibold text-[var(--color-text)] flex items-center gap-2">
-                {appointmentsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                <span className="w-2 h-2 rounded-full bg-blue-400" />
-                Appointments
-                <span className="text-xs font-normal text-[var(--color-text-secondary)]">({appointments.length})</span>
-              </h3>
-            </div>
-            {appointmentsExpanded && <>
+          <SectionCard
+            color="teal"
+            icon={<Calendar size={18} />}
+            title="Appointments"
+            count={appointments.length}
+            collapsible
+            expanded={appointmentsExpanded}
+            onToggle={setAppointmentsExpanded}
+          >
             {/* Filter chips */}
             <div className="flex items-center gap-1.5 px-4 py-2 border-b border-[var(--color-border)] bg-gray-50/50">
               {filterChips.map(chip => (
@@ -1612,8 +1602,7 @@ const ClientDetailPage: React.FC = () => {
                 {showAllAppointments ? 'Show less' : `Show all ${filteredAppts.length} appointments`}
               </button>
             )}
-            </>}
-          </div>
+          </SectionCard>
         );
       })()}
 
@@ -1628,19 +1617,19 @@ const ClientDetailPage: React.FC = () => {
       {activeTab === 'billing' && <>
 
       {/* ══════════ DISCOUNTS & PACKAGES ══════════ */}
-      <div className="card">
-        <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
-          <h3 className="font-semibold text-[var(--color-text)] flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-400" />
-            Discounts & Packages
-          </h3>
+      <SectionCard
+        color="emerald"
+        icon={<DollarSign size={18} />}
+        title="Discounts & Packages"
+        actions={
           <button
             className="btn-ghost btn-sm text-xs gap-1"
             onClick={() => setShowDiscountModal(true)}
           >
             <Plus size={12} /> Add Discount
           </button>
-        </div>
+        }
+      >
         <div className="p-4">
           {activeDiscounts.map((disc) => (
             <div key={disc.id} className="mb-3 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
@@ -1719,15 +1708,14 @@ const ClientDetailPage: React.FC = () => {
             </div>
           )}
         </div>
-      </div>
+      </SectionCard>
 
       {/* ══════════ FULL-WIDTH: BILLING SECTION ══════════ */}
-      <div className="card">
-        <div className="flex items-center justify-between p-5 border-b border-[var(--color-border)]">
-          <h2 className="text-lg font-semibold text-[var(--color-text)] flex items-center gap-2">
-            <DollarSign size={20} className="text-emerald-500" />
-            Billing & Payments
-          </h2>
+      <SectionCard
+        color="emerald"
+        icon={<Receipt size={18} />}
+        title="Billing & Payments"
+        actions={
           <div className="flex items-center gap-2">
             <button
               className="btn-primary btn-sm gap-1.5"
@@ -1772,7 +1760,8 @@ const ClientDetailPage: React.FC = () => {
               )}
             </button>
           </div>
-        </div>
+        }
+      >
 
         <div className="p-5">
           {/* Summary Cards */}
@@ -2005,7 +1994,7 @@ const ClientDetailPage: React.FC = () => {
           </div>
 
         </div>
-      </div>
+      </SectionCard>
 
       {/* CMS-1500 now saves directly via dialog — no preview needed */}
       </>}
@@ -2014,34 +2003,32 @@ const ClientDetailPage: React.FC = () => {
       {activeTab === 'documents' && <>
 
       {/* ══════════ ORDERS & CERTIFICATIONS ══════════ */}
-      <div className="card">
-        <div className="flex items-center justify-between p-5 border-b border-[var(--color-border)]">
-          <h2 className="text-lg font-semibold text-[var(--color-text)] flex items-center gap-2">
-            <ClipboardList size={20} className="text-[var(--color-primary)]" />
-            Orders & Certifications
-          </h2>
-          <div className="flex items-center gap-2">
-            <label className="btn-primary btn-sm gap-1.5 cursor-pointer">
-              <Upload size={14} /> Upload POC
-              <input
-                type="file"
-                className="hidden"
-                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.bmp,.tiff"
-                onChange={async (e) => {
-                  e.target.value = '';
-                  setUploadCategory('signed_poc');
-                  setUploadPhysicianName(client.referring_physician || '');
-                  setUploadReceivedDate(new Date().toISOString().split('T')[0]);
-                  await handleUploadDocument({
-                    category: 'signed_poc' as ClientDocumentCategory,
-                    physician_name: client.referring_physician || undefined,
-                    received_date: new Date().toISOString().split('T')[0],
-                  });
-                }}
-              />
-            </label>
-          </div>
-        </div>
+      <SectionCard
+        color="slate"
+        icon={<ClipboardList size={18} />}
+        title="Orders & Certifications"
+        actions={
+          <label className="btn-primary btn-sm gap-1.5 cursor-pointer">
+            <Upload size={14} /> Upload POC
+            <input
+              type="file"
+              className="hidden"
+              accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.bmp,.tiff"
+              onChange={async (e) => {
+                e.target.value = '';
+                setUploadCategory('signed_poc');
+                setUploadPhysicianName(client.referring_physician || '');
+                setUploadReceivedDate(new Date().toISOString().split('T')[0]);
+                await handleUploadDocument({
+                  category: 'signed_poc' as ClientDocumentCategory,
+                  physician_name: client.referring_physician || undefined,
+                  received_date: new Date().toISOString().split('T')[0],
+                });
+              }}
+            />
+          </label>
+        }
+      >
         <div className="p-5">
           {/* Current POC Status Card */}
           {(() => {
@@ -2145,14 +2132,14 @@ const ClientDetailPage: React.FC = () => {
             );
           })()}
         </div>
-      </div>
+      </SectionCard>
 
-        <div className="card">
-          <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
-            <h3 className="text-lg font-semibold text-[var(--color-text)] flex items-center gap-2">
-              <FolderOpen size={20} className="text-[var(--color-primary)]" />
-              Documents ({documents.length})
-            </h3>
+        <SectionCard
+          color="slate"
+          icon={<FolderOpen size={18} />}
+          title="Documents"
+          count={documents.length}
+          actions={
             <label className="btn-primary btn-sm gap-1.5 cursor-pointer">
               <Upload size={14} /> Upload
               <input
@@ -2172,7 +2159,8 @@ const ClientDetailPage: React.FC = () => {
                 }}
               />
             </label>
-          </div>
+          }
+        >
 
           {/* Category filter */}
           <div className="flex items-center gap-2 px-6 py-3 border-b border-[var(--color-border)] bg-gray-50/50">
@@ -2236,7 +2224,7 @@ const ClientDetailPage: React.FC = () => {
               </div>
             )}
           </div>
-        </div>
+        </SectionCard>
       </>}
 
       {/* ══════════ DISCOUNT MODAL ══════════ */}

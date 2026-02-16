@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Settings, Building2, User, Stethoscope, Info, Save, CheckCircle, Database, Download, FileSpreadsheet, HardDrive, FolderOpen, RotateCcw, Upload, Trash2, Image, Clock, AlertTriangle, Shield, Lock, PenLine, BookOpen, ChevronDown, ShieldCheck, Key, Monitor, Loader2, DollarSign, Plus, Eye, EyeOff, KeyRound, Printer } from 'lucide-react';
+import { Settings, Building2, User, Stethoscope, Info, Save, CheckCircle, Database, Download, FileSpreadsheet, HardDrive, FolderOpen, RotateCcw, Upload, Trash2, Image, Clock, AlertTriangle, Shield, Lock, PenLine, BookOpen, ChevronDown, ShieldCheck, Key, Monitor, Loader2, DollarSign, Plus, Eye, EyeOff, KeyRound, Printer, Sun, Moon, Palette, Type, Contrast } from 'lucide-react';
 import type { Practice, Discipline, NoteFormat, CloudDetectionResult, AppTier, FeeScheduleEntry, DiscountTemplate, DiscountType } from '../../shared/types';
 import FeeScheduleModal from '../components/FeeScheduleModal';
 import { NOTE_FORMAT_LABELS, DISCIPLINE_DEFAULT_FORMAT } from '../../shared/types';
@@ -13,6 +13,8 @@ import RestoreConfirmationModal from '../components/RestoreConfirmationModal';
 import ImportClientSelector from '../components/ImportClientSelector';
 import { useSectionColor } from '../hooks/useSectionColor';
 import { useTier } from '../hooks/useTier';
+import { useAccessibilityPrefs } from '../hooks/useAccessibilityPrefs';
+import type { FontSize, ThemeMode } from '../hooks/useAccessibilityPrefs';
 
 // ── Collapsible Section Component ──
 interface CollapsibleSectionProps {
@@ -116,6 +118,7 @@ const emptyPractice: Omit<Practice, 'id'> = {
 
 export default function SettingsPage() {
   const sectionColor = useSectionColor();
+  const { fontSize, setFontSize, themeMode, setThemeMode, highContrast, setHighContrast, reduceMotion, setReduceMotion } = useAccessibilityPrefs();
   const [formData, setFormData] = useState<Omit<Practice, 'id'>>(emptyPractice);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -2426,6 +2429,142 @@ export default function SettingsPage() {
               </div>
             </div>
           )}
+        </div>
+      </CollapsibleSection>
+
+      {/* ═══ APPEARANCE & ACCESSIBILITY ═══ */}
+      <div className="flex items-center gap-2 mt-6 mb-3">
+        <Palette className="w-4 h-4 text-[var(--color-text-tertiary)]" />
+        <h2 className="text-xs font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">Appearance & Accessibility</h2>
+        <div className="flex-1 border-t border-[var(--color-border)]" />
+      </div>
+
+      <CollapsibleSection
+        icon={<Palette className="w-5 h-5" />}
+        title="Appearance & Accessibility"
+        description={`${themeMode === 'dark' ? 'Dark' : themeMode === 'system' ? 'System' : 'Light'} theme · ${fontSize === 'default' ? 'Default' : fontSize} font`}
+        sectionId="settings-appearance"
+        isOpen={openSectionId === 'appearance'}
+        onToggle={() => toggleSection('appearance')}
+      >
+        <div className="space-y-6">
+          {/* Theme */}
+          <div>
+            <label className="label flex items-center gap-1.5">
+              <Sun size={14} /> Theme
+            </label>
+            <p className="text-xs text-[var(--color-text-secondary)] mb-3">
+              Choose how PocketChart looks. System will match your operating system setting.
+            </p>
+            <div className="flex items-center gap-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-1 w-fit">
+              {([
+                { value: 'light' as ThemeMode, label: 'Light', icon: <Sun size={14} /> },
+                { value: 'dark' as ThemeMode, label: 'Dark', icon: <Moon size={14} /> },
+                { value: 'system' as ThemeMode, label: 'System', icon: <Monitor size={14} /> },
+              ]).map(opt => (
+                <button
+                  key={opt.value}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    themeMode === opt.value
+                      ? 'bg-[var(--color-primary)] text-white'
+                      : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-hover)]'
+                  }`}
+                  onClick={() => setThemeMode(opt.value)}
+                >
+                  {opt.icon}
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Font Size */}
+          <div>
+            <label className="label flex items-center gap-1.5">
+              <Type size={14} /> Font Size
+            </label>
+            <p className="text-xs text-[var(--color-text-secondary)] mb-3">
+              Adjust the base font size for the entire application.
+            </p>
+            <div className="flex items-center gap-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg p-1 w-fit">
+              {([
+                { value: 'small' as FontSize, label: 'Small', desc: '14px' },
+                { value: 'default' as FontSize, label: 'Default', desc: '16px' },
+                { value: 'large' as FontSize, label: 'Large', desc: '18px' },
+                { value: 'xl' as FontSize, label: 'XL', desc: '20px' },
+              ]).map(opt => (
+                <button
+                  key={opt.value}
+                  className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    fontSize === opt.value
+                      ? 'bg-[var(--color-primary)] text-white'
+                      : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-hover)]'
+                  }`}
+                  onClick={() => setFontSize(opt.value)}
+                >
+                  {opt.label}
+                  <span className={`text-xs ${fontSize === opt.value ? 'text-white/70' : 'text-[var(--color-text-secondary)]'}`}>
+                    ({opt.desc})
+                  </span>
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-2 italic">
+              Preview: This text will resize when you change the font size above.
+            </p>
+          </div>
+
+          {/* High Contrast */}
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="label flex items-center gap-1.5 mb-0">
+                <Contrast size={14} /> High Contrast
+              </label>
+              <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                Increases border and text contrast for better readability.
+              </p>
+            </div>
+            <button
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                highContrast ? 'bg-[var(--color-primary)]' : 'bg-gray-300'
+              }`}
+              onClick={() => setHighContrast(!highContrast)}
+              role="switch"
+              aria-checked={highContrast}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  highContrast ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* Reduce Motion */}
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="label flex items-center gap-1.5 mb-0">
+                <Clock size={14} /> Reduce Motion
+              </label>
+              <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                Disables animations and transitions throughout the app.
+              </p>
+            </div>
+            <button
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                reduceMotion ? 'bg-[var(--color-primary)]' : 'bg-gray-300'
+              }`}
+              onClick={() => setReduceMotion(!reduceMotion)}
+              role="switch"
+              aria-checked={reduceMotion}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  reduceMotion ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
         </div>
       </CollapsibleSection>
 

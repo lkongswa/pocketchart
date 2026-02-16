@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { createHashRouter, RouterProvider, Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { getSectionForPath } from './hooks/useSectionColor';
 import { useLocalPreference } from './hooks/useLocalPreference';
+import { useAccessibilityPrefs } from './hooks/useAccessibilityPrefs';
 import {
   LayoutDashboard,
   Users,
@@ -426,6 +427,9 @@ const router = createHashRouter([
 ]);
 
 const App: React.FC = () => {
+  // Apply accessibility preferences (theme, font size, contrast, motion) to <html>
+  useAccessibilityPrefs();
+
   const [isLocked, setIsLocked] = useState(false);
   const [pinEnabled, setPinEnabled] = useState(false);
   const [timeoutMinutes, setTimeoutMinutes] = useState(0);
