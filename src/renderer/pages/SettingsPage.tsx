@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Settings, Building2, User, Stethoscope, Info, Save, CheckCircle, Database, Download, FileSpreadsheet, HardDrive, FolderOpen, RotateCcw, Upload, Trash2, Image, Clock, AlertTriangle, Shield, Lock, PenLine, BookOpen, ChevronDown, ShieldCheck, Key, Monitor, Loader2, DollarSign, Plus, Eye, EyeOff, KeyRound, Printer } from 'lucide-react';
 import type { Practice, Discipline, NoteFormat, CloudDetectionResult, AppTier, FeeScheduleEntry, DiscountTemplate, DiscountType } from '../../shared/types';
 import FeeScheduleModal from '../components/FeeScheduleModal';
@@ -19,31 +20,38 @@ interface CollapsibleSectionProps {
   title: string;
   description?: string;
   defaultOpen?: boolean;
+  /** Controlled mode: externally managed open state */
+  isOpen?: boolean;
+  onToggle?: () => void;
+  /** HTML id for scroll-to deep linking */
+  sectionId?: string;
   children: React.ReactNode;
 }
 
-function CollapsibleSection({ icon, title, description, defaultOpen = false, children }: CollapsibleSectionProps) {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
+function CollapsibleSection({ icon, title, description, defaultOpen = false, isOpen: controlledOpen, onToggle, sectionId, children }: CollapsibleSectionProps) {
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const open = controlledOpen !== undefined ? controlledOpen : internalOpen;
+  const handleToggle = onToggle || (() => setInternalOpen((v) => !v));
 
   return (
-    <div className="card mb-4 overflow-hidden">
+    <div className="card mb-4 overflow-hidden" id={sectionId}>
       <button
         type="button"
         className="w-full flex items-center gap-3 px-6 py-4 text-left hover:bg-gray-50/50 transition-colors cursor-pointer"
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={handleToggle}
       >
         <div className="text-[var(--color-primary)]">{icon}</div>
         <div className="flex-1 min-w-0">
           <h2 className="text-sm font-semibold text-[var(--color-text)]">{title}</h2>
-          {description && !isOpen && (
+          {description && !open && (
             <p className="text-xs text-[var(--color-text-secondary)] mt-0.5 truncate">{description}</p>
           )}
         </div>
         <ChevronDown
-          className={`w-4 h-4 text-[var(--color-text-secondary)] transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
+          className={`w-4 h-4 text-[var(--color-text-secondary)] transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
         />
       </button>
-      {isOpen && (
+      {open && (
         <div className="px-6 pb-6 border-t border-[var(--color-border)]">
           <div className="pt-4">{children}</div>
         </div>
@@ -194,6 +202,25 @@ export default function SettingsPage() {
 
   // Import state
   const [showImportSelector, setShowImportSelector] = useState(false);
+
+  // Accordion state — only one section open at a time
+  const settingsLocation = useLocation();
+  const [openSectionId, setOpenSectionId] = useState<string | null>(() => {
+    const params = new URLSearchParams(settingsLocation.search);
+    return params.get('section') || null;
+  });
+  const toggleSection = useCallback((id: string) => {
+    setOpenSectionId((prev) => (prev === id ? null : id));
+  }, []);
+
+  // Deep link: scroll to section on URL param
+  useEffect(() => {
+    if (openSectionId) {
+      setTimeout(() => {
+        document.getElementById(`settings-${openSectionId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
+    }
+  }, []);
 
   // Documentation Bank tab state
   const [bankTab, setBankTab] = useState<'goals' | 'notes'>('goals');
@@ -810,7 +837,9 @@ export default function SettingsPage() {
         icon={<Building2 className="w-5 h-5" />}
         title="Practice Information"
         description={formData.name || 'Not configured'}
-        defaultOpen
+        sectionId="settings-practice-pin"
+        isOpen={openSectionId === 'practice-pin'}
+        onToggle={() => toggleSection('practice-pin')}
       >
         <div className="space-y-4">
           <div>
@@ -937,7 +966,9 @@ export default function SettingsPage() {
         icon={<Building2 className="w-5 h-5" />}
         title="Practice Information"
         description={formData.name || 'Not configured'}
-        defaultOpen
+        sectionId="settings-practice-info"
+        isOpen={openSectionId === 'practice-info'}
+        onToggle={() => toggleSection('practice-info')}
       >
         {/* Practice Logo */}
         <div className="mb-6 pb-6 border-b border-[var(--color-border)]">
@@ -1017,6 +1048,9 @@ export default function SettingsPage() {
         icon={<User className="w-5 h-5" />}
         title="Provider Information"
         description={formData.npi ? `NPI: ${formData.npi}` : 'NPI, Tax ID, License'}
+        sectionId="settings-provider"
+        isOpen={openSectionId === 'provider'}
+        onToggle={() => toggleSection('provider')}
       >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -1071,6 +1105,9 @@ export default function SettingsPage() {
         icon={<Stethoscope className="w-5 h-5" />}
         title="Discipline"
         description={DISCIPLINES.find(d => d.value === formData.discipline)?.label || formData.discipline}
+        sectionId="settings-discipline"
+        isOpen={openSectionId === 'discipline'}
+        onToggle={() => toggleSection('discipline')}
       >
         <div className="space-y-3">
           {DISCIPLINES.map((d) => (
@@ -1112,6 +1149,9 @@ export default function SettingsPage() {
         icon={<PenLine className="w-5 h-5" />}
         title="Signature"
         description={signatureName ? `${signatureName}${signatureCredentials ? `, ${signatureCredentials}` : ''}` : 'Not configured'}
+        sectionId="settings-signature"
+        isOpen={openSectionId === 'signature'}
+        onToggle={() => toggleSection('signature')}
       >
         <p className="text-xs text-[var(--color-text-secondary)] mb-4">
           This information will be used when you sign notes and evaluations.
@@ -1183,6 +1223,9 @@ export default function SettingsPage() {
         icon={<FileSpreadsheet className="w-5 h-5" />}
         title="Note Format"
         description={NOTE_FORMAT_LABELS[noteFormat]}
+        sectionId="settings-note-format"
+        isOpen={openSectionId === 'note-format'}
+        onToggle={() => toggleSection('note-format')}
       >
         <p className="text-xs text-[var(--color-text-secondary)] mb-4">
           Choose how progress notes are structured. All formats store data the same way —
@@ -1217,6 +1260,9 @@ export default function SettingsPage() {
         icon={<Clock className="w-5 h-5" />}
         title="Session Defaults"
         description={`${defaultSessionLength} min sessions`}
+        sectionId="settings-session-defaults"
+        isOpen={openSectionId === 'session-defaults'}
+        onToggle={() => toggleSection('session-defaults')}
       >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -1239,6 +1285,9 @@ export default function SettingsPage() {
         icon={<BookOpen className="w-5 h-5" />}
         title="Documentation Bank"
         description="Goal templates and note phrases"
+        sectionId="settings-doc-bank"
+        isOpen={openSectionId === 'doc-bank'}
+        onToggle={() => toggleSection('doc-bank')}
       >
         <p className="text-xs text-[var(--color-text-secondary)] mb-4">
           Manage reusable goal templates and note phrases for faster documentation.
@@ -1290,6 +1339,9 @@ export default function SettingsPage() {
         icon={<DollarSign className="w-5 h-5" />}
         title="Billing & Fees"
         description={`${feeSchedule.length} CPT codes configured`}
+        sectionId="settings-billing-fees"
+        isOpen={openSectionId === 'billing-fees'}
+        onToggle={() => toggleSection('billing-fees')}
       >
         <div className="space-y-6">
           {/* Fee Schedule */}
@@ -1400,6 +1452,9 @@ export default function SettingsPage() {
         icon={<DollarSign className="w-5 h-5" />}
         title="Discount Templates"
         description={`${discountTemplates.length} template${discountTemplates.length !== 1 ? 's' : ''}`}
+        sectionId="settings-discount-templates"
+        isOpen={openSectionId === 'discount-templates'}
+        onToggle={() => toggleSection('discount-templates')}
       >
         <p className="text-xs text-[var(--color-text-secondary)] mb-4">
           Create reusable discount templates for quick assignment to clients.
@@ -1523,6 +1578,9 @@ export default function SettingsPage() {
         icon={<Printer className="w-5 h-5" />}
         title="CMS-1500 Paper Claims"
         description={cms1500PrintMode === 'data-only' ? 'Data-only mode' : 'Full form mode'}
+        sectionId="settings-cms1500"
+        isOpen={openSectionId === 'cms1500'}
+        onToggle={() => toggleSection('cms1500')}
       >
         <div className="space-y-6">
           {/* Default Print Format */}
@@ -1651,6 +1709,9 @@ export default function SettingsPage() {
         icon={<Shield className="w-5 h-5" />}
         title="Security"
         description={pinEnabled ? 'PIN enabled' : 'No PIN set — recommended'}
+        sectionId="settings-security"
+        isOpen={openSectionId === 'security'}
+        onToggle={() => toggleSection('security')}
       >
         <div className="space-y-4">
           <div>
@@ -1780,6 +1841,9 @@ export default function SettingsPage() {
         icon={<HardDrive className="w-5 h-5" />}
         title="Data Storage"
         description="Storage location and privacy settings"
+        sectionId="settings-data-storage"
+        isOpen={openSectionId === 'data-storage'}
+        onToggle={() => toggleSection('data-storage')}
       >
         <div className="space-y-4">
           <div>
@@ -1846,6 +1910,9 @@ export default function SettingsPage() {
         icon={<Database className="w-5 h-5" />}
         title="Backup & Export"
         description="Database backups, CSV and PDF exports"
+        sectionId="settings-backup-export"
+        isOpen={openSectionId === 'backup-export'}
+        onToggle={() => toggleSection('backup-export')}
       >
         <div className="space-y-4">
           <div className="flex items-center gap-3 flex-wrap">
@@ -2011,6 +2078,9 @@ export default function SettingsPage() {
           : tier === 'unlicensed' ? 'No active license'
           : `${tier.charAt(0).toUpperCase() + tier.slice(1)} plan active`
         }
+        sectionId="settings-license"
+        isOpen={openSectionId === 'license'}
+        onToggle={() => toggleSection('license')}
       >
         <div className="space-y-4">
           {/* Licensed state — has a real license key */}
@@ -2239,6 +2309,9 @@ export default function SettingsPage() {
         icon={<Info className="w-5 h-5" />}
         title="About PocketChart"
         description={appVersion ? `v${appVersion}` : ''}
+        sectionId="settings-about"
+        isOpen={openSectionId === 'about'}
+        onToggle={() => toggleSection('about')}
       >
         <div className="space-y-2 text-sm text-[var(--color-text-secondary)]">
           <p>

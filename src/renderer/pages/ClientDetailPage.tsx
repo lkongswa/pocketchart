@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useLocalPreference } from '../hooks/useLocalPreference';
 import {
   ArrowLeft,
   FileText,
@@ -39,6 +40,8 @@ import {
   Flag,
   LogOut,
   Lock,
+  List,
+  LayoutGrid,
 } from 'lucide-react';
 import type {
   Client,
@@ -275,8 +278,6 @@ const ClientDetailPage: React.FC = () => {
   const [goalStatusMenuId, setGoalStatusMenuId] = useState<number | null>(null);
   const [expandedGoalIdx, setExpandedGoalIdx] = useState<number | null>(0); // first active goal expanded by default
   const [patternOverrides, setPatternOverrides] = useState<PatternOverride[]>([]);
-  const [showDocuments, setShowDocuments] = useState(false);
-  const [showCompliance, setShowCompliance] = useState(false);
 
   // Billing state
   const [generatingPaymentLink, setGeneratingPaymentLink] = useState<number | null>(null);
@@ -330,7 +331,21 @@ const ClientDetailPage: React.FC = () => {
     setEditModalOpen(true);
   };
 
-  const routeState = (location.state as { tab?: string; invoiceId?: number }) || {};
+  const routeState = (location.state as { tab?: string; defaultTab?: 'clinical' | 'billing' | 'documents'; invoiceId?: number }) || {};
+
+  // Tab state with context-aware selection
+  type ClientTab = 'clinical' | 'billing' | 'documents';
+  const [savedTab, setSavedTab] = useLocalPreference<ClientTab>('client-detail-tab', 'clinical');
+  const [activeTab, setActiveTab] = useState<ClientTab>(
+    routeState.defaultTab || (savedTab as ClientTab) || 'clinical'
+  );
+  const handleTabChange = (tab: ClientTab) => {
+    setActiveTab(tab);
+    setSavedTab(tab);
+  };
+
+  // Compact notes mode
+  const [notesCompact, setNotesCompact] = useLocalPreference('client-notes-compact', true);
 
   const loadData = useCallback(async () => {
     if (!clientId) return;
@@ -874,7 +889,7 @@ const ClientDetailPage: React.FC = () => {
             color="teal"
           >
             <p className="text-xs text-[var(--color-text-secondary)]">Note frequency, recertification dates & progress report alerts</p>
-            <button className="mt-2 text-xs text-[var(--color-primary)] hover:underline" onClick={() => setShowCompliance(true)}>
+            <button className="mt-2 text-xs text-[var(--color-primary)] hover:underline" onClick={() => handleTabChange('clinical')}>
               View Details
             </button>
           </CollapsibleInfo>
@@ -910,8 +925,8 @@ const ClientDetailPage: React.FC = () => {
               {documents.length > 3 && <p className="text-xs text-[var(--color-text-secondary)]">+{documents.length - 3} more</p>}
               {documents.length === 0 && <p className="text-xs text-[var(--color-text-secondary)]">No documents</p>}
             </div>
-            <button className="mt-2 text-xs text-[var(--color-primary)] hover:underline flex items-center gap-1" onClick={() => setShowDocuments(true)}>
-              <Upload size={10} /> Upload
+            <button className="mt-2 text-xs text-[var(--color-primary)] hover:underline flex items-center gap-1" onClick={() => handleTabChange('documents')}>
+              <Upload size={10} /> Manage Documents
             </button>
           </CollapsibleInfo>
 
@@ -930,6 +945,54 @@ const ClientDetailPage: React.FC = () => {
         </div>
       </div>
 
+      {/* ══════════ COMPLIANCE BANNER ══════════ */}
+      {(() => {
+        const bannerItems: { label: string; color: 'amber' | 'red'; onClick?: () => void }[] = [];
+        if (unsignedNotes.length > 0) {
+          bannerItems.push({ label: `${unsignedNotes.length} unsigned note${unsignedNotes.length > 1 ? 's' : ''}`, color: 'amber' });
+        }
+        if (bannerItems.length === 0) return null;
+        return (
+          <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-amber-50 border border-amber-200">
+            <AlertCircle size={16} className="text-amber-500 shrink-0" />
+            <span className="text-sm text-amber-700">
+              {bannerItems.map(b => b.label).join(' | ')}
+            </span>
+          </div>
+        );
+      })()}
+
+      {/* ══════════ TAB BAR ══════════ */}
+      <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+        {([
+          { key: 'clinical' as ClientTab, label: 'Clinical', icon: <FileText size={15} />, badge: unsignedNotes.length },
+          { key: 'billing' as ClientTab, label: 'Billing', icon: <DollarSign size={15} />, badge: invoices.filter(i => i.status !== 'paid' && i.status !== 'void').length },
+          { key: 'documents' as ClientTab, label: 'Documents', icon: <FolderOpen size={15} />, badge: documents.length },
+        ]).map((tab) => (
+          <button
+            key={tab.key}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              activeTab === tab.key
+                ? 'bg-white text-[var(--color-primary)] shadow-sm'
+                : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
+            }`}
+            onClick={() => handleTabChange(tab.key)}
+          >
+            {tab.icon}
+            {tab.label}
+            {tab.badge > 0 && (
+              <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                activeTab === tab.key ? 'bg-gray-100 text-gray-600' : 'bg-gray-200 text-gray-600'
+              }`}>
+                {tab.badge}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* ══════════ CLINICAL TAB ══════════ */}
+      {activeTab === 'clinical' && <>
       {/* ══════════ TWO COLUMN: CLINICAL DATA ══════════ */}
       <div className="grid grid-cols-12 gap-6">
         {/* LEFT COLUMN: Evaluations + Goals (5 cols) */}
@@ -1225,16 +1288,75 @@ const ClientDetailPage: React.FC = () => {
                   <span className="badge bg-red-100 text-red-600 text-xs">{unsignedNotes.length} unsigned</span>
                 )}
               </h3>
-              <button
-                className="btn-primary btn-sm gap-1.5"
-                onClick={() => { if (guardAction()) navigate(`/clients/${clientId}/note/new`); }}
-              >
-                <Plus size={14} /> New Note
-              </button>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center bg-gray-100 rounded-md p-0.5">
+                  <button
+                    className={`p-1 rounded ${notesCompact ? 'bg-white shadow-sm text-[var(--color-text)]' : 'text-[var(--color-text-secondary)]'}`}
+                    onClick={() => setNotesCompact(true)}
+                    title="Compact view"
+                  >
+                    <List size={14} />
+                  </button>
+                  <button
+                    className={`p-1 rounded ${!notesCompact ? 'bg-white shadow-sm text-[var(--color-text)]' : 'text-[var(--color-text-secondary)]'}`}
+                    onClick={() => setNotesCompact(false)}
+                    title="Detailed view"
+                  >
+                    <LayoutGrid size={14} />
+                  </button>
+                </div>
+                <button
+                  className="btn-primary btn-sm gap-1.5"
+                  onClick={() => { if (guardAction()) navigate(`/clients/${clientId}/note/new`); }}
+                >
+                  <Plus size={14} /> New Note
+                </button>
+              </div>
             </div>
             {notes.length === 0 ? (
               <div className="p-8 text-center text-sm text-[var(--color-text-secondary)]">
                 No SOAP notes yet. Create one to get started.
+              </div>
+            ) : notesCompact ? (
+              <div className="divide-y divide-[var(--color-border)]">
+                {displayNotes.map((note) => {
+                  let cptCode = '';
+                  try {
+                    const parsed = JSON.parse(note.cpt_codes || '[]');
+                    if (Array.isArray(parsed) && parsed.length > 0) cptCode = parsed[0].code;
+                  } catch {}
+                  if (!cptCode && note.cpt_code) cptCode = note.cpt_code;
+                  return (
+                    <div
+                      key={note.id}
+                      className="flex items-center gap-2 px-4 py-2 hover:bg-gray-50 cursor-pointer transition-colors text-xs"
+                      onClick={() => navigate(`/clients/${clientId}/note/${note.id}`)}
+                    >
+                      <span className="text-[var(--color-text)] font-medium shrink-0">{formatDate(note.date_of_service)}</span>
+                      <span className="text-[var(--color-text-secondary)]">&middot;</span>
+                      <span className="text-[var(--color-text-secondary)]">SOAP</span>
+                      {cptCode && <>
+                        <span className="text-[var(--color-text-secondary)]">&middot;</span>
+                        <span className="text-[var(--color-text-secondary)]">{cptCode}</span>
+                      </>}
+                      <span className="text-[var(--color-text-secondary)]">&middot;</span>
+                      {note.signed_at ? (
+                        <span className="text-emerald-600 flex items-center gap-0.5"><CheckCircle size={10} /> Signed</span>
+                      ) : (
+                        <span className="text-amber-600">Draft</span>
+                      )}
+                      <span className="flex-1" />
+                      {!note.signed_at && (
+                        <button
+                          className={`p-0.5 ${deletingNoteId === note.id ? 'bg-red-600 text-white rounded' : 'btn-ghost text-red-500'}`}
+                          onClick={(e) => { e.stopPropagation(); handleDeleteNote(note.id); }}
+                        >
+                          <Trash2 size={11} />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <div className="divide-y divide-[var(--color-border)]">
@@ -1429,6 +1551,15 @@ const ClientDetailPage: React.FC = () => {
         );
       })()}
 
+      {/* Compliance + Communication Log (inline in clinical tab) */}
+      <ComplianceSection clientId={clientId} />
+      <ProFeatureGate feature="communication_log">
+        <CommunicationLogSection clientId={clientId} />
+      </ProFeatureGate>
+      </>}
+
+      {/* ══════════ BILLING TAB ══════════ */}
+      {activeTab === 'billing' && <>
       {/* ══════════ ORDERS & CERTIFICATIONS ══════════ */}
       <div className="card">
         <div className="flex items-center justify-between p-5 border-b border-[var(--color-border)]">
@@ -1443,7 +1574,7 @@ const ClientDetailPage: React.FC = () => {
                 setUploadCategory('signed_poc');
                 setUploadPhysicianName(client.referring_physician || '');
                 setUploadReceivedDate(new Date().toISOString().split('T')[0]);
-                setShowDocuments(true);
+                handleTabChange('documents');
               }}
             >
               <Upload size={14} /> Upload Documents
@@ -1931,6 +2062,101 @@ const ClientDetailPage: React.FC = () => {
       </div>
 
       {/* CMS-1500 now saves directly via dialog — no preview needed */}
+      </>}
+
+      {/* ══════════ DOCUMENTS TAB ══════════ */}
+      {activeTab === 'documents' && (
+        <div className="card">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
+            <h3 className="text-lg font-semibold text-[var(--color-text)] flex items-center gap-2">
+              <FolderOpen size={20} className="text-[var(--color-primary)]" />
+              Documents ({documents.length})
+            </h3>
+            <label className="btn-primary btn-sm gap-1.5 cursor-pointer">
+              <Upload size={14} /> Upload
+              <input
+                type="file"
+                className="hidden"
+                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.bmp,.tiff"
+                onChange={async (e) => {
+                  e.target.value = '';
+                  await handleUploadDocument({
+                    category: uploadCategory,
+                    certification_period_start: uploadCertStart || undefined,
+                    certification_period_end: uploadCertEnd || undefined,
+                    received_date: uploadReceivedDate || undefined,
+                    sent_date: uploadSentDate || undefined,
+                    physician_name: uploadPhysicianName || undefined,
+                  });
+                }}
+              />
+            </label>
+          </div>
+
+          {/* Category filter */}
+          <div className="flex items-center gap-2 px-6 py-3 border-b border-[var(--color-border)] bg-gray-50/50">
+            <span className="text-xs text-[var(--color-text-secondary)]">Filter:</span>
+            {['all', 'physician_order', 'progress_report', 'evaluation', 'authorization', 'insurance', 'consent', 'other'].map((cat) => (
+              <button
+                key={cat}
+                className={`text-xs px-2 py-1 rounded transition-colors ${
+                  docCategoryFilter === cat
+                    ? 'bg-[var(--color-primary)] text-white'
+                    : 'bg-white border border-gray-200 text-[var(--color-text-secondary)] hover:bg-gray-100'
+                }`}
+                onClick={() => setDocCategoryFilter(cat)}
+              >
+                {cat === 'all' ? 'All' : (CLIENT_DOCUMENT_CATEGORY_LABELS as any)[cat] || cat}
+              </button>
+            ))}
+          </div>
+
+          {/* Document list */}
+          <div className="divide-y divide-[var(--color-border)]">
+            {documents
+              .filter((d) => docCategoryFilter === 'all' || d.category === docCategoryFilter)
+              .map((doc) => {
+                const IconComp = getFileIcon(doc.file_type);
+                return (
+                  <div key={doc.id} className="flex items-center gap-3 px-6 py-3 hover:bg-gray-50 transition-colors">
+                    <IconComp size={18} className="text-[var(--color-text-secondary)] shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-[var(--color-text)] truncate">{doc.original_name}</p>
+                      <p className="text-xs text-[var(--color-text-secondary)]">
+                        {(CLIENT_DOCUMENT_CATEGORY_LABELS as any)[doc.category] || doc.category}
+                        {doc.physician_name ? ` · ${doc.physician_name}` : ''}
+                        {doc.certification_period_start && doc.certification_period_end
+                          ? ` · ${formatDate(doc.certification_period_start)} – ${formatDate(doc.certification_period_end)}`
+                          : ''}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        className="btn-ghost p-1.5"
+                        title="Open"
+                        onClick={() => handleOpenDocument(doc.id)}
+                      >
+                        <Eye size={14} />
+                      </button>
+                      <button
+                        className={`btn-ghost p-1.5 ${deletingDocId === doc.id ? 'bg-red-600 text-white rounded' : 'text-red-500 hover:text-red-700'}`}
+                        title="Delete"
+                        onClick={() => handleDeleteDocument(doc.id)}
+                      >
+                        {deletingDocId === doc.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            {documents.filter((d) => docCategoryFilter === 'all' || d.category === docCategoryFilter).length === 0 && (
+              <div className="px-6 py-8 text-center text-[var(--color-text-secondary)] text-sm">
+                No documents {docCategoryFilter !== 'all' ? 'in this category' : 'uploaded yet'}.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ══════════ DISCOUNT MODAL ══════════ */}
       {showDiscountModal && (
@@ -1944,165 +2170,6 @@ const ClientDetailPage: React.FC = () => {
         />
       )}
 
-      {/* ══════════ DOCUMENTS MODAL ══════════ */}
-      {showDocuments && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setShowDocuments(false)} />
-          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[80vh] overflow-hidden">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
-              <h3 className="text-lg font-semibold text-[var(--color-text)] flex items-center gap-2">
-                <FolderOpen size={20} className="text-[var(--color-primary)]" />
-                Documents
-              </h3>
-              <button onClick={() => setShowDocuments(false)} className="btn-ghost p-1">
-                <XCircle size={20} />
-              </button>
-            </div>
-            <div className="p-6 overflow-y-auto max-h-[60vh]">
-              {/* Upload Form */}
-              <div className="mb-4 p-4 rounded-lg border border-[var(--color-border)] bg-gray-50/50">
-                <div className="flex items-center gap-3 mb-3">
-                  <select
-                    className="input py-1.5 text-sm flex-1"
-                    value={uploadCategory}
-                    onChange={(e) => setUploadCategory(e.target.value as ClientDocumentCategory)}
-                  >
-                    {Object.entries(CLIENT_DOCUMENT_CATEGORY_LABELS).map(([value, label]) => (
-                      <option key={value} value={value}>{label}</option>
-                    ))}
-                  </select>
-                  <button className="btn-primary btn-sm gap-1.5 whitespace-nowrap" onClick={() => {
-                    handleUploadDocument({
-                      category: uploadCategory,
-                      certification_period_start: uploadCertStart,
-                      certification_period_end: uploadCertEnd,
-                      received_date: uploadReceivedDate,
-                      sent_date: uploadSentDate,
-                      physician_name: uploadPhysicianName,
-                    });
-                  }}>
-                    <Upload size={14} /> Upload Document
-                  </button>
-                </div>
-                {(uploadCategory === 'signed_poc' || uploadCategory === 'recertification') && (
-                  <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-[var(--color-border)]/50">
-                    <div>
-                      <label className="text-xs font-medium text-[var(--color-text-secondary)] mb-1 block">Cert Period Start</label>
-                      <input type="date" className="input py-1.5 text-sm" value={uploadCertStart} onChange={(e) => setUploadCertStart(e.target.value)} />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium text-[var(--color-text-secondary)] mb-1 block">Cert Period End</label>
-                      <input type="date" className="input py-1.5 text-sm" value={uploadCertEnd} onChange={(e) => setUploadCertEnd(e.target.value)} />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium text-[var(--color-text-secondary)] mb-1 block">Physician Name</label>
-                      <input type="text" className="input py-1.5 text-sm" placeholder={client?.referring_physician || 'Dr. ...'} value={uploadPhysicianName} onChange={(e) => setUploadPhysicianName(e.target.value)} />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium text-[var(--color-text-secondary)] mb-1 block">Received Date</label>
-                      <input type="date" className="input py-1.5 text-sm" value={uploadReceivedDate} onChange={(e) => setUploadReceivedDate(e.target.value)} />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Filter */}
-              <div className="flex items-center justify-between mb-4">
-                <select
-                  className="input py-1.5 text-sm w-44"
-                  value={docCategoryFilter}
-                  onChange={(e) => setDocCategoryFilter(e.target.value)}
-                >
-                  {DOCUMENT_CATEGORIES.map((cat) => (
-                    <option key={cat.value} value={cat.value}>{cat.label}</option>
-                  ))}
-                </select>
-              </div>
-              {(() => {
-                const filteredDocs = docCategoryFilter === 'all'
-                  ? documents
-                  : documents.filter((d) => d.category === docCategoryFilter);
-
-                return filteredDocs.length === 0 ? (
-                  <div className="py-8 text-center text-sm text-[var(--color-text-secondary)]">
-                    No documents found.
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {filteredDocs.map((doc) => {
-                      const DocIcon = getFileIcon(doc.file_type);
-                      const badgeColor = categoryBadgeColors[doc.category] || categoryBadgeColors.other;
-                      return (
-                        <div key={doc.id} className="flex items-center justify-between p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors">
-                          <div className="flex items-center gap-3 min-w-0">
-                            <DocIcon size={18} className="text-[var(--color-text-secondary)] shrink-0" />
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium text-[var(--color-text)] truncate">{doc.original_name}</p>
-                              <div className="flex items-center gap-2 mt-0.5">
-                                <span className={`badge text-xs ${badgeColor}`}>
-                                  {CLIENT_DOCUMENT_CATEGORY_LABELS[doc.category as ClientDocumentCategory] || doc.category}
-                                </span>
-                                <span className="text-xs text-[var(--color-text-secondary)]">{formatFileSize(doc.file_size)}</span>
-                                {doc.physician_name && (
-                                  <span className="text-xs text-[var(--color-text-secondary)]">{doc.physician_name}</span>
-                                )}
-                              </div>
-                              {doc.certification_period_start && doc.certification_period_end && (
-                                <p className="text-[10px] text-[var(--color-text-secondary)] mt-0.5">
-                                  Cert: {formatDate(doc.certification_period_start)} — {formatDate(doc.certification_period_end)}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <button className="btn-ghost btn-sm" onClick={() => handleOpenDocument(doc.id)}>
-                              <Eye size={14} />
-                            </button>
-                            <button
-                              className={`btn-sm ${
-                                deletingDocId === doc.id ? 'bg-red-600 text-white' : 'btn-ghost text-red-500'
-                              }`}
-                              onClick={() => handleDeleteDocument(doc.id)}
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })()}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ══════════ COMPLIANCE MODAL ══════════ */}
-      {showCompliance && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setShowCompliance(false)} />
-          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-3xl mx-4 max-h-[80vh] overflow-hidden">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
-              <h3 className="text-lg font-semibold text-[var(--color-text)] flex items-center gap-2">
-                <Shield size={20} className="text-[var(--color-primary)]" />
-                Doc Compliance
-              </h3>
-              <button onClick={() => setShowCompliance(false)} className="btn-ghost p-1">
-                <XCircle size={20} />
-              </button>
-            </div>
-            <div className="p-6 overflow-y-auto max-h-[60vh]">
-              <div className="space-y-6">
-                <ComplianceSection clientId={client.id} />
-                <ProFeatureGate feature="communication_log">
-                  <CommunicationLogSection clientId={client.id} />
-                </ProFeatureGate>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Edit Client Modal */}
       <ClientFormModal

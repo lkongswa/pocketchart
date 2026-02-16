@@ -7,12 +7,15 @@ import {
   FileText,
   Clock,
   ClipboardList,
+  ChevronRight,
+  CheckCircle,
 } from 'lucide-react';
 import { useTier } from '../hooks/useTier';
 import type { BasicAlerts } from '../../shared/types';
 
 interface AlertItem {
   key: string;
+  category: string;
   urgency: 'overdue' | 'due_soon' | 'upcoming';
   icon: React.ReactNode;
   label: string;
@@ -20,11 +23,22 @@ interface AlertItem {
   onClick: () => void;
 }
 
+interface AlertCategory {
+  id: string;
+  label: string;
+  icon: React.ReactNode;
+  items: AlertItem[];
+  highestUrgency: 'overdue' | 'due_soon' | 'upcoming';
+}
+
+const URGENCY_ORDER = { overdue: 0, due_soon: 1, upcoming: 2 } as const;
+
 export default function BasicAlertsPanel() {
   const navigate = useNavigate();
   const { isBasicOrHigher } = useTier();
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!isBasicOrHigher) {
@@ -43,6 +57,7 @@ export default function BasicAlertsPanel() {
       for (const n of data.unsignedNotes) {
         items.push({
           key: `unsigned-${n.id}`,
+          category: 'unsigned',
           urgency: 'due_soon',
           icon: <PenLine size={14} />,
           label: `Unsigned note — ${n.client_name}`,
@@ -57,6 +72,7 @@ export default function BasicAlertsPanel() {
         const isRecert = a.alert_type.includes('recert');
         items.push({
           key: `compliance-${a.client_id}-${a.alert_type}-${a.detail}`,
+          category: 'compliance',
           urgency: isOverdue ? 'overdue' : 'due_soon',
           icon: <Shield size={14} />,
           label: isRecert
@@ -75,6 +91,7 @@ export default function BasicAlertsPanel() {
         const daysUntil = Math.ceil((expDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
         items.push({
           key: `order-${o.client_id}`,
+          category: 'orders',
           urgency: daysUntil <= 0 ? 'overdue' : 'due_soon',
           icon: <FileText size={14} />,
           label: `Physician order ${daysUntil <= 0 ? 'expired' : 'expiring'} — ${o.client_name}`,
@@ -99,6 +116,7 @@ export default function BasicAlertsPanel() {
 
         items.push({
           key: `auth-${a.client_id}-${a.end_date}`,
+          category: 'auth',
           urgency: isOverdue ? 'overdue' : 'due_soon',
           icon: <Clock size={14} />,
           label: `Authorization running low — ${a.client_name}`,
@@ -107,10 +125,11 @@ export default function BasicAlertsPanel() {
         });
       }
 
-      // Incomplete charts (critical only — missing DOB or diagnosis)
+      // Incomplete charts
       for (const c of data.incompleteCharts) {
         items.push({
           key: `chart-${c.clientId}`,
+          category: 'charts',
           urgency: 'upcoming',
           icon: <ClipboardList size={14} />,
           label: `Incomplete chart — ${c.clientName}`,
@@ -118,10 +137,6 @@ export default function BasicAlertsPanel() {
           onClick: () => navigate(`/clients/${c.clientId}`),
         });
       }
-
-      // Sort by urgency: overdue first, then due_soon, then upcoming
-      const urgencyOrder = { overdue: 0, due_soon: 1, upcoming: 2 };
-      items.sort((a, b) => urgencyOrder[a.urgency] - urgencyOrder[b.urgency]);
 
       setAlerts(items);
     } catch (err) {
@@ -131,8 +146,49 @@ export default function BasicAlertsPanel() {
     }
   };
 
+  const toggleCategory = (id: string) => {
+    setExpandedCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   if (!isBasicOrHigher || loading) return null;
-  if (alerts.length === 0) return null;
+
+  // Build categories from alerts
+  const categoryDefs: { id: string; label: string; icon: React.ReactNode }[] = [
+    { id: 'unsigned', label: 'Unsigned Notes', icon: <PenLine size={15} /> },
+    { id: 'compliance', label: 'Compliance Alerts', icon: <Shield size={15} /> },
+    { id: 'orders', label: 'Expiring Orders', icon: <FileText size={15} /> },
+    { id: 'auth', label: 'Authorization Alerts', icon: <Clock size={15} /> },
+    { id: 'charts', label: 'Incomplete Charts', icon: <ClipboardList size={15} /> },
+  ];
+
+  const categories: AlertCategory[] = categoryDefs
+    .map((def) => {
+      const items = alerts.filter((a) => a.category === def.id);
+      if (items.length === 0) return null;
+      const highestUrgency = items.reduce<'overdue' | 'due_soon' | 'upcoming'>(
+        (best, item) => (URGENCY_ORDER[item.urgency] < URGENCY_ORDER[best] ? item.urgency : best),
+        'upcoming'
+      );
+      return { ...def, items, highestUrgency };
+    })
+    .filter(Boolean) as AlertCategory[];
+
+  // "All clear" state
+  if (categories.length === 0) {
+    return (
+      <div className="mb-6">
+        <div className="flex items-center justify-center gap-2 px-4 py-4 rounded-lg bg-emerald-50 border border-emerald-200">
+          <CheckCircle size={16} className="text-emerald-500" />
+          <p className="text-sm font-medium text-emerald-700">All caught up! No items need attention.</p>
+        </div>
+      </div>
+    );
+  }
 
   const urgencyStyles = {
     overdue: {
@@ -141,6 +197,8 @@ export default function BasicAlertsPanel() {
       icon: 'text-red-500',
       text: 'text-red-800',
       detail: 'text-red-600',
+      dot: 'bg-red-500',
+      badge: 'bg-red-100 text-red-700',
     },
     due_soon: {
       bg: 'bg-amber-50 hover:bg-amber-100',
@@ -148,6 +206,8 @@ export default function BasicAlertsPanel() {
       icon: 'text-amber-500',
       text: 'text-amber-800',
       detail: 'text-amber-600',
+      dot: 'bg-amber-500',
+      badge: 'bg-amber-100 text-amber-700',
     },
     upcoming: {
       bg: 'bg-gray-50 hover:bg-gray-100',
@@ -155,31 +215,63 @@ export default function BasicAlertsPanel() {
       icon: 'text-gray-400',
       text: 'text-gray-700',
       detail: 'text-gray-500',
+      dot: 'bg-gray-400',
+      badge: 'bg-gray-100 text-gray-600',
     },
   };
+
+  const totalCount = categories.reduce((sum, c) => sum + c.items.length, 0);
 
   return (
     <div className="mb-6">
       <div className="flex items-center gap-2 mb-3">
         <AlertTriangle size={16} className="text-amber-500" />
         <h2 className="text-sm font-semibold text-[var(--color-text)]">
-          Needs Attention ({alerts.length})
+          Needs Attention ({totalCount})
         </h2>
       </div>
-      <div className="space-y-1.5">
-        {alerts.map((item) => {
-          const style = urgencyStyles[item.urgency];
+      <div className="space-y-2">
+        {categories.map((cat) => {
+          const expanded = expandedCategories.has(cat.id);
+          const style = urgencyStyles[cat.highestUrgency];
           return (
-            <div
-              key={item.key}
-              className={`flex items-center gap-3 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${style.bg} ${style.border}`}
-              onClick={item.onClick}
-            >
-              <div className={`flex-shrink-0 ${style.icon}`}>{item.icon}</div>
-              <div className="flex-1 min-w-0">
-                <p className={`text-xs font-medium ${style.text} truncate`}>{item.label}</p>
-                <p className={`text-xs ${style.detail} truncate`}>{item.detail}</p>
-              </div>
+            <div key={cat.id}>
+              <button
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg border cursor-pointer transition-colors ${
+                  expanded ? 'bg-white border-[var(--color-border)]' : `${style.bg} ${style.border}`
+                }`}
+                onClick={() => toggleCategory(cat.id)}
+              >
+                <div className={`flex-shrink-0 ${style.icon}`}>{cat.icon}</div>
+                <span className="text-sm font-medium text-[var(--color-text)] flex-1 text-left">{cat.label}</span>
+                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${style.badge}`}>
+                  {cat.items.length}
+                </span>
+                <ChevronRight
+                  size={14}
+                  className={`text-gray-400 transition-transform duration-150 ${expanded ? 'rotate-90' : ''}`}
+                />
+              </button>
+              {expanded && (
+                <div className="mt-1 ml-2 space-y-1">
+                  {cat.items.map((item) => {
+                    const itemStyle = urgencyStyles[item.urgency];
+                    return (
+                      <div
+                        key={item.key}
+                        className={`flex items-center gap-3 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${itemStyle.bg} ${itemStyle.border}`}
+                        onClick={item.onClick}
+                      >
+                        <div className={`flex-shrink-0 ${itemStyle.icon}`}>{item.icon}</div>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-xs font-medium ${itemStyle.text} truncate`}>{item.label}</p>
+                          <p className={`text-xs ${itemStyle.detail} truncate`}>{item.detail}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })}

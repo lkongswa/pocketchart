@@ -371,7 +371,7 @@ const DashboardPage: React.FC = () => {
             <Activity size={18} className="text-teal-500" />
             <h2 className="section-title mb-0">Recent Activity</h2>
           </div>
-          <div className="divide-y divide-[var(--color-border)]">
+          <div>
             {recentNotes.length === 0 ? (
               <div className="px-5 py-8 text-center text-[var(--color-text-secondary)] text-sm">
                 No recent notes found.
@@ -380,30 +380,24 @@ const DashboardPage: React.FC = () => {
               recentNotes.map((item) => (
                 <div
                   key={item.note.id}
-                  className="px-5 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
+                  className="flex items-center gap-2 px-5 py-2 hover:bg-gray-50 cursor-pointer transition-colors text-xs"
                   onClick={() =>
                     navigate(
                       `/clients/${item.note.client_id}/note/${item.note.id}`
                     )
                   }
                 >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-[var(--color-text)]">
-                        {item.clientName}
-                      </p>
-                      <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                        {item.note.subjective
-                          ? item.note.subjective.length > 80
-                            ? item.note.subjective.substring(0, 80) + '...'
-                            : item.note.subjective
-                          : 'No subjective note'}
-                      </p>
-                    </div>
-                    <div className="text-xs text-[var(--color-text-secondary)] whitespace-nowrap ml-4">
-                      {formatDate(item.note.date_of_service)}
-                    </div>
-                  </div>
+                  <span className="text-[var(--color-text-secondary)] shrink-0">
+                    {formatDate(item.note.date_of_service)}
+                  </span>
+                  <span className="text-[var(--color-text-secondary)]">&middot;</span>
+                  <span className="text-[var(--color-text-secondary)] shrink-0">SOAP Note</span>
+                  <span className="text-[var(--color-text-secondary)]">&middot;</span>
+                  <span className="font-medium text-[var(--color-text)] truncate">{item.clientName}</span>
+                  <span className="text-[var(--color-text-secondary)]">&middot;</span>
+                  <span className={`shrink-0 ${item.note.signed_at ? 'text-emerald-600' : 'text-amber-600'}`}>
+                    {item.note.signed_at ? '\u2713 Signed' : 'Draft'}
+                  </span>
                 </div>
               ))
             )}

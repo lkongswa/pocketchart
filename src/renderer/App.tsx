@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createHashRouter, RouterProvider, Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { getSectionForPath } from './hooks/useSectionColor';
+import { useLocalPreference } from './hooks/useLocalPreference';
 import {
   LayoutDashboard,
   Users,
@@ -95,14 +96,6 @@ const navGroups: NavGroup[] = [
       { to: '/vault', label: 'My Vault', icon: <Shield size={18} /> },
     ],
   },
-  {
-    title: 'Settings',
-    color: '#6b7280', // gray
-    items: [
-      { to: '/help', label: 'Help', icon: <HelpCircle size={18} /> },
-      { to: '/settings', label: 'Settings', icon: <Settings size={18} /> },
-    ],
-  },
 ];
 
 /** Convert hex to rgba with alpha */
@@ -121,11 +114,25 @@ function darkenHex(hex: string, amount: number): string {
   return `rgb(${r}, ${g}, ${b})`;
 }
 
+const COLLAPSIBLE_GROUPS = new Set(['Business', 'Professional']);
+
 const Sidebar: React.FC = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   const [appVersion, setAppVersion] = useState('');
   const [logoHover, setLogoHover] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
+  const { tier } = useTier();
+
+  // Gear menu
+  const [gearOpen, setGearOpen] = useState(false);
+  const gearRef = useRef<HTMLDivElement>(null);
+
+  // Collapsible groups — store array of expanded group titles
+  const [expandedGroups, setExpandedGroups] = useLocalPreference<string[]>(
+    'sidebar-expanded-groups',
+    tier === 'pro' ? ['Clinical', 'Business', 'Professional'] : ['Clinical']
+  );
 
   useEffect(() => {
     window.api.app.getVersion().then((v) => setAppVersion(v)).catch(() => {});
@@ -142,8 +149,48 @@ const Sidebar: React.FC = () => {
     return location.pathname === item.to;
   };
 
-  // Determine which group the current route belongs to
   const activeSection = useMemo(() => getSectionForPath(location.pathname), [location.pathname]);
+
+  const isGroupExpanded = useCallback(
+    (title: string) => !COLLAPSIBLE_GROUPS.has(title) || expandedGroups.includes(title),
+    [expandedGroups]
+  );
+
+  const toggleGroup = useCallback(
+    (title: string) => {
+      setExpandedGroups((prev) =>
+        prev.includes(title) ? prev.filter((t) => t !== title) : [...prev, title]
+      );
+    },
+    [setExpandedGroups]
+  );
+
+  // Auto-expand group when navigating to a route within it
+  useEffect(() => {
+    const section = getSectionForPath(location.pathname);
+    if (COLLAPSIBLE_GROUPS.has(section.section) && !expandedGroups.includes(section.section)) {
+      setExpandedGroups((prev) => [...prev, section.section]);
+    }
+  }, [location.pathname]);
+
+  // Close gear menu on click outside
+  useEffect(() => {
+    if (!gearOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (gearRef.current && !gearRef.current.contains(e.target as Node)) {
+        setGearOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [gearOpen]);
+
+  // Close gear menu on navigation
+  useEffect(() => {
+    setGearOpen(false);
+  }, [location.pathname]);
+
+  const isOnSettingsRoute = location.pathname === '/help' || location.pathname === '/settings';
 
   return (
     <aside className="fixed top-0 left-0 h-full w-[240px] bg-[var(--color-surface)] border-r border-[var(--color-border)] flex flex-col z-10">
@@ -176,61 +223,119 @@ const Sidebar: React.FC = () => {
         {navGroups.map((group) => {
           const groupColor = group.color || '#6b7280';
           const isActiveGroup = activeSection.section === group.title;
+          const collapsible = COLLAPSIBLE_GROUPS.has(group.title);
+          const expanded = isGroupExpanded(group.title);
           return (
             <div key={group.title} className="mb-1">
-              <div className="px-3 py-1.5 flex items-center gap-1.5">
-                <span
-                  className="w-2 h-2 rounded-full flex-shrink-0"
-                  style={{ backgroundColor: groupColor }}
-                />
-                <p
-                  className="text-[10px] font-semibold uppercase tracking-wider"
-                  style={{ color: isActiveGroup ? darkenHex(groupColor, 0.15) : undefined, opacity: isActiveGroup ? 1 : 0.6 }}
+              {collapsible ? (
+                <button
+                  className="w-full px-3 py-1.5 flex items-center gap-1.5 hover:bg-white/30 rounded transition-colors"
+                  onClick={() => toggleGroup(group.title)}
                 >
-                  {group.title}
-                </p>
-              </div>
-              <div
-                className="rounded-lg border overflow-hidden"
-                style={{
-                  backgroundColor: hexToRgba(groupColor, 0.06),
-                  borderColor: hexToRgba(groupColor, 0.25),
-                }}
-              >
-                {group.items.map((item) => {
-                  const active = isActive(item);
-                  return (
-                    <NavLink
-                      key={item.to}
-                      to={item.to}
-                      className={`flex items-center gap-2.5 px-3 py-2 text-sm transition-colors ${
-                        active
-                          ? 'text-white font-medium'
-                          : 'text-[var(--color-text)] hover:bg-white/50'
-                      }`}
-                      style={active ? { backgroundColor: groupColor } : undefined}
-                    >
-                      {item.icon}
-                      <span>{item.label}</span>
-                    </NavLink>
-                  );
-                })}
-              </div>
+                  <span
+                    className="w-2 h-2 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: groupColor }}
+                  />
+                  <p
+                    className="text-[10px] font-semibold uppercase tracking-wider flex-1 text-left"
+                    style={{ color: isActiveGroup ? darkenHex(groupColor, 0.15) : undefined, opacity: isActiveGroup ? 1 : 0.6 }}
+                  >
+                    {group.title}
+                  </p>
+                  <ChevronRight
+                    size={12}
+                    className={`text-gray-400 transition-transform duration-150 ${expanded ? 'rotate-90' : ''}`}
+                  />
+                </button>
+              ) : (
+                <div className="px-3 py-1.5 flex items-center gap-1.5">
+                  <span
+                    className="w-2 h-2 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: groupColor }}
+                  />
+                  <p
+                    className="text-[10px] font-semibold uppercase tracking-wider"
+                    style={{ color: isActiveGroup ? darkenHex(groupColor, 0.15) : undefined, opacity: isActiveGroup ? 1 : 0.6 }}
+                  >
+                    {group.title}
+                  </p>
+                </div>
+              )}
+              {expanded && (
+                <div
+                  className="rounded-lg border overflow-hidden"
+                  style={{
+                    backgroundColor: hexToRgba(groupColor, 0.06),
+                    borderColor: hexToRgba(groupColor, 0.25),
+                  }}
+                >
+                  {group.items.map((item) => {
+                    const active = isActive(item);
+                    return (
+                      <NavLink
+                        key={item.to}
+                        to={item.to}
+                        className={`flex items-center gap-2.5 px-3 py-2 text-sm transition-colors ${
+                          active
+                            ? 'text-white font-medium'
+                            : 'text-[var(--color-text)] hover:bg-white/50'
+                        }`}
+                        style={active ? { backgroundColor: groupColor } : undefined}
+                      >
+                        {item.icon}
+                        <span>{item.label}</span>
+                      </NavLink>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })}
       </nav>
 
-      {/* Trial Badge + Footer */}
+      {/* Footer: Trial Badge + Gear Menu + Version */}
       <div className="px-3 py-3 border-t border-[var(--color-border)] space-y-2">
         <TrialBadge />
-        <button
-          onClick={() => setShowFeedback(true)}
-          className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)] transition-colors"
-        >
-          <MessageSquare size={14} />
-          Report Issue
-        </button>
+        <div className="relative" ref={gearRef}>
+          <button
+            onClick={() => setGearOpen((o) => !o)}
+            className={`w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              isOnSettingsRoute || gearOpen
+                ? 'bg-gray-100 text-[var(--color-primary)]'
+                : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)]'
+            }`}
+            title="Settings & Help"
+          >
+            <Settings size={14} />
+          </button>
+          {gearOpen && (
+            <div className="absolute bottom-full left-0 right-0 mb-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-lg overflow-hidden z-50">
+              <button
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-[var(--color-text)] hover:bg-gray-50 transition-colors"
+                onClick={() => { navigate('/help'); setGearOpen(false); }}
+              >
+                <HelpCircle size={15} className="text-[var(--color-text-secondary)]" />
+                Help
+              </button>
+              <button
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-[var(--color-text)] hover:bg-gray-50 transition-colors"
+                onClick={() => { navigate('/settings'); setGearOpen(false); }}
+              >
+                <Settings size={15} className="text-[var(--color-text-secondary)]" />
+                Settings
+              </button>
+              <div className="border-t border-[var(--color-border)]" />
+              <button
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-[var(--color-text)] hover:bg-gray-50 transition-colors"
+                onClick={() => { setShowFeedback(true); setGearOpen(false); }}
+              >
+                <MessageSquare size={15} className="text-[var(--color-text-secondary)]" />
+                Report Issue
+              </button>
+            </div>
+          )}
+        </div>
         <p className="text-xs text-[var(--color-text-secondary)] px-2">
           {appVersion ? `v${appVersion}` : ''}
         </p>

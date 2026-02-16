@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useLocalPreference } from '../hooks/useLocalPreference';
 import {
   format,
   startOfWeek,
@@ -73,9 +74,12 @@ export default function CalendarPage() {
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
 
-  // Todo sidebar state
-  const [todoSidebarOpen, setTodoSidebarOpen] = useState(false);
+  // Todo sidebar state — persisted
+  const [todoSidebarOpen, setTodoSidebarOpen] = useLocalPreference('calendar-sidebar-open', false);
   const [incompleteTodos, setIncompleteTodos] = useState<DashboardTodo[]>([]);
+
+  // Payment badge toggle — OFF by default
+  const [showBilling, setShowBilling] = useLocalPreference('calendar-show-billing', false);
 
   // Sidebar tab state
   type SidebarTab = 'tasks' | 'scratchpad' | 'links';
@@ -625,6 +629,8 @@ export default function CalendarPage() {
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         onAddAppointment={handleAddAppointment}
+        showBilling={showBilling}
+        onToggleBilling={setShowBilling}
       />
 
       {/* Clipboard indicator */}
@@ -665,7 +671,7 @@ export default function CalendarPage() {
               onBlockContextMenu={handleBlockContextMenu}
               onBlockToggleDone={handleToggleBlockDone}
               onBlockRemove={handleBlockRemoveInline}
-              paymentStatusMap={paymentStatusMap}
+              paymentStatusMap={showBilling ? paymentStatusMap : {}}
             />
           ) : currentView === 'week' ? (
             <WeekView
@@ -682,7 +688,7 @@ export default function CalendarPage() {
               onBlockContextMenu={handleBlockContextMenu}
               onBlockToggleDone={handleToggleBlockDone}
               onBlockRemove={handleBlockRemoveInline}
-              paymentStatusMap={paymentStatusMap}
+              paymentStatusMap={showBilling ? paymentStatusMap : {}}
             />
           ) : (
             <MonthView
@@ -696,21 +702,30 @@ export default function CalendarPage() {
               onBlockContextMenu={handleBlockContextMenu}
               onBlockToggleDone={handleToggleBlockDone}
               onBlockRemove={handleBlockRemoveInline}
-              paymentStatusMap={paymentStatusMap}
+              paymentStatusMap={showBilling ? paymentStatusMap : {}}
             />
           )}
         </div>
 
-        {/* Todo sidebar toggle */}
+        {/* Todo sidebar edge tab */}
         {!todoSidebarOpen && (
-          <div className="shrink-0 flex items-center justify-center w-12 relative">
+          <div className="shrink-0 relative flex items-center">
             <button
               type="button"
-              className="w-9 h-9 rounded-full bg-teal-500 hover:bg-teal-600 text-white shadow-md flex items-center justify-center transition-colors"
+              className={`flex flex-col items-center gap-1 px-1.5 py-3 rounded-l-lg shadow-md transition-colors ${
+                incompleteTodos.length > 0
+                  ? 'bg-teal-500 hover:bg-teal-600 text-white'
+                  : 'bg-gray-200 hover:bg-gray-300 text-gray-500'
+              }`}
               onClick={() => setTodoSidebarOpen(true)}
               title="Quick Tools"
             >
-              <ListTodo size={18} />
+              <ListTodo size={14} />
+              {incompleteTodos.length > 0 && (
+                <span className="text-[10px] font-bold bg-white text-teal-600 rounded-full w-4 h-4 flex items-center justify-center">
+                  {incompleteTodos.length}
+                </span>
+              )}
             </button>
           </div>
         )}
