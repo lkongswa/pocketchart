@@ -260,6 +260,7 @@ const ClientDetailPage: React.FC = () => {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [apptStatusFilter, setApptStatusFilter] = useState<'all' | AppointmentStatus>('all');
   const [showAllAppointments, setShowAllAppointments] = useState(false);
+  const [appointmentsExpanded, setAppointmentsExpanded] = useState(false);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [goalHistories, setGoalHistories] = useState<Record<number, GoalProgressEntry[]>>({});
   const [documents, setDocuments] = useState<ClientDocument[]>([]);
@@ -276,7 +277,7 @@ const ClientDetailPage: React.FC = () => {
   const [showAllGoals, setShowAllGoals] = useState(false);
   const [showInactiveGoals, setShowInactiveGoals] = useState(false);
   const [goalStatusMenuId, setGoalStatusMenuId] = useState<number | null>(null);
-  const [expandedGoalIdx, setExpandedGoalIdx] = useState<number | null>(0); // first active goal expanded by default
+  const [expandedGoalIdx, setExpandedGoalIdx] = useState<number | null>(null); // all goals collapsed by default
   const [patternOverrides, setPatternOverrides] = useState<PatternOverride[]>([]);
 
   // Billing state
@@ -1026,7 +1027,7 @@ const ClientDetailPage: React.FC = () => {
         ]).map((tab) => (
           <button
             key={tab.key}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer ${
               activeTab === tab.key
                 ? 'bg-white text-[var(--color-primary)] shadow-sm'
                 : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
@@ -1048,6 +1049,10 @@ const ClientDetailPage: React.FC = () => {
 
       {/* ══════════ CLINICAL TAB ══════════ */}
       {activeTab === 'clinical' && <>
+
+      {/* Compliance alerts (Progress Report & Recertification) */}
+      <ComplianceSection clientId={clientId} />
+
       {/* ══════════ TWO COLUMN: CLINICAL DATA ══════════ */}
       <div className="grid grid-cols-12 gap-6">
         {/* LEFT COLUMN: Evaluations + Goals (5 cols) */}
@@ -1509,13 +1514,18 @@ const ClientDetailPage: React.FC = () => {
         ];
         return (
           <div className="card">
-            <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
+            <div
+              className="flex items-center justify-between p-4 border-b border-[var(--color-border)] cursor-pointer hover:bg-gray-50/50 transition-colors"
+              onClick={() => setAppointmentsExpanded(!appointmentsExpanded)}
+            >
               <h3 className="font-semibold text-[var(--color-text)] flex items-center gap-2">
+                {appointmentsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                 <span className="w-2 h-2 rounded-full bg-blue-400" />
                 Appointments
                 <span className="text-xs font-normal text-[var(--color-text-secondary)]">({appointments.length})</span>
               </h3>
             </div>
+            {appointmentsExpanded && <>
             {/* Filter chips */}
             <div className="flex items-center gap-1.5 px-4 py-2 border-b border-[var(--color-border)] bg-gray-50/50">
               {filterChips.map(chip => (
@@ -1602,142 +1612,112 @@ const ClientDetailPage: React.FC = () => {
                 {showAllAppointments ? 'Show less' : `Show all ${filteredAppts.length} appointments`}
               </button>
             )}
+            </>}
           </div>
         );
       })()}
 
-      {/* Compliance + Communication Log (inline in clinical tab) */}
-      <ComplianceSection clientId={clientId} />
+      {/* Communication Log */}
       <ProFeatureGate feature="communication_log">
         <CommunicationLogSection clientId={clientId} />
       </ProFeatureGate>
+
       </>}
 
       {/* ══════════ BILLING TAB ══════════ */}
       {activeTab === 'billing' && <>
-      {/* ══════════ ORDERS & CERTIFICATIONS ══════════ */}
+
+      {/* ══════════ DISCOUNTS & PACKAGES ══════════ */}
       <div className="card">
-        <div className="flex items-center justify-between p-5 border-b border-[var(--color-border)]">
-          <h2 className="text-lg font-semibold text-[var(--color-text)] flex items-center gap-2">
-            <ClipboardList size={20} className="text-[var(--color-primary)]" />
-            Orders & Certifications
-          </h2>
-          <div className="flex items-center gap-2">
-            <button
-              className="btn-primary btn-sm gap-1.5"
-              onClick={() => {
-                setUploadCategory('signed_poc');
-                setUploadPhysicianName(client.referring_physician || '');
-                setUploadReceivedDate(new Date().toISOString().split('T')[0]);
-                handleTabChange('documents');
-              }}
-            >
-              <Upload size={14} /> Upload Documents
-            </button>
-          </div>
+        <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
+          <h3 className="font-semibold text-[var(--color-text)] flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400" />
+            Discounts & Packages
+          </h3>
+          <button
+            className="btn-ghost btn-sm text-xs gap-1"
+            onClick={() => setShowDiscountModal(true)}
+          >
+            <Plus size={12} /> Add Discount
+          </button>
         </div>
-        <div className="p-5">
-          {/* Current POC Status Card */}
-          {(() => {
-            const today = new Date().toISOString().split('T')[0];
-            const pocDocs = documents.filter(
-              (d) => (d.category === 'signed_poc' || d.category === 'recertification') && !d.deleted_at
-            ).sort((a, b) => (b.certification_period_end || '').localeCompare(a.certification_period_end || ''));
-            const currentPoc = pocDocs[0];
-
-            const daysBetween = (d1: string, d2: string) => {
-              const a = new Date(d1 + 'T00:00:00');
-              const b = new Date(d2 + 'T00:00:00');
-              return Math.ceil((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
-            };
-
-            const pocStatus = !currentPoc ? 'missing'
-              : currentPoc.certification_period_end && currentPoc.certification_period_end < today ? 'expired'
-              : currentPoc.certification_period_end && daysBetween(today, currentPoc.certification_period_end) <= 30 ? 'expiring'
-              : 'current';
-
-            return (
-              <div className="mb-5">
-                <div className={`flex items-start gap-3 p-4 rounded-lg border ${
-                  pocStatus === 'current' ? 'border-emerald-200 bg-emerald-50/50' :
-                  pocStatus === 'expiring' ? 'border-orange-200 bg-orange-50/50' :
-                  'border-red-200 bg-red-50/50'
-                }`}>
-                  <span className={`status-dot mt-1.5 ${
-                    pocStatus === 'current' ? 'status-dot--good' :
-                    pocStatus === 'expiring' ? 'status-dot--attention' :
-                    'status-dot--urgent'
-                  }`} />
-                  <div className="flex-1">
-                    <p className="text-sm font-semibold text-[var(--color-text)]">
-                      {pocStatus === 'current' && 'Current POC on file'}
-                      {pocStatus === 'expiring' && `POC expiring in ${currentPoc ? daysBetween(today, currentPoc.certification_period_end) : 0} days`}
-                      {pocStatus === 'expired' && 'POC expired'}
-                      {pocStatus === 'missing' && 'No POC on file'}
-                    </p>
-                    {currentPoc && (
-                      <div className="text-xs text-[var(--color-text-secondary)] mt-1 space-y-0.5">
-                        {currentPoc.certification_period_start && currentPoc.certification_period_end && (
-                          <p>Certification Period: {formatDate(currentPoc.certification_period_start)} — {formatDate(currentPoc.certification_period_end)}</p>
-                        )}
-                        {currentPoc.physician_name && <p>Physician: {currentPoc.physician_name}</p>}
-                        {currentPoc.received_date && <p>Received: {formatDate(currentPoc.received_date)}</p>}
-                      </div>
-                    )}
-                    {pocStatus === 'missing' && (
-                      <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                        Upload a signed Plan of Care to begin tracking certifications.
-                      </p>
-                    )}
-                  </div>
+        <div className="p-4">
+          {activeDiscounts.map((disc) => (
+            <div key={disc.id} className="mb-3 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <ClientDiscountBadge discount={disc} />
+                  {disc.notes && (
+                    <span className="text-xs text-[var(--color-text-secondary)]">{disc.notes}</span>
+                  )}
                 </div>
+                <button
+                  className="text-xs text-red-500 hover:text-red-700"
+                  onClick={async () => {
+                    await window.api.clientDiscounts.update(disc.id, { status: 'cancelled' });
+                    loadData();
+                  }}
+                >
+                  Cancel
+                </button>
               </div>
-            );
-          })()}
-
-          {/* Certification History */}
-          {(() => {
-            const certDocs = documents.filter(
-              (d) => (d.category === 'signed_poc' || d.category === 'recertification') && !d.deleted_at
-            ).sort((a, b) => (b.certification_period_end || '').localeCompare(a.certification_period_end || ''));
-
-            if (certDocs.length === 0) {
-              return (
-                <div className="py-6 text-center text-sm text-[var(--color-text-secondary)]">
-                  No certification documents uploaded yet.
-                </div>
-              );
-            }
-
-            return (
-              <div className="space-y-2">
-                <h3 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">Certification History</h3>
-                {certDocs.map((doc) => (
-                  <div key={doc.id} className="flex items-center justify-between p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <FileText size={16} className="text-[var(--color-text-secondary)] shrink-0" />
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-[var(--color-text)]">
-                          {doc.category === 'signed_poc' ? 'Signed POC' : 'Recertification'}
-                          {doc.physician_name && ` — ${doc.physician_name}`}
-                        </p>
-                        <div className="flex items-center gap-3 mt-0.5 text-xs text-[var(--color-text-secondary)]">
-                          {doc.certification_period_start && doc.certification_period_end && (
-                            <span>{formatDate(doc.certification_period_start)} to {formatDate(doc.certification_period_end)}</span>
-                          )}
-                          {doc.sent_date && <span>Sent: {formatDate(doc.sent_date)}</span>}
-                          {doc.received_date && <span>Received: {formatDate(doc.received_date)}</span>}
+              {(disc.discount_type === 'package' || disc.discount_type === 'flat_rate') && (
+                <div className="mt-2">
+                  {(() => {
+                    const total = disc.discount_type === 'package'
+                      ? disc.total_sessions || 0
+                      : disc.flat_rate_sessions || 0;
+                    const used = disc.discount_type === 'package'
+                      ? disc.sessions_used || 0
+                      : disc.flat_rate_sessions_used || 0;
+                    const pct = total > 0 ? (used / total) * 100 : 0;
+                    return (
+                      <div>
+                        <div className="flex justify-between text-xs text-[var(--color-text-secondary)] mb-1">
+                          <span>{used} of {total} sessions used</span>
+                          <span>{total - used} remaining</span>
+                        </div>
+                        <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all ${pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                            style={{ width: `${Math.min(100, pct)}%` }}
+                          />
                         </div>
                       </div>
-                    </div>
-                    <button className="btn-ghost btn-sm" onClick={() => handleOpenDocument(doc.id)}>
-                      <Eye size={14} />
-                    </button>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+          ))}
+
+          {clientDiscounts.filter(d => d.status !== 'active').length > 0 && (
+            <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+              {clientDiscounts.filter(d => d.status !== 'active').slice(0, 3).map(d => (
+                <div key={d.id} className="flex items-center justify-between px-4 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-[var(--color-text-secondary)]">{d.label || d.discount_type}</span>
+                    <span className={`badge text-xs ${
+                      d.status === 'exhausted' ? 'bg-gray-100 text-gray-600' :
+                      d.status === 'expired' ? 'bg-amber-100 text-amber-700' :
+                      'bg-red-100 text-red-600'
+                    }`}>
+                      {d.status}
+                    </span>
                   </div>
-                ))}
-              </div>
-            );
-          })()}
+                  <span className="text-xs text-[var(--color-text-secondary)]">
+                    {d.created_at ? new Date(d.created_at).toLocaleDateString() : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {clientDiscounts.length === 0 && activeDiscounts.length === 0 && (
+            <div className="rounded-lg border border-dashed border-[var(--color-border)] p-4 text-center text-sm text-[var(--color-text-secondary)]">
+              No discounts or packages. Add one to offer special pricing.
+            </div>
+          )}
         </div>
       </div>
 
@@ -1897,7 +1877,7 @@ const ClientDetailPage: React.FC = () => {
 
           {/* Recent Invoices - Clickable */}
           <div className="mb-6">
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between px-4 py-2.5 -mx-5 bg-gray-50 border-y border-[var(--color-border)] mb-3">
               <h4 className="text-sm font-semibold text-[var(--color-text)]">Recent Invoices</h4>
               <button className="text-xs text-[var(--color-primary)] hover:underline" onClick={() => navigate('/billing?tab=invoices')}>
                 View All
@@ -1992,7 +1972,7 @@ const ClientDetailPage: React.FC = () => {
 
           {/* Recent Payments - Clickable */}
           <div>
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between px-4 py-2.5 -mx-5 bg-gray-50 border-y border-[var(--color-border)] mb-3">
               <h4 className="text-sm font-semibold text-[var(--color-text)]">Recent Payments</h4>
               <button className="text-xs text-[var(--color-primary)] hover:underline" onClick={() => navigate('/billing?tab=payments')}>
                 View All
@@ -2024,95 +2004,6 @@ const ClientDetailPage: React.FC = () => {
             )}
           </div>
 
-          {/* Discounts & Packages */}
-          <div className="mt-6">
-            <div className="flex items-center justify-between mb-3">
-              <h4 className="text-sm font-semibold text-[var(--color-text)]">Discounts & Packages</h4>
-              <button
-                className="btn-ghost btn-sm text-xs gap-1"
-                onClick={() => setShowDiscountModal(true)}
-              >
-                <Plus size={12} /> Add Discount
-              </button>
-            </div>
-
-            {activeDiscounts.map((disc) => (
-              <div key={disc.id} className="mb-3 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <ClientDiscountBadge discount={disc} />
-                    {disc.notes && (
-                      <span className="text-xs text-[var(--color-text-secondary)]">{disc.notes}</span>
-                    )}
-                  </div>
-                  <button
-                    className="text-xs text-red-500 hover:text-red-700"
-                    onClick={async () => {
-                      await window.api.clientDiscounts.update(disc.id, { status: 'cancelled' });
-                      loadData();
-                    }}
-                  >
-                    Cancel
-                  </button>
-                </div>
-                {(disc.discount_type === 'package' || disc.discount_type === 'flat_rate') && (
-                  <div className="mt-2">
-                    {(() => {
-                      const total = disc.discount_type === 'package'
-                        ? disc.total_sessions || 0
-                        : disc.flat_rate_sessions || 0;
-                      const used = disc.discount_type === 'package'
-                        ? disc.sessions_used || 0
-                        : disc.flat_rate_sessions_used || 0;
-                      const pct = total > 0 ? (used / total) * 100 : 0;
-                      return (
-                        <div>
-                          <div className="flex justify-between text-xs text-[var(--color-text-secondary)] mb-1">
-                            <span>{used} of {total} sessions used</span>
-                            <span>{total - used} remaining</span>
-                          </div>
-                          <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full rounded-full transition-all ${pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                              style={{ width: `${Math.min(100, pct)}%` }}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
-                )}
-              </div>
-            ))}
-
-            {clientDiscounts.filter(d => d.status !== 'active').length > 0 && (
-              <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
-                {clientDiscounts.filter(d => d.status !== 'active').slice(0, 3).map(d => (
-                  <div key={d.id} className="flex items-center justify-between px-4 py-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-[var(--color-text-secondary)]">{d.label || d.discount_type}</span>
-                      <span className={`badge text-xs ${
-                        d.status === 'exhausted' ? 'bg-gray-100 text-gray-600' :
-                        d.status === 'expired' ? 'bg-amber-100 text-amber-700' :
-                        'bg-red-100 text-red-600'
-                      }`}>
-                        {d.status}
-                      </span>
-                    </div>
-                    <span className="text-xs text-[var(--color-text-secondary)]">
-                      {d.created_at ? new Date(d.created_at).toLocaleDateString() : ''}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {clientDiscounts.length === 0 && activeDiscounts.length === 0 && (
-              <div className="rounded-lg border border-dashed border-[var(--color-border)] p-4 text-center text-sm text-[var(--color-text-secondary)]">
-                No discounts or packages. Add one to offer special pricing.
-              </div>
-            )}
-          </div>
         </div>
       </div>
 
@@ -2120,7 +2011,142 @@ const ClientDetailPage: React.FC = () => {
       </>}
 
       {/* ══════════ DOCUMENTS TAB ══════════ */}
-      {activeTab === 'documents' && (
+      {activeTab === 'documents' && <>
+
+      {/* ══════════ ORDERS & CERTIFICATIONS ══════════ */}
+      <div className="card">
+        <div className="flex items-center justify-between p-5 border-b border-[var(--color-border)]">
+          <h2 className="text-lg font-semibold text-[var(--color-text)] flex items-center gap-2">
+            <ClipboardList size={20} className="text-[var(--color-primary)]" />
+            Orders & Certifications
+          </h2>
+          <div className="flex items-center gap-2">
+            <label className="btn-primary btn-sm gap-1.5 cursor-pointer">
+              <Upload size={14} /> Upload POC
+              <input
+                type="file"
+                className="hidden"
+                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.bmp,.tiff"
+                onChange={async (e) => {
+                  e.target.value = '';
+                  setUploadCategory('signed_poc');
+                  setUploadPhysicianName(client.referring_physician || '');
+                  setUploadReceivedDate(new Date().toISOString().split('T')[0]);
+                  await handleUploadDocument({
+                    category: 'signed_poc' as ClientDocumentCategory,
+                    physician_name: client.referring_physician || undefined,
+                    received_date: new Date().toISOString().split('T')[0],
+                  });
+                }}
+              />
+            </label>
+          </div>
+        </div>
+        <div className="p-5">
+          {/* Current POC Status Card */}
+          {(() => {
+            const today = new Date().toISOString().split('T')[0];
+            const pocDocs = documents.filter(
+              (d) => (d.category === 'signed_poc' || d.category === 'recertification') && !d.deleted_at
+            ).sort((a, b) => (b.certification_period_end || '').localeCompare(a.certification_period_end || ''));
+            const currentPoc = pocDocs[0];
+
+            const daysBetween = (d1: string, d2: string) => {
+              const a = new Date(d1 + 'T00:00:00');
+              const b = new Date(d2 + 'T00:00:00');
+              return Math.ceil((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
+            };
+
+            const pocStatus = !currentPoc ? 'missing'
+              : currentPoc.certification_period_end && currentPoc.certification_period_end < today ? 'expired'
+              : currentPoc.certification_period_end && daysBetween(today, currentPoc.certification_period_end) <= 30 ? 'expiring'
+              : 'current';
+
+            return (
+              <div className="mb-5">
+                <div className={`flex items-start gap-3 p-4 rounded-lg border ${
+                  pocStatus === 'current' ? 'border-emerald-200 bg-emerald-50/50' :
+                  pocStatus === 'expiring' ? 'border-orange-200 bg-orange-50/50' :
+                  'border-red-200 bg-red-50/50'
+                }`}>
+                  <span className={`status-dot mt-1.5 ${
+                    pocStatus === 'current' ? 'status-dot--good' :
+                    pocStatus === 'expiring' ? 'status-dot--attention' :
+                    'status-dot--urgent'
+                  }`} />
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-[var(--color-text)]">
+                      {pocStatus === 'current' && 'Current POC on file'}
+                      {pocStatus === 'expiring' && `POC expiring in ${currentPoc ? daysBetween(today, currentPoc.certification_period_end) : 0} days`}
+                      {pocStatus === 'expired' && 'POC expired'}
+                      {pocStatus === 'missing' && 'No POC on file'}
+                    </p>
+                    {currentPoc && (
+                      <div className="text-xs text-[var(--color-text-secondary)] mt-1 space-y-0.5">
+                        {currentPoc.certification_period_start && currentPoc.certification_period_end && (
+                          <p>Certification Period: {formatDate(currentPoc.certification_period_start)} — {formatDate(currentPoc.certification_period_end)}</p>
+                        )}
+                        {currentPoc.physician_name && <p>Physician: {currentPoc.physician_name}</p>}
+                        {currentPoc.received_date && <p>Received: {formatDate(currentPoc.received_date)}</p>}
+                      </div>
+                    )}
+                    {pocStatus === 'missing' && (
+                      <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+                        Upload a signed Plan of Care to begin tracking certifications.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Certification History */}
+          {(() => {
+            const certDocs = documents.filter(
+              (d) => (d.category === 'signed_poc' || d.category === 'recertification') && !d.deleted_at
+            ).sort((a, b) => (b.certification_period_end || '').localeCompare(a.certification_period_end || ''));
+
+            if (certDocs.length === 0) {
+              return (
+                <div className="py-6 text-center text-sm text-[var(--color-text-secondary)]">
+                  No certification documents uploaded yet.
+                </div>
+              );
+            }
+
+            return (
+              <div className="space-y-2">
+                <h3 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">Certification History</h3>
+                {certDocs.map((doc) => (
+                  <div key={doc.id} className="flex items-center justify-between p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <FileText size={16} className="text-[var(--color-text-secondary)] shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-[var(--color-text)]">
+                          {doc.category === 'signed_poc' ? 'Signed POC' : 'Recertification'}
+                          {doc.physician_name && ` — ${doc.physician_name}`}
+                        </p>
+                        <div className="flex items-center gap-3 mt-0.5 text-xs text-[var(--color-text-secondary)]">
+                          {doc.certification_period_start && doc.certification_period_end && (
+                            <span>{formatDate(doc.certification_period_start)} to {formatDate(doc.certification_period_end)}</span>
+                          )}
+                          {doc.sent_date && <span>Sent: {formatDate(doc.sent_date)}</span>}
+                          {doc.received_date && <span>Received: {formatDate(doc.received_date)}</span>}
+                        </div>
+                      </div>
+                    </div>
+                    <button className="btn-ghost btn-sm" onClick={() => handleOpenDocument(doc.id)}>
+                      <Eye size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+        </div>
+      </div>
+
         <div className="card">
           <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
             <h3 className="text-lg font-semibold text-[var(--color-text)] flex items-center gap-2">
@@ -2211,7 +2237,7 @@ const ClientDetailPage: React.FC = () => {
             )}
           </div>
         </div>
-      )}
+      </>}
 
       {/* ══════════ DISCOUNT MODAL ══════════ */}
       {showDiscountModal && (
