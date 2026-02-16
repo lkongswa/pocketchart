@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { DEFAULT_INTAKE_TEMPLATES } from '../shared/intakeTemplates';
 // V2: Using better-sqlite3 for plaintext mode. @journeyapps/sqlcipher is kept as a dependency
 // for future encryption re-enablement but is not used in V2.
 // Alias for compatibility with existing code that references SqlcipherDatabase
@@ -51,6 +52,10 @@ const VALID_TABLES = new Set([
   // Dashboard workspace
   'dashboard_notes', 'dashboard_todos',
   'custom_patterns',
+  // V4 Fax & Intake Forms tables
+  'physicians', 'fax_log', 'intake_form_templates',
+  // Waitlist
+  'waitlist',
 ]);
 
 export function getDataPath(): string {
@@ -1898,6 +1903,109 @@ function runMigrations(): void {
         }
       },
     },
+    {
+      version: 44,
+      description: 'Add physicians directory, fax log, intake form templates, and client referring columns',
+      up: () => {
+        // Physicians directory
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS physicians (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            npi TEXT DEFAULT '',
+            fax_number TEXT DEFAULT '',
+            phone TEXT DEFAULT '',
+            specialty TEXT DEFAULT '',
+            clinic_name TEXT DEFAULT '',
+            address TEXT DEFAULT '',
+            city TEXT DEFAULT '',
+            state TEXT DEFAULT '',
+            zip TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            is_favorite INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT (datetime('now')),
+            updated_at DATETIME DEFAULT (datetime('now')),
+            deleted_at DATETIME DEFAULT NULL
+          )
+        `);
+
+        // Fax log
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS fax_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            direction TEXT NOT NULL CHECK(direction IN ('inbound', 'outbound')),
+            client_id INTEGER DEFAULT NULL REFERENCES clients(id),
+            physician_id INTEGER DEFAULT NULL REFERENCES physicians(id),
+            fax_number TEXT DEFAULT '',
+            document_id INTEGER DEFAULT NULL REFERENCES client_documents(id),
+            srfax_id TEXT DEFAULT '',
+            status TEXT DEFAULT 'queued',
+            pages INTEGER DEFAULT 0,
+            sent_at DATETIME DEFAULT NULL,
+            received_at DATETIME DEFAULT NULL,
+            matched_confidence TEXT DEFAULT '',
+            error_message TEXT DEFAULT '',
+            created_at DATETIME DEFAULT (datetime('now'))
+          )
+        `);
+
+        // Intake form templates
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS intake_form_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            slug TEXT NOT NULL UNIQUE,
+            description TEXT DEFAULT '',
+            sections TEXT DEFAULT '[]',
+            is_active INTEGER DEFAULT 1,
+            sort_order INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT (datetime('now')),
+            updated_at DATETIME DEFAULT (datetime('now'))
+          )
+        `);
+
+        // New client columns for physician directory linkage
+        if (!columnExists('clients', 'referring_fax')) {
+          db.exec("ALTER TABLE clients ADD COLUMN referring_fax TEXT DEFAULT ''");
+        }
+        if (!columnExists('clients', 'referring_physician_id')) {
+          db.exec("ALTER TABLE clients ADD COLUMN referring_physician_id INTEGER DEFAULT NULL REFERENCES physicians(id)");
+        }
+
+        // Seed default intake form templates
+        const insertTemplate = db.prepare(
+          'INSERT OR IGNORE INTO intake_form_templates (name, slug, description, sections, is_active, sort_order) VALUES (?, ?, ?, ?, 1, ?)'
+        );
+        for (const tmpl of DEFAULT_INTAKE_TEMPLATES) {
+          insertTemplate.run(tmpl.name, tmpl.slug, tmpl.description, JSON.stringify(tmpl.sections), tmpl.sort_order);
+        }
+      },
+    },
+    {
+      version: 45,
+      description: 'Add waitlist table for prospective client pipeline',
+      up: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS waitlist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            first_name TEXT NOT NULL DEFAULT '',
+            last_name TEXT NOT NULL DEFAULT '',
+            phone TEXT NOT NULL DEFAULT '',
+            email TEXT NOT NULL DEFAULT '',
+            discipline TEXT NOT NULL DEFAULT '',
+            referral_source TEXT NOT NULL DEFAULT '',
+            notes TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'waiting',
+            priority INTEGER NOT NULL DEFAULT 0,
+            last_contacted DATETIME DEFAULT NULL,
+            converted_client_id INTEGER DEFAULT NULL REFERENCES clients(id),
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            deleted_at DATETIME DEFAULT NULL
+          )
+        `);
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
@@ -1994,6 +2102,23 @@ function createIndexes(): void {
     CREATE INDEX IF NOT EXISTS idx_progress_report_goals_goal_id ON progress_report_goals(goal_id);
     CREATE INDEX IF NOT EXISTS idx_progress_report_goals_deleted_at ON progress_report_goals(deleted_at);
     CREATE INDEX IF NOT EXISTS idx_appointments_visit_type ON appointments(visit_type);
+  `);
+
+  // V4 Fax & Intake Forms indexes
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_physicians_name ON physicians(name);
+    CREATE INDEX IF NOT EXISTS idx_physicians_deleted_at ON physicians(deleted_at);
+    CREATE INDEX IF NOT EXISTS idx_fax_log_client_id ON fax_log(client_id);
+    CREATE INDEX IF NOT EXISTS idx_fax_log_direction ON fax_log(direction);
+    CREATE INDEX IF NOT EXISTS idx_fax_log_status ON fax_log(status);
+    CREATE INDEX IF NOT EXISTS idx_intake_form_templates_slug ON intake_form_templates(slug);
+  `);
+
+  // Waitlist indexes
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_waitlist_status ON waitlist(status);
+    CREATE INDEX IF NOT EXISTS idx_waitlist_deleted_at ON waitlist(deleted_at);
+    CREATE INDEX IF NOT EXISTS idx_waitlist_discipline ON waitlist(discipline);
   `);
 }
 

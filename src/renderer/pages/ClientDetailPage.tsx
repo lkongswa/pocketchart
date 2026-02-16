@@ -318,6 +318,11 @@ const ClientDetailPage: React.FC = () => {
   const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
 
+  // Remove client (empty chart only)
+  const [canRemoveClient, setCanRemoveClient] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [removing, setRemoving] = useState(false);
+
   // Chart completeness — must be called before any early returns
   const chartCompleteness = useChartCompleteness(client);
 
@@ -411,6 +416,28 @@ const ClientDetailPage: React.FC = () => {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Check if this client can be removed (empty chart only)
+  useEffect(() => {
+    if (!clientId) return;
+    window.api.clients.canRemove(clientId).then((result) => {
+      setCanRemoveClient(result.canRemove);
+    }).catch(() => setCanRemoveClient(false));
+  }, [clientId, notes, evaluations, appointments, goals]);
+
+  const handleRemoveClient = async () => {
+    if (!clientId) return;
+    setRemoving(true);
+    try {
+      await window.api.clients.remove(clientId);
+      navigate('/clients');
+    } catch (err) {
+      console.error('Failed to remove client:', err);
+    } finally {
+      setRemoving(false);
+      setConfirmRemove(false);
+    }
+  };
 
   // Listen for background payment status updates
   useEffect(() => {
@@ -825,6 +852,34 @@ const ClientDetailPage: React.FC = () => {
               <button className="btn-ghost btn-sm gap-1.5 text-green-600 hover:bg-green-50" onClick={handleReactivate}>
                 <Archive size={14} /> Reactivate
               </button>
+            )}
+            {canRemoveClient && (
+              !confirmRemove ? (
+                <button
+                  className="btn-ghost btn-sm gap-1.5 text-red-500 hover:bg-red-50"
+                  onClick={() => setConfirmRemove(true)}
+                  title="Remove this client (no clinical records exist)"
+                >
+                  <Trash2 size={14} /> Remove
+                </button>
+              ) : (
+                <span className="flex items-center gap-1.5 text-xs">
+                  <span className="text-red-600 font-medium">Remove client?</span>
+                  <button
+                    className="btn-ghost btn-sm text-red-600 font-semibold hover:bg-red-50"
+                    onClick={handleRemoveClient}
+                    disabled={removing}
+                  >
+                    {removing ? 'Removing...' : 'Yes'}
+                  </button>
+                  <button
+                    className="btn-ghost btn-sm text-[var(--color-text-secondary)]"
+                    onClick={() => setConfirmRemove(false)}
+                  >
+                    No
+                  </button>
+                </span>
+              )
             )}
           </div>
         </div>

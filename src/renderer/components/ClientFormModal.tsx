@@ -18,6 +18,9 @@ import {
 } from '../../shared/types';
 import { searchICD10, lookupICD10, type ICD10Entry } from '../../shared/icd10Data';
 import CptCombobox from './CptCombobox';
+import PhysicianCombobox from './PhysicianCombobox';
+import PhysicianDirectoryModal from './PhysicianDirectoryModal';
+import type { Physician } from '../../shared/types';
 
 // Auto-capitalize names: "john doe" → "John Doe", handles hyphens/apostrophes
 const titleCase = (str: string): string =>
@@ -119,6 +122,8 @@ interface FormData {
   referring_physician: string;
   referring_npi: string;
   referring_physician_qualifier: ReferringQualifier;
+  referring_fax: string;
+  referring_physician_id: number | null;
   referral_source: string;
   // CMS-1500 claim fields
   onset_date: string;
@@ -164,6 +169,8 @@ const emptyForm: FormData = {
   referring_physician: '',
   referring_npi: '',
   referring_physician_qualifier: 'DN',
+  referring_fax: '',
+  referring_physician_id: null,
   referral_source: '',
   onset_date: '',
   onset_qualifier: '431',
@@ -202,6 +209,7 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
   const [form, setForm] = useState<FormData>(emptyForm);
   const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>({});
   const [saving, setSaving] = useState(false);
+  const [waitlistPrefill, setWaitlistPrefill] = useState<{ waitlistId: number; notes?: string } | null>(null);
 
   // Helper for chart completeness highlighting
   const shouldHighlight = (section: string) => highlightSections.includes(section);
@@ -213,6 +221,8 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
   const [secDxSuggestions, setSecDxSuggestions] = useState<ICD10Entry[]>([]);
   const [showSecDxSuggestions, setShowSecDxSuggestions] = useState(false);
   const [showClaimInfo, setShowClaimInfo] = useState(false);
+  const [showPhysicianDir, setShowPhysicianDir] = useState(false);
+  const [newPhysicianName, setNewPhysicianName] = useState('');
   const dxInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -245,6 +255,8 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
         referring_physician: client.referring_physician,
         referring_npi: client.referring_npi,
         referring_physician_qualifier: (client.referring_physician_qualifier as ReferringQualifier) || 'DN',
+        referring_fax: client.referring_fax || '',
+        referring_physician_id: client.referring_physician_id || null,
         referral_source: client.referral_source || '',
         onset_date: client.onset_date || '',
         onset_qualifier: (client.onset_qualifier as OnsetQualifier) || '431',
@@ -262,12 +274,42 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
         status: client.status,
       });
     } else {
-      // New client: default discipline from practice record
+      // New client: check for waitlist pre-fill data, then default discipline from practice
+      const waitlistRaw = sessionStorage.getItem('waitlist_prefill');
+      const waitlistData = waitlistRaw ? JSON.parse(waitlistRaw) : null;
+
       window.api.practice.get().then((practice: any) => {
         const practiceDiscipline = practice?.discipline || 'PT';
-        setForm({ ...emptyForm, discipline: practiceDiscipline });
+        if (waitlistData) {
+          setForm({
+            ...emptyForm,
+            first_name: waitlistData.first_name || '',
+            last_name: waitlistData.last_name || '',
+            phone: waitlistData.phone || '',
+            email: waitlistData.email || '',
+            discipline: waitlistData.discipline || practiceDiscipline,
+            referral_source: waitlistData.referral_source || '',
+          });
+          setWaitlistPrefill(waitlistData);
+        } else {
+          setForm({ ...emptyForm, discipline: practiceDiscipline });
+          setWaitlistPrefill(null);
+        }
       }).catch(() => {
-        setForm(emptyForm);
+        if (waitlistData) {
+          setForm({
+            ...emptyForm,
+            first_name: waitlistData.first_name || '',
+            last_name: waitlistData.last_name || '',
+            phone: waitlistData.phone || '',
+            email: waitlistData.email || '',
+            referral_source: waitlistData.referral_source || '',
+          });
+          setWaitlistPrefill(waitlistData);
+        } else {
+          setForm(emptyForm);
+          setWaitlistPrefill(null);
+        }
       });
     }
     setErrors({});
@@ -412,6 +454,16 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
         saved = await window.api.clients.update(client.id, submitData);
       } else {
         saved = await window.api.clients.create(submitData);
+        // Link waitlist entry to newly created client
+        if (waitlistPrefill?.waitlistId) {
+          try {
+            await window.api.waitlist.linkClient(waitlistPrefill.waitlistId, saved.id);
+          } catch (err) {
+            console.error('Failed to link waitlist entry:', err);
+          }
+          sessionStorage.removeItem('waitlist_prefill');
+          setWaitlistPrefill(null);
+        }
       }
       onSave(saved);
       onClose();
@@ -449,6 +501,13 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
+          {/* Waitlist referral notes banner */}
+          {waitlistPrefill?.notes && (
+            <div className="rounded-lg border border-teal-200 bg-teal-50/50 p-3">
+              <h4 className="text-xs font-semibold text-teal-700 mb-1">Referral Notes from Waitlist</h4>
+              <p className="text-xs text-teal-800 whitespace-pre-wrap">{waitlistPrefill.notes}</p>
+            </div>
+          )}
           {/* Basic Info */}
           <div className={`rounded-lg border-l-4 p-4 ${shouldHighlight('demographics') ? 'border-amber-400 bg-amber-50/40 ring-2 ring-amber-300' : 'border-blue-400 bg-blue-50/30'}`}>
             <h3 className={`section-title ${shouldHighlight('demographics') ? 'text-amber-700' : 'text-blue-700'}`}>Basic Information</h3>
@@ -879,15 +938,31 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
                 </select>
               </div>
               <div>
-                <label className="label" htmlFor="referring_physician">Referring Physician</label>
-                <input
-                  id="referring_physician"
-                  name="referring_physician"
-                  className="input"
+                <label className="label">Referring Physician</label>
+                <PhysicianCombobox
                   value={form.referring_physician}
-                  onChange={handleChange}
-                  onBlur={handleBlurAutoCapitalize}
-                  placeholder="Dr. Smith"
+                  physicianId={form.referring_physician_id}
+                  onChange={(physician, name) => {
+                    if (physician) {
+                      setForm(prev => ({
+                        ...prev,
+                        referring_physician: physician.name,
+                        referring_npi: physician.npi || prev.referring_npi,
+                        referring_fax: physician.fax_number || prev.referring_fax,
+                        referring_physician_id: physician.id,
+                      }));
+                    } else {
+                      setForm(prev => ({
+                        ...prev,
+                        referring_physician: name,
+                        referring_physician_id: null,
+                      }));
+                    }
+                  }}
+                  onNewPhysician={(name) => {
+                    setNewPhysicianName(name);
+                    setShowPhysicianDir(true);
+                  }}
                 />
               </div>
               <div>
@@ -902,6 +977,18 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
                   placeholder="10-digit NPI"
                 />
                 {form.referring_npi && !/^\d{10}$/.test(form.referring_npi) && <p className="text-xs text-red-500 mt-1">NPI must be exactly 10 digits</p>}
+              </div>
+              <div>
+                <label className="label" htmlFor="referring_fax">Referring Fax</label>
+                <input
+                  id="referring_fax"
+                  name="referring_fax"
+                  className="input"
+                  type="tel"
+                  value={form.referring_fax}
+                  onChange={handleChange}
+                  placeholder="(555) 123-4567"
+                />
               </div>
               <div>
                 <label className="label" htmlFor="referring_physician_qualifier">Provider Qualifier</label>
@@ -1097,6 +1184,21 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
           </div>
         </form>
       </div>
+
+      <PhysicianDirectoryModal
+        isOpen={showPhysicianDir}
+        onClose={() => { setShowPhysicianDir(false); setNewPhysicianName(''); }}
+        initialPhysicianName={newPhysicianName}
+        onSelect={(physician) => {
+          setForm(prev => ({
+            ...prev,
+            referring_physician: physician.name,
+            referring_npi: physician.npi || prev.referring_npi,
+            referring_fax: physician.fax_number || prev.referring_fax,
+            referring_physician_id: physician.id,
+          }));
+        }}
+      />
     </div>
   );
 };

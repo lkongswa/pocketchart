@@ -20,8 +20,11 @@ import {
   Lock,
   MessageSquare,
   CheckCircle,
+  Printer,
 } from 'lucide-react';
 import FeedbackModal from './components/FeedbackModal';
+import FaxPage from './pages/FaxPage';
+import IntakeFormsPage from './pages/IntakeFormsPage';
 import DashboardPage from './pages/DashboardPage';
 import ClientsPage from './pages/ClientsPage';
 import ClientDetailPage from './pages/ClientDetailPage';
@@ -84,6 +87,8 @@ const navGroups: NavGroup[] = [
     color: '#2563eb', // deep blue
     items: [
       { to: '/billing', label: 'Billing', icon: <DollarSign size={18} /> },
+      { to: '/fax', label: 'Fax Center', icon: <Printer size={18} /> },
+      { to: '/intake-forms', label: 'Intake Forms', icon: <FileText size={18} /> },
       { to: '/entities', label: 'Contracts', icon: <Building2 size={18} />, matchPrefix: '/entities' },
       { to: '/mileage', label: 'Mileage', icon: <Car size={18} /> },
       { to: '/reports', label: 'Year-End Summary', icon: <FileSpreadsheet size={18} /> },
@@ -410,6 +415,8 @@ const router = createHashRouter([
       { path: '/entities', element: <ContractedEntitiesPage /> },
       { path: '/entities/:id', element: <EntityDetailPage /> },
       { path: '/vault', element: <VaultPage /> },
+      { path: '/fax', element: <FaxPage /> },
+      { path: '/intake-forms', element: <IntakeFormsPage /> },
       { path: '/mileage', element: <MileagePage /> },
       { path: '/reports', element: <YearEndSummaryPage /> },
       { path: '/help', element: <HelpPage /> },
@@ -630,6 +637,38 @@ const App: React.FC = () => {
       checkPendingPayments();
       interval = setInterval(checkPendingPayments, 5 * 60 * 1000);
     }, 5000);
+
+    return () => {
+      clearTimeout(startTimer);
+      if (interval) clearInterval(interval);
+    };
+  }, [dbReady]);
+
+  // Background fax status polling (every 3 minutes)
+  useEffect(() => {
+    if (!dbReady) return;
+
+    let interval: ReturnType<typeof setInterval> | null = null;
+
+    const checkFaxes = async () => {
+      try {
+        const hasSRFax = await window.api.secureStorage.exists('srfax_access_id');
+        if (!hasSRFax) return;
+
+        await window.api.fax.pollStatuses();
+        const result = await window.api.fax.pollInbox();
+        if (result.newFaxes > 0) {
+          setGlobalToast(`${result.newFaxes} new fax${result.newFaxes > 1 ? 'es' : ''} received`);
+        }
+      } catch (err) {
+        console.error('Background fax check failed:', err);
+      }
+    };
+
+    const startTimer = setTimeout(() => {
+      checkFaxes();
+      interval = setInterval(checkFaxes, 3 * 60 * 1000);
+    }, 10000);
 
     return () => {
       clearTimeout(startTimer);

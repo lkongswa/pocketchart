@@ -157,6 +157,15 @@ export default function SettingsPage() {
   const [cms1500Saving, setCms1500Saving] = useState(false);
   const [cms1500TestPrinting, setCms1500TestPrinting] = useState(false);
 
+  // SRFax state
+  const [srfaxAccessId, setSrfaxAccessId] = useState('');
+  const [srfaxAccessPwd, setSrfaxAccessPwd] = useState('');
+  const [srfaxCallerId, setSrfaxCallerId] = useState('');
+  const [srfaxMaskedId, setSrfaxMaskedId] = useState<string | null>(null);
+  const [srfaxSaving, setSrfaxSaving] = useState(false);
+  const [srfaxTesting, setSrfaxTesting] = useState(false);
+  const [srfaxConfigured, setSrfaxConfigured] = useState(false);
+
   // Signature state
   const [signatureName, setSignatureName] = useState('');
   const [signatureCredentials, setSignatureCredentials] = useState('');
@@ -360,6 +369,16 @@ export default function SettingsPage() {
       return () => clearTimeout(timer);
     }
   }, [toast]);
+
+  // Load SRFax config status
+  useEffect(() => {
+    window.api.secureStorage.exists('srfax_access_id').then((exists: boolean) => {
+      setSrfaxConfigured(exists);
+      if (exists) {
+        window.api.secureStorage.getMasked('srfax_access_id').then((masked: string | null) => setSrfaxMaskedId(masked));
+      }
+    });
+  }, []);
 
   const loadPractice = useCallback(async () => {
     try {
@@ -2300,6 +2319,111 @@ export default function SettingsPage() {
           {licenseSuccess && (
             <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
               {licenseSuccess}
+            </div>
+          )}
+        </div>
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        icon={<Printer className="w-5 h-5" />}
+        title="Fax (SRFax)"
+        description={srfaxConfigured ? `Account: ${srfaxMaskedId || 'Configured'}` : 'Not configured'}
+        sectionId="settings-srfax"
+        isOpen={openSectionId === 'srfax'}
+        onToggle={() => toggleSection('srfax')}
+      >
+        <div className="space-y-4">
+          {srfaxConfigured ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-sm text-green-600">
+                <CheckCircle className="w-4 h-4" />
+                SRFax credentials configured
+              </div>
+              {srfaxMaskedId && <p className="text-xs text-[var(--color-text-secondary)]">Account ID: {srfaxMaskedId}</p>}
+              <button
+                type="button"
+                className="btn-danger text-sm"
+                onClick={async () => {
+                  await window.api.secureStorage.delete('srfax_access_id');
+                  await window.api.secureStorage.delete('srfax_access_pwd');
+                  await window.api.secureStorage.delete('srfax_caller_id');
+                  setSrfaxConfigured(false);
+                  setSrfaxMaskedId(null);
+                  setToast('SRFax credentials removed');
+                }}
+              >
+                Remove Credentials
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-sm text-[var(--color-text-secondary)]">
+                Connect your SRFax account to send and receive faxes. Visit{' '}
+                <span className="font-medium">srfax.com</span> to create an account.
+              </p>
+              <div className="grid grid-cols-1 gap-3">
+                <div>
+                  <label className="label">Account Number (Access ID)</label>
+                  <input
+                    type="text"
+                    className="input w-full"
+                    value={srfaxAccessId}
+                    onChange={(e) => setSrfaxAccessId(e.target.value)}
+                    placeholder="Your SRFax account number"
+                  />
+                </div>
+                <div>
+                  <label className="label">Password</label>
+                  <input
+                    type="password"
+                    className="input w-full"
+                    value={srfaxAccessPwd}
+                    onChange={(e) => setSrfaxAccessPwd(e.target.value)}
+                    placeholder="Your SRFax password"
+                  />
+                </div>
+                <div>
+                  <label className="label">Fax Number (Caller ID)</label>
+                  <input
+                    type="tel"
+                    className="input w-full"
+                    value={srfaxCallerId}
+                    onChange={(e) => setSrfaxCallerId(e.target.value)}
+                    placeholder="Your assigned fax number"
+                  />
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  className="btn-primary text-sm"
+                  disabled={!srfaxAccessId || !srfaxAccessPwd || srfaxSaving}
+                  onClick={async () => {
+                    setSrfaxSaving(true);
+                    try {
+                      await window.api.secureStorage.set('srfax_access_id', srfaxAccessId);
+                      await window.api.secureStorage.set('srfax_access_pwd', srfaxAccessPwd);
+                      if (srfaxCallerId) {
+                        await window.api.secureStorage.set('srfax_caller_id', srfaxCallerId);
+                      }
+                      setSrfaxConfigured(true);
+                      const masked = await window.api.secureStorage.getMasked('srfax_access_id');
+                      setSrfaxMaskedId(masked);
+                      setSrfaxAccessId('');
+                      setSrfaxAccessPwd('');
+                      setSrfaxCallerId('');
+                      setToast('SRFax credentials saved');
+                    } catch (err) {
+                      console.error('Failed to save SRFax credentials:', err);
+                      setToast('Failed to save credentials');
+                    } finally {
+                      setSrfaxSaving(false);
+                    }
+                  }}
+                >
+                  {srfaxSaving ? 'Saving...' : 'Save Credentials'}
+                </button>
+              </div>
             </div>
           )}
         </div>

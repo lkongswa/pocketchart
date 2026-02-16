@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Search, Plus, Users, Eye, Tag } from 'lucide-react';
 import type { Client, ClientStatus, Discipline } from '../../shared/types';
 import ClientFormModal from '../components/ClientFormModal';
@@ -27,6 +27,7 @@ const disciplineBadgeClass: Record<Discipline, string> = {
 
 const ClientsPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { guardAction, showExpiredModal, dismissExpiredModal } = useTrialGuard();
 
   const [clients, setClients] = useState<Client[]>([]);
@@ -36,6 +37,16 @@ const ClientsPage: React.FC = () => {
   const [disciplineFilter, setDisciplineFilter] = useState<string>('');
   const [modalOpen, setModalOpen] = useState(false);
   const [discountClientIds, setDiscountClientIds] = useState<Set<number>>(new Set());
+
+  // Auto-open modal for waitlist conversion
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('fromWaitlist') === '1') {
+      setModalOpen(true);
+      // Clean the URL param without triggering navigation
+      navigate('/clients', { replace: true });
+    }
+  }, [location.search]);
 
   const loadClients = useCallback(async () => {
     setLoading(true);

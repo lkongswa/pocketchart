@@ -57,6 +57,8 @@ const api = {
     create: (data: any) => ipcRenderer.invoke('clients:create', data),
     update: (id: number, data: any) => ipcRenderer.invoke('clients:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('clients:delete', id),
+    canRemove: (id: number) => ipcRenderer.invoke('clients:canRemove', id),
+    remove: (id: number) => ipcRenderer.invoke('clients:remove', id),
   },
 
   // Goals
@@ -479,6 +481,51 @@ const api = {
     list: (clientId: number) => ipcRenderer.invoke('communicationLog:list', clientId),
     create: (data: any) => ipcRenderer.invoke('communicationLog:create', data),
     delete: (id: number) => ipcRenderer.invoke('communicationLog:delete', id),
+  },
+
+  // ── Physician Directory ──
+  physicians: {
+    list: (filters?: { search?: string; favoritesOnly?: boolean }) => ipcRenderer.invoke('physicians:list', filters),
+    get: (id: number) => ipcRenderer.invoke('physicians:get', id),
+    create: (data: any) => ipcRenderer.invoke('physicians:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('physicians:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('physicians:delete', id),
+    search: (query: string) => ipcRenderer.invoke('physicians:search', query),
+  },
+
+  // ── Intake Forms ──
+  intakeForms: {
+    listTemplates: () => ipcRenderer.invoke('intakeForms:listTemplates'),
+    getTemplate: (id: number) => ipcRenderer.invoke('intakeForms:getTemplate', id),
+    updateTemplate: (id: number, data: any) => ipcRenderer.invoke('intakeForms:updateTemplate', id, data),
+    resetTemplate: (slug: string) => ipcRenderer.invoke('intakeForms:resetTemplate', slug),
+    generatePdf: (data: { templateIds: number[]; clientId?: number; fillable?: boolean }) => ipcRenderer.invoke('intakeForms:generatePdf', data),
+    savePdf: (data: { base64Pdf: string; filename: string }) => ipcRenderer.invoke('intakeForms:savePdf', data),
+    reorderTemplates: (ids: number[]) => ipcRenderer.invoke('intakeForms:reorderTemplates', ids),
+  },
+
+  // ── Fax ──
+  fax: {
+    send: (data: { documentId?: number; physicianId?: number; faxNumber: string; clientId?: number }) => ipcRenderer.invoke('fax:send', data),
+    getStatus: (faxLogId: number) => ipcRenderer.invoke('fax:getStatus', faxLogId),
+    listInbox: () => ipcRenderer.invoke('fax:listInbox'),
+    listOutbox: () => ipcRenderer.invoke('fax:listOutbox'),
+    retrieveFax: (srfaxId: string) => ipcRenderer.invoke('fax:retrieveFax', srfaxId),
+    matchToClient: (faxLogId: number, clientId: number) => ipcRenderer.invoke('fax:matchToClient', faxLogId, clientId),
+    pollStatuses: () => ipcRenderer.invoke('fax:pollStatuses'),
+    pollInbox: () => ipcRenderer.invoke('fax:pollInbox'),
+  },
+
+  // ── Waitlist (Pro) ──
+  waitlist: {
+    list: (filters?: { status?: string; discipline?: string }) => ipcRenderer.invoke('waitlist:list', filters),
+    create: (data: any) => ipcRenderer.invoke('waitlist:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('waitlist:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('waitlist:delete', id),
+    search: (query: string) => ipcRenderer.invoke('waitlist:search', query),
+    convertToClient: (id: number) => ipcRenderer.invoke('waitlist:convertToClient', id),
+    linkClient: (waitlistId: number, clientId: number) => ipcRenderer.invoke('waitlist:linkClient', waitlistId, clientId),
+    count: () => ipcRenderer.invoke('waitlist:count'),
   },
 
   // ── Dashboard ──

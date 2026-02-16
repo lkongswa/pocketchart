@@ -11,8 +11,10 @@ import {
   endOfMonth,
 } from 'date-fns';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Copy, Clipboard, Edit3, Trash2, X, Ban, AlertTriangle, ListTodo, ChevronRight, GripVertical, CheckCircle2, Undo2, Plus, FileText, Link2, Check } from 'lucide-react';
+import { Copy, Clipboard, Edit3, Trash2, X, Ban, AlertTriangle, ListTodo, ChevronRight, GripVertical, CheckCircle2, Undo2, Plus, FileText, Link2, Check, UserPlus, Lock } from 'lucide-react';
 import type { Appointment, Invoice, InvoiceItem, DashboardTodo, CalendarBlock, QuickLink } from '../../shared/types';
+import { useTier } from '../hooks/useTier';
+import WaitlistPanel from '../components/WaitlistPanel';
 import type { PaymentIndicator } from '../components/calendar/AppointmentBlock';
 import AppointmentModal from '../components/AppointmentModal';
 import TrialExpiredModal from '../components/TrialExpiredModal';
@@ -82,8 +84,10 @@ export default function CalendarPage() {
   const [showBilling, setShowBilling] = useLocalPreference('calendar-show-billing', false);
 
   // Sidebar tab state
-  type SidebarTab = 'tasks' | 'scratchpad' | 'links';
+  type SidebarTab = 'tasks' | 'scratchpad' | 'links' | 'waitlist';
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('tasks');
+  const { hasFeature } = useTier();
+  const canAccessWaitlist = hasFeature('waitlist');
   const [newTodoText, setNewTodoText] = useState('');
 
   // Scratchpad state
@@ -745,6 +749,7 @@ export default function CalendarPage() {
                 { key: 'tasks' as SidebarTab, label: 'Tasks', icon: <ListTodo size={13} /> },
                 { key: 'scratchpad' as SidebarTab, label: 'Pad', icon: <FileText size={13} /> },
                 { key: 'links' as SidebarTab, label: 'Links', icon: <Link2 size={13} /> },
+                { key: 'waitlist' as SidebarTab, label: 'Wait', icon: canAccessWaitlist ? <UserPlus size={13} /> : <><UserPlus size={13} /><Lock size={8} className="ml-0.5 opacity-60" /></> },
               ]).map((tab) => (
                 <button
                   key={tab.key}
@@ -931,6 +936,26 @@ export default function CalendarPage() {
                   )}
                 </div>
               </div>
+            )}
+
+            {sidebarTab === 'waitlist' && (
+              canAccessWaitlist ? (
+                <WaitlistPanel />
+              ) : (
+                <div className="flex flex-col items-center justify-center h-full px-6 text-center">
+                  <Lock size={24} className="text-gray-300 mb-2" />
+                  <p className="text-sm font-medium text-[var(--color-text)] mb-1">Waitlist is a Pro feature</p>
+                  <p className="text-xs text-[var(--color-text-secondary)] mb-3">
+                    Track prospective clients and convert them to charts with one click.
+                  </p>
+                  <button
+                    className="text-xs text-teal-600 hover:text-teal-700 font-medium"
+                    onClick={() => window.location.hash = '#/settings'}
+                  >
+                    Upgrade to Pro
+                  </button>
+                </div>
+              )
             )}
           </div>
           );

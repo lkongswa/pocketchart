@@ -122,8 +122,8 @@ const ExpandedGoalCard: React.FC<ExpandedGoalCardProps> = ({
   return (
     <div className={`${cardBg} rounded-xl border border-[var(--color-border)] border-l-[3.5px] ${borderColor} overflow-hidden shadow-sm`}>
       {/* ══ ZONE 1: HEADER BAR ══ */}
-      <div className={`flex items-center justify-between px-4 py-2 ${data.isCarriedOver ? 'bg-indigo-50/60' : 'bg-gray-50'} border-b border-[var(--color-border)]`}>
-        <div className="flex items-center gap-2">
+      <div className={`flex items-start justify-between gap-2 px-4 py-2 ${data.isCarriedOver ? 'bg-indigo-50/60' : 'bg-gray-50'} border-b border-[var(--color-border)]`}>
+        <div className="flex items-center gap-2 flex-wrap min-w-0">
           <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${typeBg}`}>
             GOAL {data.index + 1}
           </span>
@@ -206,7 +206,7 @@ const ExpandedGoalCard: React.FC<ExpandedGoalCardProps> = ({
             </div>
           )}
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 flex-shrink-0">
           {/* Pattern picker toggle */}
           {!disabled && onPatternSelect && (
             <button

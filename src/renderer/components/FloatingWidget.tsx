@@ -9,10 +9,14 @@ import {
   GripVertical,
   Check,
   Link2,
+  UserPlus,
+  Lock,
 } from 'lucide-react';
 import type { DashboardTodo, QuickLink } from '../../shared/types';
+import { useTier } from '../hooks/useTier';
+import WaitlistPanel from './WaitlistPanel';
 
-type WidgetTab = 'tasks' | 'scratchpad' | 'links';
+type WidgetTab = 'tasks' | 'scratchpad' | 'links' | 'waitlist';
 
 const POSITION_KEY = 'floatingWidgetPosition';
 const DEFAULT_POS = { x: -1, y: -1 }; // -1 signals "use default"
@@ -190,10 +194,14 @@ export default function FloatingWidget() {
     ? { right: 24, bottom: 24, left: 'auto' as const, top: 'auto' as const }
     : { left: position.x, top: position.y, right: 'auto' as const, bottom: 'auto' as const };
 
+  const { hasFeature } = useTier();
+  const canAccessWaitlist = hasFeature('waitlist');
+
   const tabs: { key: WidgetTab; label: string; icon: React.ReactNode }[] = [
     { key: 'tasks', label: 'Tasks', icon: <ListTodo size={13} /> },
     { key: 'scratchpad', label: 'Pad', icon: <FileText size={13} /> },
     { key: 'links', label: 'Links', icon: <Link2 size={13} /> },
+    { key: 'waitlist', label: 'Wait', icon: canAccessWaitlist ? <UserPlus size={13} /> : <><UserPlus size={13} /><Lock size={8} className="ml-0.5 opacity-60" /></> },
   ];
 
   return (
@@ -388,6 +396,26 @@ export default function FloatingWidget() {
                   )}
                 </div>
               </div>
+            )}
+
+            {activeTab === 'waitlist' && (
+              canAccessWaitlist ? (
+                <WaitlistPanel compact />
+              ) : (
+                <div className="flex flex-col items-center justify-center h-full px-6 text-center">
+                  <Lock size={24} className="text-gray-300 mb-2" />
+                  <p className="text-sm font-medium text-[var(--color-text)] mb-1">Waitlist is a Pro feature</p>
+                  <p className="text-xs text-[var(--color-text-secondary)] mb-3">
+                    Track prospective clients and convert them to charts with one click.
+                  </p>
+                  <button
+                    className="text-xs text-teal-600 hover:text-teal-700 font-medium"
+                    onClick={() => window.location.hash = '#/settings'}
+                  >
+                    Upgrade to Pro
+                  </button>
+                </div>
+              )
             )}
           </div>
         </div>

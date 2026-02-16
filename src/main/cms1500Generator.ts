@@ -862,26 +862,26 @@ function placePatientData(doc: jsPDF, data: CMS1500Data, opts: CMS1500Options) {
 
   const midX = (LEFT + RIGHT) / 2;
 
-  // Box 1a: Insured ID
-  doc.text(data.insuredId, ox(midX + 8, opts), oy(TOP + 22, opts));
+  // Box 1a: Insured ID — data entry area below checkbox row
+  doc.text(data.insuredId, ox(midX + 8, opts), oy(TOP + 36, opts));
 
-  // Box 2: Patient name
-  doc.text(data.patientName, ox(LEFT + 8, opts), oy(TOP + 50, opts));
+  // Box 2: Patient name — data entry area below label
+  doc.text(data.patientName, ox(LEFT + 8, opts), oy(TOP + 53, opts));
 
-  // Box 3: DOB
-  doc.text(data.patientDob, ox(midX + 8, opts), oy(TOP + 50, opts));
+  // Box 3: DOB — data entry area below label
+  doc.text(data.patientDob, ox(midX + 8, opts), oy(TOP + 53, opts));
   // Sex checkbox
   if (data.patientSex === 'M') doc.text('X', ox(midX + 161, opts), oy(TOP + 53, opts));
   if (data.patientSex === 'F') doc.text('X', ox(midX + 189, opts), oy(TOP + 53, opts));
 
-  // Box 4: Insured name
-  doc.text(data.insuredName, ox(LEFT + 8, opts), oy(TOP + 78, opts));
+  // Box 4: Insured name — data entry area below label
+  doc.text(data.insuredName, ox(LEFT + 8, opts), oy(TOP + 81, opts));
 
-  // Box 5: Patient address
-  doc.text(data.patientAddress, ox(LEFT + 8, opts), oy(TOP + 106, opts));
-  doc.text(data.patientCity, ox(LEFT + 8, opts), oy(TOP + 124, opts));
-  doc.text(data.patientState, ox(LEFT + 140, opts), oy(TOP + 124, opts));
-  doc.text(data.patientZip, ox(LEFT + 180, opts), oy(TOP + 124, opts));
+  // Box 5: Patient address — data entry area below label
+  doc.text(data.patientAddress, ox(LEFT + 8, opts), oy(TOP + 109, opts));
+  doc.text(data.patientCity, ox(LEFT + 8, opts), oy(TOP + 128, opts));
+  doc.text(data.patientState, ox(LEFT + 140, opts), oy(TOP + 128, opts));
+  doc.text(data.patientZip, ox(LEFT + 180, opts), oy(TOP + 128, opts));
   doc.text(data.patientPhone, ox(LEFT + 80, opts), oy(TOP + 137, opts));
 
   // Box 6: Relationship
@@ -891,10 +891,10 @@ function placePatientData(doc: jsPDF, data: CMS1500Data, opts: CMS1500Options) {
   if (data.patientRelationship === 'other') doc.text('X', ox(midX + 133, opts), oy(TOP + 81, opts));
 
   // Box 7: Insured address
-  doc.text(data.insuredAddress, ox(midX + 8, opts), oy(TOP + 106, opts));
-  doc.text(data.insuredCity, ox(midX + 8, opts), oy(TOP + 124, opts));
-  doc.text(data.insuredState, ox(midX + 140, opts), oy(TOP + 124, opts));
-  doc.text(data.insuredZip, ox(midX + 180, opts), oy(TOP + 124, opts));
+  doc.text(data.insuredAddress, ox(midX + 8, opts), oy(TOP + 109, opts));
+  doc.text(data.insuredCity, ox(midX + 8, opts), oy(TOP + 128, opts));
+  doc.text(data.insuredState, ox(midX + 140, opts), oy(TOP + 128, opts));
+  doc.text(data.insuredZip, ox(midX + 180, opts), oy(TOP + 128, opts));
 }
 
 function placeInsuranceData(doc: jsPDF, data: CMS1500Data, opts: CMS1500Options) {
@@ -1006,27 +1006,31 @@ function placeClaimData(doc: jsPDF, data: CMS1500Data, opts: CMS1500Options) {
 
   const midX = (LEFT + RIGHT) / 2;
 
-  // Box 14: Date of illness
-  doc.text(data.dateOfIllness, ox(LEFT + 8, opts), oy(TOP + 274, opts));
+  // Box 14: Date of illness — between hLines TOP+252 and TOP+280
+  if (data.dateOfIllness) {
+    doc.text(data.dateOfIllness, ox(LEFT + 8, opts), oy(TOP + 270, opts));
+  }
   if (data.dateOfIllnessQualifier) {
     doc.setFontSize(SMALL_FONT);
-    doc.text(data.dateOfIllnessQualifier, ox(LEFT + 200, opts), oy(TOP + 278, opts));
+    doc.text(data.dateOfIllnessQualifier, ox(LEFT + 200, opts), oy(TOP + 270, opts));
     doc.setFontSize(FONT_SIZE);
   }
 
-  // Box 17: Referring provider
-  doc.text(data.referringProvider, ox(LEFT + 8, opts), oy(TOP + 302, opts));
+  // Box 17: Referring provider — between hLines TOP+280 and TOP+308
+  if (data.referringProvider) {
+    doc.text(data.referringProvider, ox(LEFT + 8, opts), oy(TOP + 298, opts));
+  }
   if (data.referringProviderQualifier) {
-    doc.text(data.referringProviderQualifier, ox(midX + 8, opts), oy(TOP + 302, opts));
+    doc.text(data.referringProviderQualifier, ox(midX + 8, opts), oy(TOP + 298, opts));
   }
   if (data.referringProviderNpi) {
-    doc.text(data.referringProviderNpi, ox(midX + 80, opts), oy(TOP + 302, opts));
+    doc.text(data.referringProviderNpi, ox(midX + 80, opts), oy(TOP + 298, opts));
   }
 
-  // Box 19: Additional claim info
+  // Box 19: Additional claim info — between hLines TOP+308 and TOP+336
   if (data.additionalClaimInfo) {
     doc.setFontSize(6);
-    doc.text(data.additionalClaimInfo.slice(0, 80), ox(LEFT + 8, opts), oy(TOP + 330, opts));
+    doc.text(data.additionalClaimInfo.slice(0, 80), ox(LEFT + 8, opts), oy(TOP + 348, opts));
     doc.setFontSize(FONT_SIZE);
   }
 
@@ -1055,28 +1059,26 @@ function placeDiagnoses(doc: jsPDF, data: CMS1500Data, opts: CMS1500Options) {
     return;
   }
 
-  // ── Full-chrome mode (existing code) ──
+  // ── Full-chrome mode ──
   setBlackData(doc);
   doc.setFont('Courier', 'bold');
   doc.setFontSize(FONT_SIZE);
 
-  // Box 21: Up to 12 diagnoses in 4 columns x 3 rows
-  const dxStartX = LEFT + 8;
+  // Box 21: Up to 12 diagnoses in 4 columns × 3 rows
+  // Chrome labels are at LEFT+8, TOP+358 with colWidth=130, rowHeight=10
+  // Data goes next to the letter label with 12pt offset for "A." prefix
+  const dxStartX = LEFT + 20;  // offset past the chrome "A." label
   const dxStartY = TOP + 358;
-  const colWidth = 130;
-  const rowHeight = 10;
+  const dxColWidth = 130;
+  const dxRowHeight = 10;
 
   for (let i = 0; i < Math.min(12, data.diagnoses.length); i++) {
+    if (!data.diagnoses[i]) continue;
     const col = Math.floor(i / 3);
     const row = i % 3;
-    const letter = String.fromCharCode(65 + i); // A-L
-    const x = dxStartX + col * colWidth;
-    const y = dxStartY + row * rowHeight;
-
-    doc.setFontSize(SMALL_FONT);
-    doc.text(`${letter}.`, ox(x, opts), oy(y, opts));
-    doc.setFontSize(FONT_SIZE);
-    doc.text(data.diagnoses[i] || '', ox(x + 12, opts), oy(y, opts));
+    const x = dxStartX + col * dxColWidth;
+    const y = dxStartY + row * dxRowHeight;
+    doc.text(data.diagnoses[i], ox(x, opts), oy(y, opts));
   }
 }
 
@@ -1108,14 +1110,16 @@ function placeServiceLines(doc: jsPDF, data: CMS1500Data, page: number, opts: CM
     return;
   }
 
-  // ── Full-chrome mode (existing code) ──
+  // ── Full-chrome mode ──
   setBlackData(doc);
   doc.setFont('Courier', 'bold');
   doc.setFontSize(7);
 
   const startIdx = page * 6;
   const endIdx = Math.min(startIdx + 6, data.serviceLines.length);
-  const lineStartY = TOP + 415;
+  // Service line rows: chrome draws rows at TOP+400 (header), data rows every 22pt
+  // Row numbers drawn at TOP+408 + i*22, data should be in same row
+  const lineStartY = TOP + 408;
   const lineHeight = 22;
 
   for (let i = startIdx; i < endIdx; i++) {
@@ -1123,19 +1127,20 @@ function placeServiceLines(doc: jsPDF, data: CMS1500Data, page: number, opts: CM
     const row = i - startIdx;
     const y = lineStartY + row * lineHeight;
 
-    doc.text(line.dateFrom, ox(LEFT + 4, opts), oy(y, opts));
-    doc.text(line.dateTo, ox(LEFT + 58, opts), oy(y, opts));
-    doc.text(line.placeOfService, ox(LEFT + 110, opts), oy(y, opts));
-    doc.text(line.emg, ox(LEFT + 130, opts), oy(y, opts));
-    doc.text(line.cptCode, ox(LEFT + 148, opts), oy(y, opts));
-    doc.text(line.modifier1, ox(LEFT + 200, opts), oy(y, opts));
-    doc.text(line.modifier2, ox(LEFT + 222, opts), oy(y, opts));
-    doc.text(line.modifier3, ox(LEFT + 244, opts), oy(y, opts));
-    doc.text(line.modifier4, ox(LEFT + 266, opts), oy(y, opts));
-    doc.text(line.diagnosisPointers, ox(LEFT + 290, opts), oy(y, opts));
-    doc.text(line.charges, ox(LEFT + 320, opts), oy(y, opts));
-    doc.text(line.units, ox(LEFT + 388, opts), oy(y, opts));
-    doc.text(line.renderingNpi, ox(LEFT + 430, opts), oy(y, opts));
+    // Column positions aligned with chrome header columns
+    doc.text(line.dateFrom, ox(LEFT + 18, opts), oy(y, opts));       // A. FROM
+    doc.text(line.dateTo, ox(LEFT + 68, opts), oy(y, opts));         // A. TO
+    doc.text(line.placeOfService, ox(LEFT + 112, opts), oy(y, opts)); // B. POS
+    if (line.emg) doc.text(line.emg, ox(LEFT + 134, opts), oy(y, opts)); // C. EMG
+    doc.text(line.cptCode, ox(LEFT + 152, opts), oy(y, opts));       // D. CPT/HCPCS
+    if (line.modifier1) doc.text(line.modifier1, ox(LEFT + 204, opts), oy(y, opts)); // Modifier 1
+    if (line.modifier2) doc.text(line.modifier2, ox(LEFT + 220, opts), oy(y, opts)); // Modifier 2
+    if (line.modifier3) doc.text(line.modifier3, ox(LEFT + 236, opts), oy(y, opts)); // Modifier 3
+    if (line.modifier4) doc.text(line.modifier4, ox(LEFT + 252, opts), oy(y, opts)); // Modifier 4
+    doc.text(line.diagnosisPointers, ox(LEFT + 286, opts), oy(y, opts)); // E. Dx Pointer
+    doc.text(line.charges, ox(LEFT + 318, opts), oy(y, opts));       // F. Charges
+    doc.text(line.units, ox(LEFT + 378, opts), oy(y, opts));         // G. Units
+    doc.text(line.renderingNpi, ox(LEFT + 428, opts), oy(y, opts));  // J. Rendering NPI
   }
 }
 
@@ -1175,8 +1180,8 @@ function placeTotals(doc: jsPDF, data: CMS1500Data, opts: CMS1500Options) {
   if (data.acceptAssignment) doc.text('X', ox(LEFT + 349, opts), oy(TOP + 579, opts));
   else doc.text('X', ox(LEFT + 381, opts), oy(TOP + 579, opts));
 
-  // Box 28: Total charge
-  doc.text(data.totalCharge, ox(RIGHT - 100, opts), oy(TOP + 574, opts));
+  // Box 28: Total charge — right-aligned in the box
+  if (data.totalCharge) doc.text('$ ' + data.totalCharge, ox(RIGHT - 120, opts), oy(TOP + 574, opts));
 
   // Box 29: Amount paid
   doc.text(data.amountPaid, ox(LEFT + 8, opts), oy(TOP + 604, opts));
@@ -1204,33 +1209,36 @@ function placeProviderData(doc: jsPDF, data: CMS1500Data, opts: CMS1500Options) 
     return;
   }
 
-  // ── Full-chrome mode (existing code) ──
+  // ── Full-chrome mode ──
   setBlackData(doc);
   doc.setFont('Courier', 'bold');
   doc.setFontSize(7);
 
-  // Box 31: Physician signature
+  // Box 31: Physician signature — data area between hLines TOP+610 and TOP+660
   doc.text(data.physicianSignature, ox(LEFT + 8, opts), oy(TOP + 650, opts));
   doc.text(data.physicianSignatureDate, ox(LEFT + 8, opts), oy(TOP + 658, opts));
 
-  // Box 32: Service facility
-  doc.text(data.serviceFacilityName, ox(LEFT + 208, opts), oy(TOP + 634, opts));
-  doc.text(data.serviceFacilityAddress, ox(LEFT + 208, opts), oy(TOP + 644, opts));
+  // Box 32: Service facility — left edge at LEFT+192
+  doc.text(data.serviceFacilityName, ox(LEFT + 200, opts), oy(TOP + 636, opts));
+  doc.text(data.serviceFacilityAddress, ox(LEFT + 200, opts), oy(TOP + 646, opts));
   doc.text(
     `${data.serviceFacilityCity}${data.serviceFacilityState ? ', ' + data.serviceFacilityState : ''} ${data.serviceFacilityZip}`,
-    ox(LEFT + 208, opts), oy(TOP + 654, opts)
+    ox(LEFT + 200, opts), oy(TOP + 656, opts)
   );
-  doc.text(data.serviceFacilityNpi, ox(LEFT + 230, opts), oy(TOP + 664, opts));
+  // Box 32a NPI — below main data, in the "a. NPI" labeled sub-area
+  doc.text(data.serviceFacilityNpi, ox(LEFT + 230, opts), oy(TOP + 672, opts));
 
-  // Box 33: Billing provider
-  doc.text(data.billingProviderName, ox(RIGHT - 172, opts), oy(TOP + 634, opts));
-  doc.text(data.billingProviderAddress, ox(RIGHT - 172, opts), oy(TOP + 644, opts));
+  // Box 33: Billing provider — left edge at RIGHT-180
+  // Phone goes at the top of the box (first line, before provider name)
+  doc.text(data.billingProviderPhone, ox(RIGHT - 100, opts), oy(TOP + 626, opts));
+  doc.text(data.billingProviderName, ox(RIGHT - 172, opts), oy(TOP + 636, opts));
+  doc.text(data.billingProviderAddress, ox(RIGHT - 172, opts), oy(TOP + 646, opts));
   doc.text(
     `${data.billingProviderCity}${data.billingProviderState ? ', ' + data.billingProviderState : ''} ${data.billingProviderZip}`,
-    ox(RIGHT - 172, opts), oy(TOP + 654, opts)
+    ox(RIGHT - 172, opts), oy(TOP + 656, opts)
   );
-  doc.text(data.billingProviderPhone, ox(RIGHT - 172, opts), oy(TOP + 664, opts));
-  doc.text(data.billingProviderNpi, ox(RIGHT - 148, opts), oy(TOP + 674, opts));
+  // Box 33a NPI — in the "a. NPI" labeled sub-area
+  doc.text(data.billingProviderNpi, ox(RIGHT - 148, opts), oy(TOP + 682, opts));
 }
 
 // ── Alignment Test Page ──
@@ -1325,8 +1333,9 @@ export function assembleCMS1500Data({ client, practice, notes }: AssembleParams)
     return d;
   };
 
-  // Build service lines from notes
-  const serviceLines: CMS1500ServiceLine[] = notes.map((note) => {
+  // Build service lines from notes — one line per CPT code, skip notes without CPT
+  const serviceLines: CMS1500ServiceLine[] = [];
+  for (const note of notes) {
     // Parse CPT codes
     let cptLines: Array<{ code: string; units: number }> = [];
     try {
@@ -1335,6 +1344,8 @@ export function assembleCMS1500Data({ client, practice, notes }: AssembleParams)
     if (cptLines.length === 0 && note.cpt_code) {
       cptLines = [{ code: note.cpt_code, units: note.units || 1 }];
     }
+    // Skip notes with no CPT codes
+    if (cptLines.length === 0 || !cptLines[0].code) continue;
 
     // Parse modifiers
     let modifiers: string[] = [];
@@ -1349,26 +1360,27 @@ export function assembleCMS1500Data({ client, practice, notes }: AssembleParams)
     } catch {}
     const pointerStr = diagPointers.map((p: number) => String.fromCharCode(64 + p)).join('');
 
-    // Use first CPT line
-    const mainCpt = cptLines[0] || { code: '', units: 1 };
-    const chargeAmount = note.charge_amount || 0;
-
-    return {
-      dateFrom: formatDateShort(note.date_of_service),
-      dateTo: formatDateShort(note.date_of_service),
-      placeOfService: note.place_of_service || '11',
-      emg: '',
-      cptCode: mainCpt.code,
-      modifier1: modifiers[0] || '',
-      modifier2: modifiers[1] || '',
-      modifier3: modifiers[2] || '',
-      modifier4: modifiers[3] || '',
-      diagnosisPointers: pointerStr || 'A',
-      charges: chargeAmount.toFixed(2),
-      units: String(mainCpt.units || 1),
-      renderingNpi: note.rendering_provider_npi || practice?.npi || '',
-    };
-  });
+    // Create a service line for each CPT code on this note
+    for (const cpt of cptLines) {
+      if (!cpt.code) continue;
+      const chargeAmount = note.charge_amount || 0;
+      serviceLines.push({
+        dateFrom: formatDateShort(note.date_of_service),
+        dateTo: formatDateShort(note.date_of_service),
+        placeOfService: note.place_of_service || '11',
+        emg: '',
+        cptCode: cpt.code,
+        modifier1: modifiers[0] || '',
+        modifier2: modifiers[1] || '',
+        modifier3: modifiers[2] || '',
+        modifier4: modifiers[3] || '',
+        diagnosisPointers: pointerStr || 'A',
+        charges: chargeAmount.toFixed(2),
+        units: String(cpt.units || 1),
+        renderingNpi: note.rendering_provider_npi || practice?.npi || '',
+      });
+    }
+  }
 
   // Total charge
   const totalCharge = serviceLines.reduce((sum, l) => sum + (parseFloat(l.charges) || 0), 0);
@@ -1389,7 +1401,7 @@ export function assembleCMS1500Data({ client, practice, notes }: AssembleParams)
     : `${client.subscriber_last_name || ''}, ${client.subscriber_first_name || ''}`;
 
   return {
-    insuranceType: 'group',
+    insuranceType: (client.insurance_type || 'other').toLowerCase() as CMS1500Data['insuranceType'],
     insuredId: client.insurance_member_id || '',
     patientName: `${client.last_name}, ${client.first_name}`,
     patientDob: formatDate(client.dob),
@@ -1410,7 +1422,7 @@ export function assembleCMS1500Data({ client, practice, notes }: AssembleParams)
     otherInsuredPolicy: '',
     employmentRelated: client.employment_related === 'Y',
     autoAccident: client.auto_accident === 'Y',
-    autoAccidentState: client.auto_accident_state || '',
+    autoAccidentState: client.auto_accident === 'Y' ? (client.auto_accident_state || '') : '',
     otherAccident: client.other_accident === 'Y',
     insuredGroupNumber: client.insurance_group || '',
     insuredDob: isSelf ? formatDate(client.dob) : formatDate(client.subscriber_dob),

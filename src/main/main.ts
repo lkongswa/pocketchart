@@ -20,6 +20,9 @@ import type { CMS1500Options, CMS1500PrintMode } from './cms1500Generator';
 import { parseCSVFile, autoDetectColumns as autoDetectCSVColumns, matchClients as matchCSVClients, prepareImportRows, executeImport as executeCSVImport } from './csvPaymentImport';
 import type { CSVColumnMapping, CSVPaymentRow } from './csvPaymentImport';
 import type { AppTier, NoteFormat, DischargeData, DischargeGoalStatus } from '../shared/types';
+import { generateIntakePdf } from './intakeFormGenerator';
+import { DEFAULT_INTAKE_TEMPLATES } from '../shared/intakeTemplates';
+import { getSRFaxConfig, clearSRFaxConfigCache, matchFaxToClient, normalizeFaxNumber, queueFax, getFaxStatus, getInbox, retrieveFax } from './srfax';
 import { NOTE_FORMAT_SECTIONS, DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS } from '../shared/types';
 
 // ── Secure Storage Helpers ──
@@ -989,6 +992,59 @@ function registerIpcHandlers() {
       "UPDATE clients SET status = 'discharged', deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL"
     ).run(id);
     auditLog({ actionType: 'client_archived', entityType: 'client', entityId: id, clientId: id, detail: { signedNotes, signedEvals } });
+    return true;
+  });
+
+  safeHandle('clients:canRemove', (_event, id: number) => {
+    const notes = (db.prepare(
+      "SELECT COUNT(*) as count FROM notes WHERE client_id = ? AND deleted_at IS NULL"
+    ).get(id) as any)?.count || 0;
+    const evals = (db.prepare(
+      "SELECT COUNT(*) as count FROM evaluations WHERE client_id = ? AND deleted_at IS NULL"
+    ).get(id) as any)?.count || 0;
+    const appts = (db.prepare(
+      "SELECT COUNT(*) as count FROM appointments WHERE client_id = ? AND deleted_at IS NULL"
+    ).get(id) as any)?.count || 0;
+    const goals = (db.prepare(
+      "SELECT COUNT(*) as count FROM goals WHERE client_id = ? AND deleted_at IS NULL"
+    ).get(id) as any)?.count || 0;
+    const hasClinicalData = notes + evals + appts + goals > 0;
+    return { canRemove: !hasClinicalData, notes, evals, appts, goals };
+  });
+
+  safeHandle('clients:remove', (_event, id: number) => {
+    // Safety check: only allow removal if no clinical data
+    const notes = (db.prepare(
+      "SELECT COUNT(*) as count FROM notes WHERE client_id = ? AND deleted_at IS NULL"
+    ).get(id) as any)?.count || 0;
+    const evals = (db.prepare(
+      "SELECT COUNT(*) as count FROM evaluations WHERE client_id = ? AND deleted_at IS NULL"
+    ).get(id) as any)?.count || 0;
+    const appts = (db.prepare(
+      "SELECT COUNT(*) as count FROM appointments WHERE client_id = ? AND deleted_at IS NULL"
+    ).get(id) as any)?.count || 0;
+    const goals = (db.prepare(
+      "SELECT COUNT(*) as count FROM goals WHERE client_id = ? AND deleted_at IS NULL"
+    ).get(id) as any)?.count || 0;
+
+    if (notes + evals + appts + goals > 0) {
+      throw new Error('Cannot remove a client with clinical records. Use discharge instead.');
+    }
+
+    const removeOp = db.transaction(() => {
+      // Soft-delete the client
+      db.prepare(
+        "UPDATE clients SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL"
+      ).run(id);
+
+      // Revert any linked waitlist entry back to 'waiting'
+      db.prepare(
+        "UPDATE waitlist SET status = 'waiting', converted_client_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE converted_client_id = ? AND deleted_at IS NULL"
+      ).run(id);
+    });
+    removeOp();
+
+    auditLog({ actionType: 'client_removed', entityType: 'client', entityId: id, clientId: id, detail: { reason: 'empty_chart_removal' } });
     return true;
   });
 
@@ -6507,6 +6563,363 @@ function registerIpcHandlers() {
   });
 
   // ══════════════════════════════════════════════════════════════════════
+  // ── Physician Directory ──
+  // ══════════════════════════════════════════════════════════════════════
+
+  safeHandle('physicians:list', (_event, filters?: { search?: string; favoritesOnly?: boolean }) => {
+    let query = 'SELECT * FROM physicians WHERE deleted_at IS NULL';
+    const params: any[] = [];
+
+    if (filters?.search) {
+      query += ' AND (name LIKE ? OR npi LIKE ? OR clinic_name LIKE ? OR specialty LIKE ?)';
+      const q = `%${filters.search}%`;
+      params.push(q, q, q, q);
+    }
+    if (filters?.favoritesOnly) {
+      query += ' AND is_favorite = 1';
+    }
+
+    query += ' ORDER BY is_favorite DESC, name ASC';
+    return db.prepare(query).all(...params);
+  });
+
+  safeHandle('physicians:get', (_event, id: number) => {
+    return db.prepare('SELECT * FROM physicians WHERE id = ? AND deleted_at IS NULL').get(id);
+  });
+
+  safeHandle('physicians:create', (_event, data: any) => {
+    const result = db.prepare(`
+      INSERT INTO physicians (name, npi, fax_number, phone, specialty, clinic_name, address, city, state, zip, notes, is_favorite)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      data.name || '',
+      data.npi || '',
+      data.fax_number || '',
+      data.phone || '',
+      data.specialty || '',
+      data.clinic_name || '',
+      data.address || '',
+      data.city || '',
+      data.state || '',
+      data.zip || '',
+      data.notes || '',
+      data.is_favorite ? 1 : 0
+    );
+    return db.prepare('SELECT * FROM physicians WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('physicians:update', (_event, id: number, data: any) => {
+    const fields: string[] = [];
+    const params: any[] = [];
+
+    for (const key of ['name', 'npi', 'fax_number', 'phone', 'specialty', 'clinic_name', 'address', 'city', 'state', 'zip', 'notes']) {
+      if (data[key] !== undefined) {
+        fields.push(`${key} = ?`);
+        params.push(data[key]);
+      }
+    }
+    if (data.is_favorite !== undefined) {
+      fields.push('is_favorite = ?');
+      params.push(data.is_favorite ? 1 : 0);
+    }
+
+    if (fields.length > 0) {
+      fields.push("updated_at = datetime('now')");
+      params.push(id);
+      db.prepare(`UPDATE physicians SET ${fields.join(', ')} WHERE id = ?`).run(...params);
+    }
+
+    return db.prepare('SELECT * FROM physicians WHERE id = ?').get(id);
+  });
+
+  safeHandle('physicians:delete', (_event, id: number) => {
+    db.prepare("UPDATE physicians SET deleted_at = datetime('now') WHERE id = ?").run(id);
+    return true;
+  });
+
+  safeHandle('physicians:search', (_event, query: string) => {
+    const q = `%${query}%`;
+    return db.prepare(
+      'SELECT * FROM physicians WHERE deleted_at IS NULL AND (name LIKE ? OR npi LIKE ? OR clinic_name LIKE ? OR fax_number LIKE ?) ORDER BY is_favorite DESC, name ASC LIMIT 20'
+    ).all(q, q, q, q);
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // ── Intake Forms ──
+  // ══════════════════════════════════════════════════════════════════════
+
+  safeHandle('intakeForms:listTemplates', () => {
+    const rows = db.prepare('SELECT * FROM intake_form_templates ORDER BY sort_order ASC').all() as any[];
+    return rows.map((r: any) => ({
+      ...r,
+      sections: JSON.parse(r.sections || '[]'),
+      is_active: !!r.is_active,
+    }));
+  });
+
+  safeHandle('intakeForms:getTemplate', (_event, id: number) => {
+    const row = db.prepare('SELECT * FROM intake_form_templates WHERE id = ?').get(id) as any;
+    if (!row) throw new Error('Template not found');
+    return { ...row, sections: JSON.parse(row.sections || '[]'), is_active: !!row.is_active };
+  });
+
+  safeHandle('intakeForms:updateTemplate', (_event, id: number, data: any) => {
+    const fields: string[] = [];
+    const params: any[] = [];
+
+    if (data.name !== undefined) { fields.push('name = ?'); params.push(data.name); }
+    if (data.description !== undefined) { fields.push('description = ?'); params.push(data.description); }
+    if (data.sections !== undefined) { fields.push('sections = ?'); params.push(JSON.stringify(data.sections)); }
+    if (data.is_active !== undefined) { fields.push('is_active = ?'); params.push(data.is_active ? 1 : 0); }
+    if (data.sort_order !== undefined) { fields.push('sort_order = ?'); params.push(data.sort_order); }
+
+    if (fields.length > 0) {
+      fields.push("updated_at = datetime('now')");
+      params.push(id);
+      db.prepare(`UPDATE intake_form_templates SET ${fields.join(', ')} WHERE id = ?`).run(...params);
+    }
+
+    const row = db.prepare('SELECT * FROM intake_form_templates WHERE id = ?').get(id) as any;
+    return { ...row, sections: JSON.parse(row.sections || '[]'), is_active: !!row.is_active };
+  });
+
+  safeHandle('intakeForms:resetTemplate', (_event, slug: string) => {
+    const defaultTmpl = DEFAULT_INTAKE_TEMPLATES.find(t => t.slug === slug);
+    if (!defaultTmpl) throw new Error(`No default template for slug: ${slug}`);
+
+    db.prepare('DELETE FROM intake_form_templates WHERE slug = ?').run(slug);
+    db.prepare(
+      'INSERT INTO intake_form_templates (name, slug, description, sections, is_active, sort_order) VALUES (?, ?, ?, ?, 1, ?)'
+    ).run(defaultTmpl.name, defaultTmpl.slug, defaultTmpl.description, JSON.stringify(defaultTmpl.sections), defaultTmpl.sort_order);
+
+    const row = db.prepare('SELECT * FROM intake_form_templates WHERE slug = ?').get(slug) as any;
+    return { ...row, sections: JSON.parse(row.sections || '[]'), is_active: !!row.is_active };
+  });
+
+  safeHandle('intakeForms:generatePdf', async (_event, data: { templateIds: number[]; clientId?: number; fillable?: boolean }) => {
+    const templates = data.templateIds.map(id => {
+      const row = db.prepare('SELECT * FROM intake_form_templates WHERE id = ?').get(id) as any;
+      if (!row) throw new Error(`Template ${id} not found`);
+      return { ...row, sections: JSON.parse(row.sections || '[]') };
+    });
+
+    const practiceRow = db.prepare("SELECT value FROM settings WHERE key = 'practice_info'").get() as any;
+    const practiceInfo = practiceRow ? JSON.parse(practiceRow.value) : {};
+
+    let clientInfo: any = undefined;
+    if (data.clientId) {
+      clientInfo = db.prepare('SELECT * FROM clients WHERE id = ?').get(data.clientId);
+    }
+
+    const pdfBytes = await generateIntakePdf({
+      templates,
+      practiceInfo: {
+        name: practiceInfo.name || '',
+        phone: practiceInfo.phone || '',
+        address: practiceInfo.address || '',
+        city: practiceInfo.city || '',
+        state: practiceInfo.state || '',
+        zip: practiceInfo.zip || '',
+        npi: practiceInfo.npi || '',
+        tax_id: practiceInfo.tax_id || '',
+      },
+      clientInfo,
+      fillable: data.fillable,
+      logoBase64: getLogoBase64(),
+    });
+
+    const base64Pdf = Buffer.from(pdfBytes).toString('base64');
+    const clientName = clientInfo ? `${clientInfo.first_name}_${clientInfo.last_name}` : 'blank';
+    const filename = `intake_packet_${clientName}_${new Date().toISOString().slice(0, 10)}.pdf`;
+
+    return { base64Pdf, filename };
+  });
+
+  safeHandle('intakeForms:savePdf', async (_event, data: { base64Pdf: string; filename: string }) => {
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      defaultPath: data.filename,
+      filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    });
+    if (canceled || !filePath) return null;
+
+    fs.writeFileSync(filePath, Buffer.from(data.base64Pdf, 'base64'));
+    return filePath;
+  });
+
+  safeHandle('intakeForms:reorderTemplates', (_event, ids: number[]) => {
+    const stmt = db.prepare("UPDATE intake_form_templates SET sort_order = ?, updated_at = datetime('now') WHERE id = ?");
+    const txn = db.transaction(() => {
+      ids.forEach((id: number, i: number) => stmt.run(i + 1, id));
+    });
+    txn();
+    return true;
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // ── Fax (SRFax) ──
+  // ══════════════════════════════════════════════════════════════════════
+
+  safeHandle('fax:send', async (_event, data: { documentId?: number; physicianId?: number; faxNumber: string; clientId?: number }) => {
+    const config = getSRFaxConfig(db, decryptSecure);
+    if (!config) throw new Error('SRFax not configured. Set up credentials in Settings.');
+
+    let fileContent = '';
+    let fileName = 'document.pdf';
+
+    if (data.documentId) {
+      const doc = db.prepare('SELECT * FROM client_documents WHERE id = ?').get(data.documentId) as any;
+      if (!doc) throw new Error('Document not found');
+      const docPath = path.join(getDataPath(), 'documents', doc.filename);
+      if (fs.existsSync(docPath)) {
+        fileContent = fs.readFileSync(docPath).toString('base64');
+        fileName = doc.original_name || doc.filename;
+      } else {
+        throw new Error('Document file not found on disk');
+      }
+    }
+
+    const result = await queueFax(config, {
+      faxNumber: data.faxNumber,
+      fileContent,
+      fileName,
+      callerID: config.caller_id,
+    });
+
+    const insertResult = db.prepare(`
+      INSERT INTO fax_log (direction, client_id, physician_id, fax_number, document_id, srfax_id, status, sent_at)
+      VALUES ('outbound', ?, ?, ?, ?, ?, ?, datetime('now'))
+    `).run(
+      data.clientId || null,
+      data.physicianId || null,
+      data.faxNumber,
+      data.documentId || null,
+      result.srfax_id,
+      result.status === 'Queued' ? 'queued' : 'sent'
+    );
+
+    return db.prepare('SELECT * FROM fax_log WHERE id = ?').get(insertResult.lastInsertRowid);
+  });
+
+  safeHandle('fax:getStatus', (_event, faxLogId: number) => {
+    const entry = db.prepare('SELECT * FROM fax_log WHERE id = ?').get(faxLogId) as any;
+    if (!entry) throw new Error('Fax log entry not found');
+    return entry;
+  });
+
+  safeHandle('fax:listInbox', () => {
+    return db.prepare(`
+      SELECT fl.*,
+        c.first_name || ' ' || c.last_name AS client_name,
+        p.name AS physician_name,
+        cd.original_name AS document_name
+      FROM fax_log fl
+      LEFT JOIN clients c ON fl.client_id = c.id
+      LEFT JOIN physicians p ON fl.physician_id = p.id
+      LEFT JOIN client_documents cd ON fl.document_id = cd.id
+      WHERE fl.direction = 'inbound'
+      ORDER BY fl.created_at DESC
+    `).all();
+  });
+
+  safeHandle('fax:listOutbox', () => {
+    return db.prepare(`
+      SELECT fl.*,
+        c.first_name || ' ' || c.last_name AS client_name,
+        p.name AS physician_name,
+        cd.original_name AS document_name
+      FROM fax_log fl
+      LEFT JOIN clients c ON fl.client_id = c.id
+      LEFT JOIN physicians p ON fl.physician_id = p.id
+      LEFT JOIN client_documents cd ON fl.document_id = cd.id
+      WHERE fl.direction = 'outbound'
+      ORDER BY fl.created_at DESC
+    `).all();
+  });
+
+  safeHandle('fax:retrieveFax', async (_event, srfaxId: string) => {
+    const config = getSRFaxConfig(db, decryptSecure);
+    if (!config) throw new Error('SRFax not configured');
+    const base64Pdf = await retrieveFax(config, { fileName: srfaxId, direction: 'IN' });
+    return { base64Pdf, filename: `fax_${srfaxId}.pdf` };
+  });
+
+  safeHandle('fax:matchToClient', (_event, faxLogId: number, clientId: number) => {
+    db.prepare(
+      "UPDATE fax_log SET client_id = ?, matched_confidence = 'exact' WHERE id = ?"
+    ).run(clientId, faxLogId);
+    return db.prepare('SELECT * FROM fax_log WHERE id = ?').get(faxLogId);
+  });
+
+  safeHandle('fax:pollStatuses', async () => {
+    const config = getSRFaxConfig(db, decryptSecure);
+    if (!config) return { updated: 0 };
+
+    const pending = db.prepare(
+      "SELECT * FROM fax_log WHERE direction = 'outbound' AND status IN ('queued', 'sending')"
+    ).all() as any[];
+
+    let updated = 0;
+    for (const entry of pending) {
+      try {
+        const status = await getFaxStatus(config, entry.srfax_id);
+        let newStatus = entry.status;
+        if (status.status === 'Sent') newStatus = 'sent';
+        else if (status.status === 'Failed') newStatus = 'failed';
+        else if (status.status === 'Delivered') newStatus = 'delivered';
+
+        if (newStatus !== entry.status) {
+          db.prepare(
+            'UPDATE fax_log SET status = ?, pages = ?, error_message = ? WHERE id = ?'
+          ).run(newStatus, status.pages, status.errorMessage, entry.id);
+          updated++;
+        }
+      } catch (err) {
+        console.error(`[Fax] Failed to poll status for ${entry.srfax_id}:`, err);
+      }
+    }
+
+    return { updated };
+  });
+
+  safeHandle('fax:pollInbox', async () => {
+    const config = getSRFaxConfig(db, decryptSecure);
+    if (!config) return { newFaxes: 0 };
+
+    try {
+      const inboxEntries = await getInbox(config);
+      let newFaxes = 0;
+
+      for (const entry of inboxEntries) {
+        const existing = db.prepare(
+          "SELECT id FROM fax_log WHERE srfax_id = ? AND direction = 'inbound'"
+        ).get(entry.fileName);
+
+        if (!existing) {
+          const match = matchFaxToClient(entry.callerID, db);
+          db.prepare(`
+            INSERT INTO fax_log (direction, client_id, fax_number, srfax_id, status, pages, received_at, matched_confidence)
+            VALUES ('inbound', ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            match.clientId,
+            entry.callerID,
+            entry.fileName,
+            match.clientId ? 'matched' : 'unmatched',
+            entry.pages,
+            entry.date,
+            match.confidence
+          );
+          newFaxes++;
+        }
+      }
+
+      return { newFaxes };
+    } catch (err) {
+      console.error('[Fax] Failed to poll inbox:', err);
+      return { newFaxes: 0 };
+    }
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
   // ── Dashboard (Pro Only) ──
   // ══════════════════════════════════════════════════════════════════════
 
@@ -7043,6 +7456,112 @@ function registerIpcHandlers() {
   safeHandle('quickLinks:delete', (_event, id: number) => {
     db.prepare('DELETE FROM quick_links WHERE id = ?').run(id);
     return true;
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // ── Waitlist (Pro) ──
+  // ══════════════════════════════════════════════════════════════════════
+
+  safeHandle('waitlist:list', (_event, filters?: { status?: string; discipline?: string }) => {
+    requireTier('pro');
+    let query = 'SELECT * FROM waitlist WHERE deleted_at IS NULL';
+    const params: any[] = [];
+    if (filters?.status) { query += ' AND status = ?'; params.push(filters.status); }
+    if (filters?.discipline) { query += ' AND discipline = ?'; params.push(filters.discipline); }
+    query += ' ORDER BY priority DESC, created_at DESC';
+    return db.prepare(query).all(...params);
+  });
+
+  safeHandle('waitlist:create', (_event, data: {
+    first_name: string;
+    last_name?: string;
+    phone?: string;
+    email?: string;
+    discipline?: string;
+    referral_source?: string;
+    notes?: string;
+    priority?: number;
+  }) => {
+    requireTier('pro');
+    const result = db.prepare(`
+      INSERT INTO waitlist (first_name, last_name, phone, email, discipline, referral_source, notes, priority)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      data.first_name,
+      data.last_name || '',
+      data.phone || '',
+      data.email || '',
+      data.discipline || '',
+      data.referral_source || '',
+      data.notes || '',
+      data.priority || 0
+    );
+    return db.prepare('SELECT * FROM waitlist WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('waitlist:update', (_event, id: number, data: {
+    first_name?: string;
+    last_name?: string;
+    phone?: string;
+    email?: string;
+    discipline?: string;
+    referral_source?: string;
+    notes?: string;
+    status?: string;
+    priority?: number;
+    last_contacted?: string | null;
+  }) => {
+    requireTier('pro');
+    const sets: string[] = [];
+    const values: any[] = [];
+    for (const [key, val] of Object.entries(data)) {
+      if (val !== undefined) { sets.push(`${key} = ?`); values.push(val); }
+    }
+    if (sets.length === 0) return db.prepare('SELECT * FROM waitlist WHERE id = ?').get(id);
+    sets.push('updated_at = CURRENT_TIMESTAMP');
+    values.push(id);
+    db.prepare(`UPDATE waitlist SET ${sets.join(', ')} WHERE id = ? AND deleted_at IS NULL`).run(...values);
+    return db.prepare('SELECT * FROM waitlist WHERE id = ?').get(id);
+  });
+
+  safeHandle('waitlist:delete', (_event, id: number) => {
+    requireTier('pro');
+    db.prepare('UPDATE waitlist SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
+    return true;
+  });
+
+  safeHandle('waitlist:search', (_event, query: string) => {
+    requireTier('pro');
+    const q = `%${query}%`;
+    return db.prepare(`
+      SELECT * FROM waitlist
+      WHERE deleted_at IS NULL
+        AND (first_name LIKE ? OR last_name LIKE ? OR phone LIKE ? OR email LIKE ? OR referral_source LIKE ? OR notes LIKE ?)
+      ORDER BY priority DESC, created_at DESC
+    `).all(q, q, q, q, q, q);
+  });
+
+  safeHandle('waitlist:convertToClient', (_event, id: number) => {
+    requireTier('pro');
+    db.prepare(`
+      UPDATE waitlist SET status = 'converted', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL
+    `).run(id);
+    return db.prepare('SELECT * FROM waitlist WHERE id = ?').get(id);
+  });
+
+  safeHandle('waitlist:linkClient', (_event, waitlistId: number, clientId: number) => {
+    requireTier('pro');
+    db.prepare(`
+      UPDATE waitlist SET converted_client_id = ?, status = 'converted', updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND deleted_at IS NULL
+    `).run(clientId, waitlistId);
+    return db.prepare('SELECT * FROM waitlist WHERE id = ?').get(waitlistId);
+  });
+
+  safeHandle('waitlist:count', () => {
+    requireTier('pro');
+    const row = db.prepare("SELECT COUNT(*) as count FROM waitlist WHERE deleted_at IS NULL AND status NOT IN ('converted', 'declined')").get() as any;
+    return row?.count || 0;
   });
 
   // ── Dev: Seed Demo Data (temporary) ──

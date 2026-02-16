@@ -5,6 +5,7 @@ export type GoalStatus = 'active' | 'met' | 'discontinued' | 'modified';
 export type AppointmentStatus = 'scheduled' | 'completed' | 'cancelled' | 'no-show';
 export type VisitType = 'T' | 'H' | 'O' | 'C';
 export type SessionType = 'visit' | 'eval' | 'recert';
+export type WaitlistStatus = 'waiting' | 'contacted' | 'scheduled_intake' | 'converted' | 'declined';
 export type StagedGoalStatus = 'staged' | 'promoted' | 'dismissed';
 export type ProgressReportGoalStatus = 'progressing' | 'met' | 'regressed' | 'plateau' | 'discontinued' | 'modified';
 
@@ -271,6 +272,8 @@ export interface Client {
   referring_npi: string;
   referring_physician_qualifier: ReferringQualifier; // CMS-1500 Box 17a
   referral_source: string;                   // V2/V3: Tracking
+  referring_fax: string;                     // V4: Physician fax number
+  referring_physician_id: number | null;     // V4: FK to physicians table
   stripe_customer_id: string;                // V2: Stripe integration
   // CMS-1500 claim fields
   onset_date: string;                        // CMS-1500 Box 14
@@ -937,6 +940,104 @@ export interface CommunicationLogEntry {
   deleted_at: string | null;
 }
 
+// ── Physician Directory Types ──
+
+export interface Physician {
+  id: number;
+  name: string;
+  npi: string;
+  fax_number: string;
+  phone: string;
+  specialty: string;
+  clinic_name: string;
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  notes: string;
+  is_favorite: boolean;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+// ── Fax Types ──
+
+export type FaxDirection = 'inbound' | 'outbound';
+export type FaxStatus = 'queued' | 'sending' | 'sent' | 'delivered' | 'failed' | 'received' | 'matched' | 'unmatched';
+export type FaxMatchConfidence = 'exact' | 'name' | 'partial' | 'unmatched' | '';
+
+export interface FaxLogEntry {
+  id: number;
+  direction: FaxDirection;
+  client_id: number | null;
+  physician_id: number | null;
+  fax_number: string;
+  document_id: number | null;
+  srfax_id: string;
+  status: FaxStatus;
+  pages: number;
+  sent_at: string | null;
+  received_at: string | null;
+  matched_confidence: FaxMatchConfidence;
+  error_message: string;
+  created_at: string;
+  // Joined fields for display
+  client_name?: string;
+  physician_name?: string;
+  document_name?: string;
+}
+
+// ── Intake Form Types ──
+
+export interface IntakeFormSection {
+  id: string;
+  title: string;
+  content: string;
+  enabled: boolean;
+  sort_order: number;
+}
+
+export interface IntakeFormTemplate {
+  id: number;
+  name: string;
+  slug: string;
+  description: string;
+  sections: IntakeFormSection[];
+  is_active: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type IntakeTemplateSlug =
+  | 'patient_information'
+  | 'consent_to_treat'
+  | 'hipaa_notice'
+  | 'financial_agreement'
+  | 'release_of_information'
+  | 'assignment_of_benefits';
+
+// ── Waitlist Types ──
+
+export interface WaitlistEntry {
+  id: number;
+  first_name: string;
+  last_name: string;
+  phone: string;
+  email: string;
+  discipline: string;
+  referral_source: string;
+  notes: string;
+  status: WaitlistStatus;
+  priority: number;
+  last_contacted: string | null;
+  converted_client_id: number | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
 // ── Dashboard Types ──
 
 export interface IncompleteChart {
@@ -1371,6 +1472,8 @@ export interface PocketChartAPI {
     create: (data: Partial<Client>) => Promise<Client>;
     update: (id: number, data: Partial<Client>) => Promise<Client>;
     delete: (id: number) => Promise<boolean>;
+    canRemove: (id: number) => Promise<{ canRemove: boolean; notes: number; evals: number; appts: number; goals: number }>;
+    remove: (id: number) => Promise<boolean>;
   };
   goals: {
     listByClient: (clientId: number) => Promise<Goal[]>;
@@ -1874,6 +1977,47 @@ export interface PocketChartAPI {
     verifyPassphrase: (passphrase: string) => Promise<boolean>;
     migrateAndSetup: (passphrase: string) => Promise<{ success: boolean; recoveryKey?: string; error?: string }>;
     onDbReady: (callback: () => void) => () => void;
+  };
+  // ── Physician Directory ──
+  physicians: {
+    list: (filters?: { search?: string; favoritesOnly?: boolean }) => Promise<Physician[]>;
+    get: (id: number) => Promise<Physician>;
+    create: (data: Partial<Physician>) => Promise<Physician>;
+    update: (id: number, data: Partial<Physician>) => Promise<Physician>;
+    delete: (id: number) => Promise<boolean>;
+    search: (query: string) => Promise<Physician[]>;
+  };
+  // ── Fax ──
+  fax: {
+    send: (data: { documentId?: number; physicianId?: number; faxNumber: string; clientId?: number }) => Promise<FaxLogEntry>;
+    getStatus: (faxLogId: number) => Promise<FaxLogEntry>;
+    listInbox: () => Promise<FaxLogEntry[]>;
+    listOutbox: () => Promise<FaxLogEntry[]>;
+    retrieveFax: (srfaxId: string) => Promise<{ base64Pdf: string; filename: string }>;
+    matchToClient: (faxLogId: number, clientId: number) => Promise<FaxLogEntry>;
+    pollStatuses: () => Promise<{ updated: number }>;
+    pollInbox: () => Promise<{ newFaxes: number }>;
+  };
+  // ── Intake Forms ──
+  intakeForms: {
+    listTemplates: () => Promise<IntakeFormTemplate[]>;
+    getTemplate: (id: number) => Promise<IntakeFormTemplate>;
+    updateTemplate: (id: number, data: Partial<IntakeFormTemplate>) => Promise<IntakeFormTemplate>;
+    resetTemplate: (slug: string) => Promise<IntakeFormTemplate>;
+    generatePdf: (data: { templateIds: number[]; clientId?: number; fillable?: boolean }) => Promise<{ base64Pdf: string; filename: string }>;
+    savePdf: (data: { base64Pdf: string; filename: string }) => Promise<string | null>;
+    reorderTemplates: (ids: number[]) => Promise<boolean>;
+  };
+  // ── Waitlist (Pro) ──
+  waitlist: {
+    list: (filters?: { status?: string; discipline?: string }) => Promise<WaitlistEntry[]>;
+    create: (data: Partial<WaitlistEntry>) => Promise<WaitlistEntry>;
+    update: (id: number, data: Partial<WaitlistEntry>) => Promise<WaitlistEntry>;
+    delete: (id: number) => Promise<boolean>;
+    search: (query: string) => Promise<WaitlistEntry[]>;
+    convertToClient: (id: number) => Promise<WaitlistEntry>;
+    linkClient: (waitlistId: number, clientId: number) => Promise<WaitlistEntry>;
+    count: () => Promise<number>;
   };
   // ── Dev (temporary) ──
   dev: {

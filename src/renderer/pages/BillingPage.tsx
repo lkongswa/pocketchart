@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useSectionColor } from '../hooks/useSectionColor';
 import { useTier } from '../hooks/useTier';
 import { useTrialGuard } from '../hooks/useTrialGuard';
@@ -41,6 +41,9 @@ import {
   FolderOpen,
   Copy,
   RefreshCw,
+  RotateCcw,
+  Clock,
+  ChevronUp,
 } from 'lucide-react';
 import type {
   Invoice,
@@ -85,6 +88,7 @@ const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
 export default function BillingPage() {
   const sectionColor = useSectionColor();
   const location = useLocation();
+  const navigate = useNavigate();
   const { isPro } = useTier();
   const { guardAction, showExpiredModal, dismissExpiredModal } = useTrialGuard();
   const [activeTab, setActiveTab] = useState<BillingTab>('pipeline');
@@ -131,6 +135,11 @@ export default function BillingPage() {
   const [newlyCreatedInvoice, setNewlyCreatedInvoice] = useState<Invoice | null>(null);
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<number>>(new Set());
   const [batchGenerating, setBatchGenerating] = useState(false);
+
+  // Stripe tab enhanced state
+  const [checkingAll, setCheckingAll] = useState(false);
+  const [showAllStripePayments, setShowAllStripePayments] = useState(false);
+  const [stripeCardCollapsed, setStripeCardCollapsed] = useState(true);
 
   // CMS-1500 tab state
   const [practice, setPractice] = useState<Practice | null>(null);
@@ -1756,26 +1765,51 @@ export default function BillingPage() {
 
               {stripeKeyMasked ? (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
-                    <div>
-                      <p className="text-sm font-medium text-[var(--color-text)]">API Key</p>
-                      <p className="text-sm font-mono text-[var(--color-text-secondary)]">{stripeKeyMasked}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
-                        <CheckCircle className="w-3 h-3" />
+                  {!stripeCardCollapsed && (
+                    <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                      <div>
+                        <p className="text-sm font-medium text-[var(--color-text)]">API Key</p>
+                        <p className="text-sm font-mono text-[var(--color-text-secondary)]">{stripeKeyMasked}</p>
+                      </div>
+                      <span className="inline-flex items-center gap-1 text-xs text-emerald-600">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                         Connected
                       </span>
-                      <button onClick={handleRemoveStripeKey} className="p-2 rounded hover:bg-red-50 text-red-500" title="Remove API Key">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
                     </div>
-                  </div>
-                  <div className="p-3 bg-blue-50 rounded-lg">
-                    <p className="text-sm text-blue-700">
-                      Your Stripe API key is stored securely using OS-level encryption
-                      {secureStorageAvailable ? ' (Windows Credential Manager / macOS Keychain)' : ' (fallback mode)'}.
-                    </p>
+                  )}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {stripeCardCollapsed && (
+                      <span className="inline-flex items-center gap-1 text-xs text-emerald-600 mr-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        Connected
+                      </span>
+                    )}
+                    <button
+                      className="btn-ghost text-xs gap-1.5"
+                      onClick={() => window.api.shell.openExternal('https://dashboard.stripe.com')}
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      View Stripe Dashboard
+                    </button>
+                    <button
+                      className="btn-ghost text-xs gap-1.5 text-amber-600 hover:text-amber-700"
+                      onClick={() => window.api.shell.openExternal('https://dashboard.stripe.com/payments')}
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      Issue a Refund via Stripe
+                    </button>
+                    <button onClick={handleRemoveStripeKey} className="btn-ghost text-xs gap-1.5 text-red-500 hover:text-red-600" title="Remove API Key">
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Remove Key
+                    </button>
+                    <div className="flex-1" />
+                    <button
+                      className="btn-ghost text-xs gap-1 px-2 py-1"
+                      onClick={() => setStripeCardCollapsed(!stripeCardCollapsed)}
+                      title={stripeCardCollapsed ? 'Show API key' : 'Hide API key'}
+                    >
+                      {stripeCardCollapsed ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+                    </button>
                   </div>
                 </div>
               ) : (
@@ -1899,34 +1933,262 @@ export default function BillingPage() {
               )}
             </div>
 
-            {/* Recent Stripe Payments */}
-            {stripeKeyMasked && (
-              <div className="card">
-                <div className="flex items-center gap-2 p-4 border-b border-[var(--color-border)]">
-                  <CreditCard className="w-5 h-5 text-purple-500" />
-                  <h3 className="font-semibold text-[var(--color-text)]">Recent Stripe Payments</h3>
+            {/* ── SECTION 2: Stripe Revenue Summary ── */}
+            {stripeKeyMasked && (() => {
+              const stripePayments = payments.filter(
+                p => p.payment_method === 'stripe' || (p.payment_method === 'card' && p.stripe_payment_intent_id)
+              );
+              const now = new Date();
+              const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+              const thisMonthPayments = stripePayments.filter(p => p.payment_date >= thisMonthStart);
+              const stats = {
+                monthlyTotal: thisMonthPayments.reduce((sum, p) => sum + p.amount, 0),
+                monthlyCount: thisMonthPayments.length,
+                allTimeTotal: stripePayments.reduce((sum, p) => sum + p.amount, 0),
+              };
+
+              if (stripePayments.length === 0) {
+                return (
+                  <div className="card p-6 text-center text-[var(--color-text-secondary)] text-sm">
+                    No Stripe payments yet. Payment stats will appear here once clients pay via Stripe links.
+                  </div>
+                );
+              }
+
+              return (
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="card p-4">
+                    <p className="text-2xl font-bold text-[var(--color-text)]">{formatCurrency(stats.monthlyTotal)}</p>
+                    <p className="text-xs text-[var(--color-text-secondary)] mt-1">This Month</p>
+                  </div>
+                  <div className="card p-4">
+                    <p className="text-2xl font-bold text-[var(--color-text)]">{stats.monthlyCount}</p>
+                    <p className="text-xs text-[var(--color-text-secondary)] mt-1">Payments This Month</p>
+                  </div>
+                  <div className="card p-4">
+                    <p className="text-2xl font-bold text-[var(--color-text)]">{formatCurrency(stats.allTimeTotal)}</p>
+                    <p className="text-xs text-[var(--color-text-secondary)] mt-1">All Time</p>
+                  </div>
                 </div>
-                <div className="divide-y divide-[var(--color-border)]">
-                  {payments
-                    .filter(p => p.payment_method === 'stripe' || (p.payment_method === 'card' && p.stripe_payment_intent_id))
-                    .slice(0, 10)
-                    .map((payment) => (
-                      <div key={payment.id} className="flex items-center justify-between p-4 hover:bg-gray-50">
-                        <div>
-                          <p className="font-medium text-[var(--color-text)]">{getClientName(payment.client_id)}</p>
-                          <p className="text-sm text-[var(--color-text-secondary)]">{payment.payment_date}</p>
-                        </div>
-                        <p className="font-medium text-emerald-600">+{formatCurrency(payment.amount)}</p>
+              );
+            })()}
+
+            {/* ── SECTION 3: Outstanding Payment Links ── */}
+            {stripeKeyMasked && (() => {
+              const outstandingInvoices = invoices.filter(
+                inv => inv.stripe_payment_link_id && inv.status !== 'paid' && inv.status !== 'void'
+              );
+              const totalOutstanding = outstandingInvoices.reduce((sum, inv) => sum + inv.total_amount, 0);
+
+              const handleCheckSinglePayment = async (invoiceId: number) => {
+                setCheckingPaymentStatus(invoiceId);
+                try {
+                  const result = await window.api.stripe.checkPaymentStatus(invoiceId);
+                  if (result.status === 'paid') {
+                    setToast('Payment received! Invoice marked as paid.');
+                    await loadData();
+                  } else {
+                    setToast('Payment not yet received.');
+                  }
+                } catch (err: any) {
+                  setToast(err.message || 'Failed to check payment status');
+                } finally {
+                  setCheckingPaymentStatus(null);
+                }
+              };
+
+              const handleCheckAllPayments = async () => {
+                setCheckingAll(true);
+                try {
+                  const result = await window.api.stripe.checkAllPendingPayments();
+                  if (result.paid.length > 0) {
+                    setToast(`${result.paid.length} new payment${result.paid.length > 1 ? 's' : ''} received!`);
+                    await loadData();
+                  } else {
+                    setToast(`Checked ${result.checked} link${result.checked !== 1 ? 's' : ''} — no new payments yet.`);
+                  }
+                } catch (err: any) {
+                  setToast(err.message || 'Failed to check payments');
+                } finally {
+                  setCheckingAll(false);
+                }
+              };
+
+              const handleCopyLink = (url: string) => {
+                navigator.clipboard.writeText(url);
+                setToast('Link copied.');
+              };
+
+              return (
+                <div className="card overflow-hidden">
+                  <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-5 h-5 text-amber-500" />
+                      <h3 className="font-semibold text-[var(--color-text)]">
+                        Outstanding Payment Links{outstandingInvoices.length > 0 ? ` (${outstandingInvoices.length})` : ''}
+                      </h3>
+                    </div>
+                    {outstandingInvoices.length > 0 && (
+                      <button
+                        className="btn-ghost text-xs gap-1.5"
+                        onClick={handleCheckAllPayments}
+                        disabled={checkingAll}
+                      >
+                        {checkingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                        Check All
+                      </button>
+                    )}
+                  </div>
+
+                  {outstandingInvoices.length === 0 ? (
+                    <div className="p-8 text-center">
+                      <CheckCircle className="w-6 h-6 text-emerald-400 mx-auto mb-2" />
+                      <p className="text-sm text-[var(--color-text-secondary)]">No outstanding payment links</p>
+                      <p className="text-xs text-[var(--color-text-secondary)]">All Stripe payment links have been paid.</p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="divide-y divide-[var(--color-border)]">
+                        {outstandingInvoices.map((inv) => {
+                          const daysSinceSent = Math.floor(
+                            (Date.now() - new Date(inv.updated_at).getTime()) / (1000 * 60 * 60 * 24)
+                          );
+                          const agingColor = daysSinceSent > 14 ? 'text-red-500' : daysSinceSent > 7 ? 'text-amber-500' : 'text-[var(--color-text-secondary)]';
+
+                          return (
+                            <div key={inv.id} className="p-4 hover:bg-gray-50 cursor-pointer transition-colors" onClick={() => navigate(`/clients/${inv.client_id}`, { state: { defaultTab: 'billing', highlightInvoice: inv.id } })}>
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-4">
+                                  <div>
+                                    <p className="text-sm font-medium text-[var(--color-text)]">{getClientName(inv.client_id)}</p>
+                                    <p className="text-xs text-[var(--color-text-secondary)]">{inv.invoice_number}</p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  <div className="text-right">
+                                    <p className="text-sm font-semibold text-[var(--color-text)]">{formatCurrency(inv.total_amount)}</p>
+                                    <p className={`text-[10px] ${agingColor}`}>
+                                      {daysSinceSent === 0 ? 'Sent today' : `Sent ${daysSinceSent}d ago`}
+                                    </p>
+                                  </div>
+                                  <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                                    <button
+                                      className="btn-ghost text-xs gap-1 px-2 py-1"
+                                      onClick={() => handleCopyLink(inv.stripe_payment_link_url)}
+                                      title="Copy payment link"
+                                    >
+                                      <Copy className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      className="btn-ghost text-xs gap-1 px-2 py-1"
+                                      onClick={() => handleCheckSinglePayment(inv.id)}
+                                      disabled={checkingPaymentStatus === inv.id}
+                                      title="Check if paid"
+                                    >
+                                      {checkingPaymentStatus === inv.id ? (
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                      ) : (
+                                        <RefreshCw className="w-3.5 h-3.5" />
+                                      )}
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
-                    ))}
-                  {payments.filter(p => p.payment_method === 'stripe' || (p.payment_method === 'card' && p.stripe_payment_intent_id)).length === 0 && (
+                      <div className="px-4 py-3 bg-gray-50 border-t border-[var(--color-border)] text-sm text-[var(--color-text-secondary)]">
+                        Total outstanding: <span className="font-semibold text-[var(--color-text)]">{formatCurrency(totalOutstanding)}</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* ── SECTION 4: Stripe Payment History ── */}
+            {stripeKeyMasked && (() => {
+              const stripePayments = payments
+                .filter(p => p.payment_method === 'stripe' || (p.payment_method === 'card' && p.stripe_payment_intent_id))
+                .sort((a, b) => b.payment_date.localeCompare(a.payment_date));
+              const displayedPayments = showAllStripePayments ? stripePayments : stripePayments.slice(0, 10);
+
+              return (
+                <div className="card overflow-hidden">
+                  <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)]">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle className="w-5 h-5 text-emerald-500" />
+                      <h3 className="font-semibold text-[var(--color-text)]">Stripe Payment History</h3>
+                    </div>
+                    {stripePayments.length > 10 && (
+                      <button
+                        className="btn-ghost text-xs"
+                        onClick={() => setShowAllStripePayments(!showAllStripePayments)}
+                      >
+                        {showAllStripePayments ? 'Show Recent' : `View All (${stripePayments.length})`}
+                      </button>
+                    )}
+                  </div>
+
+                  {stripePayments.length === 0 ? (
                     <div className="p-8 text-center text-[var(--color-text-secondary)]">
                       No Stripe payments recorded yet
                     </div>
+                  ) : (
+                    <div className="divide-y divide-[var(--color-border)]">
+                      {/* Table header */}
+                      <div className="grid grid-cols-[1fr_auto_auto_auto] gap-4 px-4 py-2 text-xs font-medium text-[var(--color-text-secondary)] bg-gray-50/50">
+                        <span>Client</span>
+                        <span className="w-24 text-right">Amount</span>
+                        <span className="w-24 text-right">Date</span>
+                        <span className="w-16" />
+                      </div>
+                      {displayedPayments.map((payment) => {
+                        const inv = invoices.find(i => i.id === payment.invoice_id);
+                        return (
+                          <div
+                            key={payment.id}
+                            className="grid grid-cols-[1fr_auto_auto_auto] gap-4 items-center px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
+                            onClick={() => navigate(`/clients/${payment.client_id}`, { state: { defaultTab: 'billing', highlightPayment: payment.id } })}
+                          >
+                            <div>
+                              <p className="text-sm font-medium text-[var(--color-text)]">{getClientName(payment.client_id)}</p>
+                              {inv && <p className="text-[10px] text-[var(--color-text-secondary)]">{inv.invoice_number}</p>}
+                            </div>
+                            <p className="w-24 text-right text-sm font-medium text-emerald-600">+{formatCurrency(payment.amount)}</p>
+                            <p className="w-24 text-right text-xs text-[var(--color-text-secondary)]">{payment.payment_date}</p>
+                            <div className="w-16 text-right" onClick={(e) => e.stopPropagation()}>
+                              {payment.stripe_payment_intent_id && (
+                                <button
+                                  className="btn-ghost text-xs gap-1 px-2 py-1"
+                                  onClick={() => window.api.shell.openExternal(
+                                    `https://dashboard.stripe.com/payments/${payment.stripe_payment_intent_id}`
+                                  )}
+                                  title="View payment details and issue refunds in Stripe"
+                                >
+                                  <ExternalLink className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {!showAllStripePayments && stripePayments.length > 10 && (
+                        <div className="px-4 py-3 text-center">
+                          <button
+                            className="text-xs text-[var(--color-primary)] hover:underline"
+                            onClick={() => setShowAllStripePayments(true)}
+                          >
+                            Showing {displayedPayments.length} of {stripePayments.length} payments — Show More
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
         </ProFeatureGate>
       )}
