@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  FileText, DollarSign, CheckCircle,
+  FileText, DollarSign, CheckCircle, ArrowRight,
   AlertCircle, CreditCard, Eye, Loader2, ChevronRight, List, LayoutGrid,
 } from 'lucide-react';
 import type { PipelineData, Invoice, Client, FeeScheduleEntry } from '../../shared/types';
@@ -140,29 +140,18 @@ function PipelineColumn({ icon, label, subtitle, count, totalAmount, accentColor
 
 // ── Summary Bar ──
 
-function SummaryBar({ needsNoteCount, unsignedCount, unbilledTotal, awaitingTotal, paidTotal }: {
-  needsNoteCount: number;
-  unsignedCount: number;
-  unbilledTotal: number;
-  awaitingTotal: number;
-  paidTotal: number;
-}) {
+function FlowBar() {
+  const steps = ['Notes', 'Signatures', 'Invoices', 'Collect Payments', 'Paid'];
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 rounded-lg bg-white border border-gray-200 text-sm text-[var(--color-text-secondary)]">
-      <span className="font-semibold text-[var(--color-text)] mr-2">Revenue Pipeline</span>
-      {needsNoteCount > 0 && <span>📋 {needsNoteCount} need notes</span>}
-      {unsignedCount > 0 && <span>✍️ {unsignedCount} unsigned</span>}
-      {unbilledTotal > 0 && (
-        <span className="font-medium text-amber-700">
-          💰 ${unbilledTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })} to bill
-        </span>
-      )}
-      {awaitingTotal > 0 && (
-        <span>⏳ ${awaitingTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })} awaiting</span>
-      )}
-      <span className="text-green-700">
-        ✅ ${paidTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })} collected (30d)
-      </span>
+    <div className="flex items-center gap-1.5 px-4 py-2.5 rounded-lg bg-white border border-gray-200 text-sm">
+      <span className="font-semibold text-[var(--color-text)] mr-1">Revenue Pipeline</span>
+      <span className="text-gray-300 mx-1">|</span>
+      {steps.map((step, i) => (
+        <React.Fragment key={step}>
+          <span className="text-[var(--color-text-secondary)] text-xs">{step}</span>
+          {i < steps.length - 1 && <ArrowRight size={11} className="text-gray-300 shrink-0" />}
+        </React.Fragment>
+      ))}
     </div>
   );
 }
@@ -719,13 +708,7 @@ export default function RevenuePipeline({ onOpenInvoiceModal, onToast, searchTer
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4">
-        <SummaryBar
-          needsNoteCount={filteredNeedsNote.length}
-          unsignedCount={filteredNeedsSignature.length}
-          unbilledTotal={unbilledTotal}
-          awaitingTotal={awaitingTotal}
-          paidTotal={paidTotal}
-        />
+        <FlowBar />
         <div className="inline-flex shrink-0 border border-gray-200 rounded-lg overflow-hidden">
           <button
             className={`flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium transition-colors ${
