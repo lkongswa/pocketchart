@@ -873,6 +873,8 @@ export default function BillingPage() {
             setShowInvoiceModal(true);
           }}
           onToast={setToast}
+          searchTerm={searchTerm}
+          clientFilter={clientFilter}
         />
       )}
 

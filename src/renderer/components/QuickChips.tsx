@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Plus, Settings, Star, X } from 'lucide-react';
 import { useTier } from '../hooks/useTier';
 import type { Discipline, SOAPSection, NoteBankEntry } from '../../shared/types';
@@ -12,6 +12,8 @@ interface QuickChipsProps {
   priorityCategories?: string[];
 }
 
+const EMPTY_CATEGORIES: string[] = [];
+
 /**
  * QuickChips - Displays favorite/frequent phrases as clickable chips
  * for one-click insertion into SOAP note sections.
@@ -24,7 +26,7 @@ export default function QuickChips({
   onInsert,
   maxChips = 8,
   onOpenFullBank,
-  priorityCategories = [],
+  priorityCategories = EMPTY_CATEGORIES,
 }: QuickChipsProps) {
   const { isPro } = useTier();
   const [chips, setChips] = useState<NoteBankEntry[]>([]);
@@ -35,6 +37,13 @@ export default function QuickChips({
   const [newPhraseText, setNewPhraseText] = useState('');
   const [adding, setAdding] = useState(false);
   const addInputRef = useRef<HTMLInputElement>(null);
+
+  // Stabilize priorityCategories — only change identity when contents change
+  const stableCategories = useMemo(
+    () => priorityCategories,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [priorityCategories.join(',')]
+  );
 
   const loadChips = useCallback(async () => {
     try {
@@ -65,8 +74,8 @@ export default function QuickChips({
       // Sort: favorites matching priority categories first, then remaining alphabetically
       const favorites = unique.filter(p => p.is_favorite);
       const sorted = favorites.sort((a, b) => {
-        const aMatch = priorityCategories.some(cat => a.category?.toLowerCase() === cat.toLowerCase());
-        const bMatch = priorityCategories.some(cat => b.category?.toLowerCase() === cat.toLowerCase());
+        const aMatch = stableCategories.some(cat => a.category?.toLowerCase() === cat.toLowerCase());
+        const bMatch = stableCategories.some(cat => b.category?.toLowerCase() === cat.toLowerCase());
         if (aMatch && !bMatch) return -1;
         if (!aMatch && bMatch) return 1;
         return a.phrase.localeCompare(b.phrase);
@@ -77,7 +86,7 @@ export default function QuickChips({
     } finally {
       setLoading(false);
     }
-  }, [discipline, section, maxChips, priorityCategories]);
+  }, [discipline, section, maxChips, stableCategories]);
 
   useEffect(() => {
     loadChips();
