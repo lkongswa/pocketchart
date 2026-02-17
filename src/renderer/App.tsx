@@ -81,6 +81,7 @@ const navGroups: NavGroup[] = [
       { to: '/calendar', label: 'Calendar', icon: <Calendar size={18} /> },
       { to: '/notes', label: 'Notes / PRs', icon: <FileText size={18} /> },
       { to: '/evals', label: 'Evals / Recerts', icon: <ClipboardList size={18} /> },
+      { to: '/intake-forms', label: 'Intake Forms', icon: <FileText size={18} /> },
     ],
   },
   {
@@ -89,7 +90,6 @@ const navGroups: NavGroup[] = [
     items: [
       { to: '/billing', label: 'Billing', icon: <DollarSign size={18} /> },
       { to: '/fax', label: 'Fax Center', icon: <Printer size={18} /> },
-      { to: '/intake-forms', label: 'Intake Forms', icon: <FileText size={18} /> },
       { to: '/entities', label: 'Contracts', icon: <Building2 size={18} />, matchPrefix: '/entities' },
       { to: '/mileage', label: 'Mileage', icon: <Car size={18} /> },
       { to: '/reports', label: 'Year-End Summary', icon: <FileSpreadsheet size={18} /> },

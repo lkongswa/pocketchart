@@ -6,6 +6,7 @@ import FaxInbox from '../components/FaxInbox';
 import FaxOutbox from '../components/FaxOutbox';
 import FaxSendModal from '../components/FaxSendModal';
 import FaxComposePanel from '../components/FaxComposePanel';
+import ProFeatureGate from '../components/ProFeatureGate';
 
 type FaxTab = 'inbox' | 'outbox' | 'send';
 
@@ -28,6 +29,7 @@ export default function FaxPage() {
   ];
 
   return (
+    <ProFeatureGate feature="fax" lockedMessage="Upgrade to Pro to send and receive faxes, manage your fax inbox, and fax documents directly from patient charts.">
     <div className="page-container">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
@@ -120,5 +122,6 @@ export default function FaxPage() {
         onSent={refreshOutbox}
       />
     </div>
+    </ProFeatureGate>
   );
 }
