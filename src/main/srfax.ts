@@ -165,12 +165,16 @@ export async function queueFax(config: SRFaxConfig, params: QueueFaxParams): Pro
 
   const requestParams: Record<string, any> = {
     sCallerID: (params.callerID || config.caller_id).replace(/\D/g, '').slice(-10),
-    sSenderEmail: params.senderEmail || '',
     sFaxType: 'SINGLE',
     sToFaxNumber: faxNumber,
     sFileName_1: params.fileName,
     sFileContent_1: params.fileContent,
   };
+
+  // Only include sSenderEmail if we have a valid one — SRFax rejects empty strings
+  if (params.senderEmail) {
+    requestParams.sSenderEmail = params.senderEmail;
+  }
 
   const data = await srfaxPost(config, 'Queue_Fax', requestParams);
 

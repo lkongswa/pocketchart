@@ -164,6 +164,7 @@ export default function SettingsPage() {
   const [srfaxAccessId, setSrfaxAccessId] = useState('');
   const [srfaxAccessPwd, setSrfaxAccessPwd] = useState('');
   const [srfaxCallerId, setSrfaxCallerId] = useState('');
+  const [srfaxSenderEmail, setSrfaxSenderEmail] = useState('');
   const [srfaxMaskedId, setSrfaxMaskedId] = useState<string | null>(null);
   const [srfaxSaving, setSrfaxSaving] = useState(false);
   const [srfaxTesting, setSrfaxTesting] = useState(false);
@@ -2395,6 +2396,16 @@ export default function SettingsPage() {
                     placeholder="Your assigned fax number"
                   />
                 </div>
+                <div>
+                  <label className="label">Sender Email</label>
+                  <input
+                    type="email"
+                    className="input w-full"
+                    value={srfaxSenderEmail}
+                    onChange={(e) => setSrfaxSenderEmail(e.target.value)}
+                    placeholder="Email for fax delivery notifications"
+                  />
+                </div>
               </div>
               <div className="flex items-center gap-3">
                 <button
@@ -2409,12 +2420,16 @@ export default function SettingsPage() {
                       if (srfaxCallerId) {
                         await window.api.secureStorage.set('srfax_caller_id', srfaxCallerId);
                       }
+                      if (srfaxSenderEmail) {
+                        await window.api.settings.set('srfax_sender_email', srfaxSenderEmail);
+                      }
                       setSrfaxConfigured(true);
                       const masked = await window.api.secureStorage.getMasked('srfax_access_id');
                       setSrfaxMaskedId(masked);
                       setSrfaxAccessId('');
                       setSrfaxAccessPwd('');
                       setSrfaxCallerId('');
+                      setSrfaxSenderEmail('');
                       setToast('SRFax credentials saved');
                     } catch (err) {
                       console.error('Failed to save SRFax credentials:', err);
