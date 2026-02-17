@@ -42,6 +42,7 @@ import {
   Lock,
   List,
   LayoutGrid,
+  Printer,
 } from 'lucide-react';
 import type {
   Client,
@@ -84,6 +85,7 @@ import ClaimReadinessDialog from '../components/ClaimReadinessDialog';
 import CSVPaymentImportModal from '../components/CSVPaymentImportModal';
 import InvoiceModal from '../components/InvoiceModal';
 import TrialExpiredModal from '../components/TrialExpiredModal';
+import FaxSendModal from '../components/FaxSendModal';
 import { useTrialGuard } from '../hooks/useTrialGuard';
 import { useChartCompleteness } from '../hooks/useChartCompleteness';
 import { useClaimReadiness } from '../hooks/useClaimReadiness';
@@ -302,6 +304,9 @@ const ClientDetailPage: React.FC = () => {
   const [showReadinessDialog, setShowReadinessDialog] = useState(false);
   const [generatingCMS1500, setGeneratingCMS1500] = useState(false);
   const [showCsvImportForClient, setShowCsvImportForClient] = useState(false);
+  // Fax modal state
+  const [showFaxModal, setShowFaxModal] = useState(false);
+  const [faxDocumentId, setFaxDocumentId] = useState<number | undefined>(undefined);
   // CMS-1500 preview removed — now saves directly via dialog
 
   // Document upload form state
@@ -1106,9 +1111,18 @@ const ClientDetailPage: React.FC = () => {
                     </div>
                     <div className="flex items-center gap-2">
                       {evalItem.signed_at ? (
-                        <span className="flex items-center gap-1 text-xs text-emerald-600">
-                          <CheckCircle size={12} /> Signed
-                        </span>
+                        <>
+                          <span className="flex items-center gap-1 text-xs text-emerald-600">
+                            <CheckCircle size={12} /> Signed
+                          </span>
+                          <button
+                            className="btn-ghost btn-sm text-xs px-1.5 py-0.5 text-[var(--color-text-secondary)] hover:text-violet-600"
+                            title="Fax to Physician"
+                            onClick={(e) => { e.stopPropagation(); setFaxDocumentId(evalItem.id); setShowFaxModal(true); }}
+                          >
+                            <Printer size={12} />
+                          </button>
+                        </>
                       ) : (
                         <span className="flex items-center gap-1 text-xs text-amber-600">
                           <Clock size={12} /> Draft
@@ -1400,6 +1414,15 @@ const ClientDetailPage: React.FC = () => {
                         <span className="text-amber-600">Draft</span>
                       )}
                       <span className="flex-1" />
+                      {note.signed_at && (
+                        <button
+                          className="p-0.5 btn-ghost text-[var(--color-text-secondary)] hover:text-violet-600"
+                          title="Fax to Physician"
+                          onClick={(e) => { e.stopPropagation(); setFaxDocumentId(note.id); setShowFaxModal(true); }}
+                        >
+                          <Printer size={11} />
+                        </button>
+                      )}
                       {!note.signed_at && (
                         <button
                           className={`p-0.5 ${deletingNoteId === note.id ? 'bg-red-600 text-white rounded' : 'btn-ghost text-red-500'}`}
@@ -1444,9 +1467,18 @@ const ClientDetailPage: React.FC = () => {
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         {note.signed_at ? (
-                          <span className="flex items-center gap-1 text-xs text-emerald-600">
-                            <CheckCircle size={12} /> Signed
-                          </span>
+                          <>
+                            <span className="flex items-center gap-1 text-xs text-emerald-600">
+                              <CheckCircle size={12} /> Signed
+                            </span>
+                            <button
+                              className="btn-ghost btn-sm text-xs px-1.5 py-0.5 text-[var(--color-text-secondary)] hover:text-violet-600"
+                              title="Fax to Physician"
+                              onClick={(e) => { e.stopPropagation(); setFaxDocumentId(note.id); setShowFaxModal(true); }}
+                            >
+                              <Printer size={12} />
+                            </button>
+                          </>
                         ) : (
                           <span className="flex items-center gap-1 text-xs text-amber-600">
                             <Clock size={12} /> Draft
@@ -2321,6 +2353,15 @@ const ClientDetailPage: React.FC = () => {
           preSelectedClientId={client.id}
         />
       )}
+
+      {/* Fax Send Modal */}
+      <FaxSendModal
+        isOpen={showFaxModal}
+        onClose={() => { setShowFaxModal(false); setFaxDocumentId(undefined); }}
+        onSend={(data) => window.api.fax.send(data)}
+        clientId={client?.id}
+        documentId={faxDocumentId}
+      />
 
       {/* Trial Expired Modal */}
       {showExpiredModal && <TrialExpiredModal onClose={dismissExpiredModal} />}
