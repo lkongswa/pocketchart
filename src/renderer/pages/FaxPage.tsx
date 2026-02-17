@@ -5,6 +5,7 @@ import { useFax } from '../hooks/useFax';
 import FaxInbox from '../components/FaxInbox';
 import FaxOutbox from '../components/FaxOutbox';
 import FaxSendModal from '../components/FaxSendModal';
+import FaxComposePanel from '../components/FaxComposePanel';
 
 type FaxTab = 'inbox' | 'outbox' | 'send';
 
@@ -105,18 +106,7 @@ export default function FaxPage() {
           />
         )}
         {activeTab === 'send' && (
-          <div className="text-center py-8">
-            <p className="text-[var(--color-text-secondary)] text-sm mb-4">
-              Use the "Send Fax" button above to compose and send a fax.
-            </p>
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={() => setShowSendModal(true)}
-            >
-              Send Fax
-            </button>
-          </div>
+          <FaxComposePanel onSent={refreshOutbox} />
         )}
       </div>
 
