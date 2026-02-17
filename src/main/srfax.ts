@@ -161,7 +161,9 @@ async function srfaxPost(config: SRFaxConfig, action: string, params: Record<str
 }
 
 export async function queueFax(config: SRFaxConfig, params: QueueFaxParams): Promise<{ srfax_id: string; status: string }> {
-  const faxNumber = params.faxNumber.replace(/\D/g, '');
+  let faxNumber = params.faxNumber.replace(/\D/g, '');
+  // SRFax requires 11+ digits (country code + number). Prepend '1' for US numbers.
+  if (faxNumber.length === 10) faxNumber = '1' + faxNumber;
 
   const requestParams: Record<string, any> = {
     sCallerID: (params.callerID || config.caller_id).replace(/\D/g, '').slice(-10),
