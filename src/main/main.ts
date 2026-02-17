@@ -8,6 +8,7 @@ import { setupEncryption, unlockWithPassphrase, unlockWithRecoveryKey, changePas
 import type { KeystoreData } from './keystore';
 import { seedDemoData } from './seedDemoData';
 import { jsPDF } from 'jspdf';
+import { PDFDocument as PDFLibDocument } from 'pdf-lib';
 import { v4 as uuidv4 } from 'uuid';
 import archiver from 'archiver';
 import AdmZip from 'adm-zip';
@@ -6771,13 +6772,30 @@ function registerIpcHandlers() {
     physicianId?: number;
     faxNumber: string;
     clientId?: number;
+    requestSignature?: boolean;
   }) => {
     const config = getSRFaxConfig(db, decryptSecure);
     if (!config) throw new Error('SRFax not configured. Set up credentials in Settings.');
 
-    let fileContent = '';
+    let documentBuffer: Buffer | null = null;
     let fileName = 'document.pdf';
+    let documentLabel = 'Document';
+    let clientName = 'Patient';
     const docType = data.docType || 'document';
+    const practice = db.prepare('SELECT * FROM practice WHERE id = 1').get() as any;
+
+    // Look up physician name for cover page
+    let recipientName = '';
+    if (data.physicianId) {
+      const phys = db.prepare('SELECT name FROM physicians WHERE id = ?').get(data.physicianId) as any;
+      if (phys) recipientName = phys.name;
+    }
+
+    // Look up client name
+    if (data.clientId) {
+      const cl = db.prepare('SELECT first_name, last_name FROM clients WHERE id = ?').get(data.clientId) as any;
+      if (cl) clientName = `${cl.first_name} ${cl.last_name}`;
+    }
 
     if (data.documentId) {
       if (docType === 'eval') {
@@ -6786,10 +6804,11 @@ function registerIpcHandlers() {
         if (!evalItem) throw new Error('Evaluation not found');
         const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(evalItem.client_id || data.clientId) as any;
         if (!client) throw new Error('Client not found');
-        const pdfBuffer = buildSingleEvalPdf(client, evalItem);
-        fileContent = pdfBuffer.toString('base64');
+        clientName = `${client.first_name} ${client.last_name}`;
+        documentBuffer = buildSingleEvalPdf(client, evalItem);
         const dateStr = evalItem.eval_date || 'undated';
         const evalTypeLabel = evalItem.eval_type === 'reassessment' ? 'Reassessment' : 'Evaluation';
+        documentLabel = evalTypeLabel;
         fileName = `${evalTypeLabel}_${dateStr}.pdf`;
       } else if (docType === 'note') {
         // Generate note PDF on the fly
@@ -6797,30 +6816,58 @@ function registerIpcHandlers() {
         if (!note) throw new Error('Note not found');
         const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(note.client_id || data.clientId) as any;
         if (!client) throw new Error('Client not found');
+        clientName = `${client.first_name} ${client.last_name}`;
         const noteFormatVal = (db.prepare("SELECT value FROM settings WHERE key = 'note_format'").get() as any)?.value || 'SOAP';
         const pdfSections = NOTE_FORMAT_SECTIONS[noteFormatVal as NoteFormat].filter((s: any) => s.label !== '(unused)');
-        const pdfBuffer = buildSingleNotePdf(client, note, pdfSections);
-        fileContent = pdfBuffer.toString('base64');
+        documentBuffer = buildSingleNotePdf(client, note, pdfSections);
         const dateStr = note.date_of_service || 'undated';
-        let prefix = 'SOAP_Note';
-        if (note.note_type === 'progress_report') prefix = 'Progress_Report';
-        else if (note.note_type === 'discharge') prefix = 'Discharge_Summary';
-        fileName = `${prefix}_${dateStr}.pdf`;
+        let prefix = 'Treatment Note';
+        if (note.note_type === 'progress_report') prefix = 'Progress Report';
+        else if (note.note_type === 'discharge') prefix = 'Discharge Summary';
+        documentLabel = prefix;
+        fileName = `${prefix.replace(/ /g, '_')}_${dateStr}.pdf`;
       } else {
         // Client document — read file from disk
-        const doc = db.prepare('SELECT * FROM client_documents WHERE id = ?').get(data.documentId) as any;
-        if (!doc) throw new Error('Document not found');
-        const docPath = path.join(getDataPath(), 'documents', doc.filename);
+        const docRecord = db.prepare('SELECT * FROM client_documents WHERE id = ?').get(data.documentId) as any;
+        if (!docRecord) throw new Error('Document not found');
+        const docPath = path.join(getDataPath(), 'documents', docRecord.filename);
         if (fs.existsSync(docPath)) {
-          fileContent = fs.readFileSync(docPath).toString('base64');
-          fileName = doc.original_name || doc.filename;
+          documentBuffer = fs.readFileSync(docPath);
+          fileName = docRecord.original_name || docRecord.filename;
+          documentLabel = docRecord.category?.replace(/_/g, ' ') || 'Document';
         } else {
           throw new Error('Document file not found on disk');
         }
       }
     }
 
-    if (!fileContent) throw new Error('No document content to fax');
+    if (!documentBuffer) throw new Error('No document content to fax');
+
+    // Get practice fax number (caller ID) for cover page "return fax" line
+    const practiceFax = config.caller_id || '';
+
+    // Count document pages for cover page "Pages:" field
+    let docPageCount = 1;
+    try {
+      const tempDoc = await PDFLibDocument.load(documentBuffer);
+      docPageCount = tempDoc.getPageCount();
+    } catch { /* non-PDF file, assume 1 page */ }
+
+    // Generate cover page
+    const coverBuffer = buildFaxCoverPage({
+      practice,
+      recipientName,
+      recipientFax: data.faxNumber,
+      clientName,
+      documentLabel,
+      totalPages: docPageCount + 1, // +1 for cover page
+      requestSignature: data.requestSignature,
+      practiceFax,
+    });
+
+    // Merge cover page + document into single PDF
+    const mergedBuffer = await mergePdfs(coverBuffer, documentBuffer);
+    const fileContent = mergedBuffer.toString('base64');
 
     // Get sender email from SRFax settings for sSenderEmail field
     const senderEmailRow = db.prepare("SELECT value FROM settings WHERE key = 'srfax_sender_email'").get() as any;
@@ -8472,6 +8519,52 @@ function createPdfHelpers(doc: any, options?: { client?: any; practice?: any }) 
     doc.setFont('helvetica', 'normal');
   };
 
+  /** Blank physician signature / date lines for MD to sign on paper */
+  const addPhysicianSignatureLine = () => {
+    checkPageBreak(90);
+    y += 20;
+
+    // Section label
+    doc.setFontSize(PDF_FONTS.fieldLabel);
+    doc.setFont('helvetica', 'bold');
+    setColor(PDF_COLORS.accent);
+    doc.text('Physician / Ordering Provider', marginLeft, y);
+    y += 18;
+
+    // Signature line
+    setDraw(PDF_COLORS.divider);
+    doc.setLineWidth(0.5);
+    doc.line(marginLeft, y, marginLeft + 250, y);
+    doc.line(marginLeft + 290, y, marginLeft + 400, y);
+    doc.setLineWidth(0.3);
+    setDraw([0, 0, 0]);
+    y += 12;
+
+    // Labels below lines
+    doc.setFontSize(PDF_FONTS.footerText);
+    doc.setFont('helvetica', 'normal');
+    setColor(PDF_COLORS.label);
+    doc.text('Physician Signature', marginLeft, y);
+    doc.text('Date', marginLeft + 290, y);
+    y += 20;
+
+    // Print name line
+    setDraw(PDF_COLORS.divider);
+    doc.setLineWidth(0.5);
+    doc.line(marginLeft, y, marginLeft + 250, y);
+    doc.setLineWidth(0.3);
+    setDraw([0, 0, 0]);
+    y += 12;
+
+    doc.setFontSize(PDF_FONTS.footerText);
+    setColor(PDF_COLORS.label);
+    doc.text('Physician Name (Print)', marginLeft, y);
+    y += 10;
+
+    setColor(PDF_COLORS.body);
+    doc.setFont('helvetica', 'normal');
+  };
+
   return {
     pageWidth, pageHeight, marginLeft, marginRight, maxWidth,
     get y() { return y; },
@@ -8479,7 +8572,7 @@ function createPdfHelpers(doc: any, options?: { client?: any; practice?: any }) 
     checkPageBreak, addSectionHeader, addField, addEmphasisField, addWrappedText,
     addSOAPSection, addClientInfoCard, addGoalRow, addNoteHeader,
     startCard, endCard, addNoteSeparator,
-    addHeaderFooter, addSignatureBlock,
+    addHeaderFooter, addSignatureBlock, addPhysicianSignatureLine,
     setColor, setFill, setDraw, drawBadge, formatPdfDate: formatPdfDate,
   };
 }
@@ -8509,6 +8602,159 @@ function getLogoBase64(): string | null {
   } catch {
     return null;
   }
+}
+
+/** Build a one-page HIPAA fax cover sheet */
+function buildFaxCoverPage(options: {
+  practice: any;
+  recipientName?: string;
+  recipientFax: string;
+  clientName: string;
+  documentLabel: string;
+  totalPages: number; // including cover
+  requestSignature?: boolean;
+  practiceFax?: string;
+}): Buffer {
+  const { practice, recipientName, recipientFax, clientName, documentLabel, totalPages, requestSignature, practiceFax } = options;
+  const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const marginLeft = 54;
+  const maxWidth = pageWidth - 108;
+  let y = 54;
+
+  // -- Practice header --
+  const logo = getLogoBase64();
+  if (logo) {
+    try {
+      const fmt = logo.includes('image/png') ? 'PNG' : 'JPEG';
+      doc.addImage(logo, fmt, marginLeft, y, 48, 48);
+    } catch {}
+  }
+  const headerX = logo ? marginLeft + 58 : marginLeft;
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(35, 55, 75);
+  doc.text(practice?.name || 'Practice', headerX, y + 16);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 110, 120);
+  const addr = [practice?.address, practice?.city, practice?.state, practice?.zip].filter(Boolean).join(', ');
+  if (addr) { doc.text(addr, headerX, y + 30); }
+  const contactLine = [practice?.phone ? `Phone: ${practice.phone}` : '', practice?.npi ? `NPI: ${practice.npi}` : ''].filter(Boolean).join('  |  ');
+  if (contactLine) { doc.text(contactLine, headerX, y + 42); }
+  y += 62;
+
+  // Divider
+  doc.setDrawColor(210, 216, 224);
+  doc.setLineWidth(1);
+  doc.line(marginLeft, y, marginLeft + maxWidth, y);
+  y += 24;
+
+  // -- FACSIMILE COVER SHEET title --
+  doc.setFontSize(22);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(44, 82, 130);
+  doc.text('FACSIMILE COVER SHEET', pageWidth / 2, y, { align: 'center' });
+  y += 36;
+
+  // -- To / From / Date / Re / Pages grid --
+  const fieldLabel = (label: string, value: string, yPos: number) => {
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(35, 55, 75);
+    doc.text(label, marginLeft, yPos);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(51, 51, 51);
+    doc.text(value, marginLeft + 80, yPos);
+  };
+
+  fieldLabel('To:', recipientName || recipientFax, y);
+  y += 18;
+  fieldLabel('Fax:', recipientFax, y);
+  y += 18;
+  fieldLabel('From:', [practice?.name, getSetting('signature_name')].filter(Boolean).join(' — '), y);
+  y += 18;
+  if (practiceFax) {
+    fieldLabel('Our Fax:', practiceFax, y);
+    y += 18;
+  }
+  fieldLabel('Date:', new Date().toLocaleString(), y);
+  y += 18;
+  fieldLabel('Re:', `${documentLabel} for ${clientName}`, y);
+  y += 18;
+  fieldLabel('Pages:', `${totalPages} (including cover)`, y);
+  y += 30;
+
+  // Divider
+  doc.setDrawColor(210, 216, 224);
+  doc.line(marginLeft, y, marginLeft + maxWidth, y);
+  y += 20;
+
+  // -- Request Signature action box (conditional) --
+  if (requestSignature) {
+    const boxY = y;
+    doc.setFillColor(255, 248, 235);
+    doc.setDrawColor(245, 158, 11);
+    doc.setLineWidth(1.5);
+    doc.roundedRect(marginLeft, boxY, maxWidth, 52, 4, 4, 'FD');
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(180, 90, 0);
+    doc.text('ACTION REQUESTED', marginLeft + 14, boxY + 20);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(51, 51, 51);
+    const returnLine = practiceFax
+      ? `Please sign and return the attached document via fax to ${practiceFax}.`
+      : 'Please sign and return the attached document via fax.';
+    doc.text(returnLine, marginLeft + 14, boxY + 38);
+    y = boxY + 68;
+  }
+
+  // -- HIPAA Confidentiality Notice --
+  doc.setFillColor(248, 249, 251);
+  doc.setDrawColor(218, 225, 232);
+  doc.setLineWidth(0.5);
+  const noticeY = y;
+  const noticeText =
+    'CONFIDENTIALITY NOTICE: This facsimile transmission contains Protected Health Information (PHI) ' +
+    'that is legally privileged and confidential under HIPAA regulations. This information is intended ' +
+    'only for the use of the individual or entity named above. If you are not the intended recipient, ' +
+    'you are hereby notified that any disclosure, copying, distribution, or action taken in reliance on ' +
+    'the contents of this fax is strictly prohibited. If you have received this fax in error, please ' +
+    'immediately notify the sender by telephone and destroy all copies of this document.';
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'normal');
+  const noticeLines = doc.splitTextToSize(noticeText, maxWidth - 20);
+  const noticeH = noticeLines.length * 11 + 16;
+  doc.roundedRect(marginLeft, noticeY, maxWidth, noticeH, 3, 3, 'FD');
+  doc.setTextColor(100, 110, 120);
+  doc.text(noticeLines, marginLeft + 10, noticeY + 14);
+
+  // -- Footer --
+  doc.setFontSize(7.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(180, 50, 50);
+  doc.text('CONFIDENTIAL', pageWidth / 2, doc.internal.pageSize.getHeight() - 30, { align: 'center' });
+
+  const pdfOutput = doc.output('arraybuffer');
+  return Buffer.from(pdfOutput);
+}
+
+/** Merge a cover page PDF with a document PDF using pdf-lib */
+async function mergePdfs(coverBuffer: Buffer, documentBuffer: Buffer): Promise<Buffer> {
+  const mergedDoc = await PDFLibDocument.create();
+  const coverDoc = await PDFLibDocument.load(coverBuffer);
+  const docDoc = await PDFLibDocument.load(documentBuffer);
+
+  const coverPages = await mergedDoc.copyPages(coverDoc, coverDoc.getPageIndices());
+  for (const page of coverPages) mergedDoc.addPage(page);
+
+  const docPages = await mergedDoc.copyPages(docDoc, docDoc.getPageIndices());
+  for (const page of docPages) mergedDoc.addPage(page);
+
+  const mergedBytes = await mergedDoc.save();
+  return Buffer.from(mergedBytes);
 }
 
 /** Build a PDF for a single evaluation */
@@ -8559,11 +8805,31 @@ function buildSingleEvalPdf(client: any, evalItem: any): Buffer {
           goals: 'Goals',
           treatment_plan: 'Treatment Plan',
           frequency_duration: 'Frequency & Duration',
+          // Legacy camelCase keys from older eval versions
+          chiefComplaint: 'Chief Complaint',
+          socialHistory: 'Social History',
+          homeSetup: 'Home Setup',
+          dmeNeeds: 'DME Needs',
+          priorTherapy: 'Prior Therapy',
+          functionalLimitations: 'Functional Limitations',
+          patientGoals: 'Patient Goals',
+          therapistImpression: 'Therapist Impression',
+          planOfCare: 'Plan of Care',
+          dischargeRecommendations: 'Discharge Recommendations',
+        };
+        // Convert camelCase or snake_case keys to readable labels as fallback
+        const humanizeKey = (key: string): string => {
+          // snake_case → Title Case
+          if (key.includes('_')) return key.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+          // camelCase → Title Case
+          return key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()).trim();
         };
         for (const [key, val] of Object.entries(content)) {
           if (key === 'goal_entries' || key === 'created_goal_ids' || key === 'objective_assessment') continue;
+          if (key === 'enabled_objective_fields' || key === 'session_note' || key === 'carried_over_count') continue;
           if (!val || (typeof val === 'string' && !val.trim())) continue;
-          const label = evalFieldLabels[key] || key;
+          if (Array.isArray(val)) continue; // skip arrays that aren't display-ready
+          const label = evalFieldLabels[key] || humanizeKey(key);
           if (emphasisKeys.has(key)) {
             h.addEmphasisField(label, String(val));
           } else {
@@ -8624,6 +8890,9 @@ function buildSingleEvalPdf(client: any, evalItem: any): Buffer {
   }
 
   h.addSignatureBlock(evalItem.signature_typed, evalItem.signature_image, evalItem.signed_at);
+
+  // MD / Physician Signature line (blank for paper signing)
+  h.addPhysicianSignatureLine();
 
   h.addHeaderFooter();
   const pdfOutput = doc.output('arraybuffer');
@@ -8798,6 +9067,11 @@ function buildSingleNotePdf(client: any, note: any, pdfSections: any[]): Buffer 
   }
 
   h.addSignatureBlock(note.signature_typed, note.signature_image, note.signed_at);
+
+  // MD / Physician Signature line for progress reports (recertification orders)
+  if (isProgressReport) {
+    h.addPhysicianSignatureLine();
+  }
 
   h.addHeaderFooter();
   const pdfOutput = doc.output('arraybuffer');

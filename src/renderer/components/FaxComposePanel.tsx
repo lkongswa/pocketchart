@@ -34,6 +34,9 @@ export default function FaxComposePanel({ onSent }: FaxComposePanelProps) {
   const [selectedPhysician, setSelectedPhysician] = useState<Physician | null>(null);
   const [manualFax, setManualFax] = useState('');
 
+  // Request signature
+  const [requestSignature, setRequestSignature] = useState(false);
+
   // Send state
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
@@ -134,6 +137,7 @@ export default function FaxComposePanel({ onSent }: FaxComposePanelProps) {
         physicianId: selectedPhysician?.id,
         faxNumber,
         clientId: selectedClient.id,
+        requestSignature,
       });
       setSent(true);
       onSent?.();
@@ -151,6 +155,7 @@ export default function FaxComposePanel({ onSent }: FaxComposePanelProps) {
     setSelectedItem(null);
     setSelectedPhysician(null);
     setManualFax('');
+    setRequestSignature(false);
     setSent(false);
     setError(null);
   };
@@ -331,6 +336,17 @@ export default function FaxComposePanel({ onSent }: FaxComposePanelProps) {
               Fax: {selectedPhysician.fax_number}
             </div>
           )}
+
+          {/* Request Signature checkbox */}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={requestSignature}
+              onChange={(e) => setRequestSignature(e.target.checked)}
+              className="rounded border-gray-300 text-[var(--color-primary)] focus:ring-[var(--color-primary)]"
+            />
+            <span className="text-sm text-[var(--color-text)]">Request physician signature on this document</span>
+          </label>
 
           {/* Error */}
           {error && (

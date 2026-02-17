@@ -29,6 +29,7 @@ export default function FaxSendModal({ isOpen, onClose, clientId, documentId, do
   const [documents, setDocuments] = useState<ClientDocument[]>([]);
   const [selectedDocId, setSelectedDocId] = useState<number | undefined>(documentId);
   const [selectedDocType, setSelectedDocType] = useState<FaxDocType | undefined>(docType);
+  const [requestSignature, setRequestSignature] = useState(false);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,12 +39,14 @@ export default function FaxSendModal({ isOpen, onClose, clientId, documentId, do
     if (isOpen) {
       setSelectedDocId(documentId);
       setSelectedDocType(docType);
+      setRequestSignature(false);
       setSending(false);
       setSent(false);
       setError(null);
     } else {
       setSelectedPhysician(null);
       setManualFax('');
+      setRequestSignature(false);
       setError(null);
     }
   }, [isOpen, documentId, docType]);
@@ -95,6 +98,7 @@ export default function FaxSendModal({ isOpen, onClose, clientId, documentId, do
         physicianId: selectedPhysician?.id,
         faxNumber,
         clientId,
+        requestSignature,
       });
       setSent(true);
       onSent?.();
@@ -194,6 +198,17 @@ export default function FaxSendModal({ isOpen, onClose, clientId, documentId, do
                   </select>
                 </div>
               )}
+
+              {/* Request Signature checkbox */}
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={requestSignature}
+                  onChange={(e) => setRequestSignature(e.target.checked)}
+                  className="rounded border-gray-300 text-[var(--color-primary)] focus:ring-[var(--color-primary)]"
+                />
+                <span className="text-sm text-[var(--color-text)]">Request physician signature on this document</span>
+              </label>
 
               {/* Error message */}
               {error && (
