@@ -943,6 +943,7 @@ const ClientDetailPage: React.FC = () => {
           >
             <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Physician</span><span>{client.referring_physician || '--'}</span></div>
             <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">NPI</span><span>{client.referring_npi || '--'}</span></div>
+            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Fax</span><span>{client.referring_fax || '--'}</span></div>
           </CollapsibleInfo>
 
           <CollapsibleInfo
