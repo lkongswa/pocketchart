@@ -6816,11 +6816,16 @@ function registerIpcHandlers() {
 
     if (!fileContent) throw new Error('No document content to fax');
 
+    // Get sender email from practice record for SRFax sSenderEmail field
+    const practiceRecord = db.prepare('SELECT contact_email FROM practice WHERE id = 1').get() as any;
+    const senderEmail = practiceRecord?.contact_email || '';
+
     const result = await queueFax(config, {
       faxNumber: data.faxNumber,
       fileContent,
       fileName,
       callerID: config.caller_id,
+      senderEmail,
     });
 
     const insertResult = db.prepare(`
