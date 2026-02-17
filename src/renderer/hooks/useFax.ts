@@ -6,8 +6,12 @@ export function useFax() {
   const [outbox, setOutbox] = useState<FaxLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const refreshInbox = useCallback(async () => {
+  const refreshInbox = useCallback(async (poll = false) => {
     try {
+      // If poll=true, hit SRFax API to check for new incoming faxes before re-reading
+      if (poll) {
+        try { await window.api.fax.pollInbox(); } catch (e) { console.error('Poll inbox failed:', e); }
+      }
       const data = await window.api.fax.listInbox();
       setInbox(data);
     } catch (err) {
@@ -15,8 +19,12 @@ export function useFax() {
     }
   }, []);
 
-  const refreshOutbox = useCallback(async () => {
+  const refreshOutbox = useCallback(async (poll = false) => {
     try {
+      // If poll=true, hit SRFax API to update statuses before re-reading
+      if (poll) {
+        try { await window.api.fax.pollStatuses(); } catch (e) { console.error('Poll statuses failed:', e); }
+      }
       const data = await window.api.fax.listOutbox();
       setOutbox(data);
     } catch (err) {

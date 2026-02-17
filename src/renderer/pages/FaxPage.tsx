@@ -92,7 +92,7 @@ export default function FaxPage() {
         {activeTab === 'inbox' && (
           <FaxInbox
             inbox={inbox}
-            onRefresh={refreshInbox}
+            onRefresh={() => refreshInbox(true)}
             onMatchToClient={matchToClient}
             loading={loading}
           />
@@ -100,7 +100,7 @@ export default function FaxPage() {
         {activeTab === 'outbox' && (
           <FaxOutbox
             outbox={outbox}
-            onRefresh={refreshOutbox}
+            onRefresh={() => refreshOutbox(true)}
             loading={loading}
           />
         )}

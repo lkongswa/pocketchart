@@ -4,7 +4,7 @@ import type { FaxLogEntry, Client } from '../../shared/types';
 
 interface FaxInboxProps {
   inbox: FaxLogEntry[];
-  onRefresh: () => void;
+  onRefresh: () => Promise<void> | void;
   onMatchToClient: (faxLogId: number, clientId: number) => void;
   loading: boolean;
 }
@@ -16,9 +16,20 @@ const STATUS_BADGES: Record<string, { bg: string; text: string; label: string }>
 };
 
 export default function FaxInbox({ inbox, onRefresh, onMatchToClient, loading }: FaxInboxProps) {
+  const [polling, setPolling] = useState(false);
   const [matchingId, setMatchingId] = useState<number | null>(null);
   const [clients, setClients] = useState<Client[]>([]);
   const [clientSearch, setClientSearch] = useState('');
+  const isLoading = loading || polling;
+
+  const handleRefresh = async () => {
+    setPolling(true);
+    try {
+      await onRefresh();
+    } finally {
+      setPolling(false);
+    }
+  };
 
   const openClientPicker = async (faxLogId: number) => {
     setMatchingId(faxLogId);
@@ -49,11 +60,11 @@ export default function FaxInbox({ inbox, onRefresh, onMatchToClient, loading }:
         <button
           type="button"
           className="btn-ghost flex items-center gap-2 text-sm"
-          onClick={onRefresh}
-          disabled={loading}
+          onClick={handleRefresh}
+          disabled={isLoading}
         >
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-          Refresh
+          <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
+          {polling ? 'Checking SRFax...' : 'Refresh'}
         </button>
       </div>
 

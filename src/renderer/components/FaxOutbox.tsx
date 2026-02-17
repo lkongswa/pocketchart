@@ -1,10 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { FaxLogEntry } from '../../shared/types';
 
 interface FaxOutboxProps {
   outbox: FaxLogEntry[];
-  onRefresh: () => void;
+  onRefresh: () => Promise<void> | void;
   loading: boolean;
 }
 
@@ -17,6 +17,18 @@ const STATUS_BADGES: Record<string, { bg: string; text: string; label: string }>
 };
 
 export default function FaxOutbox({ outbox, onRefresh, loading }: FaxOutboxProps) {
+  const [polling, setPolling] = useState(false);
+  const isLoading = loading || polling;
+
+  const handleRefresh = async () => {
+    setPolling(true);
+    try {
+      await onRefresh();
+    } finally {
+      setPolling(false);
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
@@ -26,11 +38,11 @@ export default function FaxOutbox({ outbox, onRefresh, loading }: FaxOutboxProps
         <button
           type="button"
           className="btn-ghost flex items-center gap-2 text-sm"
-          onClick={onRefresh}
-          disabled={loading}
+          onClick={handleRefresh}
+          disabled={isLoading}
         >
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-          Refresh Statuses
+          <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
+          {polling ? 'Checking SRFax...' : 'Refresh Statuses'}
         </button>
       </div>
 

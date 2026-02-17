@@ -6840,7 +6840,7 @@ function registerIpcHandlers() {
 
     const insertResult = db.prepare(`
       INSERT INTO fax_log (direction, client_id, physician_id, fax_number, document_id, srfax_id, status, sent_at)
-      VALUES ('outbound', ?, ?, ?, ?, ?, ?, datetime('now'))
+      VALUES ('outbound', ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
     `).run(
       data.clientId || null,
       data.physicianId || null,
