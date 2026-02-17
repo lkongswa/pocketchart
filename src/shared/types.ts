@@ -192,12 +192,15 @@ export type PaymentMethod = 'card' | 'cash' | 'check' | 'stripe' | 'insurance' |
 export type ClaimStatus =
   | 'draft'
   | 'ready'
+  | 'validated'
   | 'submitted'
   | 'accepted'
+  | 'acknowledged'
   | 'rejected'
   | 'pending'
   | 'paid'
   | 'denied'
+  | 'appeal_in_progress'
   | 'appealed'
   | 'void';
 
@@ -1323,6 +1326,14 @@ export interface Claim {
   era_id: number | null;
   edi_837_content: string;
   edi_835_content: string;
+  validated_at: string | null;
+  acknowledged_at: string | null;
+  denied_at: string | null;
+  appeal_submitted_at: string | null;
+  appeal_notes: string;
+  correction_notes: string;
+  original_claim_id: number | null;
+  client_name?: string; // Joined field
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -1345,6 +1356,47 @@ export interface ClaimLine {
   adjustment_reason_codes: string; // JSON array
   patient_responsibility: number;
   created_at: string;
+}
+
+// V3 Insurance: Eligibility Check
+export interface EligibilityCheck {
+  id: number;
+  client_id: number;
+  payer_name: string;
+  payer_id: string;
+  check_date: string;
+  raw_response: string | null;
+  plan_name: string | null;
+  plan_type: string | null;
+  coverage_active: number;
+  copay_amount: number | null;
+  coinsurance_percent: number | null;
+  deductible_total: number | null;
+  deductible_met: number | null;
+  out_of_pocket_max: number | null;
+  out_of_pocket_met: number | null;
+  therapy_visits_allowed: number | null;
+  therapy_visits_used: number | null;
+  therapy_visits_remaining: number | null;
+  auth_required: number;
+  auth_number: string | null;
+  referral_required: number;
+  benefit_period_start: string | null;
+  benefit_period_end: string | null;
+  parsed_benefits: string; // JSON
+  notes: string | null;
+  created_at: string;
+}
+
+// V3 Insurance: Denial Code reference
+export interface DenialCode {
+  id: number;
+  code: string;
+  group_code: string;
+  description: string;
+  plain_english: string;
+  what_to_do: string;
+  common_in_therapy: number;
 }
 
 // Audit Log
@@ -1763,12 +1815,33 @@ export interface PocketChartAPI {
     create: (data: Partial<Claim>, lines: Partial<ClaimLine>[]) => Promise<Claim>;
     update: (id: number, data: Partial<Claim>) => Promise<Claim>;
     delete: (id: number) => Promise<boolean>;
+    createFromNotes: (clientId: number, noteIds: number[]) => Promise<Claim>;
+    generate837P: (claimId: number) => Promise<{ ediContent: string; claimNumber: string }>;
   };
   payers: {
     list: () => Promise<Payer[]>;
     create: (data: Partial<Payer>) => Promise<Payer>;
     update: (id: number, data: Partial<Payer>) => Promise<Payer>;
     delete: (id: number) => Promise<boolean>;
+  };
+  clearinghouse: {
+    setCredentials: (apiKey: string, accountKey?: string) => Promise<boolean>;
+    getConnectionStatus: () => Promise<{ connected: boolean; error?: string }>;
+    testConnection: () => Promise<{ success: boolean; message: string }>;
+    getPayerList: () => Promise<any[]>;
+    checkEnrollment: (payerId: string) => Promise<{ status: string; message: string }>;
+    submitClaim: (claimId: number) => Promise<{ success: boolean; clearinghouseClaimId?: string; message: string; errors?: string[] }>;
+    checkClaimStatus: (claimId: number) => Promise<{ status: string; message: string; rawResponse?: any }>;
+    checkEligibility: (clientId: number) => Promise<{ success: boolean; message: string }>;
+    getRemittance: (startDate: string, endDate: string) => Promise<{ success: boolean; remittances: any[]; message: string }>;
+  };
+  eligibilityChecks: {
+    listByClient: (clientId: number) => Promise<EligibilityCheck[]>;
+    getLatest: (clientId: number) => Promise<EligibilityCheck | null>;
+  };
+  denialCodes: {
+    lookup: (code: string) => Promise<DenialCode | null>;
+    listCommon: () => Promise<DenialCode[]>;
   };
   auditLog: {
     list: (filters?: {

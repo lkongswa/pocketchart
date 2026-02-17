@@ -1,14 +1,20 @@
 import { useMemo } from 'react';
 import type { Client, Practice, Note, CMS1500Readiness, CMS1500ReadinessCheck } from '../../shared/types';
 
+export interface ClaimReadinessOptions {
+  mode?: 'cms1500' | '837P';
+  clearinghouseConnected?: boolean;
+}
+
 /**
- * computeClaimReadiness — Pure function for CMS-1500 pre-flight checks.
+ * computeClaimReadiness — Pure function for CMS-1500 / 837P pre-flight checks.
  * Can be used outside of React components (e.g., in BillingPage loops).
  */
 export function computeClaimReadiness(
   client: Client | null,
   practice: Practice | null,
-  notes?: Note[]
+  notes?: Note[],
+  options?: ClaimReadinessOptions
 ): CMS1500Readiness {
   if (!client) {
     return { ready: false, checks: [], passCount: 0, failCount: 0, warnCount: 0 };
@@ -166,6 +172,30 @@ export function computeClaimReadiness(
     });
   }
 
+  // --- 837P-specific checks ---
+  if (options?.mode === '837P') {
+    checks.push({
+      field: 'clearinghouse_connection',
+      label: 'Clearinghouse Connection',
+      status: options.clearinghouseConnected ? 'pass' : 'fail',
+      message: options.clearinghouseConnected ? undefined : 'Clearinghouse (Claim.MD) must be connected to submit electronically',
+    });
+
+    checks.push({
+      field: 'edi_payer_id',
+      label: 'EDI Payer ID',
+      status: client.insurance_payer_id ? 'pass' : 'fail',
+      message: client.insurance_payer_id ? undefined : 'EDI Payer ID is required for electronic submission',
+    });
+
+    checks.push({
+      field: 'taxonomy_code',
+      label: 'Taxonomy Code',
+      status: (practice as any)?.taxonomy_code ? 'pass' : 'warn',
+      message: (practice as any)?.taxonomy_code ? undefined : 'Taxonomy code recommended for 837P submissions',
+    });
+  }
+
   const passCount = checks.filter(c => c.status === 'pass').length;
   const failCount = checks.filter(c => c.status === 'fail').length;
   const warnCount = checks.filter(c => c.status === 'warn').length;
@@ -186,7 +216,11 @@ export function computeClaimReadiness(
 export function useClaimReadiness(
   client: Client | null,
   practice: Practice | null,
-  notes?: Note[]
+  notes?: Note[],
+  options?: ClaimReadinessOptions
 ): CMS1500Readiness {
-  return useMemo(() => computeClaimReadiness(client, practice, notes), [client, practice, notes]);
+  return useMemo(
+    () => computeClaimReadiness(client, practice, notes, options),
+    [client, practice, notes, options?.mode, options?.clearinghouseConnected]
+  );
 }

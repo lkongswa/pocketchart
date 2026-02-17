@@ -56,6 +56,8 @@ const VALID_TABLES = new Set([
   'physicians', 'fax_log', 'intake_form_templates',
   // Waitlist
   'waitlist',
+  // V3 Insurance: eligibility & denial codes
+  'eligibility_checks', 'denial_codes',
 ]);
 
 export function getDataPath(): string {
@@ -2021,6 +2023,79 @@ function runMigrations(): void {
         }
       },
     },
+    {
+      version: 47,
+      description: 'V3 Insurance: Add claims lifecycle columns, eligibility_checks and denial_codes tables',
+      up: () => {
+        // ── New columns on claims table ──
+        if (!columnExists('claims', 'validated_at')) {
+          db.exec("ALTER TABLE claims ADD COLUMN validated_at DATETIME");
+        }
+        if (!columnExists('claims', 'acknowledged_at')) {
+          db.exec("ALTER TABLE claims ADD COLUMN acknowledged_at DATETIME");
+        }
+        if (!columnExists('claims', 'denied_at')) {
+          db.exec("ALTER TABLE claims ADD COLUMN denied_at DATETIME");
+        }
+        if (!columnExists('claims', 'appeal_submitted_at')) {
+          db.exec("ALTER TABLE claims ADD COLUMN appeal_submitted_at DATETIME");
+        }
+        if (!columnExists('claims', 'appeal_notes')) {
+          db.exec("ALTER TABLE claims ADD COLUMN appeal_notes TEXT DEFAULT ''");
+        }
+        if (!columnExists('claims', 'correction_notes')) {
+          db.exec("ALTER TABLE claims ADD COLUMN correction_notes TEXT DEFAULT ''");
+        }
+        if (!columnExists('claims', 'original_claim_id')) {
+          db.exec("ALTER TABLE claims ADD COLUMN original_claim_id INTEGER REFERENCES claims(id)");
+        }
+
+        // ── Eligibility checks table ──
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS eligibility_checks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            client_id INTEGER REFERENCES clients(id),
+            payer_name TEXT,
+            payer_id TEXT,
+            check_date TEXT NOT NULL,
+            raw_response TEXT,
+            plan_name TEXT,
+            plan_type TEXT,
+            coverage_active INTEGER DEFAULT 0,
+            copay_amount REAL,
+            coinsurance_percent REAL,
+            deductible_total REAL,
+            deductible_met REAL,
+            out_of_pocket_max REAL,
+            out_of_pocket_met REAL,
+            therapy_visits_allowed INTEGER,
+            therapy_visits_used INTEGER,
+            therapy_visits_remaining INTEGER,
+            auth_required INTEGER DEFAULT 0,
+            auth_number TEXT,
+            referral_required INTEGER DEFAULT 0,
+            benefit_period_start TEXT,
+            benefit_period_end TEXT,
+            parsed_benefits TEXT DEFAULT '{}',
+            notes TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+
+        // ── Denial codes reference table ──
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS denial_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL UNIQUE,
+            group_code TEXT NOT NULL,
+            description TEXT NOT NULL,
+            plain_english TEXT NOT NULL,
+            what_to_do TEXT NOT NULL,
+            common_in_therapy INTEGER DEFAULT 0
+          )
+        `);
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
@@ -2083,6 +2158,15 @@ function createIndexes(): void {
     CREATE INDEX IF NOT EXISTS idx_audit_log_entity_id ON audit_log(entity_id);
     CREATE INDEX IF NOT EXISTS idx_audit_log_client_id ON audit_log(client_id);
     CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at);
+  `);
+
+  // V3 Insurance: eligibility + denial indexes
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_eligibility_checks_client_id ON eligibility_checks(client_id);
+    CREATE INDEX IF NOT EXISTS idx_eligibility_checks_check_date ON eligibility_checks(check_date);
+    CREATE INDEX IF NOT EXISTS idx_denial_codes_code ON denial_codes(code);
+    CREATE INDEX IF NOT EXISTS idx_denial_codes_common ON denial_codes(common_in_therapy);
+    CREATE INDEX IF NOT EXISTS idx_claims_original_claim_id ON claims(original_claim_id);
   `);
 
   // V2 Pro table indexes (run after migration 15 creates tables)
