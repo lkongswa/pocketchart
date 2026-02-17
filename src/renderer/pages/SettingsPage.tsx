@@ -11,6 +11,7 @@ import BAAComplianceModal from '../components/BAAComplianceModal';
 import RecoveryKeyCeremony from '../components/RecoveryKeyCeremony';
 import RestoreConfirmationModal from '../components/RestoreConfirmationModal';
 import ImportClientSelector from '../components/ImportClientSelector';
+import PhysicianDirectoryModal from '../components/PhysicianDirectoryModal';
 import { useSectionColor } from '../hooks/useSectionColor';
 import { useTier } from '../hooks/useTier';
 import { useAccessibilityPrefs } from '../hooks/useAccessibilityPrefs';
@@ -169,6 +170,7 @@ export default function SettingsPage() {
   const [srfaxSaving, setSrfaxSaving] = useState(false);
   const [srfaxTesting, setSrfaxTesting] = useState(false);
   const [srfaxConfigured, setSrfaxConfigured] = useState(false);
+  const [showPhysicianDirectory, setShowPhysicianDirectory] = useState(false);
 
   // Signature state
   const [signatureName, setSignatureName] = useState('');
@@ -1240,6 +1242,30 @@ export default function SettingsPage() {
         <h2 className="text-xs font-semibold text-[var(--color-text-tertiary)] uppercase tracking-wider">Clinical</h2>
         <div className="flex-1 border-t border-[var(--color-border)]" />
       </div>
+
+      {/* Physician Directory */}
+      <CollapsibleSection
+        icon={<Stethoscope className="w-5 h-5" />}
+        title="Physician Directory"
+        description="Manage referring physicians, fax numbers, and NPI info"
+        sectionId="settings-physician-directory"
+        isOpen={openSectionId === 'physician-directory'}
+        onToggle={() => toggleSection('physician-directory')}
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-[var(--color-text-secondary)]">
+            Your physician directory stores referring physician details used across client charts and fax workflows.
+          </p>
+          <button
+            type="button"
+            className="btn-primary text-sm flex items-center gap-2"
+            onClick={() => setShowPhysicianDirectory(true)}
+          >
+            <BookOpen className="w-4 h-4" />
+            Open Physician Directory
+          </button>
+        </div>
+      </CollapsibleSection>
 
       {/* Note Format */}
       <CollapsibleSection
@@ -2634,6 +2660,12 @@ export default function SettingsPage() {
           setFeeSchedule(updated);
         }}
         fee={editingFee || undefined}
+      />
+
+      {/* Physician Directory Modal */}
+      <PhysicianDirectoryModal
+        isOpen={showPhysicianDirectory}
+        onClose={() => setShowPhysicianDirectory(false)}
       />
     </div>
   );
