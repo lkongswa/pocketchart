@@ -1989,7 +1989,7 @@ export interface PocketChartAPI {
   };
   // ── Fax ──
   fax: {
-    send: (data: { documentId?: number; docType?: 'eval' | 'note' | 'document'; physicianId?: number; faxNumber: string; clientId?: number; requestSignature?: boolean }) => Promise<FaxLogEntry>;
+    send: (data: { documentId?: number; docType?: 'eval' | 'note' | 'document'; documents?: Array<{ id: number; type: 'eval' | 'note' | 'document' }>; physicianId?: number; faxNumber: string; clientId?: number; requestSignature?: boolean }) => Promise<FaxLogEntry>;
     getStatus: (faxLogId: number) => Promise<FaxLogEntry>;
     listInbox: () => Promise<FaxLogEntry[]>;
     listOutbox: () => Promise<FaxLogEntry[]>;

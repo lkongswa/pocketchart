@@ -506,7 +506,7 @@ const api = {
 
   // ── Fax ──
   fax: {
-    send: (data: { documentId?: number; docType?: 'eval' | 'note' | 'document'; physicianId?: number; faxNumber: string; clientId?: number; requestSignature?: boolean }) => ipcRenderer.invoke('fax:send', data),
+    send: (data: { documentId?: number; docType?: 'eval' | 'note' | 'document'; documents?: Array<{ id: number; type: 'eval' | 'note' | 'document' }>; physicianId?: number; faxNumber: string; clientId?: number; requestSignature?: boolean }) => ipcRenderer.invoke('fax:send', data),
     getStatus: (faxLogId: number) => ipcRenderer.invoke('fax:getStatus', faxLogId),
     listInbox: () => ipcRenderer.invoke('fax:listInbox'),
     listOutbox: () => ipcRenderer.invoke('fax:listOutbox'),

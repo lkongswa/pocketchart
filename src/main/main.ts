@@ -6766,9 +6766,42 @@ function registerIpcHandlers() {
   // ── Fax (SRFax) ──
   // ══════════════════════════════════════════════════════════════════════
 
+  // Helper: generate a single document PDF buffer from a docType + id
+  function buildDocumentPdf(docId: number, docType: string, fallbackClientId?: number): { buffer: Buffer; label: string; fileName: string; clientName: string } {
+    if (docType === 'eval') {
+      const evalItem = db.prepare('SELECT * FROM evaluations WHERE id = ? AND deleted_at IS NULL').get(docId) as any;
+      if (!evalItem) throw new Error('Evaluation not found');
+      const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(evalItem.client_id || fallbackClientId) as any;
+      if (!client) throw new Error('Client not found');
+      const buffer = buildSingleEvalPdf(client, evalItem);
+      const evalTypeLabel = evalItem.eval_type === 'reassessment' ? 'Reassessment' : 'Evaluation';
+      return { buffer, label: evalTypeLabel, fileName: `${evalTypeLabel}_${evalItem.eval_date || 'undated'}.pdf`, clientName: `${client.first_name} ${client.last_name}` };
+    } else if (docType === 'note') {
+      const note = db.prepare('SELECT * FROM notes WHERE id = ? AND deleted_at IS NULL').get(docId) as any;
+      if (!note) throw new Error('Note not found');
+      const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(note.client_id || fallbackClientId) as any;
+      if (!client) throw new Error('Client not found');
+      const noteFormatVal = (db.prepare("SELECT value FROM settings WHERE key = 'note_format'").get() as any)?.value || 'SOAP';
+      const pdfSections = NOTE_FORMAT_SECTIONS[noteFormatVal as NoteFormat].filter((s: any) => s.label !== '(unused)');
+      const buffer = buildSingleNotePdf(client, note, pdfSections);
+      let prefix = 'Treatment Note';
+      if (note.note_type === 'progress_report') prefix = 'Progress Report';
+      else if (note.note_type === 'discharge') prefix = 'Discharge Summary';
+      return { buffer, label: prefix, fileName: `${prefix.replace(/ /g, '_')}_${note.date_of_service || 'undated'}.pdf`, clientName: `${client.first_name} ${client.last_name}` };
+    } else {
+      const docRecord = db.prepare('SELECT * FROM client_documents WHERE id = ?').get(docId) as any;
+      if (!docRecord) throw new Error('Document not found');
+      const docPath = path.join(getDataPath(), 'documents', docRecord.filename);
+      if (!fs.existsSync(docPath)) throw new Error('Document file not found on disk');
+      const buffer = fs.readFileSync(docPath);
+      return { buffer, label: docRecord.category?.replace(/_/g, ' ') || 'Document', fileName: docRecord.original_name || docRecord.filename, clientName: '' };
+    }
+  }
+
   safeHandle('fax:send', async (_event, data: {
     documentId?: number;
     docType?: 'eval' | 'note' | 'document';
+    documents?: Array<{ id: number; type: 'eval' | 'note' | 'document' }>;
     physicianId?: number;
     faxNumber: string;
     clientId?: number;
@@ -6777,12 +6810,11 @@ function registerIpcHandlers() {
     const config = getSRFaxConfig(db, decryptSecure);
     if (!config) throw new Error('SRFax not configured. Set up credentials in Settings.');
 
-    let documentBuffer: Buffer | null = null;
-    let fileName = 'document.pdf';
-    let documentLabel = 'Document';
-    let clientName = 'Patient';
-    const docType = data.docType || 'document';
     const practice = db.prepare('SELECT * FROM practice WHERE id = 1').get() as any;
+    let clientName = 'Patient';
+    const documentLabels: string[] = [];
+    const pdfBuffers: Buffer[] = [];
+    let fileName = 'document.pdf';
 
     // Look up physician name for cover page
     let recipientName = '';
@@ -6797,51 +6829,47 @@ function registerIpcHandlers() {
       if (cl) clientName = `${cl.first_name} ${cl.last_name}`;
     }
 
-    if (data.documentId) {
-      if (docType === 'eval') {
-        // Generate eval PDF on the fly
-        const evalItem = db.prepare('SELECT * FROM evaluations WHERE id = ? AND deleted_at IS NULL').get(data.documentId) as any;
-        if (!evalItem) throw new Error('Evaluation not found');
-        const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(evalItem.client_id || data.clientId) as any;
-        if (!client) throw new Error('Client not found');
-        clientName = `${client.first_name} ${client.last_name}`;
-        documentBuffer = buildSingleEvalPdf(client, evalItem);
-        const dateStr = evalItem.eval_date || 'undated';
-        const evalTypeLabel = evalItem.eval_type === 'reassessment' ? 'Reassessment' : 'Evaluation';
-        documentLabel = evalTypeLabel;
-        fileName = `${evalTypeLabel}_${dateStr}.pdf`;
-      } else if (docType === 'note') {
-        // Generate note PDF on the fly
-        const note = db.prepare('SELECT * FROM notes WHERE id = ? AND deleted_at IS NULL').get(data.documentId) as any;
-        if (!note) throw new Error('Note not found');
-        const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(note.client_id || data.clientId) as any;
-        if (!client) throw new Error('Client not found');
-        clientName = `${client.first_name} ${client.last_name}`;
-        const noteFormatVal = (db.prepare("SELECT value FROM settings WHERE key = 'note_format'").get() as any)?.value || 'SOAP';
-        const pdfSections = NOTE_FORMAT_SECTIONS[noteFormatVal as NoteFormat].filter((s: any) => s.label !== '(unused)');
-        documentBuffer = buildSingleNotePdf(client, note, pdfSections);
-        const dateStr = note.date_of_service || 'undated';
-        let prefix = 'Treatment Note';
-        if (note.note_type === 'progress_report') prefix = 'Progress Report';
-        else if (note.note_type === 'discharge') prefix = 'Discharge Summary';
-        documentLabel = prefix;
-        fileName = `${prefix.replace(/ /g, '_')}_${dateStr}.pdf`;
-      } else {
-        // Client document — read file from disk
-        const docRecord = db.prepare('SELECT * FROM client_documents WHERE id = ?').get(data.documentId) as any;
-        if (!docRecord) throw new Error('Document not found');
-        const docPath = path.join(getDataPath(), 'documents', docRecord.filename);
-        if (fs.existsSync(docPath)) {
-          documentBuffer = fs.readFileSync(docPath);
-          fileName = docRecord.original_name || docRecord.filename;
-          documentLabel = docRecord.category?.replace(/_/g, ' ') || 'Document';
-        } else {
-          throw new Error('Document file not found on disk');
-        }
-      }
+    // Build list of documents to process — support both single doc and multi-doc
+    const docList: Array<{ id: number; type: string }> = [];
+    if (data.documents && data.documents.length > 0) {
+      docList.push(...data.documents);
+    } else if (data.documentId) {
+      docList.push({ id: data.documentId, type: data.docType || 'document' });
     }
 
-    if (!documentBuffer) throw new Error('No document content to fax');
+    if (docList.length === 0) throw new Error('No documents selected to fax');
+
+    // Generate PDFs for each document
+    for (const doc of docList) {
+      const result = buildDocumentPdf(doc.id, doc.type, data.clientId);
+      pdfBuffers.push(result.buffer);
+      documentLabels.push(result.label);
+      if (result.clientName) clientName = result.clientName;
+      if (docList.length === 1) fileName = result.fileName;
+    }
+
+    // If multiple docs, set a combined filename
+    if (docList.length > 1) {
+      fileName = `Fax_${docList.length}_documents_${new Date().toISOString().split('T')[0]}.pdf`;
+    }
+
+    // Merge all document PDFs into one
+    let documentBuffer: Buffer;
+    if (pdfBuffers.length === 1) {
+      documentBuffer = pdfBuffers[0];
+    } else {
+      const mergedDoc = await PDFLibDocument.create();
+      for (const buf of pdfBuffers) {
+        try {
+          const srcDoc = await PDFLibDocument.load(buf);
+          const pages = await mergedDoc.copyPages(srcDoc, srcDoc.getPageIndices());
+          for (const page of pages) mergedDoc.addPage(page);
+        } catch (err) {
+          console.error('[Fax] Failed to merge a document PDF, skipping:', err);
+        }
+      }
+      documentBuffer = Buffer.from(await mergedDoc.save());
+    }
 
     // Get practice fax number (caller ID) for cover page "return fax" line
     const practiceFax = config.caller_id || '';
@@ -6852,6 +6880,11 @@ function registerIpcHandlers() {
       const tempDoc = await PDFLibDocument.load(documentBuffer);
       docPageCount = tempDoc.getPageCount();
     } catch { /* non-PDF file, assume 1 page */ }
+
+    // Build document label for cover page
+    const documentLabel = docList.length === 1
+      ? documentLabels[0]
+      : `${docList.length} Documents (${documentLabels.join(', ')})`;
 
     // Generate cover page
     const coverBuffer = buildFaxCoverPage({
@@ -6865,9 +6898,9 @@ function registerIpcHandlers() {
       practiceFax,
     });
 
-    // Merge cover page + document into single PDF
-    const mergedBuffer = await mergePdfs(coverBuffer, documentBuffer);
-    const fileContent = mergedBuffer.toString('base64');
+    // Merge cover page + document(s) into single PDF
+    const finalBuffer = await mergePdfs(coverBuffer, documentBuffer);
+    const fileContent = finalBuffer.toString('base64');
 
     // Get sender email from SRFax settings for sSenderEmail field
     const senderEmailRow = db.prepare("SELECT value FROM settings WHERE key = 'srfax_sender_email'").get() as any;
@@ -6881,9 +6914,8 @@ function registerIpcHandlers() {
       senderEmail,
     });
 
-    // Only store document_id when it's actually a client_documents FK — evals/notes
-    // are not in that table, so passing their IDs breaks the FK constraint.
-    const faxLogDocId = docType === 'document' ? (data.documentId || null) : null;
+    // Only store document_id when it's a single client_documents FK
+    const faxLogDocId = (docList.length === 1 && docList[0].type === 'document') ? docList[0].id : null;
 
     const insertResult = db.prepare(`
       INSERT INTO fax_log (direction, client_id, physician_id, fax_number, document_id, srfax_id, status, sent_at)

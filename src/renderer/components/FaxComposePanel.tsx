@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Send, Search, FileText, ClipboardList, StickyNote, CheckCircle, AlertCircle, User } from 'lucide-react';
+import { Send, Search, FileText, ClipboardList, StickyNote, CheckCircle, AlertCircle, User, Check } from 'lucide-react';
 import PhysicianCombobox from './PhysicianCombobox';
 import type { Client, Physician, ClientDocument, Evaluation, Note } from '../../shared/types';
 import type { FaxDocType } from './FaxSendModal';
@@ -25,9 +25,9 @@ export default function FaxComposePanel({ onSent }: FaxComposePanelProps) {
   const [clientSearch, setClientSearch] = useState('');
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
 
-  // Document selection
+  // Document selection (multi-select)
   const [faxableItems, setFaxableItems] = useState<FaxablItem[]>([]);
-  const [selectedItem, setSelectedItem] = useState<FaxablItem | null>(null);
+  const [selectedItems, setSelectedItems] = useState<FaxablItem[]>([]);
   const [docLoading, setDocLoading] = useState(false);
 
   // Recipient
@@ -92,7 +92,7 @@ export default function FaxComposePanel({ onSent }: FaxComposePanelProps) {
             type: 'document',
             label: d.original_name,
             detail: d.category?.replace(/_/g, ' ') || 'Document',
-            signed: true, // documents are always faxable
+            signed: true,
           });
         }
       }
@@ -106,7 +106,7 @@ export default function FaxComposePanel({ onSent }: FaxComposePanelProps) {
 
   const handleSelectClient = (client: Client) => {
     setSelectedClient(client);
-    setSelectedItem(null);
+    setSelectedItems([]);
     setStep('document');
     loadFaxableItems(client);
 
@@ -119,26 +119,54 @@ export default function FaxComposePanel({ onSent }: FaxComposePanelProps) {
     }
   };
 
-  const handleSelectItem = (item: FaxablItem) => {
-    setSelectedItem(item);
-    setStep('recipient');
+  const toggleItem = (item: FaxablItem) => {
+    setSelectedItems(prev => {
+      const key = `${item.type}-${item.id}`;
+      const exists = prev.some(i => `${i.type}-${i.id}` === key);
+      if (exists) {
+        return prev.filter(i => `${i.type}-${i.id}` !== key);
+      }
+      return [...prev, item];
+    });
+  };
+
+  const isItemSelected = (item: FaxablItem) => {
+    return selectedItems.some(i => i.type === item.type && i.id === item.id);
+  };
+
+  const handleContinueToRecipient = () => {
+    if (selectedItems.length > 0) {
+      setStep('recipient');
+    }
   };
 
   const faxNumber = selectedPhysician?.fax_number || manualFax;
 
   const handleSend = async () => {
-    if (!faxNumber || !selectedItem || !selectedClient) return;
+    if (!faxNumber || selectedItems.length === 0 || !selectedClient) return;
     setSending(true);
     setError(null);
     try {
-      await window.api.fax.send({
-        documentId: selectedItem.id,
-        docType: selectedItem.type,
-        physicianId: selectedPhysician?.id,
-        faxNumber,
-        clientId: selectedClient.id,
-        requestSignature,
-      });
+      if (selectedItems.length === 1) {
+        // Single doc — use legacy single-doc path
+        await window.api.fax.send({
+          documentId: selectedItems[0].id,
+          docType: selectedItems[0].type,
+          physicianId: selectedPhysician?.id,
+          faxNumber,
+          clientId: selectedClient.id,
+          requestSignature,
+        });
+      } else {
+        // Multi-doc — use documents array
+        await window.api.fax.send({
+          documents: selectedItems.map(i => ({ id: i.id, type: i.type })),
+          physicianId: selectedPhysician?.id,
+          faxNumber,
+          clientId: selectedClient.id,
+          requestSignature,
+        });
+      }
       setSent(true);
       onSent?.();
     } catch (err: any) {
@@ -152,7 +180,7 @@ export default function FaxComposePanel({ onSent }: FaxComposePanelProps) {
   const handleStartOver = () => {
     setStep('client');
     setSelectedClient(null);
-    setSelectedItem(null);
+    setSelectedItems([]);
     setSelectedPhysician(null);
     setManualFax('');
     setRequestSignature(false);
@@ -180,7 +208,9 @@ export default function FaxComposePanel({ onSent }: FaxComposePanelProps) {
         <CheckCircle className="mx-auto mb-3 text-green-500" size={36} />
         <div className="text-green-600 font-medium text-base">Fax queued successfully!</div>
         <p className="text-sm text-[var(--color-text-secondary)] mt-1 mb-4">
-          Track the status in the Outbox tab.
+          {selectedItems.length > 1
+            ? `${selectedItems.length} documents sent. Track the status in the Outbox tab.`
+            : 'Track the status in the Outbox tab.'}
         </p>
         <button type="button" className="btn-ghost text-sm" onClick={handleStartOver}>
           Send Another Fax
@@ -195,7 +225,7 @@ export default function FaxComposePanel({ onSent }: FaxComposePanelProps) {
       <div className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
         <button
           type="button"
-          onClick={() => { if (step !== 'client') { setStep('client'); setSelectedItem(null); } }}
+          onClick={() => { if (step !== 'client') { setStep('client'); setSelectedItems([]); } }}
           className={`flex items-center gap-1 ${step === 'client' ? 'text-[var(--color-primary)] font-semibold' : selectedClient ? 'text-[var(--color-text)] hover:underline cursor-pointer' : ''}`}
         >
           <User size={12} />
@@ -205,11 +235,13 @@ export default function FaxComposePanel({ onSent }: FaxComposePanelProps) {
         <button
           type="button"
           onClick={() => { if (selectedClient && step !== 'document') { setStep('document'); } }}
-          className={`flex items-center gap-1 ${step === 'document' ? 'text-[var(--color-primary)] font-semibold' : selectedItem ? 'text-[var(--color-text)] hover:underline cursor-pointer' : ''}`}
+          className={`flex items-center gap-1 ${step === 'document' ? 'text-[var(--color-primary)] font-semibold' : selectedItems.length > 0 ? 'text-[var(--color-text)] hover:underline cursor-pointer' : ''}`}
           disabled={!selectedClient}
         >
           <FileText size={12} />
-          {selectedItem ? selectedItem.label : 'Select Document'}
+          {selectedItems.length > 0
+            ? `${selectedItems.length} Document${selectedItems.length > 1 ? 's' : ''}`
+            : 'Select Documents'}
         </button>
         <span className="text-gray-300">/</span>
         <span className={`flex items-center gap-1 ${step === 'recipient' || step === 'confirm' ? 'text-[var(--color-primary)] font-semibold' : ''}`}>
@@ -258,10 +290,17 @@ export default function FaxComposePanel({ onSent }: FaxComposePanelProps) {
         </div>
       )}
 
-      {/* STEP 2: Select Document */}
+      {/* STEP 2: Select Documents (multi-select) */}
       {step === 'document' && (
         <div>
-          <label className="label mb-2">Select a Document to Fax</label>
+          <div className="flex items-center justify-between mb-2">
+            <label className="label">Select Documents to Fax</label>
+            {selectedItems.length > 0 && (
+              <span className="text-xs text-[var(--color-primary)] font-medium">
+                {selectedItems.length} selected
+              </span>
+            )}
+          </div>
           {docLoading ? (
             <div className="text-sm text-[var(--color-text-secondary)] text-center py-6">Loading documents...</div>
           ) : faxableItems.length === 0 ? (
@@ -269,26 +308,49 @@ export default function FaxComposePanel({ onSent }: FaxComposePanelProps) {
               No signed evaluations, notes, or documents found for this client.
             </div>
           ) : (
-            <div className="space-y-0.5 max-h-72 overflow-y-auto">
-              {faxableItems.map((item) => (
+            <>
+              <div className="space-y-0.5 max-h-72 overflow-y-auto mb-3">
+                {faxableItems.map((item) => {
+                  const selected = isItemSelected(item);
+                  return (
+                    <button
+                      key={`${item.type}-${item.id}`}
+                      type="button"
+                      className={`w-full text-left px-3 py-2.5 rounded-lg flex items-center gap-3 transition-colors ${
+                        selected ? 'bg-blue-50 ring-1 ring-blue-200' : 'hover:bg-gray-50'
+                      }`}
+                      onClick={() => toggleItem(item)}
+                    >
+                      {/* Checkbox indicator */}
+                      <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
+                        selected ? 'bg-[var(--color-primary)] border-[var(--color-primary)]' : 'border-gray-300'
+                      }`}>
+                        {selected && <Check size={10} className="text-white" />}
+                      </div>
+                      {docIcon(item.type)}
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm font-medium text-[var(--color-text)] block truncate">
+                          {item.label}
+                        </span>
+                        <span className="text-xs text-[var(--color-text-secondary)]">
+                          {item.detail}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex justify-end">
                 <button
-                  key={`${item.type}-${item.id}`}
                   type="button"
-                  className="w-full text-left px-3 py-2.5 rounded-lg hover:bg-blue-50 flex items-center gap-3 group"
-                  onClick={() => handleSelectItem(item)}
+                  className="btn-primary flex items-center gap-2 text-sm"
+                  disabled={selectedItems.length === 0}
+                  onClick={handleContinueToRecipient}
                 >
-                  {docIcon(item.type)}
-                  <div className="flex-1 min-w-0">
-                    <span className="text-sm font-medium text-[var(--color-text)] block truncate">
-                      {item.label}
-                    </span>
-                    <span className="text-xs text-[var(--color-text-secondary)]">
-                      {item.detail}
-                    </span>
-                  </div>
+                  Continue with {selectedItems.length} Document{selectedItems.length !== 1 ? 's' : ''}
                 </button>
-              ))}
-            </div>
+              </div>
+            </>
           )}
         </div>
       )}
@@ -297,11 +359,20 @@ export default function FaxComposePanel({ onSent }: FaxComposePanelProps) {
       {(step === 'recipient' || step === 'confirm') && (
         <div className="space-y-4">
           {/* Summary of what's being sent */}
-          <div className="text-sm bg-gray-50 px-3 py-2 rounded border border-[var(--color-border)] flex items-center gap-2">
-            {selectedItem && docIcon(selectedItem.type)}
-            <span className="text-[var(--color-text-secondary)]">Sending:</span>
-            <span className="font-medium text-[var(--color-text)]">{selectedItem?.label}</span>
-            <span className="text-[var(--color-text-secondary)]">({selectedItem?.detail})</span>
+          <div className="text-sm bg-gray-50 px-3 py-2 rounded border border-[var(--color-border)] space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="text-[var(--color-text-secondary)]">Sending:</span>
+              <span className="font-medium text-[var(--color-text)]">
+                {selectedItems.length} document{selectedItems.length !== 1 ? 's' : ''}
+              </span>
+            </div>
+            {selectedItems.map((item) => (
+              <div key={`${item.type}-${item.id}`} className="flex items-center gap-2 pl-2 text-xs text-[var(--color-text-secondary)]">
+                {docIcon(item.type)}
+                <span>{item.label}</span>
+                <span>({item.detail})</span>
+              </div>
+            ))}
           </div>
 
           {/* Recipient picker */}
@@ -365,7 +436,7 @@ export default function FaxComposePanel({ onSent }: FaxComposePanelProps) {
               disabled={!faxNumber || sending}
             >
               <Send size={14} />
-              {sending ? 'Sending...' : 'Send Fax'}
+              {sending ? 'Sending...' : `Send Fax (${selectedItems.length} doc${selectedItems.length !== 1 ? 's' : ''})`}
             </button>
           </div>
         </div>
