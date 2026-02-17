@@ -11,7 +11,7 @@ type FaxTab = 'inbox' | 'outbox' | 'send';
 
 export default function FaxPage() {
   const navigate = useNavigate();
-  const { inbox, outbox, loading, refreshInbox, refreshOutbox, sendFax, matchToClient } = useFax();
+  const { inbox, outbox, loading, refreshInbox, refreshOutbox, sendFax, matchToClient, saveToChart } = useFax();
   const [activeTab, setActiveTab] = useState<FaxTab>('inbox');
   const [showSendModal, setShowSendModal] = useState(false);
   const [srfaxConfigured, setSrfaxConfigured] = useState<boolean | null>(null);
@@ -95,6 +95,9 @@ export default function FaxPage() {
             inbox={inbox}
             onRefresh={() => refreshInbox(true)}
             onMatchToClient={matchToClient}
+            onSaveToChart={async (faxLogId, clientId, category, linkToOutboundFaxId) => {
+              await saveToChart({ faxLogId, clientId, category, linkToOutboundFaxId });
+            }}
             loading={loading}
           />
         )}

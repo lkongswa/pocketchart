@@ -512,6 +512,8 @@ const api = {
     listOutbox: () => ipcRenderer.invoke('fax:listOutbox'),
     retrieveFax: (srfaxId: string) => ipcRenderer.invoke('fax:retrieveFax', srfaxId),
     matchToClient: (faxLogId: number, clientId: number) => ipcRenderer.invoke('fax:matchToClient', faxLogId, clientId),
+    getOutboundByClient: (clientId: number) => ipcRenderer.invoke('faxLog:getOutboundByClient', clientId),
+    saveToChart: (data: { faxLogId: number; clientId: number; category: string; linkToOutboundFaxId?: number }) => ipcRenderer.invoke('fax:saveToChart', data),
     pollStatuses: () => ipcRenderer.invoke('fax:pollStatuses'),
     pollInbox: () => ipcRenderer.invoke('fax:pollInbox'),
   },

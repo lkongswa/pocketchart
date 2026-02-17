@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useLocalPreference } from '../hooks/useLocalPreference';
 import {
@@ -43,6 +43,8 @@ import {
   List,
   LayoutGrid,
   Printer,
+  Check,
+  Inbox,
 } from 'lucide-react';
 import type {
   Client,
@@ -65,6 +67,7 @@ import type {
   Practice,
   Appointment,
   AppointmentStatus,
+  FaxTrackingEntry,
 } from '../../shared/types';
 import { CLIENT_DOCUMENT_CATEGORY_LABELS, SESSION_TYPE_LABELS, VISIT_TYPE_LABELS } from '../../shared/types';
 import ClientFormModal from '../components/ClientFormModal';
@@ -308,6 +311,7 @@ const ClientDetailPage: React.FC = () => {
   const [showFaxModal, setShowFaxModal] = useState(false);
   const [faxDocumentId, setFaxDocumentId] = useState<number | undefined>(undefined);
   const [faxDocType, setFaxDocType] = useState<'eval' | 'note' | 'document' | undefined>(undefined);
+  const [faxTracking, setFaxTracking] = useState<FaxTrackingEntry[]>([]);
   // CMS-1500 preview removed — now saves directly via dialog
 
   // Document upload form state
@@ -360,11 +364,40 @@ const ClientDetailPage: React.FC = () => {
   // Compact notes mode
   const [notesCompact, setNotesCompact] = useLocalPreference('client-notes-compact', true);
 
+  // Fax tracking: maps eval/note IDs to sent/received-back status
+  const evalFaxMap = useMemo(() => {
+    const map = new Map<number, { sent: boolean; receivedBack: boolean }>();
+    for (const entry of faxTracking) {
+      if (entry.eval_id) {
+        const existing = map.get(entry.eval_id);
+        map.set(entry.eval_id, {
+          sent: true,
+          receivedBack: (existing?.receivedBack || false) || entry.has_received_back > 0,
+        });
+      }
+    }
+    return map;
+  }, [faxTracking]);
+
+  const noteFaxMap = useMemo(() => {
+    const map = new Map<number, { sent: boolean; receivedBack: boolean }>();
+    for (const entry of faxTracking) {
+      if (entry.note_id) {
+        const existing = map.get(entry.note_id);
+        map.set(entry.note_id, {
+          sent: true,
+          receivedBack: (existing?.receivedBack || false) || entry.has_received_back > 0,
+        });
+      }
+    }
+    return map;
+  }, [faxTracking]);
+
   const loadData = useCallback(async () => {
     if (!clientId) return;
     setLoading(true);
     try {
-      const [clientData, notesData, evalsData, goalsData, docsData, invoicesData, paymentsData, discountsData, activeDiscountsData, practiceData, feeScheduleData, entitiesData, appointmentsData] = await Promise.all([
+      const [clientData, notesData, evalsData, goalsData, docsData, invoicesData, paymentsData, discountsData, activeDiscountsData, practiceData, feeScheduleData, entitiesData, appointmentsData, faxTrackingData] = await Promise.all([
         window.api.clients.get(clientId),
         window.api.notes.listByClient(clientId),
         window.api.evaluations.listByClient(clientId),
@@ -378,12 +411,14 @@ const ClientDetailPage: React.FC = () => {
         window.api.feeSchedule.list().catch(() => []),
         window.api.contractedEntities.list().catch(() => []),
         window.api.appointments.list({ clientId }).catch(() => []),
+        window.api.fax.getOutboundByClient(clientId).catch(() => []),
       ]);
       setClient(clientData);
       setPractice(practiceData);
       setNotes(notesData || []);
       setEvaluations(evalsData || []);
       setAppointments(appointmentsData || []);
+      setFaxTracking(faxTrackingData || []);
       setGoals(goalsData || []);
       // Load progress histories for all goals
       if (goalsData?.length) {
@@ -1124,6 +1159,16 @@ const ClientDetailPage: React.FC = () => {
                           >
                             <Printer size={12} />
                           </button>
+                          {evalFaxMap.get(evalItem.id)?.sent && (
+                            <span className="flex items-center gap-0.5 text-[10px] text-green-600" title="Faxed">
+                              <Check size={10} /> Sent
+                            </span>
+                          )}
+                          {evalFaxMap.get(evalItem.id)?.receivedBack && (
+                            <span className="flex items-center gap-0.5 text-[10px] text-blue-600" title="Signed copy received back">
+                              <Inbox size={10} /> Received
+                            </span>
+                          )}
                         </>
                       ) : (
                         <span className="flex items-center gap-1 text-xs text-amber-600">
@@ -1417,13 +1462,21 @@ const ClientDetailPage: React.FC = () => {
                       )}
                       <span className="flex-1" />
                       {note.signed_at && (
-                        <button
-                          className="p-0.5 btn-ghost text-[var(--color-text-secondary)] hover:text-violet-600"
-                          title="Fax to Physician"
-                          onClick={(e) => { e.stopPropagation(); setFaxDocumentId(note.id); setFaxDocType('note'); setShowFaxModal(true); }}
-                        >
-                          <Printer size={11} />
-                        </button>
+                        <>
+                          <button
+                            className="p-0.5 btn-ghost text-[var(--color-text-secondary)] hover:text-violet-600"
+                            title="Fax to Physician"
+                            onClick={(e) => { e.stopPropagation(); setFaxDocumentId(note.id); setFaxDocType('note'); setShowFaxModal(true); }}
+                          >
+                            <Printer size={11} />
+                          </button>
+                          {noteFaxMap.get(note.id)?.sent && (
+                            <span className="text-green-600" title="Faxed"><Check size={10} /></span>
+                          )}
+                          {noteFaxMap.get(note.id)?.receivedBack && (
+                            <span className="text-blue-600" title="Signed copy received"><Inbox size={10} /></span>
+                          )}
+                        </>
                       )}
                       {!note.signed_at && (
                         <button
@@ -1480,6 +1533,16 @@ const ClientDetailPage: React.FC = () => {
                             >
                               <Printer size={12} />
                             </button>
+                            {noteFaxMap.get(note.id)?.sent && (
+                              <span className="flex items-center gap-0.5 text-[10px] text-green-600" title="Faxed">
+                                <Check size={10} /> Sent
+                              </span>
+                            )}
+                            {noteFaxMap.get(note.id)?.receivedBack && (
+                              <span className="flex items-center gap-0.5 text-[10px] text-blue-600" title="Signed copy received back">
+                                <Inbox size={10} /> Received
+                              </span>
+                            )}
                           </>
                         ) : (
                           <span className="flex items-center gap-1 text-xs text-amber-600">
@@ -2366,6 +2429,11 @@ const ClientDetailPage: React.FC = () => {
         referringPhysicianId={client?.referring_physician_id}
         referringPhysicianName={client?.referring_physician}
         referringFax={client?.referring_fax}
+        onSent={() => {
+          if (clientId) {
+            window.api.fax.getOutboundByClient(clientId).then(setFaxTracking).catch(() => {});
+          }
+        }}
       />
 
       {/* Trial Expired Modal */}

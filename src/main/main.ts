@@ -6917,14 +6917,22 @@ function registerIpcHandlers() {
     // Only store document_id when it's a single client_documents FK
     const faxLogDocId = (docList.length === 1 && docList[0].type === 'document') ? docList[0].id : null;
 
+    // Track which eval/note was faxed (if exactly one in the list)
+    const evalIds = docList.filter(d => d.type === 'eval').map(d => d.id);
+    const noteIds = docList.filter(d => d.type === 'note').map(d => d.id);
+    const faxLogEvalId = evalIds.length === 1 ? evalIds[0] : null;
+    const faxLogNoteId = noteIds.length === 1 ? noteIds[0] : null;
+
     const insertResult = db.prepare(`
-      INSERT INTO fax_log (direction, client_id, physician_id, fax_number, document_id, srfax_id, status, sent_at)
-      VALUES ('outbound', ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+      INSERT INTO fax_log (direction, client_id, physician_id, fax_number, document_id, eval_id, note_id, srfax_id, status, sent_at)
+      VALUES ('outbound', ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
     `).run(
       data.clientId || null,
       data.physicianId || null,
       data.faxNumber,
       faxLogDocId,
+      faxLogEvalId,
+      faxLogNoteId,
       result.srfax_id,
       result.status === 'Queued' ? 'queued' : 'sent'
     );
@@ -6980,6 +6988,78 @@ function registerIpcHandlers() {
       "UPDATE fax_log SET client_id = ?, matched_confidence = 'exact' WHERE id = ?"
     ).run(clientId, faxLogId);
     return db.prepare('SELECT * FROM fax_log WHERE id = ?').get(faxLogId);
+  });
+
+  // Get all outbound faxes with eval/note links for a client (for sent/received-back markers)
+  safeHandle('faxLog:getOutboundByClient', (_event, clientId: number) => {
+    return db.prepare(`
+      SELECT fl.id, fl.eval_id, fl.note_id, fl.document_id, fl.status, fl.sent_at,
+        (SELECT COUNT(*) FROM fax_log inb
+         WHERE inb.linked_outbound_fax_id = fl.id AND inb.direction = 'inbound') AS has_received_back
+      FROM fax_log fl
+      WHERE fl.client_id = ? AND fl.direction = 'outbound'
+        AND (fl.eval_id IS NOT NULL OR fl.note_id IS NOT NULL)
+      ORDER BY fl.sent_at DESC
+    `).all(clientId);
+  });
+
+  // Save a received fax to a client's chart as a document
+  safeHandle('fax:saveToChart', async (_event, data: {
+    faxLogId: number;
+    clientId: number;
+    category: string;
+    linkToOutboundFaxId?: number;
+  }) => {
+    const config = getSRFaxConfig(db, decryptSecure);
+    if (!config) throw new Error('SRFax not configured');
+
+    const faxEntry = db.prepare('SELECT * FROM fax_log WHERE id = ?').get(data.faxLogId) as any;
+    if (!faxEntry) throw new Error('Fax log entry not found');
+    if (!faxEntry.srfax_id) throw new Error('No SRFax ID for this entry');
+
+    // 1. Retrieve the PDF from SRFax
+    const base64Pdf = await retrieveFax(config, { fileName: faxEntry.srfax_id, direction: 'IN' });
+    if (!base64Pdf) throw new Error('Failed to retrieve fax PDF from SRFax');
+
+    // 2. Save PDF to filesystem
+    const uuidName = `${uuidv4()}.pdf`;
+    const clientDocsDir = path.join(getDataPath(), 'documents', String(data.clientId));
+    fs.mkdirSync(clientDocsDir, { recursive: true });
+    const destPath = path.join(clientDocsDir, uuidName);
+    fs.writeFileSync(destPath, Buffer.from(base64Pdf, 'base64'));
+    const fileSize = fs.statSync(destPath).size;
+
+    // 3. Create client_documents record
+    const dateStr = faxEntry.received_at || faxEntry.created_at || '';
+    const datePart = dateStr ? dateStr.split('T')[0] : new Date().toISOString().split('T')[0];
+    const originalName = `Received_Fax_${(faxEntry.fax_number || 'unknown').replace(/\D/g, '')}_${datePart}.pdf`;
+
+    const docResult = db.prepare(`
+      INSERT INTO client_documents (client_id, filename, original_name, file_type, file_size, category)
+      VALUES (?, ?, ?, 'application/pdf', ?, ?)
+    `).run(
+      data.clientId,
+      uuidName,
+      originalName,
+      fileSize,
+      data.category || 'correspondence'
+    );
+
+    // 4. Update fax_log: set document_id + optionally link to outbound fax
+    if (data.linkToOutboundFaxId) {
+      db.prepare(`
+        UPDATE fax_log SET document_id = ?, client_id = ?, matched_confidence = 'exact',
+          linked_outbound_fax_id = ?, status = 'matched'
+        WHERE id = ?
+      `).run(docResult.lastInsertRowid, data.clientId, data.linkToOutboundFaxId, data.faxLogId);
+    } else {
+      db.prepare(`
+        UPDATE fax_log SET document_id = ?, client_id = ?, matched_confidence = 'exact', status = 'matched'
+        WHERE id = ?
+      `).run(docResult.lastInsertRowid, data.clientId, data.faxLogId);
+    }
+
+    return db.prepare('SELECT * FROM fax_log WHERE id = ?').get(data.faxLogId);
   });
 
   safeHandle('fax:pollStatuses', async () => {

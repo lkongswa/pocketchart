@@ -73,7 +73,7 @@ export function normalizeFaxNumber(fax: string): string {
 
 // ── Smart client matching ──
 
-export type MatchConfidence = 'exact' | 'name' | 'partial' | 'unmatched';
+export type MatchConfidence = 'exact' | 'name' | 'partial' | 'unmatched' | 'ambiguous';
 
 export function matchFaxToClient(
   callerFaxNumber: string,
@@ -100,12 +100,14 @@ export function matchFaxToClient(
 
   for (const physician of physicians) {
     if (normalizeFaxNumber(physician.fax_number) === normalized) {
-      // Find client linked to this physician
-      const linked = db.prepare(
+      // Find client(s) linked to this physician — handle same MD for multiple clients
+      const linkedClients = db.prepare(
         'SELECT id FROM clients WHERE deleted_at IS NULL AND referring_physician_id = ?'
-      ).get(physician.id) as { id: number } | undefined;
-      if (linked) {
-        return { clientId: linked.id, confidence: 'name' };
+      ).all(physician.id) as Array<{ id: number }>;
+      if (linkedClients.length === 1) {
+        return { clientId: linkedClients[0].id, confidence: 'name' };
+      } else if (linkedClients.length > 1) {
+        return { clientId: null, confidence: 'ambiguous' };
       }
     }
   }

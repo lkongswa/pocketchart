@@ -53,7 +53,13 @@ export function useFax() {
     return result;
   }, [refreshInbox]);
 
+  const saveToChart = useCallback(async (data: { faxLogId: number; clientId: number; category: string; linkToOutboundFaxId?: number }) => {
+    const result = await window.api.fax.saveToChart(data);
+    await refreshInbox();
+    return result;
+  }, [refreshInbox]);
+
   useEffect(() => { refresh(); }, [refresh]);
 
-  return { inbox, outbox, loading, refresh, refreshInbox, refreshOutbox, sendFax, matchToClient };
+  return { inbox, outbox, loading, refresh, refreshInbox, refreshOutbox, sendFax, matchToClient, saveToChart };
 }

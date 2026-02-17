@@ -965,7 +965,7 @@ export interface Physician {
 
 export type FaxDirection = 'inbound' | 'outbound';
 export type FaxStatus = 'queued' | 'sending' | 'sent' | 'delivered' | 'failed' | 'received' | 'matched' | 'unmatched';
-export type FaxMatchConfidence = 'exact' | 'name' | 'partial' | 'unmatched' | '';
+export type FaxMatchConfidence = 'exact' | 'name' | 'partial' | 'unmatched' | 'ambiguous' | '';
 
 export interface FaxLogEntry {
   id: number;
@@ -974,6 +974,9 @@ export interface FaxLogEntry {
   physician_id: number | null;
   fax_number: string;
   document_id: number | null;
+  eval_id: number | null;
+  note_id: number | null;
+  linked_outbound_fax_id: number | null;
   srfax_id: string;
   status: FaxStatus;
   pages: number;
@@ -986,6 +989,16 @@ export interface FaxLogEntry {
   client_name?: string;
   physician_name?: string;
   document_name?: string;
+}
+
+export interface FaxTrackingEntry {
+  id: number;
+  eval_id: number | null;
+  note_id: number | null;
+  document_id: number | null;
+  status: FaxStatus;
+  sent_at: string | null;
+  has_received_back: number;
 }
 
 // ── Intake Form Types ──
@@ -1995,6 +2008,8 @@ export interface PocketChartAPI {
     listOutbox: () => Promise<FaxLogEntry[]>;
     retrieveFax: (srfaxId: string) => Promise<{ base64Pdf: string; filename: string }>;
     matchToClient: (faxLogId: number, clientId: number) => Promise<FaxLogEntry>;
+    getOutboundByClient: (clientId: number) => Promise<FaxTrackingEntry[]>;
+    saveToChart: (data: { faxLogId: number; clientId: number; category: string; linkToOutboundFaxId?: number }) => Promise<FaxLogEntry>;
     pollStatuses: () => Promise<{ updated: number }>;
     pollInbox: () => Promise<{ newFaxes: number }>;
   };

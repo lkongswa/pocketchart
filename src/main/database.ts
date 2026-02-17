@@ -2006,6 +2006,21 @@ function runMigrations(): void {
         `);
       },
     },
+    {
+      version: 46,
+      description: 'Add eval_id, note_id, linked_outbound_fax_id to fax_log for fax tracking',
+      up: () => {
+        if (!columnExists('fax_log', 'eval_id')) {
+          db.exec(`ALTER TABLE fax_log ADD COLUMN eval_id INTEGER DEFAULT NULL`);
+        }
+        if (!columnExists('fax_log', 'note_id')) {
+          db.exec(`ALTER TABLE fax_log ADD COLUMN note_id INTEGER DEFAULT NULL`);
+        }
+        if (!columnExists('fax_log', 'linked_outbound_fax_id')) {
+          db.exec(`ALTER TABLE fax_log ADD COLUMN linked_outbound_fax_id INTEGER DEFAULT NULL`);
+        }
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
