@@ -2363,6 +2363,8 @@ const ClientDetailPage: React.FC = () => {
         documentId={faxDocumentId}
         docType={faxDocType}
         referringPhysicianId={client?.referring_physician_id}
+        referringPhysicianName={client?.referring_physician}
+        referringFax={client?.referring_fax}
       />
 
       {/* Trial Expired Modal */}

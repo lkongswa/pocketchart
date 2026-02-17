@@ -6828,6 +6828,10 @@ function registerIpcHandlers() {
       senderEmail,
     });
 
+    // Only store document_id when it's actually a client_documents FK — evals/notes
+    // are not in that table, so passing their IDs breaks the FK constraint.
+    const faxLogDocId = docType === 'document' ? (data.documentId || null) : null;
+
     const insertResult = db.prepare(`
       INSERT INTO fax_log (direction, client_id, physician_id, fax_number, document_id, srfax_id, status, sent_at)
       VALUES ('outbound', ?, ?, ?, ?, ?, ?, datetime('now'))
@@ -6835,7 +6839,7 @@ function registerIpcHandlers() {
       data.clientId || null,
       data.physicianId || null,
       data.faxNumber,
-      data.documentId || null,
+      faxLogDocId,
       result.srfax_id,
       result.status === 'Queued' ? 'queued' : 'sent'
     );

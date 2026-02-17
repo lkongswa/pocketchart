@@ -15,11 +15,15 @@ interface FaxSendModalProps {
   docType?: FaxDocType;
   /** Pre-populate with this physician (from client.referring_physician_id) */
   referringPhysicianId?: number | null;
+  /** Fallback: free-text physician name (from client.referring_physician) */
+  referringPhysicianName?: string;
+  /** Fallback: free-text referring fax (from client.referring_fax) */
+  referringFax?: string;
   /** Called after a fax is successfully queued (e.g., to refresh outbox) */
   onSent?: () => void;
 }
 
-export default function FaxSendModal({ isOpen, onClose, clientId, documentId, docType, referringPhysicianId, onSent }: FaxSendModalProps) {
+export default function FaxSendModal({ isOpen, onClose, clientId, documentId, docType, referringPhysicianId, referringPhysicianName, referringFax, onSent }: FaxSendModalProps) {
   const [selectedPhysician, setSelectedPhysician] = useState<Physician | null>(null);
   const [manualFax, setManualFax] = useState('');
   const [documents, setDocuments] = useState<ClientDocument[]>([]);
@@ -46,14 +50,28 @@ export default function FaxSendModal({ isOpen, onClose, clientId, documentId, do
 
   // Pre-populate referring physician when modal opens
   useEffect(() => {
-    if (!isOpen || !referringPhysicianId) return;
+    if (!isOpen) return;
+    if (!referringPhysicianId && !referringPhysicianName && !referringFax) return;
+
     window.api.physicians.list().then((physicians: Physician[]) => {
-      const match = physicians.find(p => p.id === referringPhysicianId);
-      if (match) {
-        setSelectedPhysician(match);
+      // Try exact ID match first
+      if (referringPhysicianId) {
+        const match = physicians.find(p => p.id === referringPhysicianId);
+        if (match) { setSelectedPhysician(match); return; }
+      }
+      // Fallback: match by name
+      if (referringPhysicianName) {
+        const nameMatch = physicians.find(p =>
+          p.name.toLowerCase() === referringPhysicianName.toLowerCase()
+        );
+        if (nameMatch) { setSelectedPhysician(nameMatch); return; }
+      }
+      // Fallback: just pre-fill the manual fax number from the client record
+      if (referringFax) {
+        setManualFax(referringFax);
       }
     });
-  }, [isOpen, referringPhysicianId]);
+  }, [isOpen, referringPhysicianId, referringPhysicianName, referringFax]);
 
   // Load client documents only when docType is 'document' or not set (fallback picker)
   useEffect(() => {
