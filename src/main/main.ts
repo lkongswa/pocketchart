@@ -6759,24 +6759,62 @@ function registerIpcHandlers() {
   // ── Fax (SRFax) ──
   // ══════════════════════════════════════════════════════════════════════
 
-  safeHandle('fax:send', async (_event, data: { documentId?: number; physicianId?: number; faxNumber: string; clientId?: number }) => {
+  safeHandle('fax:send', async (_event, data: {
+    documentId?: number;
+    docType?: 'eval' | 'note' | 'document';
+    physicianId?: number;
+    faxNumber: string;
+    clientId?: number;
+  }) => {
     const config = getSRFaxConfig(db, decryptSecure);
     if (!config) throw new Error('SRFax not configured. Set up credentials in Settings.');
 
     let fileContent = '';
     let fileName = 'document.pdf';
+    const docType = data.docType || 'document';
 
     if (data.documentId) {
-      const doc = db.prepare('SELECT * FROM client_documents WHERE id = ?').get(data.documentId) as any;
-      if (!doc) throw new Error('Document not found');
-      const docPath = path.join(getDataPath(), 'documents', doc.filename);
-      if (fs.existsSync(docPath)) {
-        fileContent = fs.readFileSync(docPath).toString('base64');
-        fileName = doc.original_name || doc.filename;
+      if (docType === 'eval') {
+        // Generate eval PDF on the fly
+        const evalItem = db.prepare('SELECT * FROM evaluations WHERE id = ? AND deleted_at IS NULL').get(data.documentId) as any;
+        if (!evalItem) throw new Error('Evaluation not found');
+        const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(evalItem.client_id || data.clientId) as any;
+        if (!client) throw new Error('Client not found');
+        const pdfBuffer = buildSingleEvalPdf(client, evalItem);
+        fileContent = pdfBuffer.toString('base64');
+        const dateStr = evalItem.eval_date || 'undated';
+        const evalTypeLabel = evalItem.eval_type === 'reassessment' ? 'Reassessment' : 'Evaluation';
+        fileName = `${evalTypeLabel}_${dateStr}.pdf`;
+      } else if (docType === 'note') {
+        // Generate note PDF on the fly
+        const note = db.prepare('SELECT * FROM notes WHERE id = ? AND deleted_at IS NULL').get(data.documentId) as any;
+        if (!note) throw new Error('Note not found');
+        const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(note.client_id || data.clientId) as any;
+        if (!client) throw new Error('Client not found');
+        const noteFormatVal = (db.prepare("SELECT value FROM settings WHERE key = 'note_format'").get() as any)?.value || 'SOAP';
+        const pdfSections = NOTE_FORMAT_SECTIONS[noteFormatVal as NoteFormat].filter((s: any) => s.label !== '(unused)');
+        const pdfBuffer = buildSingleNotePdf(client, note, pdfSections);
+        fileContent = pdfBuffer.toString('base64');
+        const dateStr = note.date_of_service || 'undated';
+        let prefix = 'SOAP_Note';
+        if (note.note_type === 'progress_report') prefix = 'Progress_Report';
+        else if (note.note_type === 'discharge') prefix = 'Discharge_Summary';
+        fileName = `${prefix}_${dateStr}.pdf`;
       } else {
-        throw new Error('Document file not found on disk');
+        // Client document — read file from disk
+        const doc = db.prepare('SELECT * FROM client_documents WHERE id = ?').get(data.documentId) as any;
+        if (!doc) throw new Error('Document not found');
+        const docPath = path.join(getDataPath(), 'documents', doc.filename);
+        if (fs.existsSync(docPath)) {
+          fileContent = fs.readFileSync(docPath).toString('base64');
+          fileName = doc.original_name || doc.filename;
+        } else {
+          throw new Error('Document file not found on disk');
+        }
       }
     }
+
+    if (!fileContent) throw new Error('No document content to fax');
 
     const result = await queueFax(config, {
       faxNumber: data.faxNumber,

@@ -307,6 +307,7 @@ const ClientDetailPage: React.FC = () => {
   // Fax modal state
   const [showFaxModal, setShowFaxModal] = useState(false);
   const [faxDocumentId, setFaxDocumentId] = useState<number | undefined>(undefined);
+  const [faxDocType, setFaxDocType] = useState<'eval' | 'note' | 'document' | undefined>(undefined);
   // CMS-1500 preview removed — now saves directly via dialog
 
   // Document upload form state
@@ -1118,7 +1119,7 @@ const ClientDetailPage: React.FC = () => {
                           <button
                             className="btn-ghost btn-sm text-xs px-1.5 py-0.5 text-[var(--color-text-secondary)] hover:text-violet-600"
                             title="Fax to Physician"
-                            onClick={(e) => { e.stopPropagation(); setFaxDocumentId(evalItem.id); setShowFaxModal(true); }}
+                            onClick={(e) => { e.stopPropagation(); setFaxDocumentId(evalItem.id); setFaxDocType('eval'); setShowFaxModal(true); }}
                           >
                             <Printer size={12} />
                           </button>
@@ -1418,7 +1419,7 @@ const ClientDetailPage: React.FC = () => {
                         <button
                           className="p-0.5 btn-ghost text-[var(--color-text-secondary)] hover:text-violet-600"
                           title="Fax to Physician"
-                          onClick={(e) => { e.stopPropagation(); setFaxDocumentId(note.id); setShowFaxModal(true); }}
+                          onClick={(e) => { e.stopPropagation(); setFaxDocumentId(note.id); setFaxDocType('note'); setShowFaxModal(true); }}
                         >
                           <Printer size={11} />
                         </button>
@@ -1474,7 +1475,7 @@ const ClientDetailPage: React.FC = () => {
                             <button
                               className="btn-ghost btn-sm text-xs px-1.5 py-0.5 text-[var(--color-text-secondary)] hover:text-violet-600"
                               title="Fax to Physician"
-                              onClick={(e) => { e.stopPropagation(); setFaxDocumentId(note.id); setShowFaxModal(true); }}
+                              onClick={(e) => { e.stopPropagation(); setFaxDocumentId(note.id); setFaxDocType('note'); setShowFaxModal(true); }}
                             >
                               <Printer size={12} />
                             </button>
@@ -2357,10 +2358,11 @@ const ClientDetailPage: React.FC = () => {
       {/* Fax Send Modal */}
       <FaxSendModal
         isOpen={showFaxModal}
-        onClose={() => { setShowFaxModal(false); setFaxDocumentId(undefined); }}
-        onSend={(data) => window.api.fax.send(data)}
+        onClose={() => { setShowFaxModal(false); setFaxDocumentId(undefined); setFaxDocType(undefined); }}
         clientId={client?.id}
         documentId={faxDocumentId}
+        docType={faxDocType}
+        referringPhysicianId={client?.referring_physician_id}
       />
 
       {/* Trial Expired Modal */}

@@ -124,7 +124,7 @@ export default function FaxPage() {
       <FaxSendModal
         isOpen={showSendModal}
         onClose={() => setShowSendModal(false)}
-        onSend={sendFax}
+        onSent={refreshOutbox}
       />
     </div>
   );

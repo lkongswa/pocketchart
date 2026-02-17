@@ -33,7 +33,7 @@ export function useFax() {
     }
   }, [refreshInbox, refreshOutbox]);
 
-  const sendFax = useCallback(async (data: { documentId?: number; physicianId?: number; faxNumber: string; clientId?: number }) => {
+  const sendFax = useCallback(async (data: { documentId?: number; docType?: 'eval' | 'note' | 'document'; physicianId?: number; faxNumber: string; clientId?: number }) => {
     const result = await window.api.fax.send(data);
     await refreshOutbox();
     return result;
