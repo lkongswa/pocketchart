@@ -8,7 +8,7 @@ export function useFax() {
 
   const refreshInbox = useCallback(async (poll = false) => {
     try {
-      // If poll=true, hit SRFax API to check for new incoming faxes before re-reading
+      // If poll=true, hit fax provider API to check for new incoming faxes before re-reading
       if (poll) {
         try { await window.api.fax.pollInbox(); } catch (e) { console.error('Poll inbox failed:', e); }
       }
@@ -21,7 +21,7 @@ export function useFax() {
 
   const refreshOutbox = useCallback(async (poll = false) => {
     try {
-      // If poll=true, hit SRFax API to update statuses before re-reading
+      // If poll=true, hit fax provider API to update statuses before re-reading
       if (poll) {
         try { await window.api.fax.pollStatuses(); } catch (e) { console.error('Poll statuses failed:', e); }
       }

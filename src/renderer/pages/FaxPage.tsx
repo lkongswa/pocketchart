@@ -15,11 +15,16 @@ export default function FaxPage() {
   const { inbox, outbox, loading, refreshInbox, refreshOutbox, sendFax, matchToClient, saveToChart } = useFax();
   const [activeTab, setActiveTab] = useState<FaxTab>('inbox');
   const [showSendModal, setShowSendModal] = useState(false);
-  const [srfaxConfigured, setSrfaxConfigured] = useState<boolean | null>(null);
+  const [faxConfigured, setFaxConfigured] = useState<boolean | null>(null);
+  const [faxProviderName, setFaxProviderName] = useState<string>('');
 
-  // Check if SRFax is configured
+  // Check if fax provider is configured
   useEffect(() => {
-    window.api.secureStorage.exists('srfax_access_id').then(setSrfaxConfigured);
+    window.api.fax.getProviderStatus().then((status) => {
+      setFaxConfigured(status.configured);
+      const providerNames: Record<string, string> = { srfax: 'SRFax', faxage: 'Faxage', phaxio: 'Phaxio' };
+      setFaxProviderName(status.provider ? (providerNames[status.provider] || status.provider) : '');
+    }).catch(() => setFaxConfigured(false));
   }, []);
 
   const tabs: Array<{ id: FaxTab; label: string; icon: React.ReactNode; count?: number }> = [
@@ -36,9 +41,9 @@ export default function FaxPage() {
         <div className="flex items-center gap-3">
           <h1 className="page-title">Fax Center</h1>
           <div className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-full">
-            {srfaxConfigured ? (
-              <><Wifi size={12} className="text-green-500" /><span className="text-green-600">SRFax Connected</span></>
-            ) : srfaxConfigured === false ? (
+            {faxConfigured ? (
+              <><Wifi size={12} className="text-green-500" /><span className="text-green-600">{faxProviderName} Connected</span></>
+            ) : faxConfigured === false ? (
               <><WifiOff size={12} className="text-gray-400" /><span className="text-gray-500">Not Configured</span></>
             ) : null}
           </div>
@@ -53,15 +58,15 @@ export default function FaxPage() {
         </button>
       </div>
 
-      {/* Not configured banner — clickable, navigates to Settings > SRFax */}
-      {srfaxConfigured === false && (
+      {/* Not configured banner — clickable, navigates to Settings > Fax */}
+      {faxConfigured === false && (
         <div
           className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6 cursor-pointer hover:bg-amber-100 transition-colors"
-          onClick={() => navigate('/settings?section=srfax')}
+          onClick={() => navigate('/settings?section=fax')}
         >
           <p className="text-sm text-amber-800">
-            SRFax is not configured. Set up your credentials in{' '}
-            <span className="font-medium underline">Settings &gt; Fax (SRFax)</span> to start sending and receiving faxes.
+            Fax service is not configured. Set up your credentials in{' '}
+            <span className="font-medium underline">Settings &gt; Fax Service</span> to start sending and receiving faxes.
           </p>
         </div>
       )}

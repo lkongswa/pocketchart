@@ -23,9 +23,9 @@ import type { CSVColumnMapping, CSVPaymentRow } from './csvPaymentImport';
 import type { AppTier, NoteFormat, DischargeData, DischargeGoalStatus } from '../shared/types';
 import { generateIntakePdf } from './intakeFormGenerator';
 import { DEFAULT_INTAKE_TEMPLATES } from '../shared/intakeTemplates';
-import { getSRFaxConfig, clearSRFaxConfigCache, matchFaxToClient, normalizeFaxNumber, queueFax, getFaxStatus, getInbox, retrieveFax } from './srfax';
+import { FaxRouter, matchFaxToClient, normalizeFaxNumber, type FaxProviderType } from './fax';
 import { NOTE_FORMAT_SECTIONS, DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS } from '../shared/types';
-import * as clearinghouse from './clearinghouse';
+import { ClearinghouseRouter, type ClearinghouseProviderType } from './clearinghouse';
 import { generate837P, assemble837PInput } from './edi837Generator';
 
 // ── Secure Storage Helpers ──
@@ -719,6 +719,22 @@ function cleanupTempDir(tempDir: string | null): void {
 
 function registerIpcHandlers() {
   const db = getDatabase();
+
+  // ── Fax Router (multi-provider abstraction) ──
+  const faxRouter = new FaxRouter();
+  try {
+    faxRouter.initialize(db, decryptSecure, encryptSecure);
+  } catch (err) {
+    console.error('[FaxRouter] Failed to initialize (non-fatal):', err);
+  }
+
+  // ── Clearinghouse Router (multi-provider abstraction) ──
+  const clearinghouseRouter = new ClearinghouseRouter();
+  try {
+    clearinghouseRouter.initialize(db, decryptSecure, encryptSecure);
+  } catch (err) {
+    console.error('[ClearinghouseRouter] Failed to initialize (non-fatal):', err);
+  }
 
   // ── Audit Log Helper ──
   function auditLog(params: {
@@ -1749,6 +1765,19 @@ function registerIpcHandlers() {
       const hash = computeContentHash(JSON.parse(data.content || '{}'));
       db.prepare('UPDATE evaluations SET content_hash = ? WHERE id = ?').run(hash, id);
       auditLog({ actionType: 'eval_signed', entityType: 'evaluation', entityId: id, clientId, contentHash: hash });
+
+      // Increment compliance visit counter — eval/re-eval IS a billable visit
+      try {
+        const compliance = db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(clientId) as any;
+        if (compliance?.tracking_enabled) {
+          db.prepare(`
+            UPDATE compliance_tracking
+            SET visits_since_last_progress = visits_since_last_progress + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE client_id = ?
+          `).run(clientId);
+        }
+      } catch { /* compliance tracking may not exist yet */ }
     } else {
       auditLog({ actionType: 'eval_draft_saved', entityType: 'evaluation', entityId: id, clientId });
     }
@@ -2248,6 +2277,74 @@ function registerIpcHandlers() {
       return true;
     }
     return false;
+  });
+
+  // ── Review Prompt System ──
+
+  safeHandle('review-prompts:check-eligible', () => {
+    // Gate check: look at most recent review_prompts row
+    const lastPrompt = db.prepare(
+      'SELECT * FROM review_prompts ORDER BY created_at DESC LIMIT 1'
+    ).get() as any;
+
+    if (lastPrompt) {
+      // If dismissed, review_site, or feedback → never show again
+      if (['dismissed', 'review_site', 'feedback'].includes(lastPrompt.action)) {
+        return { eligible: false, milestone: null };
+      }
+      // If remind_later, must be >90 days ago
+      if (lastPrompt.action === 'remind_later') {
+        const promptedDate = new Date(lastPrompt.prompted_at);
+        const daysSince = (Date.now() - promptedDate.getTime()) / (1000 * 60 * 60 * 24);
+        if (daysSince < 90) {
+          return { eligible: false, milestone: null };
+        }
+      }
+    }
+
+    // Milestone 1: 50th signed note
+    const signedNotes = (db.prepare(
+      'SELECT COUNT(*) as count FROM notes WHERE signed_at IS NOT NULL AND deleted_at IS NULL'
+    ).get() as any).count;
+    if (signedNotes >= 50) {
+      return { eligible: true, milestone: '50_notes_signed' };
+    }
+
+    // Milestone 2: 30 days since first signed note
+    const firstNote = db.prepare(
+      'SELECT MIN(signed_at) as first FROM notes WHERE signed_at IS NOT NULL AND deleted_at IS NULL'
+    ).get() as any;
+    if (firstNote?.first) {
+      const daysSinceFirst = (Date.now() - new Date(firstNote.first).getTime()) / (1000 * 60 * 60 * 24);
+      if (daysSinceFirst >= 30) {
+        return { eligible: true, milestone: '30_days_active' };
+      }
+    }
+
+    // Milestone 3: First invoice generated
+    const invoiceCount = (db.prepare(
+      'SELECT COUNT(*) as count FROM invoices WHERE deleted_at IS NULL'
+    ).get() as any).count;
+    if (invoiceCount >= 1) {
+      return { eligible: true, milestone: 'first_invoice' };
+    }
+
+    // Milestone 4: 100th appointment
+    const apptCount = (db.prepare(
+      'SELECT COUNT(*) as count FROM appointments WHERE deleted_at IS NULL'
+    ).get() as any).count;
+    if (apptCount >= 100) {
+      return { eligible: true, milestone: '100_appointments' };
+    }
+
+    return { eligible: false, milestone: null };
+  });
+
+  safeHandle('review-prompts:record', (_event, data: { rating: number | null; action: string }) => {
+    const result = db.prepare(
+      "INSERT INTO review_prompts (prompted_at, rating, action) VALUES (datetime('now'), ?, ?)"
+    ).run(data.rating, data.action);
+    return { id: result.lastInsertRowid };
   });
 
   // ── Stripe Payment Integration ──
@@ -3674,7 +3771,9 @@ function registerIpcHandlers() {
   safeHandle('cms1500:openPreview', async (_event, data: { base64Pdf: string; filename: string }) => {
     const tempDir = path.join(os.tmpdir(), 'pocketchart-preview');
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-    const tempPath = path.join(tempDir, data.filename);
+    // Sanitize filename — remove characters illegal in Windows paths
+    const safeFilename = data.filename.replace(/[<>:"/\\|?*]/g, '_');
+    const tempPath = path.join(tempDir, safeFilename);
     fs.writeFileSync(tempPath, Buffer.from(data.base64Pdf, 'base64'));
     await shell.openPath(tempPath);
     return tempPath;
@@ -5433,34 +5532,46 @@ function registerIpcHandlers() {
     return { ediContent, claimNumber: claim.claim_number };
   });
 
-  // ── Clearinghouse (Claim.MD) ──
-  safeHandle('clearinghouse:setCredentials', (_event, apiKey: string, accountKey?: string) => {
+  // ── Clearinghouse (Provider-Agnostic) ──
+
+  // Provider management (mirrors fax provider pattern)
+  safeHandle('clearinghouse:setProvider', (_event, type: ClearinghouseProviderType, credentials: Record<string, string>) => {
     requireTier('pro');
-    clearinghouse.setCredentials(apiKey, accountKey);
-    auditLog({ actionType: 'clearinghouse_credentials_set', entityType: 'settings', entityId: 0, detail: { masked: clearinghouse.getMaskedApiKey() } });
+    clearinghouseRouter.setProvider(type, credentials, db, encryptSecure);
+    auditLog({ actionType: 'clearinghouse_provider_set', entityType: 'settings', entityId: 0, detail: { provider: type } });
     return true;
   });
 
-  safeHandle('clearinghouse:getConnectionStatus', async () => {
-    requireTier('pro');
-    return clearinghouse.getConnectionStatus();
+  safeHandle('clearinghouse:getProviderStatus', () => {
+    return {
+      configured: clearinghouseRouter.isConfigured(),
+      provider: clearinghouseRouter.getProviderType(),
+    };
   });
 
-  safeHandle('clearinghouse:testConnection', async () => {
+  safeHandle('clearinghouse:testProvider', async () => {
     requireTier('pro');
-    const result = await clearinghouse.testConnection();
+    const result = await clearinghouseRouter.testConnection();
     auditLog({ actionType: 'clearinghouse_connection_test', entityType: 'settings', entityId: 0, detail: { success: result.success, message: result.message } });
     return result;
   });
 
+  safeHandle('clearinghouse:removeProvider', () => {
+    requireTier('pro');
+    clearinghouseRouter.removeProvider(db);
+    auditLog({ actionType: 'clearinghouse_provider_removed', entityType: 'settings', entityId: 0, detail: {} });
+    return true;
+  });
+
+  // Operations (routed through active provider)
   safeHandle('clearinghouse:getPayerList', async () => {
     requireTier('pro');
-    return clearinghouse.getPayerList();
+    return clearinghouseRouter.getProvider().getPayerList();
   });
 
   safeHandle('clearinghouse:checkEnrollment', async (_event, payerId: string) => {
     requireTier('pro');
-    return clearinghouse.checkEnrollment(payerId);
+    return clearinghouseRouter.getProvider().checkEnrollmentStatus(payerId);
   });
 
   safeHandle('clearinghouse:submitClaim', async (_event, claimId: number) => {
@@ -5469,7 +5580,7 @@ function registerIpcHandlers() {
     if (!claim) throw new Error('Claim not found');
     if (!claim.edi_837_content) throw new Error('No EDI content generated. Generate 837P first.');
 
-    const result = await clearinghouse.submitClaim(claim.edi_837_content);
+    const result = await clearinghouseRouter.getProvider().submitClaim(claim.edi_837_content);
 
     if (result.success) {
       db.prepare(`
@@ -5487,7 +5598,7 @@ function registerIpcHandlers() {
     const claim = db.prepare('SELECT * FROM claims WHERE id = ? AND deleted_at IS NULL').get(claimId) as any;
     if (!claim) throw new Error('Claim not found');
     if (!claim.clearinghouse_claim_id) throw new Error('Claim has not been submitted to clearinghouse');
-    return clearinghouse.checkClaimStatus(claim.clearinghouse_claim_id);
+    return clearinghouseRouter.getProvider().checkClaimStatus(claim.clearinghouse_claim_id);
   });
 
   safeHandle('clearinghouse:checkEligibility', async (_event, _clientId: number) => {
@@ -5498,7 +5609,7 @@ function registerIpcHandlers() {
 
   safeHandle('clearinghouse:getRemittance', async (_event, startDate: string, endDate: string) => {
     requireTier('pro');
-    return clearinghouse.getRemittances(startDate, endDate);
+    return clearinghouseRouter.getProvider().getRemittances(startDate, endDate);
   });
 
   // ── Eligibility Checks ──
@@ -7061,8 +7172,7 @@ function registerIpcHandlers() {
     clientId?: number;
     requestSignature?: boolean;
   }) => {
-    const config = getSRFaxConfig(db, decryptSecure);
-    if (!config) throw new Error('SRFax not configured. Set up credentials in Settings.');
+    const provider = faxRouter.getProvider(); // Throws if not configured
 
     const practice = db.prepare('SELECT * FROM practice WHERE id = 1').get() as any;
     let clientName = 'Patient';
@@ -7126,7 +7236,7 @@ function registerIpcHandlers() {
     }
 
     // Get practice fax number (caller ID) for cover page "return fax" line
-    const practiceFax = config.caller_id || '';
+    const practiceFax = faxRouter.getProviderFaxNumber();
 
     // Count document pages for cover page "Pages:" field
     let docPageCount = 1;
@@ -7156,17 +7266,16 @@ function registerIpcHandlers() {
     const finalBuffer = await mergePdfs(coverBuffer, documentBuffer);
     const fileContent = finalBuffer.toString('base64');
 
-    // Get sender email from SRFax settings for sSenderEmail field
-    const senderEmailRow = db.prepare("SELECT value FROM settings WHERE key = 'srfax_sender_email'").get() as any;
-    const senderEmail = senderEmailRow?.value || '';
-
-    const result = await queueFax(config, {
-      faxNumber: data.faxNumber,
-      fileContent,
-      fileName,
-      callerID: config.caller_id,
-      senderEmail,
+    // Send via active fax provider
+    const result = await provider.sendFax({
+      toFaxNumber: data.faxNumber,
+      files: [{ fileName, contentBase64: fileContent }],
+      senderName: practice?.name || '',
     });
+
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to send fax');
+    }
 
     // Only store document_id when it's a single client_documents FK
     const faxLogDocId = (docList.length === 1 && docList[0].type === 'document') ? docList[0].id : null;
@@ -7177,9 +7286,11 @@ function registerIpcHandlers() {
     const faxLogEvalId = evalIds.length === 1 ? evalIds[0] : null;
     const faxLogNoteId = noteIds.length === 1 ? noteIds[0] : null;
 
+    const currentProviderType = faxRouter.getProviderType() || '';
+
     const insertResult = db.prepare(`
-      INSERT INTO fax_log (direction, client_id, physician_id, fax_number, document_id, eval_id, note_id, srfax_id, status, sent_at)
-      VALUES ('outbound', ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+      INSERT INTO fax_log (direction, client_id, physician_id, fax_number, document_id, eval_id, note_id, srfax_id, provider_fax_id, fax_provider, status, sent_at)
+      VALUES ('outbound', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', datetime('now', 'localtime'))
     `).run(
       data.clientId || null,
       data.physicianId || null,
@@ -7187,8 +7298,9 @@ function registerIpcHandlers() {
       faxLogDocId,
       faxLogEvalId,
       faxLogNoteId,
-      result.srfax_id,
-      result.status === 'Queued' ? 'queued' : 'sent'
+      result.faxId, // backward compat: also store in srfax_id
+      result.faxId,
+      currentProviderType
     );
 
     return db.prepare('SELECT * FROM fax_log WHERE id = ?').get(insertResult.lastInsertRowid);
@@ -7230,11 +7342,10 @@ function registerIpcHandlers() {
     `).all();
   });
 
-  safeHandle('fax:retrieveFax', async (_event, srfaxId: string) => {
-    const config = getSRFaxConfig(db, decryptSecure);
-    if (!config) throw new Error('SRFax not configured');
-    const base64Pdf = await retrieveFax(config, { fileName: srfaxId, direction: 'IN' });
-    return { base64Pdf, filename: `fax_${srfaxId}.pdf` };
+  safeHandle('fax:retrieveFax', async (_event, providerFaxId: string) => {
+    const provider = faxRouter.getProvider();
+    const base64Pdf = await provider.downloadFax(providerFaxId, 'in');
+    return { base64Pdf, filename: `fax_${providerFaxId}.pdf` };
   });
 
   safeHandle('fax:matchToClient', (_event, faxLogId: number, clientId: number) => {
@@ -7264,16 +7375,16 @@ function registerIpcHandlers() {
     category: string;
     linkToOutboundFaxId?: number;
   }) => {
-    const config = getSRFaxConfig(db, decryptSecure);
-    if (!config) throw new Error('SRFax not configured');
+    const provider = faxRouter.getProvider();
 
     const faxEntry = db.prepare('SELECT * FROM fax_log WHERE id = ?').get(data.faxLogId) as any;
     if (!faxEntry) throw new Error('Fax log entry not found');
-    if (!faxEntry.srfax_id) throw new Error('No SRFax ID for this entry');
+    const faxId = faxEntry.provider_fax_id || faxEntry.srfax_id;
+    if (!faxId) throw new Error('No provider fax ID for this entry');
 
-    // 1. Retrieve the PDF from SRFax
-    const base64Pdf = await retrieveFax(config, { fileName: faxEntry.srfax_id, direction: 'IN' });
-    if (!base64Pdf) throw new Error('Failed to retrieve fax PDF from SRFax');
+    // 1. Retrieve the PDF from the fax provider
+    const base64Pdf = await provider.downloadFax(faxId, 'in');
+    if (!base64Pdf) throw new Error('Failed to retrieve fax PDF from provider');
 
     // 2. Save PDF to filesystem
     const uuidName = `${uuidv4()}.pdf`;
@@ -7317,8 +7428,8 @@ function registerIpcHandlers() {
   });
 
   safeHandle('fax:pollStatuses', async () => {
-    const config = getSRFaxConfig(db, decryptSecure);
-    if (!config) return { updated: 0 };
+    if (!faxRouter.isConfigured()) return { updated: 0 };
+    const provider = faxRouter.getProvider();
 
     const pending = db.prepare(
       "SELECT * FROM fax_log WHERE direction = 'outbound' AND status IN ('queued', 'sending')"
@@ -7326,21 +7437,23 @@ function registerIpcHandlers() {
 
     let updated = 0;
     for (const entry of pending) {
+      const faxId = entry.provider_fax_id || entry.srfax_id;
+      if (!faxId) continue;
       try {
-        const status = await getFaxStatus(config, entry.srfax_id);
+        const status = await provider.checkStatus(faxId);
         let newStatus = entry.status;
-        if (status.status === 'Sent') newStatus = 'sent';
-        else if (status.status === 'Failed') newStatus = 'failed';
-        else if (status.status === 'Delivered') newStatus = 'delivered';
+        if (status.status === 'sent') newStatus = 'sent';
+        else if (status.status === 'failed') newStatus = 'failed';
+        else if (status.status === 'sending') newStatus = 'sending';
 
         if (newStatus !== entry.status) {
           db.prepare(
             'UPDATE fax_log SET status = ?, pages = ?, error_message = ? WHERE id = ?'
-          ).run(newStatus, status.pages, status.errorMessage, entry.id);
+          ).run(newStatus, status.pages || 0, status.errorMessage || '', entry.id);
           updated++;
         }
       } catch (err) {
-        console.error(`[Fax] Failed to poll status for ${entry.srfax_id}:`, err);
+        console.error(`[Fax] Failed to poll status for ${faxId}:`, err);
       }
     }
 
@@ -7348,30 +7461,34 @@ function registerIpcHandlers() {
   });
 
   safeHandle('fax:pollInbox', async () => {
-    const config = getSRFaxConfig(db, decryptSecure);
-    if (!config) return { newFaxes: 0 };
+    if (!faxRouter.isConfigured()) return { newFaxes: 0 };
+    const provider = faxRouter.getProvider();
+    const currentProviderType = faxRouter.getProviderType() || '';
 
     try {
-      const inboxEntries = await getInbox(config);
+      const inboxEntries = await provider.getInbox();
       let newFaxes = 0;
 
       for (const entry of inboxEntries) {
+        // Check for duplicates using provider_fax_id (or legacy srfax_id)
         const existing = db.prepare(
-          "SELECT id FROM fax_log WHERE srfax_id = ? AND direction = 'inbound'"
-        ).get(entry.fileName);
+          "SELECT id FROM fax_log WHERE (provider_fax_id = ? OR srfax_id = ?) AND direction = 'inbound'"
+        ).get(entry.faxId, entry.faxId);
 
         if (!existing) {
-          const match = matchFaxToClient(entry.callerID, db);
+          const match = matchFaxToClient(entry.fromFaxNumber, db);
           db.prepare(`
-            INSERT INTO fax_log (direction, client_id, fax_number, srfax_id, status, pages, received_at, matched_confidence)
-            VALUES ('inbound', ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO fax_log (direction, client_id, fax_number, srfax_id, provider_fax_id, fax_provider, status, pages, received_at, matched_confidence)
+            VALUES ('inbound', ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             match.clientId,
-            entry.callerID,
-            entry.fileName,
+            entry.fromFaxNumber,
+            entry.faxId, // backward compat: also store in srfax_id
+            entry.faxId,
+            currentProviderType,
             match.clientId ? 'matched' : 'unmatched',
             entry.pages,
-            entry.date,
+            entry.receivedAt,
             match.confidence
           );
           newFaxes++;
@@ -7383,6 +7500,35 @@ function registerIpcHandlers() {
       console.error('[Fax] Failed to poll inbox:', err);
       return { newFaxes: 0 };
     }
+  });
+
+  // ── Fax Provider Management ──
+
+  safeHandle('fax:setProvider', (_event, type: FaxProviderType, credentials: Record<string, string>) => {
+    requireTier('pro');
+    faxRouter.setProvider(type, credentials, db, encryptSecure);
+    auditLog({ actionType: 'fax_provider_set', entityType: 'settings', entityId: 0, detail: { provider: type } });
+    return true;
+  });
+
+  safeHandle('fax:getProviderStatus', () => {
+    return {
+      configured: faxRouter.isConfigured(),
+      provider: faxRouter.getProviderType(),
+      faxNumber: faxRouter.getProviderFaxNumber(),
+    };
+  });
+
+  safeHandle('fax:testProvider', async () => {
+    requireTier('pro');
+    return faxRouter.testConnection();
+  });
+
+  safeHandle('fax:removeProvider', () => {
+    requireTier('pro');
+    faxRouter.removeProvider(db);
+    auditLog({ actionType: 'fax_provider_removed', entityType: 'settings', entityId: 0, detail: {} });
+    return true;
   });
 
   // ══════════════════════════════════════════════════════════════════════

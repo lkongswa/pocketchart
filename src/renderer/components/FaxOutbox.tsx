@@ -42,7 +42,7 @@ export default function FaxOutbox({ outbox, onRefresh, loading }: FaxOutboxProps
           disabled={isLoading}
         >
           <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
-          {polling ? 'Checking SRFax...' : 'Refresh Statuses'}
+          {polling ? 'Checking statuses...' : 'Refresh Statuses'}
         </button>
       </div>
 

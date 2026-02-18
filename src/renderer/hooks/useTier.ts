@@ -13,6 +13,7 @@ const PRO_FEATURES = new Set([
   'quick_chips',
   'waitlist',
   'fax',
+  'insurance_billing',
 ]);
 
 export function useTier() {

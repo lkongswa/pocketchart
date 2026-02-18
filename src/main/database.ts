@@ -58,6 +58,8 @@ const VALID_TABLES = new Set([
   'waitlist',
   // V3 Insurance: eligibility & denial codes
   'eligibility_checks', 'denial_codes',
+  // Review prompt tracking
+  'review_prompts',
 ]);
 
 export function getDataPath(): string {
@@ -2096,6 +2098,67 @@ function runMigrations(): void {
         `);
       },
     },
+    {
+      version: 48,
+      description: 'Seed common therapy denial codes',
+      up: () => {
+        const insert = db.prepare(`
+          INSERT OR IGNORE INTO denial_codes (code, group_code, description, plain_english, what_to_do, common_in_therapy)
+          VALUES (?, ?, ?, ?, ?, 1)
+        `);
+        const codes: [string, string, string, string, string][] = [
+          ['CO-4', 'CO', 'The procedure code is inconsistent with the modifier used', 'Wrong modifier on CPT code', 'Verify GP/GO/GN modifier matches discipline. Resubmit corrected claim.'],
+          ['CO-11', 'CO', 'The diagnosis is inconsistent with the procedure', 'Diagnosis code does not match the CPT code billed', 'Review ICD-10 pointers. Ensure dx supports medical necessity for the service.'],
+          ['CO-16', 'CO', 'Claim/service lacks information needed for adjudication', 'Missing info on claim', 'Check for missing fields (auth number, onset date, referring NPI). Resubmit with complete data.'],
+          ['CO-18', 'CO', 'Exact duplicate claim/service', 'Duplicate claim submitted', 'Verify this is not a true duplicate. If distinct service, resubmit with different date/modifier.'],
+          ['CO-29', 'CO', 'The time limit for filing has expired', 'Claim filed too late', 'Note payer timely filing deadline. Appeal with proof of timely submission if applicable.'],
+          ['CO-50', 'CO', 'Non-covered services because not deemed a medical necessity', 'Service not medically necessary', 'Appeal with clinical documentation supporting medical necessity. Include functional outcome data.'],
+          ['CO-96', 'CO', 'Non-covered charges', 'Service not covered by plan', 'Verify patient benefits. May need prior auth. Appeal or bill patient if plan exclusion.'],
+          ['CO-97', 'CO', 'Payment adjusted because benefit for this service has been maximized', 'Therapy cap/benefit limit reached', 'Check therapy visit limits. Request KX modifier exception if applicable. Notify patient.'],
+          ['CO-109', 'CO', 'Claim not covered by this payer. Another payer is primary.', 'Wrong payer billed', 'Verify coordination of benefits. Resubmit to correct primary payer.'],
+          ['CO-197', 'CO', 'Precertification/authorization/notification absent', 'No prior auth on file', 'Obtain retroactive auth if possible. Resubmit with auth number in Box 23.'],
+          ['CO-242', 'CO', 'Services not provided by network/primary care providers', 'Out-of-network provider', 'Verify network status. May need to join network or get single-case agreement.'],
+          ['CO-252', 'CO', 'An attachment/other documentation is required', 'Documentation required', 'Submit requested records (eval, progress notes, plan of care). Resubmit claim.'],
+          ['PR-1', 'PR', 'Deductible amount', 'Applied to patient deductible', 'Bill patient for deductible amount. Not an error — patient responsibility.'],
+          ['PR-2', 'PR', 'Coinsurance amount', 'Patient coinsurance portion', 'Bill patient for coinsurance. Not an error — patient responsibility.'],
+          ['PR-3', 'PR', 'Co-payment amount', 'Patient copay', 'Collect copay from patient. Not an error — patient responsibility.'],
+          ['OA-23', 'OA', 'Payment adjusted due to authorization/pre-certification', 'Auth issue', 'Verify auth number and date range. Ensure services fall within authorized period/units.'],
+        ];
+        for (const [code, group, desc, plain, whatToDo] of codes) {
+          insert.run(code, group, desc, plain, whatToDo);
+        }
+      },
+    },
+    {
+      version: 49,
+      description: 'Add fax_provider + provider_fax_id columns to fax_log for multi-provider support',
+      up: () => {
+        if (!columnExists('fax_log', 'fax_provider')) {
+          db.exec("ALTER TABLE fax_log ADD COLUMN fax_provider TEXT DEFAULT ''");
+        }
+        if (!columnExists('fax_log', 'provider_fax_id')) {
+          db.exec("ALTER TABLE fax_log ADD COLUMN provider_fax_id TEXT DEFAULT ''");
+        }
+        // Migrate existing SRFax data to new columns
+        db.exec("UPDATE fax_log SET provider_fax_id = srfax_id, fax_provider = 'srfax' WHERE srfax_id != '' AND provider_fax_id = ''");
+      },
+    },
+    {
+      version: 50,
+      description: 'Add review_prompts table for in-app review system',
+      up: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS review_prompts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prompted_at TEXT NOT NULL,
+            rating INTEGER,
+            action TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+          );
+        `);
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
@@ -2210,6 +2273,8 @@ function createIndexes(): void {
     CREATE INDEX IF NOT EXISTS idx_fax_log_client_id ON fax_log(client_id);
     CREATE INDEX IF NOT EXISTS idx_fax_log_direction ON fax_log(direction);
     CREATE INDEX IF NOT EXISTS idx_fax_log_status ON fax_log(status);
+    CREATE INDEX IF NOT EXISTS idx_fax_log_provider_fax_id ON fax_log(provider_fax_id);
+    CREATE INDEX IF NOT EXISTS idx_fax_log_fax_provider ON fax_log(fax_provider);
     CREATE INDEX IF NOT EXISTS idx_intake_form_templates_slug ON intake_form_templates(slug);
   `);
 

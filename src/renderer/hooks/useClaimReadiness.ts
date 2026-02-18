@@ -178,7 +178,7 @@ export function computeClaimReadiness(
       field: 'clearinghouse_connection',
       label: 'Clearinghouse Connection',
       status: options.clearinghouseConnected ? 'pass' : 'fail',
-      message: options.clearinghouseConnected ? undefined : 'Clearinghouse (Claim.MD) must be connected to submit electronically',
+      message: options.clearinghouseConnected ? undefined : 'Clearinghouse must be connected to submit electronically',
     });
 
     checks.push({

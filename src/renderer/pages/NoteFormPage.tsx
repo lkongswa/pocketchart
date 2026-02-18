@@ -163,7 +163,7 @@ export default function NoteFormPage() {
   const [chargeAmount, setChargeAmount] = useState<number>(0);
 
   // Practice info (for validation)
-  const [practiceInfo, setPracticeInfo] = useState<{ license_number?: string } | null>(null);
+  const [practiceInfo, setPracticeInfo] = useState<{ license_number?: string; npi?: string } | null>(null);
 
   // Contracted entity state
   const [isContractedVisit, setIsContractedVisit] = useState(false);
@@ -796,6 +796,60 @@ export default function NoteFormPage() {
       });
     }
 
+    // ── Discharged client check ──
+    if (client?.status === 'discharged') {
+      issues.push({
+        id: 'note_discharged_client', message: 'This client has been discharged', severity: 'warning', fixable: false,
+        fieldType: 'none', target: 'document',
+        guidance: 'Creating notes for discharged clients may result in claim denials. Re-admit the client if treatment has resumed.',
+      });
+    }
+
+    // ── Future date prevention ──
+    if (dateOfService) {
+      const dosDate = new Date(dateOfService + 'T00:00:00');
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (dosDate > today) {
+        issues.push({
+          id: 'note_future_dos', message: 'Date of service cannot be in the future', severity: 'error', fixable: true,
+          fieldType: 'date', target: 'document', currentValue: dateOfService,
+        });
+      }
+    }
+
+    // ── CPT code required ──
+    const hasValidCpt = cptLines.some(l => l.code?.trim() && l.code.trim().length >= 4);
+    if (!hasValidCpt && !isStandaloneDischarge) {
+      issues.push({
+        id: 'note_no_cpt', message: 'At least one CPT code is required for billing', severity: 'error', fixable: false,
+        fieldType: 'none', target: 'document', guidance: 'Add a CPT code in the billing section above.',
+        scrollTarget: 'cpt-section',
+      });
+    }
+
+    // ── Time-in / Time-out validation ──
+    if (!isStandaloneDischarge) {
+      if (!timeIn || !timeOut) {
+        issues.push({
+          id: 'note_no_times', message: 'Time in and time out are required', severity: 'error', fixable: false,
+          fieldType: 'none', target: 'document', guidance: 'Enter session start and end times above.',
+          scrollTarget: 'time-section',
+        });
+      } else {
+        const [hIn, mIn] = timeIn.split(':').map(Number);
+        const [hOut, mOut] = timeOut.split(':').map(Number);
+        const totalMinutes = hOut * 60 + mOut - (hIn * 60 + mIn);
+        if (totalMinutes <= 0) {
+          issues.push({
+            id: 'note_time_invalid', message: 'Time out must be after time in', severity: 'error', fixable: false,
+            fieldType: 'none', target: 'document', guidance: 'Correct the session times above.',
+            scrollTarget: 'time-section',
+          });
+        }
+      }
+    }
+
     // ── Discharge-specific ──
     if (isDischarge) {
       if (!dischargeData.discharge_reason) {
@@ -953,6 +1007,15 @@ export default function NoteFormPage() {
       }
     }
 
+    // ── Goals addressed ──
+    if (!isStandaloneDischarge && !isDischarge && goalsAddressed.length === 0 && goals && goals.length > 0) {
+      issues.push({
+        id: 'note_no_goals', message: 'No goals addressed in this note', severity: 'warning', fixable: false,
+        fieldType: 'none', target: 'document',
+        guidance: 'Medicare expects treatment notes to document progress toward established goals. Select goals addressed above.',
+      });
+    }
+
     // ── Provider info ──
     if (!signatureTyped.trim()) {
       issues.push({
@@ -1012,20 +1075,45 @@ export default function NoteFormPage() {
       });
     }
 
+    // ── Duplicate date-of-service warning ──
+    if (dateOfService && client) {
+      try {
+        const allNotes: Note[] = await window.api.notes.listByClient(client.id);
+        const dupes = allNotes.filter(
+          (n: Note) => n.date_of_service === dateOfService && n.signed_at && n.id !== (savedNoteId || 0)
+        );
+        if (dupes.length > 0) {
+          issues.push({
+            id: 'note_duplicate_dos',
+            message: `${dupes.length} other signed note(s) exist for this date of service`,
+            severity: 'warning', fixable: false, fieldType: 'none', target: 'document',
+            guidance: 'Medicare may deny duplicate date-of-service claims. Verify this is intentional.',
+          });
+        }
+      } catch { /* ignore — advisory check */ }
+    }
+
+    // ── NPI warning ──
+    if (!practiceInfo?.npi?.trim()) {
+      issues.push({
+        id: 'provider_npi', message: 'Practice NPI is not set', severity: 'warning', fixable: false,
+        fieldType: 'none', target: 'settings',
+        guidance: 'NPI is required on all Medicare documents. Update in Settings > Practice Information.',
+      });
+    }
+
     setSignDialogIssues(issues);
     setSignDialogOpen(true);
   };
 
-  /** Handle fix-it sign: apply fixes from dialog, then save+sign */
-  const handleSignWithFixes = (fixes: ValidationFixes) => {
-    // Apply document-level section fixes
+  /** Apply fix-it dialog fixes to React state (for UI display) */
+  const applyFixesToState = (fixes: ValidationFixes) => {
     if (fixes.documentFixes.subjective !== undefined) setSubjective(fixes.documentFixes.subjective);
     if (fixes.documentFixes.objective !== undefined) setObjective(fixes.documentFixes.objective);
     if (fixes.documentFixes.assessment !== undefined) setAssessment(fixes.documentFixes.assessment);
     if (fixes.documentFixes.plan !== undefined) setPlan(fixes.documentFixes.plan);
     if (fixes.documentFixes.date_of_service !== undefined) setDateOfService(fixes.documentFixes.date_of_service);
 
-    // Apply discharge fixes
     if (isDischarge) {
       const dcUpdates: Partial<DischargeData> = {};
       if (fixes.documentFixes.discharge_reason !== undefined) dcUpdates.discharge_reason = fixes.documentFixes.discharge_reason;
@@ -1036,7 +1124,6 @@ export default function NoteFormPage() {
       }
     }
 
-    // Apply goal fixes (progress report goal statuses and performance data)
     if (Object.keys(fixes.goalFixes).length > 0) {
       setProgressReportGoals(prev => prev.map(g => {
         const goalFix = fixes.goalFixes[g.goal_id];
@@ -1048,47 +1135,26 @@ export default function NoteFormPage() {
         };
       }));
     }
-
-    setSignDialogOpen(false);
-    setTimeout(() => handleSave(true), 50);
   };
 
-  /** Save fixes from the Sign dialog WITHOUT signing — just apply and close */
-  const handleSaveFixesOnly = (fixes: ValidationFixes) => {
-    // Apply document-level section fixes
-    if (fixes.documentFixes.subjective !== undefined) setSubjective(fixes.documentFixes.subjective);
-    if (fixes.documentFixes.objective !== undefined) setObjective(fixes.documentFixes.objective);
-    if (fixes.documentFixes.assessment !== undefined) setAssessment(fixes.documentFixes.assessment);
-    if (fixes.documentFixes.plan !== undefined) setPlan(fixes.documentFixes.plan);
-    if (fixes.documentFixes.date_of_service !== undefined) setDateOfService(fixes.documentFixes.date_of_service);
-
-    // Apply discharge fixes
-    if (isDischarge) {
-      const dcUpdates: Partial<DischargeData> = {};
-      if (fixes.documentFixes.discharge_reason !== undefined) dcUpdates.discharge_reason = fixes.documentFixes.discharge_reason;
-      if (fixes.documentFixes.discharge_reason_detail !== undefined) dcUpdates.discharge_reason_detail = fixes.documentFixes.discharge_reason_detail;
-      if (fixes.documentFixes.current_level_of_function !== undefined) dcUpdates.current_level_of_function = fixes.documentFixes.current_level_of_function;
-      if (Object.keys(dcUpdates).length > 0) {
-        setDischargeData(prev => ({ ...prev, ...dcUpdates }));
-      }
-    }
-
-    // Apply goal fixes (progress report goal statuses and performance data)
-    if (Object.keys(fixes.goalFixes).length > 0) {
-      setProgressReportGoals(prev => prev.map(g => {
-        const goalFix = fixes.goalFixes[g.goal_id];
-        if (!goalFix) return g;
-        return {
-          ...g,
-          ...(goalFix.status_at_report ? { status_at_report: goalFix.status_at_report as ProgressReportGoalStatus } : {}),
-          ...(goalFix.performance_data !== undefined ? { performance_data: goalFix.performance_data } : {}),
-        };
-      }));
-    }
-
+  /** Handle fix-it sign: apply fixes from dialog, then save+sign */
+  const handleSignWithFixes = (fixes: ValidationFixes) => {
+    applyFixesToState(fixes);
     setSignDialogOpen(false);
-    // Trigger a non-signing draft save so fixes are persisted
-    setTimeout(() => handleSave(false), 50);
+    // Pass fixes directly to handleSave to avoid stale state race condition
+    const docFixes = Object.keys(fixes.documentFixes).length > 0 ? fixes.documentFixes : undefined;
+    const goalFixes = Object.keys(fixes.goalFixes).length > 0 ? fixes.goalFixes : undefined;
+    setTimeout(() => handleSave(true, docFixes, goalFixes), 50);
+  };
+
+  /** Save fixes from the Sign dialog WITHOUT signing — stay in note for continued editing */
+  const handleSaveFixesOnly = (fixes: ValidationFixes) => {
+    applyFixesToState(fixes);
+    setSignDialogOpen(false);
+    // Don't call handleSave(false) — that navigates away.
+    // The state updates from applyFixesToState will be picked up by the auto-save timer,
+    // or the user can click Sign again. Show a toast so they know the fix was applied.
+    setToast('Fixes applied — continue editing or try signing again');
   };
 
   /** Handle client record updates from Fix-It dialog */
@@ -1099,7 +1165,7 @@ export default function NoteFormPage() {
     setClient(updated);
   };
 
-  const handleSave = async (sign: boolean) => {
+  const handleSave = async (sign: boolean, documentFixes?: Record<string, any>, goalFixes?: Record<number, any>) => {
     if (!clientId) return;
 
     // Cancel any pending auto-save to prevent it from overwriting signed_at
@@ -1111,9 +1177,17 @@ export default function NoteFormPage() {
     try {
       setSaving(true);
       const filteredCptLines = cptLines.filter(l => l.code.trim());
+
+      // Merge document fixes directly (avoids stale React state race condition)
+      const mergedSubjective = documentFixes?.subjective ?? subjective;
+      const mergedObjective = documentFixes?.objective ?? objective;
+      const mergedAssessment = documentFixes?.assessment ?? assessment;
+      const mergedPlan = documentFixes?.plan ?? plan;
+      const mergedDateOfService = documentFixes?.date_of_service ?? dateOfService;
+
       const noteData: Partial<Note> = {
         client_id: parseInt(clientId, 10),
-        date_of_service: dateOfService,
+        date_of_service: mergedDateOfService,
         time_in: timeIn,
         time_out: timeOut,
         units: filteredCptLines.reduce((sum, l) => sum + (l.units || 0), 0),
@@ -1123,10 +1197,10 @@ export default function NoteFormPage() {
         cpt_modifiers: JSON.stringify(cptModifiers),
         place_of_service: placeOfService,
         charge_amount: chargeAmount,
-        subjective,
-        objective,
-        assessment,
-        plan,
+        subjective: mergedSubjective,
+        objective: mergedObjective,
+        assessment: mergedAssessment,
+        plan: mergedPlan,
         goals_addressed: JSON.stringify(goalsAddressed),
         signature_image: sign ? signatureImage : '',
         signature_typed: sign ? signatureTyped : '',
@@ -1143,10 +1217,15 @@ export default function NoteFormPage() {
           duration_weeks: prDurationWeeks,
           plan_of_care_update: planOfCareUpdate,
           report_period_start: complianceData?.last_progress_date || '',
-          report_period_end: dateOfService,
+          report_period_end: mergedDateOfService,
           visits_in_period: complianceData?.visits_since_last_progress || 0,
         } as ProgressReportData) : '',
-        discharge_data: isDischarge ? JSON.stringify(dischargeData) : '',
+        discharge_data: isDischarge ? JSON.stringify({
+          ...dischargeData,
+          ...(documentFixes?.discharge_reason !== undefined ? { discharge_reason: documentFixes.discharge_reason } : {}),
+          ...(documentFixes?.discharge_reason_detail !== undefined ? { discharge_reason_detail: documentFixes.discharge_reason_detail } : {}),
+          ...(documentFixes?.current_level_of_function !== undefined ? { current_level_of_function: documentFixes.current_level_of_function } : {}),
+        }) : '',
         patient_name: isContractedVisit ? patientName : '',
       };
 
@@ -1181,8 +1260,20 @@ export default function NoteFormPage() {
       if (sign && isProgressReport) {
         const noteIdForPR = resultNoteId;
         if (noteIdForPR) {
-          await window.api.progressReportGoals.upsert(noteIdForPR, progressReportGoals);
-          for (const prg of progressReportGoals) {
+          // Merge any goal fixes from the sign dialog directly (avoids stale state)
+          const mergedGoals = goalFixes
+            ? progressReportGoals.map(g => {
+                const fix = goalFixes[g.goal_id];
+                if (!fix) return g;
+                return {
+                  ...g,
+                  ...(fix.status_at_report ? { status_at_report: fix.status_at_report } : {}),
+                  ...(fix.performance_data !== undefined ? { performance_data: fix.performance_data } : {}),
+                };
+              })
+            : progressReportGoals;
+          await window.api.progressReportGoals.upsert(noteIdForPR, mergedGoals);
+          for (const prg of mergedGoals) {
             // Tag goal as established by this progress report (graduates pending → established)
             try { await window.api.goals.tagSource(prg.goal_id, noteIdForPR, 'progress_report'); } catch (_) { /* ignore */ }
             if (prg.status_at_report === 'met') {

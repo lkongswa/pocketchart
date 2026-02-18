@@ -104,7 +104,7 @@ export default function FaxSendModal({ isOpen, onClose, clientId, documentId, do
       onSent?.();
     } catch (err: any) {
       console.error('Failed to send fax:', err);
-      setError(err?.message || 'Failed to send fax. Check your SRFax credentials in Settings.');
+      setError(err?.message || 'Failed to send fax. Check your fax credentials in Settings.');
     } finally {
       setSending(false);
     }

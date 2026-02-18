@@ -568,7 +568,7 @@ export default function EvalFormPage() {
   const [client, setClient] = useState<Client | null>(null);
   const disciplineRef = useRef<Discipline>('PT');
   if (client) disciplineRef.current = client.discipline as Discipline;
-  const [practiceInfo, setPracticeInfo] = useState<{ license_number?: string } | null>(null);
+  const [practiceInfo, setPracticeInfo] = useState<{ license_number?: string; npi?: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -1557,6 +1557,19 @@ export default function EvalFormPage() {
       });
     }
 
+    // ── Future date prevention ──
+    if (evalDate) {
+      const evalDateObj = new Date(evalDate + 'T00:00:00');
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (evalDateObj > today) {
+        issues.push({
+          id: 'eval_future_date', message: 'Evaluation date cannot be in the future', severity: 'error', fixable: true,
+          fieldType: 'date', target: 'document', currentValue: evalDate,
+        });
+      }
+    }
+
     // ── Backdated note warning ──
     if (evalDate) {
       const evalDateObj = new Date(evalDate + 'T00:00:00');
@@ -1570,6 +1583,15 @@ export default function EvalFormPage() {
           guidance: 'Medicare requires timely documentation. If this is intentional, proceed.',
         });
       }
+    }
+
+    // ── NPI warning ──
+    if (!practiceInfo?.npi?.trim()) {
+      issues.push({
+        id: 'provider_npi', message: 'Practice NPI is not set', severity: 'warning', fixable: false,
+        fieldType: 'none', target: 'settings',
+        guidance: 'NPI is required on all Medicare documents. Update in Settings > Practice Information.',
+      });
     }
 
     return issues;

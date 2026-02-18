@@ -970,6 +970,12 @@ export type FaxDirection = 'inbound' | 'outbound';
 export type FaxStatus = 'queued' | 'sending' | 'sent' | 'delivered' | 'failed' | 'received' | 'matched' | 'unmatched';
 export type FaxMatchConfidence = 'exact' | 'name' | 'partial' | 'unmatched' | 'ambiguous' | '';
 
+export type FaxProviderType = 'srfax' | 'faxage' | 'phaxio';
+
+export type ClearinghouseProviderType = 'claimmd' | 'availity' | 'officeally';
+
+export type ReviewPromptAction = 'review_site' | 'feedback' | 'dismissed' | 'remind_later';
+
 export interface FaxLogEntry {
   id: number;
   direction: FaxDirection;
@@ -981,6 +987,8 @@ export interface FaxLogEntry {
   note_id: number | null;
   linked_outbound_fax_id: number | null;
   srfax_id: string;
+  provider_fax_id: string;
+  fax_provider: string;
   status: FaxStatus;
   pages: number;
   sent_at: string | null;
@@ -1825,9 +1833,10 @@ export interface PocketChartAPI {
     delete: (id: number) => Promise<boolean>;
   };
   clearinghouse: {
-    setCredentials: (apiKey: string, accountKey?: string) => Promise<boolean>;
-    getConnectionStatus: () => Promise<{ connected: boolean; error?: string }>;
-    testConnection: () => Promise<{ success: boolean; message: string }>;
+    setProvider: (type: string, credentials: Record<string, string>) => Promise<boolean>;
+    getProviderStatus: () => Promise<{ configured: boolean; provider: ClearinghouseProviderType | null }>;
+    testProvider: () => Promise<{ success: boolean; message: string }>;
+    removeProvider: () => Promise<boolean>;
     getPayerList: () => Promise<any[]>;
     checkEnrollment: (payerId: string) => Promise<{ status: string; message: string }>;
     submitClaim: (claimId: number) => Promise<{ success: boolean; clearinghouseClaimId?: string; message: string; errors?: string[] }>;
@@ -2039,6 +2048,11 @@ export interface PocketChartAPI {
       os: string;
     }) => Promise<{ success: boolean }>;
   };
+  // ── Review Prompts ──
+  reviewPrompts: {
+    checkEligible: () => Promise<{ eligible: boolean; milestone: string | null }>;
+    record: (data: { rating: number | null; action: string }) => Promise<{ id: number }>;
+  };
   // ── Restore ──
   restore: {
     pickFile: () => Promise<string | null>;
@@ -2079,12 +2093,17 @@ export interface PocketChartAPI {
     getStatus: (faxLogId: number) => Promise<FaxLogEntry>;
     listInbox: () => Promise<FaxLogEntry[]>;
     listOutbox: () => Promise<FaxLogEntry[]>;
-    retrieveFax: (srfaxId: string) => Promise<{ base64Pdf: string; filename: string }>;
+    retrieveFax: (providerFaxId: string) => Promise<{ base64Pdf: string; filename: string }>;
     matchToClient: (faxLogId: number, clientId: number) => Promise<FaxLogEntry>;
     getOutboundByClient: (clientId: number) => Promise<FaxTrackingEntry[]>;
     saveToChart: (data: { faxLogId: number; clientId: number; category: string; linkToOutboundFaxId?: number }) => Promise<FaxLogEntry>;
     pollStatuses: () => Promise<{ updated: number }>;
     pollInbox: () => Promise<{ newFaxes: number }>;
+    // Provider management
+    setProvider: (type: string, credentials: Record<string, string>) => Promise<boolean>;
+    getProviderStatus: () => Promise<{ configured: boolean; provider: FaxProviderType | null; faxNumber?: string }>;
+    testProvider: () => Promise<{ success: boolean; message: string; faxNumber?: string; balance?: string }>;
+    removeProvider: () => Promise<boolean>;
   };
   // ── Intake Forms ──
   intakeForms: {

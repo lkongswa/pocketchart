@@ -656,8 +656,8 @@ const App: React.FC = () => {
 
     const checkFaxes = async () => {
       try {
-        const hasSRFax = await window.api.secureStorage.exists('srfax_access_id');
-        if (!hasSRFax) return;
+        const faxStatus = await window.api.fax.getProviderStatus();
+        if (!faxStatus.configured) return;
 
         await window.api.fax.pollStatuses();
         const result = await window.api.fax.pollInbox();

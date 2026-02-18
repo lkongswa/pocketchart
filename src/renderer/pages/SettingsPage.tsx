@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Settings, Building2, User, Stethoscope, Info, Save, CheckCircle, Database, Download, FileSpreadsheet, HardDrive, FolderOpen, RotateCcw, Upload, Trash2, Image, Clock, AlertTriangle, Shield, Lock, PenLine, BookOpen, ChevronDown, ShieldCheck, Key, Monitor, Loader2, DollarSign, Plus, Eye, EyeOff, KeyRound, Printer, Sun, Moon, Palette, Type, Contrast } from 'lucide-react';
+import { Settings, Building2, User, Stethoscope, Info, Save, CheckCircle, Database, Download, FileSpreadsheet, HardDrive, FolderOpen, RotateCcw, Upload, Trash2, Image, Clock, AlertTriangle, AlertCircle, Shield, Lock, PenLine, BookOpen, ChevronDown, ShieldCheck, Key, Monitor, Loader2, DollarSign, Plus, Eye, EyeOff, KeyRound, Printer, RefreshCw, Sun, Moon, Palette, Type, Contrast } from 'lucide-react';
 import type { Practice, Discipline, NoteFormat, CloudDetectionResult, AppTier, FeeScheduleEntry, DiscountTemplate, DiscountType } from '../../shared/types';
 import FeeScheduleModal from '../components/FeeScheduleModal';
 import { NOTE_FORMAT_LABELS, DISCIPLINE_DEFAULT_FORMAT } from '../../shared/types';
@@ -117,6 +117,80 @@ const emptyPractice: Omit<Practice, 'id'> = {
   taxonomy_code: '',
 };
 
+// Fax provider schemas for Settings UI — mirrors PROVIDER_CREDENTIAL_SCHEMAS from main process
+const FAX_PROVIDERS = {
+  srfax: {
+    name: 'SRFax',
+    description: 'Healthcare-focused fax service. Popular with therapy practices.',
+    website: 'https://www.srfax.com',
+    baaInfo: 'SRFax signs BAAs. Request via their website or support.',
+    fields: [
+      { key: 'accountNumber', label: 'Account Number', type: 'text' as const, placeholder: 'Your SRFax account number' },
+      { key: 'password', label: 'Password', type: 'password' as const, placeholder: 'Your SRFax password' },
+      { key: 'faxNumber', label: 'Fax Number', type: 'text' as const, placeholder: '15551234567', helpText: 'Include country code (1 for US)' },
+    ],
+  },
+  faxage: {
+    name: 'Faxage',
+    description: 'Value-priced fax service with HITRUST certification. Signs BAAs.',
+    website: 'https://www.faxage.com',
+    baaInfo: 'Email support@faxage.com to request a BAA. Free with any account.',
+    fields: [
+      { key: 'company', label: 'Company/Login', type: 'text' as const, placeholder: 'Your Faxage company login' },
+      { key: 'username', label: 'Username', type: 'text' as const, placeholder: 'Your Faxage username' },
+      { key: 'password', label: 'Password', type: 'password' as const, placeholder: 'Your Faxage password' },
+      { key: 'faxNumber', label: 'Fax Number', type: 'text' as const, placeholder: '15551234567', helpText: 'Your Faxage DID number with country code' },
+    ],
+  },
+  phaxio: {
+    name: 'Phaxio (Sinch)',
+    description: 'Developer-friendly fax API with modern REST/JSON interface. HIPAA compliant.',
+    website: 'https://www.phaxio.com',
+    baaInfo: 'Sign BAA in the Phaxio/Sinch dashboard under Build > HIPAA settings.',
+    fields: [
+      { key: 'apiKey', label: 'API Key', type: 'text' as const, placeholder: 'Your Phaxio API key' },
+      { key: 'apiSecret', label: 'API Secret', type: 'password' as const, placeholder: 'Your Phaxio API secret' },
+      { key: 'faxNumber', label: 'Fax Number', type: 'text' as const, placeholder: '+15551234567', helpText: 'Your Phaxio number in E.164 format' },
+    ],
+  },
+};
+
+// Clearinghouse provider schemas for Settings UI — mirrors CLEARINGHOUSE_CREDENTIAL_SCHEMAS from main process
+interface ClearinghouseField { key: string; label: string; type: 'text' | 'password'; placeholder: string; helpText?: string; }
+interface ClearinghouseProviderInfo { name: string; description: string; website: string; pricingNote: string; fields: ClearinghouseField[]; }
+const CLEARINGHOUSE_PROVIDERS: Record<string, ClearinghouseProviderInfo> = {
+  claimmd: {
+    name: 'Claim.MD',
+    description: 'Developer-friendly REST API with per-claim pricing. Great for solo practices.',
+    website: 'https://www.claim.md',
+    pricingNote: 'Approximately $0.25–0.35 per claim. No monthly minimum.',
+    fields: [
+      { key: 'apiKey', label: 'API Key', type: 'password', placeholder: 'Your Claim.MD API key' },
+      { key: 'accountKey', label: 'Account Key (optional)', type: 'text', placeholder: 'Optional account key', helpText: 'Required if your account uses sub-accounts' },
+    ],
+  },
+  availity: {
+    name: 'Availity',
+    description: 'Largest US clearinghouse. Enterprise-focused with broad payer coverage. (Coming soon)',
+    website: 'https://www.availity.com',
+    pricingNote: 'Pricing varies. Contact Availity for solo practitioner rates.',
+    fields: [
+      { key: 'clientId', label: 'Client ID', type: 'text', placeholder: 'Your Availity Client ID' },
+      { key: 'clientSecret', label: 'Client Secret', type: 'password', placeholder: 'Your Availity Client Secret' },
+    ],
+  },
+  officeally: {
+    name: 'Office Ally',
+    description: 'Free claim submission option. Web-portal focused with limited API. (Coming soon)',
+    website: 'https://www.officeally.com',
+    pricingNote: 'Free for claim submission. ERA and other services may have fees.',
+    fields: [
+      { key: 'username', label: 'Username', type: 'text', placeholder: 'Your Office Ally username' },
+      { key: 'password', label: 'Password', type: 'password', placeholder: 'Your Office Ally password' },
+    ],
+  },
+};
+
 export default function SettingsPage() {
   const sectionColor = useSectionColor();
   const { fontSize, setFontSize, themeMode, setThemeMode, highContrast, setHighContrast, reduceMotion, setReduceMotion } = useAccessibilityPrefs();
@@ -161,16 +235,24 @@ export default function SettingsPage() {
   const [cms1500Saving, setCms1500Saving] = useState(false);
   const [cms1500TestPrinting, setCms1500TestPrinting] = useState(false);
 
-  // SRFax state
-  const [srfaxAccessId, setSrfaxAccessId] = useState('');
-  const [srfaxAccessPwd, setSrfaxAccessPwd] = useState('');
-  const [srfaxCallerId, setSrfaxCallerId] = useState('');
-  const [srfaxSenderEmail, setSrfaxSenderEmail] = useState('');
-  const [srfaxMaskedId, setSrfaxMaskedId] = useState<string | null>(null);
-  const [srfaxSaving, setSrfaxSaving] = useState(false);
-  const [srfaxTesting, setSrfaxTesting] = useState(false);
-  const [srfaxConfigured, setSrfaxConfigured] = useState(false);
+  // Fax provider state
+  const [faxProvider, setFaxProvider] = useState<'srfax' | 'faxage' | 'phaxio'>('srfax');
+  const [faxCredentials, setFaxCredentials] = useState<Record<string, string>>({});
+  const [faxConfigured, setFaxConfigured] = useState(false);
+  const [faxConfiguredProvider, setFaxConfiguredProvider] = useState<string | null>(null);
+  const [faxSaving, setFaxSaving] = useState(false);
+  const [faxTesting, setFaxTesting] = useState(false);
+  const [faxTestResult, setFaxTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [showPhysicianDirectory, setShowPhysicianDirectory] = useState(false);
+
+  // Clearinghouse (provider-agnostic) state
+  const [clearinghouseProvider, setClearinghouseProvider] = useState<string>('claimmd');
+  const [clearinghouseCredentials, setClearinghouseCredentials] = useState<Record<string, string>>({});
+  const [clearinghouseConfigured, setClearinghouseConfigured] = useState(false);
+  const [clearinghouseConfiguredProvider, setClearinghouseConfiguredProvider] = useState<string | null>(null);
+  const [clearinghouseSaving, setClearinghouseSaving] = useState(false);
+  const [clearinghouseTesting, setClearinghouseTesting] = useState(false);
+  const [clearinghouseTestResult, setClearinghouseTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   // Signature state
   const [signatureName, setSignatureName] = useState('');
@@ -376,14 +458,25 @@ export default function SettingsPage() {
     }
   }, [toast]);
 
-  // Load SRFax config status
+  // Load fax provider status
   useEffect(() => {
-    window.api.secureStorage.exists('srfax_access_id').then((exists: boolean) => {
-      setSrfaxConfigured(exists);
-      if (exists) {
-        window.api.secureStorage.getMasked('srfax_access_id').then((masked: string | null) => setSrfaxMaskedId(masked));
+    window.api.fax.getProviderStatus().then((status) => {
+      setFaxConfigured(status.configured);
+      setFaxConfiguredProvider(status.provider);
+      if (status.provider) {
+        setFaxProvider(status.provider as 'srfax' | 'faxage' | 'phaxio');
       }
-    });
+    }).catch(() => setFaxConfigured(false));
+  }, []);
+
+  // Load Clearinghouse config status
+  useEffect(() => {
+    window.api.clearinghouse.getProviderStatus()
+      .then((status) => {
+        setClearinghouseConfigured(status.configured);
+        if (status.provider) setClearinghouseConfiguredProvider(status.provider);
+      })
+      .catch(() => setClearinghouseConfigured(false));
   }, []);
 
   const loadPractice = useCallback(async () => {
@@ -2356,120 +2449,324 @@ export default function SettingsPage() {
 
       <CollapsibleSection
         icon={<Printer className="w-5 h-5" />}
-        title="Fax (SRFax)"
-        description={srfaxConfigured ? `Account: ${srfaxMaskedId || 'Configured'}` : 'Not configured'}
-        sectionId="settings-srfax"
-        isOpen={openSectionId === 'srfax'}
-        onToggle={() => toggleSection('srfax')}
+        title="Fax Service"
+        description={faxConfigured ? `${FAX_PROVIDERS[faxConfiguredProvider as keyof typeof FAX_PROVIDERS]?.name || 'Configured'}` : 'Not configured'}
+        sectionId="settings-fax"
+        isOpen={openSectionId === 'fax' || openSectionId === 'srfax'}
+        onToggle={() => toggleSection('fax')}
       >
         <div className="space-y-4">
-          {srfaxConfigured ? (
+          {/* Provider Selector */}
+          <div>
+            <label className="label">Fax Provider</label>
+            <select
+              className="input w-full"
+              value={faxProvider}
+              onChange={(e) => {
+                setFaxProvider(e.target.value as 'srfax' | 'faxage' | 'phaxio');
+                setFaxCredentials({});
+                setFaxTestResult(null);
+              }}
+              disabled={faxSaving}
+            >
+              {Object.entries(FAX_PROVIDERS).map(([key, info]) => (
+                <option key={key} value={key}>{info.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Provider info */}
+          <div className="text-sm text-[var(--color-text-secondary)]">
+            <p>{FAX_PROVIDERS[faxProvider].description}</p>
+            <p className="mt-1">
+              <a href={FAX_PROVIDERS[faxProvider].website} className="text-blue-600 hover:underline" target="_blank" rel="noopener">
+                {FAX_PROVIDERS[faxProvider].website}
+              </a>
+            </p>
+            <p className="text-xs mt-1 text-amber-700">{FAX_PROVIDERS[faxProvider].baaInfo}</p>
+          </div>
+
+          {/* Configured state */}
+          {faxConfigured && faxConfiguredProvider === faxProvider ? (
             <div className="space-y-3">
               <div className="flex items-center gap-2 text-sm text-green-600">
                 <CheckCircle className="w-4 h-4" />
-                SRFax credentials configured
+                {FAX_PROVIDERS[faxProvider].name} credentials configured
               </div>
-              {srfaxMaskedId && <p className="text-xs text-[var(--color-text-secondary)]">Account ID: {srfaxMaskedId}</p>}
-              <button
-                type="button"
-                className="btn-danger text-sm"
-                onClick={async () => {
-                  await window.api.secureStorage.delete('srfax_access_id');
-                  await window.api.secureStorage.delete('srfax_access_pwd');
-                  await window.api.secureStorage.delete('srfax_caller_id');
-                  setSrfaxConfigured(false);
-                  setSrfaxMaskedId(null);
-                  setToast('SRFax credentials removed');
-                }}
-              >
-                Remove Credentials
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="btn-ghost text-sm flex items-center gap-1"
+                  disabled={faxTesting}
+                  onClick={async () => {
+                    setFaxTesting(true);
+                    setFaxTestResult(null);
+                    try {
+                      const result = await window.api.fax.testProvider();
+                      setFaxTestResult(result);
+                    } catch (err: any) {
+                      setFaxTestResult({ success: false, message: err.message || 'Test failed' });
+                    } finally {
+                      setFaxTesting(false);
+                    }
+                  }}
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${faxTesting ? 'animate-spin' : ''}`} />
+                  {faxTesting ? 'Testing...' : 'Test Connection'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-danger text-sm"
+                  onClick={async () => {
+                    try {
+                      await window.api.fax.removeProvider();
+                      setFaxConfigured(false);
+                      setFaxConfiguredProvider(null);
+                      setFaxCredentials({});
+                      setFaxTestResult(null);
+                      setToast('Fax credentials removed');
+                    } catch (err) {
+                      setToast('Failed to remove credentials');
+                    }
+                  }}
+                >
+                  Remove Credentials
+                </button>
+              </div>
+              {faxTestResult && (
+                <div className={`text-sm p-2 rounded ${faxTestResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                  {faxTestResult.message}
+                </div>
+              )}
             </div>
           ) : (
             <div className="space-y-3">
-              <p className="text-sm text-[var(--color-text-secondary)]">
-                Connect your SRFax account to send and receive faxes. Visit{' '}
-                <span className="font-medium">srfax.com</span> to create an account.
-              </p>
+              {/* Dynamic credential fields */}
               <div className="grid grid-cols-1 gap-3">
-                <div>
-                  <label className="label">Account Number (Access ID)</label>
-                  <input
-                    type="text"
-                    className="input w-full"
-                    value={srfaxAccessId}
-                    onChange={(e) => setSrfaxAccessId(e.target.value)}
-                    placeholder="Your SRFax account number"
-                  />
-                </div>
-                <div>
-                  <label className="label">Password</label>
-                  <input
-                    type="password"
-                    className="input w-full"
-                    value={srfaxAccessPwd}
-                    onChange={(e) => setSrfaxAccessPwd(e.target.value)}
-                    placeholder="Your SRFax password"
-                  />
-                </div>
-                <div>
-                  <label className="label">Fax Number (Caller ID)</label>
-                  <input
-                    type="tel"
-                    className="input w-full"
-                    value={srfaxCallerId}
-                    onChange={(e) => setSrfaxCallerId(e.target.value)}
-                    placeholder="Your assigned fax number"
-                  />
-                </div>
-                <div>
-                  <label className="label">Sender Email</label>
-                  <input
-                    type="email"
-                    className="input w-full"
-                    value={srfaxSenderEmail}
-                    onChange={(e) => setSrfaxSenderEmail(e.target.value)}
-                    placeholder="Email for fax delivery notifications"
-                  />
-                </div>
+                {FAX_PROVIDERS[faxProvider].fields.map((field) => (
+                  <div key={field.key}>
+                    <label className="label">{field.label}</label>
+                    <input
+                      type={field.type}
+                      className="input w-full"
+                      value={faxCredentials[field.key] || ''}
+                      onChange={(e) => setFaxCredentials(prev => ({ ...prev, [field.key]: e.target.value }))}
+                      placeholder={field.placeholder}
+                    />
+                    {field.helpText && (
+                      <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">{field.helpText}</p>
+                    )}
+                  </div>
+                ))}
               </div>
+
               <div className="flex items-center gap-3">
                 <button
                   type="button"
                   className="btn-primary text-sm"
-                  disabled={!srfaxAccessId || !srfaxAccessPwd || srfaxSaving}
+                  disabled={faxSaving || !FAX_PROVIDERS[faxProvider].fields.every(f => f.type === 'password' ? true : (faxCredentials[f.key] || '').trim())}
                   onClick={async () => {
-                    setSrfaxSaving(true);
+                    setFaxSaving(true);
+                    setFaxTestResult(null);
                     try {
-                      await window.api.secureStorage.set('srfax_access_id', srfaxAccessId);
-                      await window.api.secureStorage.set('srfax_access_pwd', srfaxAccessPwd);
-                      if (srfaxCallerId) {
-                        await window.api.secureStorage.set('srfax_caller_id', srfaxCallerId);
+                      await window.api.fax.setProvider(faxProvider, faxCredentials);
+                      // Test connection immediately
+                      const testResult = await window.api.fax.testProvider();
+                      setFaxTestResult(testResult);
+                      if (testResult.success) {
+                        setFaxConfigured(true);
+                        setFaxConfiguredProvider(faxProvider);
+                        setFaxCredentials({});
+                        setToast(`${FAX_PROVIDERS[faxProvider].name} credentials saved`);
+                      } else {
+                        // If test failed, remove the credentials
+                        await window.api.fax.removeProvider();
+                        setFaxConfigured(false);
+                        setFaxConfiguredProvider(null);
                       }
-                      if (srfaxSenderEmail) {
-                        await window.api.settings.set('srfax_sender_email', srfaxSenderEmail);
-                      }
-                      setSrfaxConfigured(true);
-                      const masked = await window.api.secureStorage.getMasked('srfax_access_id');
-                      setSrfaxMaskedId(masked);
-                      setSrfaxAccessId('');
-                      setSrfaxAccessPwd('');
-                      setSrfaxCallerId('');
-                      setSrfaxSenderEmail('');
-                      setToast('SRFax credentials saved');
-                    } catch (err) {
-                      console.error('Failed to save SRFax credentials:', err);
+                    } catch (err: any) {
+                      console.error('Failed to save fax credentials:', err);
                       setToast('Failed to save credentials');
                     } finally {
-                      setSrfaxSaving(false);
+                      setFaxSaving(false);
                     }
                   }}
                 >
-                  {srfaxSaving ? 'Saving...' : 'Save Credentials'}
+                  {faxSaving ? 'Saving & Testing...' : 'Save & Test'}
+                </button>
+              </div>
+
+              {faxTestResult && (
+                <div className={`text-sm p-2 rounded ${faxTestResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                  {faxTestResult.message}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* HIPAA BAA reminder */}
+          <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
+            <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+            <p>
+              <strong>HIPAA Reminder:</strong> Ensure you have a signed Business Associate Agreement (BAA) with your fax provider before transmitting PHI.
+            </p>
+          </div>
+        </div>
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        icon={<Shield className="w-5 h-5" />}
+        title="Clearinghouse"
+        description={clearinghouseConfigured ? `${CLEARINGHOUSE_PROVIDERS[clearinghouseConfiguredProvider as keyof typeof CLEARINGHOUSE_PROVIDERS]?.name || 'Configured'}` : 'Not configured'}
+        sectionId="settings-clearinghouse"
+        isOpen={openSectionId === 'clearinghouse'}
+        onToggle={() => toggleSection('clearinghouse')}
+      >
+        <div className="space-y-4">
+          {/* Provider dropdown */}
+          <div>
+            <label className="label">Clearinghouse Provider</label>
+            <select
+              className="input w-full"
+              value={clearinghouseProvider}
+              onChange={(e) => {
+                setClearinghouseProvider(e.target.value);
+                setClearinghouseCredentials({});
+                setClearinghouseTestResult(null);
+              }}
+            >
+              {Object.entries(CLEARINGHOUSE_PROVIDERS).map(([key, info]) => (
+                <option key={key} value={key}>{info.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Provider info */}
+          <div className="text-sm text-[var(--color-text-secondary)]">
+            <p>{CLEARINGHOUSE_PROVIDERS[clearinghouseProvider as keyof typeof CLEARINGHOUSE_PROVIDERS].description}</p>
+            <p className="mt-1">
+              <a href={CLEARINGHOUSE_PROVIDERS[clearinghouseProvider as keyof typeof CLEARINGHOUSE_PROVIDERS].website} className="text-blue-600 hover:underline" target="_blank" rel="noopener">
+                {CLEARINGHOUSE_PROVIDERS[clearinghouseProvider as keyof typeof CLEARINGHOUSE_PROVIDERS].website}
+              </a>
+            </p>
+            <p className="text-xs mt-1 text-amber-700">{CLEARINGHOUSE_PROVIDERS[clearinghouseProvider as keyof typeof CLEARINGHOUSE_PROVIDERS].pricingNote}</p>
+          </div>
+
+          {/* Configured state — show test/remove buttons */}
+          {clearinghouseConfigured ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-sm text-green-600">
+                <CheckCircle className="w-4 h-4" />
+                {CLEARINGHOUSE_PROVIDERS[clearinghouseProvider as keyof typeof CLEARINGHOUSE_PROVIDERS].name} credentials configured
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="btn-ghost text-sm gap-1.5"
+                  disabled={clearinghouseTesting}
+                  onClick={async () => {
+                    setClearinghouseTesting(true);
+                    setClearinghouseTestResult(null);
+                    try {
+                      const result = await window.api.clearinghouse.testProvider();
+                      setClearinghouseTestResult(result);
+                    } catch (err: any) {
+                      setClearinghouseTestResult({ success: false, message: err.message || 'Connection test failed' });
+                    } finally {
+                      setClearinghouseTesting(false);
+                    }
+                  }}
+                >
+                  {clearinghouseTesting ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  Test Connection
+                </button>
+                <button
+                  type="button"
+                  className="btn-danger text-sm"
+                  onClick={async () => {
+                    await window.api.clearinghouse.removeProvider();
+                    setClearinghouseConfigured(false);
+                    setClearinghouseConfiguredProvider(null);
+                    setClearinghouseTestResult(null);
+                    setToast('Clearinghouse credentials removed');
+                  }}
+                >
+                  Remove Credentials
+                </button>
+              </div>
+              {clearinghouseTestResult && (
+                <div className={`p-3 rounded-lg text-xs ${
+                  clearinghouseTestResult.success
+                    ? 'bg-green-50 border border-green-200 text-green-700'
+                    : 'bg-red-50 border border-red-200 text-red-700'
+                }`}>
+                  {clearinghouseTestResult.success ? (
+                    <span className="flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> {clearinghouseTestResult.message}</span>
+                  ) : (
+                    <span className="flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" /> {clearinghouseTestResult.message}</span>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {/* Dynamic credential fields */}
+              <div className="grid grid-cols-1 gap-3">
+                {CLEARINGHOUSE_PROVIDERS[clearinghouseProvider as keyof typeof CLEARINGHOUSE_PROVIDERS].fields.map((field) => (
+                  <div key={field.key}>
+                    <label className="label">{field.label}</label>
+                    <input
+                      type={field.type}
+                      className="input w-full"
+                      value={clearinghouseCredentials[field.key] || ''}
+                      onChange={(e) => setClearinghouseCredentials(prev => ({ ...prev, [field.key]: e.target.value }))}
+                      placeholder={field.placeholder}
+                    />
+                    {field.helpText && <p className="text-xs text-[var(--color-text-tertiary)] mt-0.5">{field.helpText}</p>}
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="btn-primary text-sm"
+                  disabled={clearinghouseSaving || !CLEARINGHOUSE_PROVIDERS[clearinghouseProvider as keyof typeof CLEARINGHOUSE_PROVIDERS].fields.some(f => (clearinghouseCredentials[f.key] || '').trim())}
+                  onClick={async () => {
+                    setClearinghouseSaving(true);
+                    setClearinghouseTestResult(null);
+                    try {
+                      await window.api.clearinghouse.setProvider(clearinghouseProvider, clearinghouseCredentials);
+                      const testResult = await window.api.clearinghouse.testProvider();
+                      setClearinghouseTestResult(testResult);
+                      if (testResult.success) {
+                        setClearinghouseConfigured(true);
+                        setClearinghouseConfiguredProvider(clearinghouseProvider);
+                        setClearinghouseCredentials({});
+                        setToast(`${CLEARINGHOUSE_PROVIDERS[clearinghouseProvider as keyof typeof CLEARINGHOUSE_PROVIDERS].name} credentials saved and verified`);
+                      } else {
+                        // If test failed, remove the credentials
+                        await window.api.clearinghouse.removeProvider();
+                        setToast('Connection test failed. Credentials were not saved.');
+                      }
+                    } catch (err: any) {
+                      console.error('Failed to save clearinghouse credentials:', err);
+                      setToast('Failed to save credentials');
+                    } finally {
+                      setClearinghouseSaving(false);
+                    }
+                  }}
+                >
+                  {clearinghouseSaving ? 'Saving & Testing...' : 'Save & Test'}
                 </button>
               </div>
             </div>
           )}
+
+          {/* HIPAA reminder */}
+          <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
+            <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+            <p>
+              <strong>HIPAA Reminder:</strong> Ensure you have a signed Business Associate Agreement (BAA) with your clearinghouse before transmitting PHI.
+            </p>
+          </div>
         </div>
       </CollapsibleSection>
 

@@ -81,6 +81,8 @@ export const ISSUE_TO_FIELD_MAP: Record<string, string> = {
   dc_no_reason: 'discharge_reason',
   dc_no_reason_detail: 'discharge_reason_detail',
   dc_no_current_lof: 'current_level_of_function',
+  note_future_dos: 'date_of_service',
+  eval_future_date: 'eval_date',
 };
 
 /** Map issue IDs to client record field names */

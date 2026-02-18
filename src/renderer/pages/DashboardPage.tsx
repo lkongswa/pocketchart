@@ -17,6 +17,7 @@ import {
 import type { Client, Note, Appointment } from '../../shared/types';
 import BasicAlertsPanel from '../components/BasicAlertsPanel';
 import DashboardWorkspace from '../components/DashboardWorkspace';
+import ReviewPromptCard from '../components/ReviewPromptCard';
 
 interface DashboardStats {
   incompleteEvals: number;
@@ -50,11 +51,29 @@ const DashboardPage: React.FC = () => {
   const [showBackupReminder, setShowBackupReminder] = useState(false);
   const [daysSinceBackup, setDaysSinceBackup] = useState<number | null>(null);
   const [integrityIssues, setIntegrityIssues] = useState<{ tamperedNotes: number[]; tamperedEvals: number[] } | null>(null);
+  const [reviewEligible, setReviewEligible] = useState(false);
+  const [reviewMilestone, setReviewMilestone] = useState<string | null>(null);
 
   useEffect(() => {
     loadDashboardData();
     checkBackupReminder();
     runIntegrityCheck();
+  }, []);
+
+  // Review prompt: wait 30 seconds before checking eligibility (don't ambush on launch)
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      try {
+        const result = await window.api.reviewPrompts.checkEligible();
+        if (result.eligible) {
+          setReviewEligible(true);
+          setReviewMilestone(result.milestone);
+        }
+      } catch {
+        // Silently fail — never break dashboard over a review prompt
+      }
+    }, 30000);
+    return () => clearTimeout(timer);
   }, []);
 
   const checkBackupReminder = async () => {
@@ -332,6 +351,14 @@ const DashboardPage: React.FC = () => {
 
       {/* Alerts Panel */}
       <BasicAlertsPanel />
+
+      {/* Review Prompt Card */}
+      {reviewEligible && reviewMilestone && (
+        <ReviewPromptCard
+          milestone={reviewMilestone}
+          onComplete={() => setReviewEligible(false)}
+        />
+      )}
 
       {/* Stat Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">

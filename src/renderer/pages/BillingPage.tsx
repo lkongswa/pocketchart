@@ -44,6 +44,7 @@ import {
   RotateCcw,
   Clock,
   ChevronUp,
+  Shield,
 } from 'lucide-react';
 import type {
   Invoice,
@@ -60,12 +61,13 @@ import type {
   CMS1500Readiness,
 } from '../../shared/types';
 import { computeClaimReadiness } from '../hooks/useClaimReadiness';
+import InsuranceTab from '../components/InsuranceTab';
 import InvoiceModal from '../components/InvoiceModal';
 import PaymentModal from '../components/PaymentModal';
 import CSVPaymentImportModal from '../components/CSVPaymentImportModal';
 import RevenuePipeline from '../components/RevenuePipeline';
 
-type BillingTab = 'pipeline' | 'invoices' | 'payments' | 'cms1500' | 'analytics' | 'stripe';
+type BillingTab = 'pipeline' | 'invoices' | 'payments' | 'cms1500' | 'insurance' | 'analytics' | 'stripe';
 
 const STATUS_COLORS: Record<InvoiceStatus, { bg: string; text: string }> = {
   draft: { bg: 'bg-gray-100', text: 'text-gray-700' },
@@ -781,6 +783,7 @@ export default function BillingPage() {
     { id: 'invoices', label: 'Invoices', icon: <FileText className="w-4 h-4" /> },
     { id: 'payments', label: 'Payments', icon: <DollarSign className="w-4 h-4" /> },
     { id: 'cms1500', label: 'Claim Preview', icon: <ClipboardList className="w-4 h-4" /> },
+    { id: 'insurance', label: 'Insurance', icon: <Shield className="w-4 h-4" />, pro: true },
     { id: 'analytics', label: 'Analytics', icon: <BarChart3 className="w-4 h-4" />, pro: true },
     { id: 'stripe', label: 'Stripe Payments', icon: <Zap className="w-4 h-4" />, pro: true },
   ];
@@ -1540,6 +1543,13 @@ export default function BillingPage() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Insurance Tab (Pro) */}
+      {activeTab === 'insurance' && (
+        <ProFeatureGate feature="insurance_billing" lockedMessage="Upgrade to Pro to unlock electronic insurance claim submission, 837P generation, and clearinghouse integration.">
+          <InsuranceTab onToast={(msg) => setToast(msg)} />
+        </ProFeatureGate>
       )}
 
       {/* Analytics Tab (Pro) */}

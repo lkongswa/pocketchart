@@ -436,7 +436,7 @@ export default function SignConfirmDialog({
                 onClick={handleSaveAndClose}
                 className="px-4 py-2 text-sm font-medium rounded-lg border-2 border-blue-400 text-blue-700 bg-white hover:bg-blue-50 transition-colors"
               >
-                Save & Go Back
+                Apply Fixes
               </button>
             )}
           </div>
@@ -516,7 +516,7 @@ export default function SignConfirmDialog({
                     : 'border-gray-300 text-gray-400 bg-gray-50 cursor-not-allowed'
                 }`}
               >
-                Save & Go Back
+                Apply Fixes
               </button>
             )}
             <button

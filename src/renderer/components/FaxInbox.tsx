@@ -36,7 +36,6 @@ export default function FaxInbox({ inbox, onRefresh, onMatchToClient, onSaveToCh
   const [savingInProgress, setSavingInProgress] = useState(false);
   // Preview state
   const [previewFaxId, setPreviewFaxId] = useState<number | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
 
   const isLoading = loading || polling;
@@ -93,24 +92,21 @@ export default function FaxInbox({ inbox, onRefresh, onMatchToClient, onSaveToCh
   };
 
   const handlePreview = async (fax: FaxLogEntry) => {
-    if (previewFaxId === fax.id) {
-      // Toggle off
-      setPreviewFaxId(null);
-      if (previewUrl) { URL.revokeObjectURL(previewUrl); setPreviewUrl(null); }
-      return;
-    }
+    const faxId = fax.provider_fax_id || fax.srfax_id;
+    if (!faxId) return;
     setPreviewFaxId(fax.id);
     setPreviewLoading(true);
     try {
-      const result = await window.api.fax.retrieveFax(fax.srfax_id);
-      const byteArray = Uint8Array.from(atob(result.base64Pdf), c => c.charCodeAt(0));
-      const blob = new Blob([byteArray], { type: 'application/pdf' });
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-      setPreviewUrl(URL.createObjectURL(blob));
+      // Download fax PDF from provider, then open in default PDF viewer via shell.openPath
+      const result = await window.api.fax.retrieveFax(faxId);
+      await window.api.cms1500.openPreview({
+        base64Pdf: result.base64Pdf,
+        filename: result.filename || `fax_${faxId}.pdf`,
+      });
     } catch (err) {
       console.error('Failed to retrieve fax for preview:', err);
-      setPreviewFaxId(null);
     } finally {
+      setPreviewFaxId(null);
       setPreviewLoading(false);
     }
   };
@@ -134,13 +130,13 @@ export default function FaxInbox({ inbox, onRefresh, onMatchToClient, onSaveToCh
           disabled={isLoading}
         >
           <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
-          {polling ? 'Checking SRFax...' : 'Refresh'}
+          {polling ? 'Checking faxes...' : 'Refresh'}
         </button>
       </div>
 
       {inbox.length === 0 ? (
         <div className="text-center py-8 text-[var(--color-text-secondary)] text-sm">
-          No received faxes yet. Faxes will appear here once SRFax is configured and receiving.
+          No received faxes yet. Faxes will appear here once your fax service is configured and receiving.
         </div>
       ) : (
         <div className="space-y-1">
@@ -177,12 +173,12 @@ export default function FaxInbox({ inbox, onRefresh, onMatchToClient, onSaveToCh
 
                   <div className="flex items-center gap-1">
                     {/* Preview button */}
-                    {fax.srfax_id && (
+                    {(fax.provider_fax_id || fax.srfax_id) && (
                       <button
                         type="button"
-                        className={`p-1.5 rounded hover:bg-gray-100 ${previewFaxId === fax.id ? 'text-violet-600 bg-violet-50' : 'text-[var(--color-text-secondary)]'}`}
+                        className={`p-1.5 rounded hover:bg-gray-100 text-[var(--color-text-secondary)]`}
                         onClick={() => handlePreview(fax)}
-                        title="Preview fax"
+                        title="Open fax PDF"
                         disabled={previewLoading && previewFaxId === fax.id}
                       >
                         {previewLoading && previewFaxId === fax.id ? <Loader2 size={14} className="animate-spin" /> : <Eye size={14} />}
@@ -250,13 +246,6 @@ export default function FaxInbox({ inbox, onRefresh, onMatchToClient, onSaveToCh
                     )}
                   </div>
                 </div>
-
-                {/* Preview panel */}
-                {previewFaxId === fax.id && previewUrl && (
-                  <div className="mx-3 mb-2 border rounded-lg overflow-hidden" style={{ height: 500 }}>
-                    <iframe src={previewUrl} className="w-full h-full" title="Fax Preview" />
-                  </div>
-                )}
 
                 {/* Save to Chart panel */}
                 {savingFaxId === fax.id && (

@@ -249,6 +249,11 @@ const api = {
   feedback: {
     submit: (data: any) => ipcRenderer.invoke('feedback:submit', data),
   },
+  // Review Prompts
+  reviewPrompts: {
+    checkEligible: () => ipcRenderer.invoke('review-prompts:check-eligible') as Promise<{ eligible: boolean; milestone: string | null }>,
+    record: (data: { rating: number | null; action: string }) => ipcRenderer.invoke('review-prompts:record', data) as Promise<{ id: number }>,
+  },
   // License
   license: {
     getStatus: () => ipcRenderer.invoke('license:getStatus'),
@@ -361,11 +366,14 @@ const api = {
     delete: (id: number) => ipcRenderer.invoke('payers:delete', id),
   },
 
-  // V3 Insurance - Clearinghouse (Claim.MD)
+  // V3 Insurance - Clearinghouse (provider-agnostic)
   clearinghouse: {
-    setCredentials: (apiKey: string, accountKey?: string) => ipcRenderer.invoke('clearinghouse:setCredentials', apiKey, accountKey),
-    getConnectionStatus: () => ipcRenderer.invoke('clearinghouse:getConnectionStatus'),
-    testConnection: () => ipcRenderer.invoke('clearinghouse:testConnection'),
+    // Provider management
+    setProvider: (type: string, credentials: Record<string, string>) => ipcRenderer.invoke('clearinghouse:setProvider', type, credentials),
+    getProviderStatus: () => ipcRenderer.invoke('clearinghouse:getProviderStatus'),
+    testProvider: () => ipcRenderer.invoke('clearinghouse:testProvider'),
+    removeProvider: () => ipcRenderer.invoke('clearinghouse:removeProvider'),
+    // Operations
     getPayerList: () => ipcRenderer.invoke('clearinghouse:getPayerList'),
     checkEnrollment: (payerId: string) => ipcRenderer.invoke('clearinghouse:checkEnrollment', payerId),
     submitClaim: (claimId: number) => ipcRenderer.invoke('clearinghouse:submitClaim', claimId),
@@ -537,12 +545,17 @@ const api = {
     getStatus: (faxLogId: number) => ipcRenderer.invoke('fax:getStatus', faxLogId),
     listInbox: () => ipcRenderer.invoke('fax:listInbox'),
     listOutbox: () => ipcRenderer.invoke('fax:listOutbox'),
-    retrieveFax: (srfaxId: string) => ipcRenderer.invoke('fax:retrieveFax', srfaxId),
+    retrieveFax: (providerFaxId: string) => ipcRenderer.invoke('fax:retrieveFax', providerFaxId),
     matchToClient: (faxLogId: number, clientId: number) => ipcRenderer.invoke('fax:matchToClient', faxLogId, clientId),
     getOutboundByClient: (clientId: number) => ipcRenderer.invoke('faxLog:getOutboundByClient', clientId),
     saveToChart: (data: { faxLogId: number; clientId: number; category: string; linkToOutboundFaxId?: number }) => ipcRenderer.invoke('fax:saveToChart', data),
     pollStatuses: () => ipcRenderer.invoke('fax:pollStatuses'),
     pollInbox: () => ipcRenderer.invoke('fax:pollInbox'),
+    // Provider management
+    setProvider: (type: string, credentials: Record<string, string>) => ipcRenderer.invoke('fax:setProvider', type, credentials),
+    getProviderStatus: () => ipcRenderer.invoke('fax:getProviderStatus'),
+    testProvider: () => ipcRenderer.invoke('fax:testProvider'),
+    removeProvider: () => ipcRenderer.invoke('fax:removeProvider'),
   },
 
   // ── Waitlist (Pro) ──
