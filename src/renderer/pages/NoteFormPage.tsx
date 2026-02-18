@@ -40,6 +40,8 @@ import { METRIC_OPTIONS, calculateProgress, getMetricDirection } from '../../sha
 import type { ValidationIssue, ValidationFixes } from '../../shared/types/validation';
 import SignConfirmDialog from '../components/SignConfirmDialog';
 import CptCombobox from '../components/CptCombobox';
+import { validateEightMinuteRule, appliesTo as eightMinRuleApplies, formatIndicatorSummary, calculateTreatmentMinutes } from '../../shared/eightMinuteRule';
+import { checkDisciplineCptMismatch, formatMismatchWarning } from '../../shared/cptDisciplineMap';
 
 // Place of service options
 const PLACE_OF_SERVICE_OPTIONS = [
@@ -850,6 +852,37 @@ export default function NoteFormPage() {
       }
     }
 
+    // ── 8-Minute Rule validation (PT, OT, ST only) ──
+    if (!isStandaloneDischarge && timeIn && timeOut && client?.discipline && eightMinRuleApplies(client.discipline)) {
+      const totalMin = calculateTreatmentMinutes(timeIn, timeOut);
+      if (totalMin > 0) {
+        const result = validateEightMinuteRule(cptLines, totalMin);
+        if (!result.valid) {
+          issues.push({
+            id: 'eight_min_rule_overbill',
+            message: result.message || 'Billed units exceed 8-minute rule maximum',
+            severity: 'error',
+            fixable: false,
+            fieldType: 'none',
+            target: 'document',
+            guidance: 'Adjust your CPT code units or session time to comply with Medicare\'s 8-minute rule.',
+            scrollTarget: 'cpt-section',
+          });
+        } else if (result.underbilling) {
+          issues.push({
+            id: 'eight_min_rule_underbill',
+            message: result.message || 'You may be underbilling for documented time',
+            severity: 'warning',
+            fixable: false,
+            fieldType: 'none',
+            target: 'document',
+            guidance: 'Review your units — you may be leaving reimbursement on the table.',
+            scrollTarget: 'cpt-section',
+          });
+        }
+      }
+    }
+
     // ── Discharge-specific ──
     if (isDischarge) {
       if (!dischargeData.discharge_reason) {
@@ -1016,6 +1049,37 @@ export default function NoteFormPage() {
       });
     }
 
+    // ── Discipline / CPT code mismatch ──
+    if (client?.discipline) {
+      const codes = cptLines.map(l => l.code).filter(c => c?.trim());
+      const mismatches = checkDisciplineCptMismatch(codes, client.discipline);
+      if (mismatches.length > 0) {
+        issues.push({
+          id: 'cpt_discipline_mismatch',
+          message: formatMismatchWarning(mismatches),
+          severity: 'warning',
+          fixable: false,
+          fieldType: 'none',
+          target: 'document',
+          guidance: 'Using CPT codes outside your discipline scope may result in claim denials. Verify these codes are appropriate for this client.',
+          scrollTarget: 'cpt-section',
+        });
+      }
+    }
+
+    // ── Modifier 59 documentation warning ──
+    if (cptModifiers.includes('59')) {
+      issues.push({
+        id: 'modifier_59_warning',
+        message: 'Modifier 59 (Distinct Procedural Service) requires supporting documentation',
+        severity: 'warning',
+        fixable: false,
+        fieldType: 'none',
+        target: 'document',
+        guidance: 'Your note must clearly document why the services were distinct and independent from other procedures performed on the same day. This is a common audit trigger.',
+      });
+    }
+
     // ── Provider info ──
     if (!signatureTyped.trim()) {
       issues.push({
@@ -1073,6 +1137,35 @@ export default function NoteFormPage() {
         severity: 'warning', fixable: false, fieldType: 'none', target: 'document',
         guidance: 'Ensure a new authorization has been obtained before billing.',
       });
+    }
+
+    // ── Eval-before-treatment warning (A6) ──
+    if (client && !isStandaloneDischarge) {
+      try {
+        const evals: Evaluation[] = await window.api.evaluations.listByClient(client.id);
+        const signedEvals = evals.filter((e: Evaluation) => e.signed_at);
+        if (signedEvals.length === 0) {
+          issues.push({
+            id: 'no_eval_on_file',
+            message: 'No signed evaluation on file for this client',
+            severity: 'warning', fixable: false, fieldType: 'none', target: 'document',
+            guidance: 'Medicare requires a signed Plan of Care (initial evaluation) before treatment sessions. Consider completing an evaluation first.',
+          });
+        } else if (dateOfService) {
+          const earliestEvalDate = signedEvals
+            .map((e: Evaluation) => e.eval_date || e.created_at?.split('T')[0] || '')
+            .filter(Boolean)
+            .sort()[0];
+          if (earliestEvalDate && dateOfService < earliestEvalDate) {
+            issues.push({
+              id: 'treatment_before_eval',
+              message: `This note is dated before the earliest evaluation (${earliestEvalDate})`,
+              severity: 'warning', fixable: false, fieldType: 'none', target: 'document',
+              guidance: 'Treatment provided before the Plan of Care was established may not be covered by Medicare.',
+            });
+          }
+        }
+      } catch (_) { /* advisory check */ }
     }
 
     // ── Duplicate date-of-service warning ──
@@ -1784,6 +1877,26 @@ export default function NoteFormPage() {
               ))}
             </div>
           </div>
+
+          {/* 8-Minute Rule Real-Time Indicator */}
+          {client?.discipline && eightMinRuleApplies(client.discipline) && (() => {
+            const totalMin = calculateTreatmentMinutes(timeIn, timeOut);
+            if (totalMin <= 0) return null;
+            const result = validateEightMinuteRule(cptLines, totalMin);
+            const indicator = formatIndicatorSummary(result);
+            if (!indicator) return null;
+            const colorClasses = {
+              green: 'bg-emerald-50 border-emerald-200 text-emerald-700',
+              red: 'bg-red-50 border-red-200 text-red-700',
+              amber: 'bg-amber-50 border-amber-200 text-amber-700',
+            };
+            return (
+              <div className={`mt-3 px-3 py-2 rounded-lg border text-xs font-medium flex items-center gap-2 ${colorClasses[indicator.color]}`}>
+                <span>{indicator.icon}</span>
+                <span>{indicator.text}</span>
+              </div>
+            );
+          })()}
 
           {/* Billing Fields */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 pt-4 border-t border-[var(--color-border)]">

@@ -421,69 +421,69 @@ export function seedCategoryAlignedPhrases(db: BetterSqlite3.Database): void {
 }
 
 // Discipline-specific CPT code sets
-function getCPTCodesForDiscipline(discipline: string): Array<{ cpt_code: string; description: string; default_units: number; amount: number }> {
+function getCPTCodesForDiscipline(discipline: string): Array<{ cpt_code: string; description: string; default_units: number; amount: number; is_timed: number | null }> {
   const ptOtShared = [
-    { cpt_code: '97110', description: 'Therapeutic exercises', default_units: 1, amount: 50.00 },
-    { cpt_code: '97112', description: 'Neuromuscular reeducation', default_units: 1, amount: 50.00 },
-    { cpt_code: '97116', description: 'Gait training', default_units: 1, amount: 50.00 },
-    { cpt_code: '97140', description: 'Manual therapy', default_units: 1, amount: 55.00 },
-    { cpt_code: '97530', description: 'Therapeutic activities', default_units: 1, amount: 50.00 },
-    { cpt_code: '97535', description: 'Self-care/home management training', default_units: 1, amount: 50.00 },
-    { cpt_code: '97542', description: 'Wheelchair management training', default_units: 1, amount: 45.00 },
-    { cpt_code: '97750', description: 'Physical performance test', default_units: 1, amount: 60.00 },
-    { cpt_code: '97533', description: 'Sensory integration', default_units: 1, amount: 50.00 },
+    { cpt_code: '97110', description: 'Therapeutic exercises', default_units: 1, amount: 50.00, is_timed: 1 },
+    { cpt_code: '97112', description: 'Neuromuscular reeducation', default_units: 1, amount: 50.00, is_timed: 1 },
+    { cpt_code: '97116', description: 'Gait training', default_units: 1, amount: 50.00, is_timed: 1 },
+    { cpt_code: '97140', description: 'Manual therapy', default_units: 1, amount: 55.00, is_timed: 1 },
+    { cpt_code: '97530', description: 'Therapeutic activities', default_units: 1, amount: 50.00, is_timed: 1 },
+    { cpt_code: '97535', description: 'Self-care/home management training', default_units: 1, amount: 50.00, is_timed: 1 },
+    { cpt_code: '97542', description: 'Wheelchair management training', default_units: 1, amount: 45.00, is_timed: 1 },
+    { cpt_code: '97750', description: 'Physical performance test', default_units: 1, amount: 60.00, is_timed: 1 },
+    { cpt_code: '97533', description: 'Sensory integration', default_units: 1, amount: 50.00, is_timed: 1 },
   ];
 
   switch (discipline) {
     case 'PT':
       return [
         ...ptOtShared,
-        { cpt_code: '97161', description: 'PT evaluation - low complexity', default_units: 1, amount: 150.00 },
-        { cpt_code: '97162', description: 'PT evaluation - moderate complexity', default_units: 1, amount: 175.00 },
-        { cpt_code: '97163', description: 'PT evaluation - high complexity', default_units: 1, amount: 200.00 },
-        { cpt_code: '97164', description: 'PT re-evaluation', default_units: 1, amount: 100.00 },
+        { cpt_code: '97161', description: 'PT evaluation - low complexity', default_units: 1, amount: 150.00, is_timed: 0 },
+        { cpt_code: '97162', description: 'PT evaluation - moderate complexity', default_units: 1, amount: 175.00, is_timed: 0 },
+        { cpt_code: '97163', description: 'PT evaluation - high complexity', default_units: 1, amount: 200.00, is_timed: 0 },
+        { cpt_code: '97164', description: 'PT re-evaluation', default_units: 1, amount: 100.00, is_timed: 0 },
       ];
     case 'OT':
       return [
         ...ptOtShared,
-        { cpt_code: '97165', description: 'OT evaluation - low complexity', default_units: 1, amount: 150.00 },
-        { cpt_code: '97166', description: 'OT evaluation - moderate complexity', default_units: 1, amount: 175.00 },
-        { cpt_code: '97167', description: 'OT evaluation - high complexity', default_units: 1, amount: 200.00 },
-        { cpt_code: '97168', description: 'OT re-evaluation', default_units: 1, amount: 100.00 },
+        { cpt_code: '97165', description: 'OT evaluation - low complexity', default_units: 1, amount: 150.00, is_timed: 0 },
+        { cpt_code: '97166', description: 'OT evaluation - moderate complexity', default_units: 1, amount: 175.00, is_timed: 0 },
+        { cpt_code: '97167', description: 'OT evaluation - high complexity', default_units: 1, amount: 200.00, is_timed: 0 },
+        { cpt_code: '97168', description: 'OT re-evaluation', default_units: 1, amount: 100.00, is_timed: 0 },
       ];
     case 'ST':
       return [
-        { cpt_code: '92507', description: 'Speech/language treatment', default_units: 1, amount: 75.00 },
-        { cpt_code: '92508', description: 'Speech/language treatment (group)', default_units: 1, amount: 50.00 },
-        { cpt_code: '92521', description: 'Evaluation of speech fluency', default_units: 1, amount: 150.00 },
-        { cpt_code: '92522', description: 'Evaluation of speech production', default_units: 1, amount: 150.00 },
-        { cpt_code: '92523', description: 'Speech/language evaluation', default_units: 1, amount: 200.00 },
-        { cpt_code: '92524', description: 'Behavioral/qualitative voice analysis', default_units: 1, amount: 150.00 },
-        { cpt_code: '92526', description: 'Oral function treatment', default_units: 1, amount: 75.00 },
-        { cpt_code: '92610', description: 'Swallowing function evaluation', default_units: 1, amount: 175.00 },
-        { cpt_code: '97129', description: 'Cognitive function intervention, first 15 min', default_units: 1, amount: 50.00 },
-        { cpt_code: '97130', description: 'Cognitive function intervention, add-on 15 min', default_units: 1, amount: 38.00 },
+        { cpt_code: '92507', description: 'Speech/language treatment', default_units: 1, amount: 75.00, is_timed: 1 },
+        { cpt_code: '92508', description: 'Speech/language treatment (group)', default_units: 1, amount: 50.00, is_timed: 0 },
+        { cpt_code: '92521', description: 'Evaluation of speech fluency', default_units: 1, amount: 150.00, is_timed: 0 },
+        { cpt_code: '92522', description: 'Evaluation of speech production', default_units: 1, amount: 150.00, is_timed: 0 },
+        { cpt_code: '92523', description: 'Speech/language evaluation', default_units: 1, amount: 200.00, is_timed: 0 },
+        { cpt_code: '92524', description: 'Behavioral/qualitative voice analysis', default_units: 1, amount: 150.00, is_timed: 0 },
+        { cpt_code: '92526', description: 'Oral function treatment', default_units: 1, amount: 75.00, is_timed: 1 },
+        { cpt_code: '92610', description: 'Swallowing function evaluation', default_units: 1, amount: 175.00, is_timed: 0 },
+        { cpt_code: '97129', description: 'Cognitive function intervention, first 15 min', default_units: 1, amount: 50.00, is_timed: 1 },
+        { cpt_code: '97130', description: 'Cognitive function intervention, add-on 15 min', default_units: 1, amount: 38.00, is_timed: 1 },
       ];
     case 'MFT':
       return [
-        { cpt_code: '90791', description: 'Psychiatric diagnostic evaluation', default_units: 1, amount: 200.00 },
-        { cpt_code: '90834', description: 'Psychotherapy, 45 minutes', default_units: 1, amount: 130.00 },
-        { cpt_code: '90837', description: 'Psychotherapy, 60 minutes', default_units: 1, amount: 170.00 },
-        { cpt_code: '90832', description: 'Psychotherapy, 30 minutes', default_units: 1, amount: 85.00 },
-        { cpt_code: '90847', description: 'Family psychotherapy, with patient', default_units: 1, amount: 160.00 },
-        { cpt_code: '90846', description: 'Family psychotherapy, without patient', default_units: 1, amount: 150.00 },
-        { cpt_code: '90853', description: 'Group psychotherapy', default_units: 1, amount: 55.00 },
+        { cpt_code: '90791', description: 'Psychiatric diagnostic evaluation', default_units: 1, amount: 200.00, is_timed: null },
+        { cpt_code: '90834', description: 'Psychotherapy, 45 minutes', default_units: 1, amount: 130.00, is_timed: null },
+        { cpt_code: '90837', description: 'Psychotherapy, 60 minutes', default_units: 1, amount: 170.00, is_timed: null },
+        { cpt_code: '90832', description: 'Psychotherapy, 30 minutes', default_units: 1, amount: 85.00, is_timed: null },
+        { cpt_code: '90847', description: 'Family psychotherapy, with patient', default_units: 1, amount: 160.00, is_timed: null },
+        { cpt_code: '90846', description: 'Family psychotherapy, without patient', default_units: 1, amount: 150.00, is_timed: null },
+        { cpt_code: '90853', description: 'Group psychotherapy', default_units: 1, amount: 55.00, is_timed: null },
       ];
     default: // MULTI or unknown — broad set
       return [
-        { cpt_code: '97110', description: 'Therapeutic exercises', default_units: 1, amount: 50.00 },
-        { cpt_code: '97530', description: 'Therapeutic activities', default_units: 1, amount: 50.00 },
-        { cpt_code: '97140', description: 'Manual therapy', default_units: 1, amount: 55.00 },
-        { cpt_code: '92507', description: 'Speech/language treatment', default_units: 1, amount: 75.00 },
-        { cpt_code: '92523', description: 'Speech/language evaluation', default_units: 1, amount: 200.00 },
-        { cpt_code: '97161', description: 'PT evaluation - low complexity', default_units: 1, amount: 150.00 },
-        { cpt_code: '97165', description: 'OT evaluation - low complexity', default_units: 1, amount: 150.00 },
-        { cpt_code: '90834', description: 'Psychotherapy, 45 minutes', default_units: 1, amount: 130.00 },
+        { cpt_code: '97110', description: 'Therapeutic exercises', default_units: 1, amount: 50.00, is_timed: 1 },
+        { cpt_code: '97530', description: 'Therapeutic activities', default_units: 1, amount: 50.00, is_timed: 1 },
+        { cpt_code: '97140', description: 'Manual therapy', default_units: 1, amount: 55.00, is_timed: 1 },
+        { cpt_code: '92507', description: 'Speech/language treatment', default_units: 1, amount: 75.00, is_timed: 1 },
+        { cpt_code: '92523', description: 'Speech/language evaluation', default_units: 1, amount: 200.00, is_timed: 0 },
+        { cpt_code: '97161', description: 'PT evaluation - low complexity', default_units: 1, amount: 150.00, is_timed: 0 },
+        { cpt_code: '97165', description: 'OT evaluation - low complexity', default_units: 1, amount: 150.00, is_timed: 0 },
+        { cpt_code: '90834', description: 'Psychotherapy, 45 minutes', default_units: 1, amount: 130.00, is_timed: null },
       ];
   }
 }
@@ -516,12 +516,12 @@ export function seedFeeSchedule(db: BetterSqlite3.Database, discipline?: string)
   const codes = getCPTCodesForDiscipline(disc || 'ST');
   const today = new Date().toISOString().slice(0, 10);
   const insertFee = db.prepare(
-    'INSERT INTO fee_schedule (cpt_code, description, default_units, amount, effective_date) VALUES (?, ?, ?, ?, ?)'
+    'INSERT INTO fee_schedule (cpt_code, description, default_units, amount, effective_date, is_timed) VALUES (?, ?, ?, ?, ?, ?)'
   );
 
   const tx = db.transaction(() => {
     for (const fee of codes) {
-      insertFee.run(fee.cpt_code, fee.description, fee.default_units, fee.amount, today);
+      insertFee.run(fee.cpt_code, fee.description, fee.default_units, fee.amount, today, fee.is_timed);
     }
   });
   tx();
@@ -538,11 +538,11 @@ export function resetFeeSchedule(db: BetterSqlite3.Database, discipline: string)
   const codes = getCPTCodesForDiscipline(discipline);
   const today = new Date().toISOString().slice(0, 10);
   const insertFee = db.prepare(
-    'INSERT INTO fee_schedule (cpt_code, description, default_units, amount, effective_date) VALUES (?, ?, ?, ?, ?)'
+    'INSERT INTO fee_schedule (cpt_code, description, default_units, amount, effective_date, is_timed) VALUES (?, ?, ?, ?, ?, ?)'
   );
   const tx = db.transaction(() => {
     for (const fee of codes) {
-      insertFee.run(fee.cpt_code, fee.description, fee.default_units, fee.amount, today);
+      insertFee.run(fee.cpt_code, fee.description, fee.default_units, fee.amount, today, fee.is_timed);
     }
   });
   tx();

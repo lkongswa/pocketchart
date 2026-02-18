@@ -2159,6 +2159,31 @@ function runMigrations(): void {
         `);
       },
     },
+    {
+      version: 51,
+      description: 'Add is_timed flag to fee_schedule for 8-minute rule validation',
+      up: () => {
+        if (!columnExists('fee_schedule', 'is_timed')) {
+          db.exec("ALTER TABLE fee_schedule ADD COLUMN is_timed INTEGER DEFAULT NULL");
+        }
+        // Backfill known timed codes
+        const timedCodes = [
+          '97110', '97112', '97116', '97140', '97530', '97533', '97535', '97537',
+          '97542', '97750', '97032', '97033', '97034', '97035', '97036',
+          '92507', '92526', '97129', '97130',
+        ];
+        // Backfill known untimed codes
+        const untimedCodes = [
+          '97161', '97162', '97163', '97164', '97165', '97166', '97167', '97168',
+          '92521', '92522', '92523', '92524', '97010', '97014', 'G0283', '97150',
+          '92508', '92610',
+        ];
+        const updateTimed = db.prepare('UPDATE fee_schedule SET is_timed = 1 WHERE cpt_code = ?');
+        const updateUntimed = db.prepare('UPDATE fee_schedule SET is_timed = 0 WHERE cpt_code = ?');
+        for (const code of timedCodes) updateTimed.run(code);
+        for (const code of untimedCodes) updateUntimed.run(code);
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
@@ -2416,7 +2441,7 @@ function createTables(): void {
 
 // ── Backup, Restore & Integrity Functions ──
 
-const LATEST_SCHEMA_VERSION = 40;
+const LATEST_SCHEMA_VERSION = 51;
 
 /**
  * Run PRAGMA quick_check — a fast consistency check on every launch.

@@ -1139,6 +1139,7 @@ export interface FeeScheduleEntry {
   default_units: number;
   amount: number;
   effective_date: string;
+  is_timed: number | null;   // 1 = timed (8-min rule), 0 = service-based, null = N/A (MFT)
   created_at: string;
   deleted_at: string | null;
 }
