@@ -1243,7 +1243,8 @@ function placeProviderData(doc: jsPDF, data: CMS1500Data, opts: CMS1500Options) 
 
 // ── Alignment Test Page ──
 
-export function generateAlignmentTestPage(): string {
+export function generateAlignmentTestPage(options: Partial<CMS1500Options> = {}): string {
+  const opts = { ...DEFAULT_OPTIONS, ...options };
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'pt',
@@ -1259,6 +1260,9 @@ export function generateAlignmentTestPage(): string {
   doc.setFontSize(8);
   doc.text('Print this page on a pre-printed CMS-1500 form.', PAGE_W / 2, 55, { align: 'center' });
   doc.text('The crosshairs should land in the center of each target box.', PAGE_W / 2, 67, { align: 'center' });
+  if (opts.offsetX !== 0 || opts.offsetY !== 0) {
+    doc.text(`Current offsets: X=${opts.offsetX}pt, Y=${opts.offsetY}pt`, PAGE_W / 2, 79, { align: 'center' });
+  }
 
   // Crosshairs at key landmark positions on the CMS-1500
   const landmarks = [
@@ -1272,12 +1276,14 @@ export function generateAlignmentTestPage(): string {
   ];
 
   for (const lm of landmarks) {
+    const lx = ox(lm.x, opts);
+    const ly = oy(lm.y, opts);
     const size = 8;
-    doc.line(lm.x - size, lm.y, lm.x + size, lm.y);
-    doc.line(lm.x, lm.y - size, lm.x, lm.y + size);
-    doc.circle(lm.x, lm.y, 2);
+    doc.line(lx - size, ly, lx + size, ly);
+    doc.line(lx, ly - size, lx, ly + size);
+    doc.circle(lx, ly, 2);
     doc.setFontSize(5);
-    doc.text(lm.label, lm.x + 12, lm.y + 2);
+    doc.text(lm.label, lx + 12, ly + 2);
     doc.setFontSize(8);
   }
 

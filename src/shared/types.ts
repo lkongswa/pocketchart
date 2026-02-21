@@ -465,6 +465,7 @@ export type ClientDocumentCategory =
   | 'intake_form'          // Intake / consent forms
   | 'correspondence'       // Letters, fax confirmations, misc
   | 'discharge_summary'    // Discharge documentation
+  | 'good_faith_estimate'  // Good Faith Estimate (No Surprises Act)
   | 'other';               // Catch-all
 
 export const CLIENT_DOCUMENT_CATEGORY_LABELS: Record<ClientDocumentCategory, string> = {
@@ -475,6 +476,7 @@ export const CLIENT_DOCUMENT_CATEGORY_LABELS: Record<ClientDocumentCategory, str
   intake_form: 'Intake / Consent Forms',
   correspondence: 'Correspondence',
   discharge_summary: 'Discharge Summary',
+  good_faith_estimate: 'Good Faith Estimate',
   other: 'Other',
 };
 
@@ -1408,6 +1410,40 @@ export interface DenialCode {
   common_in_therapy: number;
 }
 
+// Good Faith Estimate (No Surprises Act)
+export type GFEStatus = 'active' | 'superseded' | 'expired';
+
+export interface GFELineItem {
+  description: string;
+  cpt_code: string;
+  quantity: number;
+  rate: number;
+  total: number;
+}
+
+export interface GoodFaithEstimate {
+  id: number;
+  client_id: number;
+  document_id: number | null;
+  service_period_start: string;
+  service_period_end: string;
+  estimated_total: number;
+  line_items: string;        // JSON array of GFELineItem
+  diagnosis_codes: string;   // JSON array of diagnosis codes at time of estimate
+  status: GFEStatus;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface GFEGenerateRequest {
+  clientId: number;
+  servicePeriodStart: string;
+  servicePeriodEnd: string;
+  lineItems: GFELineItem[];
+  diagnosisCodes: string[];
+}
+
 // Audit Log
 export interface AuditLogEntry {
   id: number;
@@ -1853,15 +1889,27 @@ export interface PocketChartAPI {
     lookup: (code: string) => Promise<DenialCode | null>;
     listCommon: () => Promise<DenialCode[]>;
   };
+  onboarding: {
+    getStatus: () => Promise<{
+      practiceSetUp: boolean;
+      pinSet: boolean;
+      hasClient: boolean;
+      hasNote: boolean;
+      hasSignedNote: boolean;
+      hasBackup: boolean;
+    }>;
+  };
   auditLog: {
     list: (filters?: {
       entityType?: string;
       entityId?: number;
       clientId?: number;
+      actionType?: string;
       startDate?: string;
       endDate?: string;
       limit?: number;
-    }) => Promise<AuditLogEntry[]>;
+      offset?: number;
+    }) => Promise<{ rows: AuditLogEntry[]; total: number }>;
     create: (data: {
       entityType: string;
       entityId?: number;
@@ -1872,6 +1920,10 @@ export interface PocketChartAPI {
       amount?: number;
       description?: string;
     }) => Promise<AuditLogEntry>;
+    logWarningDismissal: (data: {
+      actionType: string;
+      detail: Record<string, any>;
+    }) => Promise<boolean>;
   };
   update: {
     check: () => Promise<{ updateAvailable: boolean }>;
@@ -2126,6 +2178,13 @@ export interface PocketChartAPI {
     convertToClient: (id: number) => Promise<WaitlistEntry>;
     linkClient: (waitlistId: number, clientId: number) => Promise<WaitlistEntry>;
     count: () => Promise<number>;
+  };
+  // ── Good Faith Estimates (No Surprises Act) ──
+  gfe: {
+    generate: (data: GFEGenerateRequest) => Promise<{ gfeId: number; documentId: number; base64Pdf: string; filename: string; estimatedTotal: number }>;
+    save: (data: { base64Pdf: string; filename: string }) => Promise<boolean>;
+    list: (clientId: number) => Promise<GoodFaithEstimate[]>;
+    get: (id: number) => Promise<GoodFaithEstimate | null>;
   };
   // ── Dev (temporary) ──
   dev: {

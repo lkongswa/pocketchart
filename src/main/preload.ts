@@ -394,10 +394,17 @@ const api = {
     listCommon: () => ipcRenderer.invoke('denialCodes:listCommon'),
   },
 
+  // Onboarding
+  onboarding: {
+    getStatus: () => ipcRenderer.invoke('onboarding:getStatus'),
+  },
+
   // Audit Log
   auditLog: {
     list: (filters?: any) => ipcRenderer.invoke('auditLog:list', filters),
     create: (data: any) => ipcRenderer.invoke('auditLog:create', data),
+    logWarningDismissal: (data: { actionType: string; detail: Record<string, any> }) =>
+      ipcRenderer.invoke('auditLog:logWarningDismissal', data),
   },
 
   // Auto-Update
@@ -646,6 +653,14 @@ const api = {
     create: (data: any) => ipcRenderer.invoke('quickLinks:create', data),
     update: (id: number, data: any) => ipcRenderer.invoke('quickLinks:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('quickLinks:delete', id),
+  },
+
+  // Good Faith Estimates (No Surprises Act)
+  gfe: {
+    generate: (data: any) => ipcRenderer.invoke('gfe:generate', data),
+    save: (data: any) => ipcRenderer.invoke('gfe:save', data),
+    list: (clientId: number) => ipcRenderer.invoke('gfe:list', clientId),
+    get: (id: number) => ipcRenderer.invoke('gfe:get', id),
   },
 
   // Dev tools (temporary)

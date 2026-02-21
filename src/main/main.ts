@@ -1655,7 +1655,19 @@ function registerIpcHandlers() {
   safeHandle('notes:delete', (_event, id: number) => {
     const note = db.prepare('SELECT signed_at, client_id FROM notes WHERE id = ? AND deleted_at IS NULL').get(id) as any;
     if (!note) throw new Error('Note not found');
-    if (note.signed_at) throw new Error('Cannot delete a signed note. Signed documents are part of the permanent medical record.');
+    if (note.signed_at) {
+      auditLog({
+        actionType: 'signed_document_delete_attempted',
+        entityType: 'note',
+        entityId: id,
+        clientId: note.client_id,
+        detail: {
+          document_type: 'note',
+          signed_at: note.signed_at,
+        },
+      });
+      throw new Error('Cannot delete a signed note. Signed documents are part of the permanent medical record.');
+    }
     db.prepare('UPDATE notes SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL').run(id);
     // Clear note_id on any appointment that referenced this deleted note
     db.prepare('UPDATE appointments SET note_id = NULL WHERE note_id = ? AND deleted_at IS NULL').run(id);
@@ -1789,7 +1801,19 @@ function registerIpcHandlers() {
   safeHandle('evaluations:delete', (_event, id: number) => {
     const evalRecord = db.prepare('SELECT signed_at, client_id FROM evaluations WHERE id = ? AND deleted_at IS NULL').get(id) as any;
     if (!evalRecord) throw new Error('Evaluation not found');
-    if (evalRecord.signed_at) throw new Error('Cannot delete a signed evaluation. Signed documents are part of the permanent medical record.');
+    if (evalRecord.signed_at) {
+      auditLog({
+        actionType: 'signed_document_delete_attempted',
+        entityType: 'evaluation',
+        entityId: id,
+        clientId: evalRecord.client_id,
+        detail: {
+          document_type: 'evaluation',
+          signed_at: evalRecord.signed_at,
+        },
+      });
+      throw new Error('Cannot delete a signed evaluation. Signed documents are part of the permanent medical record.');
+    }
     db.prepare('UPDATE evaluations SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL').run(id);
     // Clear evaluation_id on any appointment that referenced this deleted eval
     db.prepare('UPDATE appointments SET evaluation_id = NULL WHERE evaluation_id = ? AND deleted_at IS NULL').run(id);
@@ -2088,6 +2112,21 @@ function registerIpcHandlers() {
 
   safeHandle('settings:set', (_event, key: string, value: string) => {
     db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
+
+    // Audit log: EULA acceptance during onboarding
+    if (key === 'terms_accepted') {
+      auditLog({
+        actionType: 'eula_accepted',
+        entityType: 'system',
+        entityId: null,
+        detail: {
+          eula_version: '1.0',
+          accepted_at: value,
+          acceptance_method: 'in_app_onboarding',
+        },
+      });
+    }
+
     return true;
   });
 
@@ -3913,7 +3952,8 @@ function registerIpcHandlers() {
   });
 
   safeHandle('cms1500:generateAlignmentTest', () => {
-    const base64Pdf = generateAlignmentTestPage();
+    const options = getCMS1500Options();
+    const base64Pdf = generateAlignmentTestPage(options);
     return {
       base64Pdf,
       filename: 'CMS1500_Alignment_Test.pdf',
@@ -4134,6 +4174,129 @@ function registerIpcHandlers() {
 
     const dataDir = getDataPath();
     return path.join(dataDir, 'documents', String(doc.client_id), doc.filename);
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // GOOD FAITH ESTIMATE (No Surprises Act)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  safeHandle('gfe:generate', (_event, data: {
+    clientId: number;
+    servicePeriodStart: string;
+    servicePeriodEnd: string;
+    lineItems: Array<{ description: string; cpt_code: string; quantity: number; rate: number; total: number }>;
+    diagnosisCodes: string[];
+  }) => {
+    const client = db.prepare('SELECT * FROM clients WHERE id = ? AND deleted_at IS NULL').get(data.clientId) as any;
+    if (!client) throw new Error('Client not found');
+    const practice = db.prepare('SELECT * FROM practice WHERE id = 1').get() as any || {};
+
+    const estimatedTotal = data.lineItems.reduce((sum, li) => sum + li.total, 0);
+
+    // Mark any existing active GFE for this client as superseded
+    const existingActive = db.prepare(
+      'SELECT id FROM good_faith_estimates WHERE client_id = ? AND status = ? AND deleted_at IS NULL'
+    ).all(data.clientId, 'active') as any[];
+
+    for (const old of existingActive) {
+      db.prepare('UPDATE good_faith_estimates SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run('superseded', old.id);
+      auditLog({
+        actionType: 'gfe_superseded',
+        entityType: 'good_faith_estimate',
+        entityId: old.id,
+        clientId: data.clientId,
+        detail: { superseded_by: 'new_gfe' },
+      });
+    }
+
+    // Generate the PDF
+    const { base64Pdf, filename } = buildGfePdf(client, practice, data);
+
+    // Save PDF to client documents
+    const dataDir = getDataPath();
+    const clientDocsDir = path.join(dataDir, 'documents', String(data.clientId));
+    fs.mkdirSync(clientDocsDir, { recursive: true });
+
+    const uuidName = `${uuidv4()}.pdf`;
+    const destPath = path.join(clientDocsDir, uuidName);
+    const buffer = Buffer.from(base64Pdf, 'base64');
+    fs.writeFileSync(destPath, buffer);
+
+    const docNotes = `Good Faith Estimate — ${data.servicePeriodStart} to ${data.servicePeriodEnd} — Estimated total: ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(estimatedTotal)}`;
+
+    const docResult = db.prepare(`
+      INSERT INTO client_documents (client_id, filename, original_name, file_type, file_size, category, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      data.clientId, uuidName, filename, 'pdf', buffer.length, 'good_faith_estimate', docNotes
+    );
+    const documentId = docResult.lastInsertRowid as number;
+
+    // Save structured GFE record
+    const gfeResult = db.prepare(`
+      INSERT INTO good_faith_estimates (client_id, document_id, service_period_start, service_period_end,
+        estimated_total, line_items, diagnosis_codes, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'active')
+    `).run(
+      data.clientId, documentId, data.servicePeriodStart, data.servicePeriodEnd,
+      estimatedTotal, JSON.stringify(data.lineItems), JSON.stringify(data.diagnosisCodes)
+    );
+
+    // Update superseded records with the new ID
+    const newGfeId = gfeResult.lastInsertRowid as number;
+    for (const old of existingActive) {
+      // Update the audit detail with actual new ID
+      auditLog({
+        actionType: 'gfe_superseded',
+        entityType: 'good_faith_estimate',
+        entityId: old.id,
+        clientId: data.clientId,
+        detail: { superseded_by: newGfeId },
+      });
+    }
+
+    auditLog({
+      actionType: 'gfe_created',
+      entityType: 'good_faith_estimate',
+      entityId: newGfeId,
+      clientId: data.clientId,
+      detail: {
+        estimated_total: estimatedTotal,
+        service_period: `${data.servicePeriodStart} to ${data.servicePeriodEnd}`,
+        line_item_count: data.lineItems.length,
+      },
+    });
+
+    return {
+      gfeId: newGfeId,
+      documentId,
+      base64Pdf,
+      filename,
+      estimatedTotal,
+    };
+  });
+
+  safeHandle('gfe:save', async (_event, data: { base64Pdf: string; filename: string }) => {
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      title: 'Save Good Faith Estimate PDF',
+      defaultPath: data.filename,
+      filters: [{ name: 'PDF Document', extensions: ['pdf'] }],
+    });
+    if (canceled || !filePath) return false;
+    const buffer = Buffer.from(data.base64Pdf, 'base64');
+    fs.writeFileSync(filePath, buffer);
+    return true;
+  });
+
+  safeHandle('gfe:list', (_event, clientId: number) => {
+    return db.prepare(
+      'SELECT * FROM good_faith_estimates WHERE client_id = ? AND deleted_at IS NULL ORDER BY created_at DESC'
+    ).all(clientId);
+  });
+
+  safeHandle('gfe:get', (_event, id: number) => {
+    return db.prepare('SELECT * FROM good_faith_estimates WHERE id = ? AND deleted_at IS NULL').get(id);
   });
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -5684,47 +5847,81 @@ function registerIpcHandlers() {
     return true;
   });
 
+  // ── Onboarding ──
+  safeHandle('onboarding:getStatus', () => {
+    const practice = db.prepare('SELECT name, npi FROM practice LIMIT 1').get() as any;
+    const pinHash = db.prepare("SELECT value FROM settings WHERE key = 'pin_hash'").get() as any;
+    const clientCount = (db.prepare('SELECT COUNT(*) as count FROM clients WHERE deleted_at IS NULL').get() as any)?.count || 0;
+    const noteCount = (db.prepare('SELECT COUNT(*) as count FROM notes WHERE deleted_at IS NULL').get() as any)?.count || 0;
+    const signedNoteCount = (db.prepare('SELECT COUNT(*) as count FROM notes WHERE signed_at IS NOT NULL AND deleted_at IS NULL').get() as any)?.count || 0;
+    const lastBackup = db.prepare("SELECT value FROM settings WHERE key = 'last_backup_date'").get() as any;
+
+    return {
+      practiceSetUp: !!(practice?.name && practice?.npi),
+      pinSet: !!pinHash?.value,
+      hasClient: clientCount > 0,
+      hasNote: noteCount > 0,
+      hasSignedNote: signedNoteCount > 0,
+      hasBackup: !!lastBackup?.value,
+    };
+  });
+
   // ── Audit Log ──
   safeHandle('auditLog:list', (_event, filters?: {
     entityType?: string;
     entityId?: number;
     clientId?: number;
+    actionType?: string;
     startDate?: string;
     endDate?: string;
     limit?: number;
+    offset?: number;
   }) => {
-    let query = 'SELECT * FROM audit_log WHERE 1=1';
+    let whereClause = ' WHERE 1=1';
     const params: any[] = [];
 
     if (filters?.entityType) {
-      query += ' AND entity_type = ?';
+      whereClause += ' AND entity_type = ?';
       params.push(filters.entityType);
     }
     if (filters?.entityId) {
-      query += ' AND entity_id = ?';
+      whereClause += ' AND entity_id = ?';
       params.push(filters.entityId);
     }
     if (filters?.clientId) {
-      query += ' AND client_id = ?';
+      whereClause += ' AND client_id = ?';
       params.push(filters.clientId);
     }
+    if (filters?.actionType) {
+      whereClause += ' AND action_type = ?';
+      params.push(filters.actionType);
+    }
     if (filters?.startDate) {
-      query += ' AND created_at >= ?';
+      whereClause += ' AND created_at >= ?';
       params.push(filters.startDate);
     }
     if (filters?.endDate) {
-      query += ' AND created_at <= ?';
+      whereClause += ' AND created_at <= ?';
       params.push(filters.endDate);
     }
 
-    query += ' ORDER BY created_at DESC';
+    // Total count for pagination
+    const countRow = db.prepare('SELECT COUNT(*) as total FROM audit_log' + whereClause).get(...params) as any;
+    const total = countRow?.total || 0;
 
-    if (filters?.limit) {
-      query += ' LIMIT ?';
-      params.push(filters.limit);
+    let query = 'SELECT * FROM audit_log' + whereClause + ' ORDER BY created_at DESC';
+
+    const limit = filters?.limit || 50;
+    query += ' LIMIT ?';
+    params.push(limit);
+
+    if (filters?.offset) {
+      query += ' OFFSET ?';
+      params.push(filters.offset);
     }
 
-    return db.prepare(query).all(...params);
+    const rows = db.prepare(query).all(...params);
+    return { rows, total };
   });
 
   safeHandle('auditLog:create', (_event, data: {
@@ -5751,6 +5948,20 @@ function registerIpcHandlers() {
       data.description || null
     );
     return db.prepare('SELECT * FROM audit_log WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  // Log warning dismissals from renderer (uses the proper hash-chained auditLog helper)
+  safeHandle('auditLog:logWarningDismissal', (_event, data: {
+    actionType: string;
+    detail: Record<string, any>;
+  }) => {
+    auditLog({
+      actionType: data.actionType,
+      entityType: 'system',
+      entityId: null,
+      detail: data.detail,
+    });
+    return true;
   });
 
   // ══════════════════════════════════════════════════════════════════════
@@ -8191,6 +8402,315 @@ function registerIpcHandlers() {
 }
 
 // Helper: build an invoice PDF and return as base64
+// ── Good Faith Estimate PDF Builder ──
+
+function buildGfePdf(
+  client: any,
+  practice: any,
+  data: {
+    servicePeriodStart: string;
+    servicePeriodEnd: string;
+    lineItems: Array<{ description: string; cpt_code: string; quantity: number; rate: number; total: number }>;
+    diagnosisCodes: string[];
+  }
+): { base64Pdf: string; filename: string } {
+  const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const marginLeft = 40;
+  const marginRight = 40;
+  const maxWidth = pageWidth - marginLeft - marginRight;
+  let y = 40;
+  let pageCount = 1;
+
+  const formatCurrency = (amount: number) =>
+    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+
+  const estimatedTotal = data.lineItems.reduce((sum, li) => sum + li.total, 0);
+
+  const checkPageBreak = (needed: number) => {
+    if (y + needed > pageHeight - 60) {
+      doc.addPage();
+      pageCount++;
+      y = 40;
+    }
+  };
+
+  // ── Header: Practice Info with Logo ──
+  let textStartX = marginLeft;
+  const logoData = getLogoBase64();
+  if (logoData) {
+    try {
+      const logoFormat = logoData.includes('image/png') ? 'PNG' : 'JPEG';
+      doc.addImage(logoData, logoFormat, marginLeft, y - 6, 48, 48);
+      textStartX = marginLeft + 56;
+    } catch { /* skip logo */ }
+  }
+
+  doc.setFontSize(14);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(PDF_COLORS.heading[0], PDF_COLORS.heading[1], PDF_COLORS.heading[2]);
+  doc.text(practice?.name || 'Practice Name', textStartX, y);
+  y += 14;
+
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(PDF_COLORS.label[0], PDF_COLORS.label[1], PDF_COLORS.label[2]);
+  if (practice?.address) { doc.text(practice.address, textStartX, y); y += 11; }
+  const cityStateZip = [practice?.city, practice?.state, practice?.zip].filter(Boolean).join(', ');
+  if (cityStateZip) { doc.text(cityStateZip, textStartX, y); y += 11; }
+  if (practice?.phone) { doc.text(`Phone: ${practice.phone}`, textStartX, y); y += 11; }
+  if (practice?.npi) { doc.text(`NPI: ${practice.npi}`, textStartX, y); y += 11; }
+  if (practice?.tax_id) { doc.text(`Tax ID: ${practice.tax_id}`, textStartX, y); y += 11; }
+
+  // ── Title (right aligned) ──
+  const rightX = pageWidth - marginRight;
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(PDF_COLORS.accent[0], PDF_COLORS.accent[1], PDF_COLORS.accent[2]);
+  doc.text('GOOD FAITH', rightX, 48, { align: 'right' });
+  doc.text('ESTIMATE', rightX, 66, { align: 'right' });
+
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(PDF_COLORS.label[0], PDF_COLORS.label[1], PDF_COLORS.label[2]);
+  const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  doc.text(`Date: ${today}`, rightX, 82, { align: 'right' });
+  const endDateFmt = (() => {
+    try { return new Date(data.servicePeriodEnd + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
+    catch { return data.servicePeriodEnd; }
+  })();
+  doc.text(`Valid through: ${endDateFmt}`, rightX, 94, { align: 'right' });
+
+  // Ensure y is past header
+  if (logoData) y = Math.max(y, 96);
+  y = Math.max(y, 110);
+
+  // ── Divider ──
+  doc.setLineWidth(1.5);
+  doc.setDrawColor(PDF_COLORS.accent[0], PDF_COLORS.accent[1], PDF_COLORS.accent[2]);
+  doc.line(marginLeft, y, pageWidth - marginRight, y);
+  doc.setDrawColor(0, 0, 0);
+  y += 20;
+
+  // ── Patient Information ──
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(PDF_COLORS.heading[0], PDF_COLORS.heading[1], PDF_COLORS.heading[2]);
+  doc.text('PATIENT INFORMATION', marginLeft, y);
+  y += 16;
+
+  doc.setFontSize(9.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(PDF_COLORS.body[0], PDF_COLORS.body[1], PDF_COLORS.body[2]);
+  const clientName = `${client?.first_name || ''} ${client?.last_name || ''}`.trim();
+  if (clientName) { doc.text(`Name: ${clientName}`, marginLeft, y); y += 14; }
+  if (client?.dob) {
+    const dobFmt = (() => {
+      try { return new Date(client.dob + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
+      catch { return client.dob; }
+    })();
+    doc.text(`Date of Birth: ${dobFmt}`, marginLeft, y); y += 14;
+  }
+  if (client?.address) { doc.text(`Address: ${client.address}`, marginLeft, y); y += 14; }
+  const clientCityStateZip = [client?.city, client?.state, client?.zip].filter(Boolean).join(', ');
+  if (clientCityStateZip) { doc.text(`         ${clientCityStateZip}`, marginLeft, y); y += 14; }
+  y += 6;
+
+  // ── Diagnosis ──
+  checkPageBreak(50);
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(PDF_COLORS.heading[0], PDF_COLORS.heading[1], PDF_COLORS.heading[2]);
+  doc.text('DIAGNOSIS', marginLeft, y);
+  y += 16;
+
+  doc.setFontSize(9.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(PDF_COLORS.body[0], PDF_COLORS.body[1], PDF_COLORS.body[2]);
+  if (data.diagnosisCodes.length === 0 || (data.diagnosisCodes.length === 1 && !data.diagnosisCodes[0])) {
+    doc.text('To be determined following initial evaluation', marginLeft, y);
+    y += 14;
+  } else {
+    // Primary
+    const primary = [client?.primary_dx_code, client?.primary_dx_description].filter(Boolean).join(' — ');
+    if (primary) {
+      doc.text(`Primary: ${primary}`, marginLeft, y);
+      y += 14;
+    }
+    // Secondary
+    try {
+      const secondaryDx = typeof client?.secondary_dx === 'string' ? JSON.parse(client.secondary_dx) : client?.secondary_dx;
+      if (Array.isArray(secondaryDx) && secondaryDx.length > 0) {
+        for (const dx of secondaryDx) {
+          checkPageBreak(14);
+          const dxText = typeof dx === 'object' ? [dx.code, dx.description].filter(Boolean).join(' — ') : String(dx);
+          if (dxText) { doc.text(`Secondary: ${dxText}`, marginLeft, y); y += 14; }
+        }
+      }
+    } catch { /* ignore parse errors */ }
+  }
+  y += 6;
+
+  // ── Expected Services Table ──
+  checkPageBreak(60);
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(PDF_COLORS.heading[0], PDF_COLORS.heading[1], PDF_COLORS.heading[2]);
+  doc.text('EXPECTED SERVICES', marginLeft, y);
+  y += 16;
+
+  const startDateFmt = (() => {
+    try { return new Date(data.servicePeriodStart + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
+    catch { return data.servicePeriodStart; }
+  })();
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(PDF_COLORS.label[0], PDF_COLORS.label[1], PDF_COLORS.label[2]);
+  doc.text(`Service Period: ${startDateFmt} to ${endDateFmt}`, marginLeft, y);
+  y += 16;
+
+  // Table header
+  const colX = {
+    description: marginLeft,
+    cpt: marginLeft + 250,
+    qty: marginLeft + 340,
+    rate: marginLeft + 400,
+    total: pageWidth - marginRight - 70,
+  };
+
+  doc.setFillColor(245, 245, 245);
+  doc.rect(marginLeft, y - 12, maxWidth, 20, 'F');
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(PDF_COLORS.heading[0], PDF_COLORS.heading[1], PDF_COLORS.heading[2]);
+  doc.text('Service', colX.description, y);
+  doc.text('CPT', colX.cpt, y);
+  doc.text('Qty', colX.qty, y);
+  doc.text('Rate', colX.rate, y);
+  doc.text('Total', colX.total, y);
+  y += 20;
+
+  // Table rows
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(PDF_COLORS.body[0], PDF_COLORS.body[1], PDF_COLORS.body[2]);
+  for (const item of data.lineItems) {
+    checkPageBreak(22);
+    const descLines = doc.splitTextToSize(item.description || 'Service', 230);
+    doc.text(descLines, colX.description, y);
+    doc.text(item.cpt_code || '-', colX.cpt, y);
+    doc.text(String(item.quantity || 1), colX.qty, y);
+    doc.text(formatCurrency(item.rate || 0), colX.rate, y);
+    doc.text(formatCurrency(item.total || 0), colX.total, y);
+    y += Math.max(descLines.length * 14, 18);
+  }
+
+  // Total line
+  y += 10;
+  doc.setDrawColor(PDF_COLORS.accent[0], PDF_COLORS.accent[1], PDF_COLORS.accent[2]);
+  doc.setLineWidth(1);
+  doc.line(colX.rate - 20, y, pageWidth - marginRight, y);
+  y += 18;
+
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(PDF_COLORS.heading[0], PDF_COLORS.heading[1], PDF_COLORS.heading[2]);
+  doc.text('ESTIMATED TOTAL:', colX.rate - 20, y);
+  doc.text(formatCurrency(estimatedTotal), colX.total, y);
+  y += 30;
+
+  // ── Disclaimers ──
+  checkPageBreak(280);
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(PDF_COLORS.heading[0], PDF_COLORS.heading[1], PDF_COLORS.heading[2]);
+  doc.text('IMPORTANT DISCLAIMERS', marginLeft, y);
+  y += 16;
+
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(PDF_COLORS.body[0], PDF_COLORS.body[1], PDF_COLORS.body[2]);
+
+  const disclaimers = [
+    'This Good Faith Estimate shows the costs of items and services that are reasonably expected for your health care needs for the item or service listed above. The estimate is based on information known at the time the estimate was created.',
+    'The Good Faith Estimate does not include any unknown or unexpected costs that may arise during treatment. You could be charged more if complications or special circumstances occur. If this happens, federal law allows you to dispute (appeal) the bill.',
+    'If you are billed for more than this Good Faith Estimate, you have the right to dispute the bill. You may contact the health care provider or facility listed to let them know the billed charges are higher than the Good Faith Estimate. You can ask them to update the bill to match the Good Faith Estimate, ask to negotiate the bill, or ask if there is financial assistance available.',
+    'You may also start a dispute resolution process with the U.S. Department of Health and Human Services (HHS). If you choose to use the dispute resolution process, you must start the dispute process within 120 calendar days (about 4 months) of the date on the original bill.',
+    'There is a $25 fee to use the dispute process. If the agency reviewing your dispute agrees with you, you will have to pay the price on this Good Faith Estimate. If the agency disagrees with you and agrees with the health care provider or facility, you will have to pay the higher amount.',
+    'This Good Faith Estimate is not a contract and does not require you to obtain the items or services from the provider(s) listed.',
+  ];
+
+  for (let i = 0; i < disclaimers.length; i++) {
+    const text = `${i + 1}. ${disclaimers[i]}`;
+    const lines = doc.splitTextToSize(text, maxWidth - 10);
+    checkPageBreak(lines.length * 11 + 6);
+    doc.text(lines, marginLeft + 5, y);
+    y += lines.length * 11 + 6;
+  }
+
+  y += 8;
+  checkPageBreak(30);
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(PDF_COLORS.accent[0], PDF_COLORS.accent[1], PDF_COLORS.accent[2]);
+  const cmsLines = doc.splitTextToSize(
+    'To learn more and get a form to start the dispute process, go to www.cms.gov/nosurprises or call 1-800-985-3059.',
+    maxWidth - 10
+  );
+  doc.text(cmsLines, marginLeft + 5, y);
+  y += cmsLines.length * 11 + 10;
+
+  // Contact info
+  checkPageBreak(20);
+  doc.setTextColor(PDF_COLORS.body[0], PDF_COLORS.body[1], PDF_COLORS.body[2]);
+  const contactLine = `For questions about this estimate, contact: ${practice?.name || ''} — ${practice?.phone || ''}`;
+  doc.text(contactLine, marginLeft + 5, y);
+  y += 20;
+
+  // ── Signature Lines ──
+  checkPageBreak(60);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(PDF_COLORS.body[0], PDF_COLORS.body[1], PDF_COLORS.body[2]);
+
+  doc.text('Provider Signature: ___________________________  Date: __________', marginLeft, y);
+  y += 20;
+  doc.text('Patient Signature:  ___________________________  Date: __________', marginLeft, y);
+  y += 20;
+
+  // ── Confidentiality Footer ──
+  const addFooters = () => {
+    const totalPages = doc.getNumberOfPages();
+    for (let p = 1; p <= totalPages; p++) {
+      doc.setPage(p);
+      doc.setFontSize(7);
+      doc.setFont('helvetica', 'italic');
+      doc.setTextColor(PDF_COLORS.confidential[0], PDF_COLORS.confidential[1], PDF_COLORS.confidential[2]);
+      doc.text(
+        'This document contains confidential health information. Unauthorized disclosure is prohibited.',
+        pageWidth / 2, pageHeight - 20, { align: 'center' }
+      );
+      if (totalPages > 1) {
+        doc.setTextColor(PDF_COLORS.footer[0], PDF_COLORS.footer[1], PDF_COLORS.footer[2]);
+        doc.text(`Page ${p} of ${totalPages}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+      }
+    }
+  };
+  addFooters();
+
+  doc.setTextColor(0, 0, 0);
+
+  const clientLastName = (client?.last_name || 'Client').replace(/[^a-zA-Z0-9]/g, '');
+  const clientFirstName = (client?.first_name || '').replace(/[^a-zA-Z0-9]/g, '');
+  const dateStr = new Date().toISOString().split('T')[0];
+  const filename = `GFE_${clientLastName}_${clientFirstName}_${dateStr}.pdf`;
+
+  const pdfOutput = doc.output('arraybuffer');
+  const base64Pdf = Buffer.from(pdfOutput).toString('base64');
+
+  return { base64Pdf, filename };
+}
+
 function buildInvoicePdf(invoice: any, items: any[], client: any, practice: any): { base64Pdf: string; filename: string } {
   const doc = new jsPDF({ unit: 'pt', format: 'letter' });
   const pageWidth = doc.internal.pageSize.getWidth();

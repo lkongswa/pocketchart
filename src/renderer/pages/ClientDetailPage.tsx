@@ -87,6 +87,7 @@ import ChartCompleteness from '../components/ChartCompleteness';
 import ClaimReadinessDialog from '../components/ClaimReadinessDialog';
 import CSVPaymentImportModal from '../components/CSVPaymentImportModal';
 import InvoiceModal from '../components/InvoiceModal';
+import GoodFaithEstimateModal from '../components/GoodFaithEstimateModal';
 import TrialExpiredModal from '../components/TrialExpiredModal';
 import FaxSendModal from '../components/FaxSendModal';
 import { useTrialGuard } from '../hooks/useTrialGuard';
@@ -155,6 +156,7 @@ const categoryBadgeColors: Record<string, string> = {
   intake_form: 'bg-sky-100 text-sky-700',
   correspondence: 'bg-slate-100 text-slate-700',
   discharge_summary: 'bg-gray-100 text-gray-700',
+  good_faith_estimate: 'bg-amber-100 text-amber-700',
   other: 'bg-slate-100 text-slate-700',
 };
 
@@ -307,6 +309,7 @@ const ClientDetailPage: React.FC = () => {
   const [showReadinessDialog, setShowReadinessDialog] = useState(false);
   const [generatingCMS1500, setGeneratingCMS1500] = useState(false);
   const [showCsvImportForClient, setShowCsvImportForClient] = useState(false);
+  const [showGfeModal, setShowGfeModal] = useState(false);
   // Fax modal state
   const [showFaxModal, setShowFaxModal] = useState(false);
   const [faxDocumentId, setFaxDocumentId] = useState<number | undefined>(undefined);
@@ -1840,6 +1843,12 @@ const ClientDetailPage: React.FC = () => {
             </button>
             <button
               className="btn-secondary btn-sm gap-1.5"
+              onClick={() => { if (guardAction()) setShowGfeModal(true); }}
+            >
+              <Shield size={14} /> GFE
+            </button>
+            <button
+              className="btn-secondary btn-sm gap-1.5"
               onClick={() => setShowReadinessDialog(true)}
               disabled={generatingCMS1500}
             >
@@ -2262,7 +2271,7 @@ const ClientDetailPage: React.FC = () => {
           {/* Category filter */}
           <div className="flex items-center gap-2 px-6 py-3 border-b border-[var(--color-border)] bg-gray-50/50">
             <span className="text-xs text-[var(--color-text-secondary)]">Filter:</span>
-            {['all', 'physician_order', 'progress_report', 'evaluation', 'authorization', 'insurance', 'consent', 'other'].map((cat) => (
+            {['all', 'physician_order', 'signed_poc', 'recertification', 'prior_authorization', 'intake_form', 'good_faith_estimate', 'correspondence', 'discharge_summary', 'other'].map((cat) => (
               <button
                 key={cat}
                 className={`text-xs px-2 py-1 rounded transition-colors ${
@@ -2416,6 +2425,20 @@ const ClientDetailPage: React.FC = () => {
           entities={entities}
           feeSchedule={feeSchedule}
           preSelectedClientId={client.id}
+        />
+      )}
+
+      {/* Good Faith Estimate Modal */}
+      {showGfeModal && client && (
+        <GoodFaithEstimateModal
+          isOpen={showGfeModal}
+          onClose={() => setShowGfeModal(false)}
+          client={client}
+          feeSchedule={feeSchedule}
+          onGenerated={() => {
+            // Refresh documents list
+            window.api.documents.list({ clientId }).then(setDocuments).catch(() => {});
+          }}
         />
       )}
 

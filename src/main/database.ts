@@ -2184,6 +2184,30 @@ function runMigrations(): void {
         for (const code of untimedCodes) updateUntimed.run(code);
       },
     },
+    {
+      version: 52,
+      description: 'Add good_faith_estimates table for No Surprises Act compliance',
+      up: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS good_faith_estimates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            client_id INTEGER NOT NULL REFERENCES clients(id),
+            document_id INTEGER REFERENCES client_documents(id),
+            service_period_start TEXT NOT NULL,
+            service_period_end TEXT NOT NULL,
+            estimated_total REAL NOT NULL,
+            line_items TEXT NOT NULL,
+            diagnosis_codes TEXT,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            deleted_at DATETIME DEFAULT NULL
+          )
+        `);
+        db.exec('CREATE INDEX IF NOT EXISTS idx_gfe_client ON good_faith_estimates(client_id)');
+        db.exec('CREATE INDEX IF NOT EXISTS idx_gfe_status ON good_faith_estimates(status)');
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
@@ -2441,7 +2465,7 @@ function createTables(): void {
 
 // ── Backup, Restore & Integrity Functions ──
 
-const LATEST_SCHEMA_VERSION = 51;
+const LATEST_SCHEMA_VERSION = 52;
 
 /**
  * Run PRAGMA quick_check — a fast consistency check on every launch.

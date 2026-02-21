@@ -12,6 +12,7 @@ import RecoveryKeyCeremony from '../components/RecoveryKeyCeremony';
 import RestoreConfirmationModal from '../components/RestoreConfirmationModal';
 import ImportClientSelector from '../components/ImportClientSelector';
 import PhysicianDirectoryModal from '../components/PhysicianDirectoryModal';
+import AuditLogViewer from '../components/AuditLogViewer';
 import { useSectionColor } from '../hooks/useSectionColor';
 import { useTier } from '../hooks/useTier';
 import { useAccessibilityPrefs } from '../hooks/useAccessibilityPrefs';
@@ -864,6 +865,16 @@ export default function SettingsPage() {
     if (pendingDataPath) {
       setDataPath(pendingDataPath);
       setToast('Data location changed. Please restart the app for changes to take effect.');
+
+      // Audit log: cloud storage warning dismissed
+      window.api.auditLog.logWarningDismissal({
+        actionType: 'cloud_storage_warning_dismissed',
+        detail: {
+          path_selected: pendingDataPath,
+          cloud_provider_detected: baaModalProps?.providerDisplayName || 'unknown',
+          warning_type: 'cloud_sync_detected',
+        },
+      }).catch(() => {});
     }
     setBaaModalOpen(false);
     setPendingDataPath(null);
@@ -2904,6 +2915,17 @@ export default function SettingsPage() {
             </button>
           </div>
         </div>
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        icon={<Shield className="w-5 h-5" />}
+        title="Audit Trail"
+        description="View all clinical document actions, data changes, and system events"
+        sectionId="settings-audit-trail"
+        isOpen={openSectionId === 'audit-trail'}
+        onToggle={() => toggleSection('audit-trail')}
+      >
+        <AuditLogViewer />
       </CollapsibleSection>
 
       <CollapsibleSection

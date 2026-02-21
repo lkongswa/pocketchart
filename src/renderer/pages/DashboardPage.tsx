@@ -18,6 +18,7 @@ import type { Client, Note, Appointment } from '../../shared/types';
 import BasicAlertsPanel from '../components/BasicAlertsPanel';
 import DashboardWorkspace from '../components/DashboardWorkspace';
 import ReviewPromptCard from '../components/ReviewPromptCard';
+import OnboardingChecklist from '../components/OnboardingChecklist';
 
 interface DashboardStats {
   incompleteEvals: number;
@@ -351,6 +352,9 @@ const DashboardPage: React.FC = () => {
 
       {/* Alerts Panel */}
       <BasicAlertsPanel />
+
+      {/* Onboarding Checklist */}
+      <OnboardingChecklist />
 
       {/* Review Prompt Card */}
       {reviewEligible && reviewMilestone && (
