@@ -316,7 +316,9 @@ const ClientDetailPage: React.FC = () => {
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<number>>(new Set());
   const [batchGenerating, setBatchGenerating] = useState(false);
   const [draggedPaymentId, setDraggedPaymentId] = useState<number | null>(null);
+  const [draggedInvoiceId, setDraggedInvoiceId] = useState<number | null>(null);
   const [dropTargetInvoiceId, setDropTargetInvoiceId] = useState<number | null>(null);
+  const [dropTargetPaymentId, setDropTargetPaymentId] = useState<number | null>(null);
   const [discountsExpanded, setDiscountsExpanded] = useState(false);
 
   // Discount state
@@ -2143,15 +2145,18 @@ const ClientDetailPage: React.FC = () => {
           )}
 
           {/* ── Two-Column: Invoices | Payments (drag to match) ── */}
-          {draggedPaymentId && (
+          {(draggedPaymentId || draggedInvoiceId) && (
             <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-700 mb-2">
-              <Link2 size={12} /> Drag the payment onto an unpaid invoice to match them
+              <Link2 size={12} /> {draggedPaymentId ? 'Drop on an unpaid invoice to match' : 'Drop on an unmatched payment to match'}
             </div>
           )}
           <div className="grid grid-cols-2 gap-4">
 
-            {/* LEFT: Recent Invoices (drop targets) */}
-            <div>
+            {/* LEFT: Recent Invoices (draggable + drop targets) */}
+            <div
+              onDragOver={(e) => { if (draggedInvoiceId) { e.preventDefault(); } }}
+              onDrop={(e) => { e.preventDefault(); setDraggedInvoiceId(null); setDropTargetPaymentId(null); }}
+            >
               <div className="flex items-center justify-between mb-2">
                 <h4 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">Invoices</h4>
                 <button className="text-xs text-[var(--color-primary)] hover:underline" onClick={() => navigate('/billing?tab=invoices')}>
@@ -2167,10 +2172,12 @@ const ClientDetailPage: React.FC = () => {
                   {invoices.slice(0, 6).map((invoice) => {
                     const isUnpaid = invoice.status !== 'paid' && invoice.status !== 'void';
                     const isOverdue = invoice.status === 'overdue';
-                    const isDropTarget = draggedPaymentId && isUnpaid;
+                    const isPaymentDropTarget = draggedPaymentId && isUnpaid;
                     const isHoveredDrop = dropTargetInvoiceId === invoice.id;
+                    const canDragInvoice = isUnpaid && !draggedPaymentId && !draggedInvoiceId;
+                    const isDraggingThis = draggedInvoiceId === invoice.id;
                     const rowAccent = isHoveredDrop
-                      ? 'border-l-4 border-l-blue-500 bg-blue-50 ring-2 ring-blue-300 scale-[1.01]'
+                      ? 'border-l-4 border-l-blue-500 bg-blue-50 ring-2 ring-blue-300'
                       : isOverdue
                         ? 'border-l-4 border-l-red-400 bg-red-50/40'
                         : isUnpaid
@@ -2179,9 +2186,19 @@ const ClientDetailPage: React.FC = () => {
                     return (
                       <div
                         key={invoice.id}
-                        className={`flex items-center justify-between px-3 py-2.5 cursor-pointer transition-all ${rowAccent} ${isDropTarget ? 'border-dashed' : ''}`}
+                        className={`flex items-center justify-between px-3 py-2.5 cursor-pointer ${rowAccent} ${isDraggingThis ? 'opacity-50 bg-blue-50' : 'hover:bg-gray-50'} ${canDragInvoice ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                        style={canDragInvoice ? { userSelect: 'none', WebkitUserSelect: 'none' } : undefined}
+                        draggable={canDragInvoice || undefined}
+                        onMouseDown={canDragInvoice ? (e) => { e.preventDefault(); } : undefined}
+                        onDragStart={canDragInvoice ? (e) => {
+                          e.dataTransfer.setData('text/plain', `invoice:${invoice.id}`);
+                          e.dataTransfer.effectAllowed = 'move';
+                          if (e.currentTarget) e.dataTransfer.setDragImage(e.currentTarget, 50, 20);
+                          setDraggedInvoiceId(invoice.id);
+                        } : undefined}
+                        onDragEnd={() => { setDraggedInvoiceId(null); setDropTargetPaymentId(null); }}
                         onClick={async () => {
-                          if (draggedPaymentId) return;
+                          if (draggedPaymentId || draggedInvoiceId) return;
                           try {
                             const full = await window.api.invoices.get(invoice.id);
                             setEditingInvoice(full);
@@ -2190,35 +2207,25 @@ const ClientDetailPage: React.FC = () => {
                             console.error('Failed to load invoice:', err);
                           }
                         }}
-                        onDragOver={isDropTarget ? (e) => {
+                        onDragOver={isPaymentDropTarget ? (e) => {
                           e.preventDefault();
-                          e.dataTransfer.dropEffect = 'link';
+                          e.dataTransfer.dropEffect = 'move';
                           setDropTargetInvoiceId(invoice.id);
                         } : undefined}
-                        onDragLeave={isDropTarget ? () => setDropTargetInvoiceId(null) : undefined}
-                        onDrop={isDropTarget ? (e) => {
+                        onDragLeave={isPaymentDropTarget ? () => setDropTargetInvoiceId(null) : undefined}
+                        onDrop={isPaymentDropTarget ? (e) => {
                           e.preventDefault();
-                          const paymentId = parseInt(e.dataTransfer.getData('text/plain'), 10);
-                          if (paymentId) handleMatchPaymentToInvoice(paymentId, invoice.id);
+                          e.stopPropagation();
+                          const data = e.dataTransfer.getData('text/plain');
+                          const paymentId = parseInt(data, 10);
+                          if (paymentId && !data.startsWith('invoice:')) handleMatchPaymentToInvoice(paymentId, invoice.id);
                           setDropTargetInvoiceId(null);
                           setDraggedPaymentId(null);
                         } : undefined}
                       >
-                        <div className="flex items-center gap-2 min-w-0">
-                          {isUnpaid && !draggedPaymentId && (
-                            <div onClick={(e) => e.stopPropagation()}>
-                              <input
-                                type="checkbox"
-                                className="rounded w-3.5 h-3.5"
-                                checked={selectedInvoiceIds.has(invoice.id)}
-                                onChange={(e) => {
-                                  const next = new Set(selectedInvoiceIds);
-                                  if (e.target.checked) next.add(invoice.id);
-                                  else next.delete(invoice.id);
-                                  setSelectedInvoiceIds(next);
-                                }}
-                              />
-                            </div>
+                        <div className="flex items-center gap-2 min-w-0" style={canDragInvoice || isPaymentDropTarget ? { pointerEvents: 'none' } : undefined}>
+                          {isUnpaid && !draggedPaymentId && !draggedInvoiceId && (
+                            <GripVertical size={12} className="text-gray-400 shrink-0" />
                           )}
                           <div className="min-w-0">
                             <p className="text-xs font-medium text-[var(--color-text)] truncate">{invoice.invoice_number}</p>
@@ -2227,7 +2234,7 @@ const ClientDetailPage: React.FC = () => {
                             </p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2 shrink-0">
+                        <div className="flex items-center gap-2 shrink-0" style={canDragInvoice || isPaymentDropTarget ? { pointerEvents: 'none' } : undefined}>
                           <div className="text-right">
                             <p className="text-xs font-semibold text-[var(--color-text)]">{formatCurrency(invoice.total_amount)}</p>
                             <span
@@ -2238,8 +2245,8 @@ const ClientDetailPage: React.FC = () => {
                               {invoice.status || 'draft'}
                             </span>
                           </div>
-                          {isUnpaid && !draggedPaymentId && (
-                            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                          {isUnpaid && !draggedPaymentId && !draggedInvoiceId && (
+                            <div className="flex items-center gap-1" style={{ pointerEvents: 'auto' }} onClick={(e) => e.stopPropagation()}>
                               <button
                                 className="btn-primary px-1.5 py-1 text-[10px] gap-0.5 rounded"
                                 onClick={() => handleGeneratePaymentLink(invoice.id)}
@@ -2276,9 +2283,9 @@ const ClientDetailPage: React.FC = () => {
               )}
             </div>
 
-            {/* RIGHT: Recent Payments (draggable) */}
+            {/* RIGHT: Recent Payments (draggable + drop targets) */}
             <div
-              onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'none'; }}
+              onDragOver={(e) => { if (draggedPaymentId) { e.preventDefault(); } }}
               onDrop={(e) => { e.preventDefault(); setDraggedPaymentId(null); setDropTargetInvoiceId(null); }}
             >
               <div className="flex items-center justify-between mb-2">
@@ -2295,24 +2302,49 @@ const ClientDetailPage: React.FC = () => {
                 <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
                   {payments.slice(0, 6).map((payment) => {
                     const isMatched = !!(payment as any).invoice_id;
-                    const isDraggable = !isMatched && payment.amount > 0;
+                    const isDraggablePayment = !isMatched && payment.amount > 0 && !draggedInvoiceId;
                     const isDragging = draggedPaymentId === payment.id;
-                    const rowAccent = isMatched
-                      ? 'border-l-4 border-l-emerald-400'
-                      : 'border-l-4 border-l-amber-400 bg-amber-50/30';
+                    const isInvoiceDropTarget = draggedInvoiceId && !isMatched && payment.amount > 0;
+                    const isHoveredPaymentDrop = dropTargetPaymentId === payment.id;
+                    const rowAccent = isHoveredPaymentDrop
+                      ? 'border-l-4 border-l-blue-500 bg-blue-50 ring-2 ring-blue-300'
+                      : isMatched
+                        ? 'border-l-4 border-l-emerald-400'
+                        : 'border-l-4 border-l-amber-400 bg-amber-50/30';
                     return (
                       <div
                         key={payment.id}
-                        className={`flex items-center justify-between px-3 py-2.5 transition-all ${rowAccent} ${isDragging ? 'opacity-50 bg-blue-50' : 'hover:bg-gray-50'} ${isDraggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
-                        draggable={isDraggable}
-                        onDragStart={isDraggable ? (e) => {
+                        className={`flex items-center justify-between px-3 py-2.5 ${rowAccent} ${isDragging ? 'opacity-50 bg-blue-50' : 'hover:bg-gray-50'} ${isDraggablePayment ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
+                        style={isDraggablePayment ? { userSelect: 'none', WebkitUserSelect: 'none' } : undefined}
+                        draggable={isDraggablePayment || undefined}
+                        onMouseDown={isDraggablePayment ? (e) => { e.preventDefault(); } : undefined}
+                        onDragStart={isDraggablePayment ? (e) => {
                           e.dataTransfer.setData('text/plain', payment.id.toString());
+                          e.dataTransfer.effectAllowed = 'move';
+                          if (e.currentTarget) e.dataTransfer.setDragImage(e.currentTarget, 50, 20);
                           setDraggedPaymentId(payment.id);
                         } : undefined}
-                        onDragEnd={() => { setDraggedPaymentId(null); setDropTargetInvoiceId(null); }}
+                        onDragEnd={() => { setDraggedPaymentId(null); setDraggedInvoiceId(null); setDropTargetInvoiceId(null); setDropTargetPaymentId(null); }}
+                        onDragOver={isInvoiceDropTarget ? (e) => {
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = 'move';
+                          setDropTargetPaymentId(payment.id);
+                        } : undefined}
+                        onDragLeave={isInvoiceDropTarget ? () => setDropTargetPaymentId(null) : undefined}
+                        onDrop={isInvoiceDropTarget ? (e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const data = e.dataTransfer.getData('text/plain');
+                          if (data.startsWith('invoice:')) {
+                            const invoiceId = parseInt(data.split(':')[1], 10);
+                            if (invoiceId) handleMatchPaymentToInvoice(payment.id, invoiceId);
+                          }
+                          setDraggedInvoiceId(null);
+                          setDropTargetPaymentId(null);
+                        } : undefined}
                       >
-                        <div className="flex items-center gap-2 min-w-0">
-                          {isDraggable && (
+                        <div className="flex items-center gap-2 min-w-0" style={{ pointerEvents: 'none' }}>
+                          {(isDraggablePayment || isInvoiceDropTarget) && !isMatched && (
                             <GripVertical size={12} className="text-gray-400 shrink-0" />
                           )}
                           <div className="min-w-0">
@@ -2323,7 +2355,7 @@ const ClientDetailPage: React.FC = () => {
                             </p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2 shrink-0">
+                        <div className="flex items-center gap-2 shrink-0" style={isDraggablePayment ? { pointerEvents: 'none' } : undefined}>
                           <div className="text-right">
                             <p className="text-xs font-semibold text-emerald-600">+{formatCurrency(payment.amount)}</p>
                             {!isMatched && (
