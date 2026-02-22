@@ -978,16 +978,16 @@ const ClientDetailPage: React.FC = () => {
         {/* Compact completeness strip (always visible) */}
         <div className="flex items-center gap-3 mt-3 flex-wrap">
           {([
-            { label: 'Demographics', complete: demographicsComplete, color: 'blue' as SectionColor },
-            { label: 'Diagnosis', complete: diagnosisComplete, color: 'violet' as SectionColor },
-            { label: 'Referral', complete: referringComplete, color: 'amber' as SectionColor },
-            { label: 'Compliance', complete: true, color: 'teal' as SectionColor },
-            { label: 'Insurance', complete: insuranceComplete, color: 'emerald' as SectionColor },
-            { label: 'Docs', complete: documents.length > 0, color: 'slate' as SectionColor },
-            { label: 'Claims', complete: claimInfoComplete, color: 'violet' as SectionColor },
-          ]).map(({ label, complete, color }) => (
+            { label: 'Demographics', complete: demographicsComplete },
+            { label: 'Diagnosis', complete: diagnosisComplete },
+            { label: 'Referral', complete: referringComplete },
+            { label: 'Compliance', complete: true },
+            { label: 'Insurance', complete: insuranceComplete },
+            { label: 'Docs', complete: documents.length > 0 },
+            { label: 'Claims', complete: claimInfoComplete },
+          ]).map(({ label, complete }) => (
             <span key={label} className="flex items-center gap-1 text-xs text-[var(--color-text-secondary)]">
-              <span className={`w-2 h-2 rounded-full ${complete ? sectionColorMap[color].dot : 'bg-amber-400'}`} />
+              <span className={`w-2 h-2 rounded-full ${complete ? 'bg-emerald-400' : 'bg-amber-400'}`} />
               {label}
             </span>
           ))}
