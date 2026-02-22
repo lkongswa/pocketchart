@@ -2277,7 +2277,10 @@ const ClientDetailPage: React.FC = () => {
             </div>
 
             {/* RIGHT: Recent Payments (draggable) */}
-            <div>
+            <div
+              onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'none'; }}
+              onDrop={(e) => { e.preventDefault(); setDraggedPaymentId(null); setDropTargetInvoiceId(null); }}
+            >
               <div className="flex items-center justify-between mb-2">
                 <h4 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">Payments</h4>
                 <button className="text-xs text-[var(--color-primary)] hover:underline" onClick={() => navigate('/billing?tab=payments')}>
@@ -2304,7 +2307,6 @@ const ClientDetailPage: React.FC = () => {
                         draggable={isDraggable}
                         onDragStart={isDraggable ? (e) => {
                           e.dataTransfer.setData('text/plain', payment.id.toString());
-                          e.dataTransfer.effectAllowed = 'link';
                           setDraggedPaymentId(payment.id);
                         } : undefined}
                         onDragEnd={() => { setDraggedPaymentId(null); setDropTargetInvoiceId(null); }}
