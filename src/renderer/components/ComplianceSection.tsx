@@ -4,6 +4,8 @@ import type { ComplianceTracking, CompliancePreset } from '@shared/types';
 
 interface ComplianceSectionProps {
   clientId: number;
+  /** Show only a specific card: 'progress', 'recert', or undefined for both + settings bar */
+  card?: 'progress' | 'recert';
 }
 
 const PRESET_LABELS: Record<CompliancePreset, string> = {
@@ -12,7 +14,7 @@ const PRESET_LABELS: Record<CompliancePreset, string> = {
   none: 'Disabled',
 };
 
-export default function ComplianceSection({ clientId }: ComplianceSectionProps) {
+export default function ComplianceSection({ clientId, card }: ComplianceSectionProps) {
   const [compliance, setCompliance] = useState<ComplianceTracking | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -186,6 +188,8 @@ export default function ComplianceSection({ clientId }: ComplianceSectionProps) 
 
   // No compliance data or not enabled
   if (!compliance || !compliance.tracking_enabled) {
+    // When rendering a single card in split mode, show nothing if disabled
+    if (card) return null;
     return (
       <div className="card p-6 text-center">
         <Shield size={32} className="mx-auto text-[var(--color-text-secondary)] mb-3 opacity-40" />
@@ -206,6 +210,67 @@ export default function ComplianceSection({ clientId }: ComplianceSectionProps) 
   const progressOverdue = progressDue && progressDue < now;
   const recertOverdue = recertDue && recertDue < now;
 
+  // ── Single-card mode: render just one card inline ──
+  if (card === 'progress') {
+    return (
+      <div className={`card p-3 border-l-4 ${progressOverdue ? 'border-l-red-400 bg-red-50/50' : 'border-l-green-400 bg-green-50/50'}`}>
+        <div className="flex items-center justify-between mb-1">
+          <h4 className="text-xs font-semibold text-[var(--color-text)] flex items-center gap-1.5">
+            {progressOverdue ? <AlertTriangle size={12} className="text-red-500" /> : <CheckCircle size={12} className="text-green-500" />}
+            Progress Report
+          </h4>
+          <button className="btn-ghost p-1" onClick={handleResetProgressCounter} title="Reset counter">
+            <RotateCcw size={11} />
+          </button>
+        </div>
+        <div className="space-y-0.5 text-xs">
+          <p className="text-[var(--color-text)]">
+            Visits since last: <strong>{compliance.visits_since_last_progress}</strong> / {compliance.progress_visit_threshold}
+          </p>
+          {progressDue && (
+            <p className={progressOverdue ? 'text-red-600 font-medium' : 'text-[var(--color-text-secondary)]'}>
+              {progressOverdue ? 'OVERDUE' : 'Due'}: {progressDue.toLocaleDateString()}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (card === 'recert') {
+    return (
+      <div className={`card p-3 border-l-4 ${recertOverdue ? 'border-l-red-400 bg-red-50/50' : 'border-l-green-400 bg-green-50/50'}`}>
+        <div className="flex items-center justify-between mb-1">
+          <h4 className="text-xs font-semibold text-[var(--color-text)] flex items-center gap-1.5">
+            {recertOverdue ? <AlertTriangle size={12} className="text-red-500" /> : <CheckCircle size={12} className="text-green-500" />}
+            Recertification
+          </h4>
+          <div className="flex items-center gap-1">
+            <button className="btn-ghost p-1" onClick={handleResetRecertCounter} title="Reset date">
+              <RotateCcw size={11} />
+            </button>
+            <button className="btn-ghost p-1 text-xs" onClick={() => setEditing(true)} title="Settings">
+              <Settings size={11} />
+            </button>
+          </div>
+        </div>
+        <div className="space-y-0.5 text-xs">
+          <p className="text-[var(--color-text)]">
+            MD Signature: {compliance.recert_md_signature_received
+              ? <span className="text-green-600 font-medium">Received</span>
+              : <span className="text-amber-600 font-medium">Pending</span>}
+          </p>
+          {recertDue && (
+            <p className={recertOverdue ? 'text-red-600 font-medium' : 'text-[var(--color-text-secondary)]'}>
+              {recertOverdue ? 'OVERDUE' : 'Due'}: {recertDue.toLocaleDateString()}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Default: both cards in a grid with settings bar ──
   return (
     <div className="space-y-4">
       {/* Status Cards */}

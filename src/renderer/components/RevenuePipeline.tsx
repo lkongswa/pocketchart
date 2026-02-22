@@ -709,6 +709,12 @@ export default function RevenuePipeline({ onOpenInvoiceModal, onToast, searchTer
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4">
         <FlowBar />
+        {unbilledTotal > 0 && (
+          <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200" title={`$${unbilledTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })} in completed work hasn't been billed yet`}>
+            <AlertCircle size={12} className="text-amber-500" />
+            ${unbilledTotal.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} unbilled
+          </span>
+        )}
         <div className="inline-flex shrink-0 border border-gray-200 rounded-lg overflow-hidden">
           <button
             className={`flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium transition-colors ${
@@ -731,15 +737,7 @@ export default function RevenuePipeline({ onOpenInvoiceModal, onToast, searchTer
         </div>
       </div>
 
-      {unbilledTotal > 500 && (
-        <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-amber-50 border border-amber-200">
-          <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
-          <p className="text-sm text-amber-800">
-            You have <strong>${unbilledTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong> in
-            completed work that hasn't been billed yet.
-          </p>
-        </div>
-      )}
+      {/* Unbilled total — subtle inline pill (visible near the pipeline header) */}
 
       <div className="flex gap-2 pb-4">
         {/* Column 1: Needs a Note */}

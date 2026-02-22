@@ -1151,13 +1151,13 @@ const ClientDetailPage: React.FC = () => {
       {/* ══════════ CLINICAL TAB ══════════ */}
       {activeTab === 'clinical' && <>
 
-      {/* Compliance alerts (Progress Report & Recertification) */}
-      <ComplianceSection clientId={clientId} />
-
       {/* ══════════ TWO COLUMN: CLINICAL DATA ══════════ */}
       <div className="grid grid-cols-12 gap-6">
-        {/* LEFT COLUMN: Evaluations + Goals (5 cols) */}
+        {/* LEFT COLUMN: Recert + Evaluations + Goals (5 cols) */}
         <div className="col-span-5 space-y-6">
+          {/* Recertification compliance card — anchored above evals */}
+          <ComplianceSection clientId={clientId} card="recert" />
+
           {/* Evaluations */}
           <SectionCard
             color="violet"
@@ -1462,8 +1462,11 @@ const ClientDetailPage: React.FC = () => {
           </SectionCard>
         </div>
 
-        {/* RIGHT COLUMN: SOAP Notes (7 cols) */}
-        <div className="col-span-7">
+        {/* RIGHT COLUMN: Progress Report + SOAP Notes (7 cols) */}
+        <div className="col-span-7 space-y-6">
+          {/* Progress Report compliance card — anchored above notes */}
+          <ComplianceSection clientId={clientId} card="progress" />
+
           {/* Appointments missing notes */}
           {missingNoteAppts.length > 0 && (
             <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 overflow-hidden">
