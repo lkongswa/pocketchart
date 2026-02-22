@@ -189,6 +189,9 @@ const api = {
     savePdf: (data: { base64Pdf: string; defaultFilename: string }) => ipcRenderer.invoke('backup:savePdf', data),
     exportCsv: () => ipcRenderer.invoke('backup:exportCsv'),
     exportAllChartsPdf: () => ipcRenderer.invoke('backup:exportAllChartsPdf'),
+    pickBackupFolder: () => ipcRenderer.invoke('backup:pickBackupFolder'),
+    clearBackupFolder: () => ipcRenderer.invoke('backup:clearBackupFolder'),
+    quickBackup: () => ipcRenderer.invoke('backup:quickBackup'),
   },
 
   // Storage Location

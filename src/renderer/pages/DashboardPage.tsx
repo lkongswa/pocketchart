@@ -12,6 +12,7 @@ import {
   X,
   ClipboardList,
   DollarSign,
+  CheckCircle,
 } from 'lucide-react';
 import type { Client, Note, Appointment } from '../../shared/types';
 import BasicAlertsPanel from '../components/BasicAlertsPanel';
@@ -44,6 +45,9 @@ const DashboardPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [showBackupReminder, setShowBackupReminder] = useState(false);
   const [daysSinceBackup, setDaysSinceBackup] = useState<number | null>(null);
+  const [backupFolder, setBackupFolder] = useState<string | null>(null);
+  const [quickBackupLoading, setQuickBackupLoading] = useState(false);
+  const [quickBackupSuccess, setQuickBackupSuccess] = useState(false);
   const [integrityIssues, setIntegrityIssues] = useState<{ tamperedNotes: number[]; tamperedEvals: number[] } | null>(null);
   const [reviewEligible, setReviewEligible] = useState(false);
   const [reviewMilestone, setReviewMilestone] = useState<string | null>(null);
@@ -98,8 +102,32 @@ const DashboardPage: React.FC = () => {
           setShowBackupReminder(true);
         }
       }
+      // Also load backup folder for one-click backup
+      const folder = await window.api.settings.get('backup_folder');
+      setBackupFolder(folder || null);
     } catch (err) {
       // Silently fail — don't break the dashboard over a reminder
+    }
+  };
+
+  const handleQuickBackupFromDashboard = async () => {
+    try {
+      setQuickBackupLoading(true);
+      if (backupFolder) {
+        await window.api.backup.quickBackup();
+      } else {
+        await window.api.backup.exportManual();
+      }
+      setShowBackupReminder(false);
+      setQuickBackupSuccess(true);
+      setTimeout(() => setQuickBackupSuccess(false), 5000);
+    } catch (err: any) {
+      console.error('Quick backup failed:', err);
+      if (err?.message?.includes('BACKUP_FOLDER_NOT_FOUND') || err?.message?.includes('BACKUP_FOLDER_NOT_WRITABLE')) {
+        navigate('/settings');
+      }
+    } finally {
+      setQuickBackupLoading(false);
     }
   };
 
@@ -309,16 +337,23 @@ const DashboardPage: React.FC = () => {
                 ? "You haven't created a backup yet."
                 : `It's been ${daysSinceBackup} days since your last backup.`}
             </p>
-            <p className="text-orange-700 mt-1">
-              Protect your clinical records — go to{' '}
+            <div className="flex items-center gap-3 mt-2">
               <button
-                className="underline font-medium hover:text-orange-900"
-                onClick={() => navigate('/settings')}
+                className="px-3 py-1.5 text-xs font-medium text-white bg-orange-600 hover:bg-orange-700 rounded-md transition-colors disabled:opacity-50"
+                onClick={handleQuickBackupFromDashboard}
+                disabled={quickBackupLoading}
               >
-                Settings &gt; Backup & Export
-              </button>{' '}
-              to export a backup.
-            </p>
+                {quickBackupLoading ? 'Backing up\u2026' : 'Back Up Now'}
+              </button>
+              {!backupFolder && (
+                <button
+                  className="text-xs text-orange-700 underline hover:text-orange-900"
+                  onClick={() => navigate('/settings')}
+                >
+                  Set up backup folder
+                </button>
+              )}
+            </div>
           </div>
           <button
             onClick={dismissBackupReminder}
@@ -327,6 +362,14 @@ const DashboardPage: React.FC = () => {
           >
             <X size={16} />
           </button>
+        </div>
+      )}
+
+      {/* Quick backup success */}
+      {quickBackupSuccess && (
+        <div className="mb-6 flex items-center gap-3 p-4 rounded-lg border border-emerald-300 bg-emerald-50 text-sm">
+          <CheckCircle size={20} className="text-emerald-600 flex-shrink-0" />
+          <p className="text-emerald-800 font-medium">Backup completed successfully.</p>
         </div>
       )}
 

@@ -3244,6 +3244,91 @@ function registerIpcHandlers() {
     return filePath;
   });
 
+  // ── Designated Backup Folder ──
+
+  /** Delete old backup files beyond the retention limit. Only targets files matching our naming pattern. */
+  function cleanupOldBackups(folder: string, maxKeep: number): { deletedCount: number } {
+    const pattern = /^pocketchart_backup_\d{4}-\d{2}-\d{2}_\d{4}\.pcbackup$/;
+    const allFiles = fs.readdirSync(folder)
+      .filter((f: string) => pattern.test(f))
+      .sort()     // ISO dates sort lexicographically
+      .reverse(); // newest first
+    const toDelete = allFiles.slice(maxKeep);
+    let deletedCount = 0;
+    for (const file of toDelete) {
+      try {
+        fs.unlinkSync(path.join(folder, file));
+        deletedCount++;
+      } catch (err) {
+        console.error(`[Backup Cleanup] Failed to delete ${file}:`, err);
+      }
+    }
+    return { deletedCount };
+  }
+
+  safeHandle('backup:pickBackupFolder', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: 'Choose Backup Folder',
+      properties: ['openDirectory'],
+    });
+    if (canceled || !filePaths?.[0]) return null;
+    const folderPath = filePaths[0];
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('backup_folder', ?)").run(folderPath);
+    const cloud = detectCloudStorage(folderPath);
+    return { folderPath, cloud };
+  });
+
+  safeHandle('backup:clearBackupFolder', async () => {
+    db.prepare("DELETE FROM settings WHERE key = 'backup_folder'").run();
+    return true;
+  });
+
+  safeHandle('backup:quickBackup', async () => {
+    // 1. Read designated folder
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'backup_folder'").get() as any;
+    const backupFolder = row?.value;
+    if (!backupFolder) throw new Error('NO_BACKUP_FOLDER');
+
+    // 2. Validate folder
+    if (!fs.existsSync(backupFolder)) throw new Error('BACKUP_FOLDER_NOT_FOUND');
+    try { fs.accessSync(backupFolder, fs.constants.W_OK); } catch { throw new Error('BACKUP_FOLDER_NOT_WRITABLE'); }
+
+    // 3. Generate timestamped filename
+    const now = new Date();
+    const datePart = now.toISOString().slice(0, 10);
+    const timePart = now.toTimeString().slice(0, 5).replace(':', '');
+    const filename = `pocketchart_backup_${datePart}_${timePart}.pcbackup`;
+    const filePath = path.join(backupFolder, filename);
+
+    // 4. Create zip archive (same as exportManual)
+    await new Promise<void>((resolve, reject) => {
+      const output = fs.createWriteStream(filePath);
+      const archive = archiver('zip', { zlib: { level: 1 } });
+      output.on('close', () => resolve());
+      archive.on('error', (err: Error) => reject(err));
+      archive.pipe(output);
+      archive.file(dbPath, { name: 'pocketchart.db' });
+      const keystoreData = loadKeystore();
+      if (keystoreData) {
+        archive.append(JSON.stringify(keystoreData, null, 2), { name: 'keystore.json' });
+      }
+      archive.finalize();
+    });
+
+    // 5. Stamp last backup date
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_backup_date', ?)").run(now.toISOString());
+
+    // 6. Retention cleanup
+    const retentionRow = db.prepare("SELECT value FROM settings WHERE key = 'backup_retention_count'").get() as any;
+    const maxKeep = parseInt(retentionRow?.value || '10', 10);
+    const cleanup = cleanupOldBackups(backupFolder, maxKeep);
+
+    // 7. Audit log
+    auditLog({ actionType: 'bulk_export_performed', entityType: 'backup', detail: { export_type: 'database', format: 'pcbackup', method: 'quick_backup', deleted_count: cleanup.deletedCount } });
+
+    return { filePath, deletedCount: cleanup.deletedCount };
+  });
+
   safeHandle('backup:getDbPath', () => {
     return dbPath;
   });

@@ -1674,6 +1674,9 @@ export interface PocketChartAPI {
     savePdf: (data: { base64Pdf: string; defaultFilename: string }) => Promise<string | null>;
     exportCsv: () => Promise<string | null>;
     exportAllChartsPdf: () => Promise<{ path: string; clientCount: number; documentCount: number } | null>;
+    pickBackupFolder: () => Promise<{ folderPath: string; cloud: { isCloudSynced: boolean; providerDisplayName?: string } } | null>;
+    clearBackupFolder: () => Promise<boolean>;
+    quickBackup: () => Promise<{ filePath: string; deletedCount: number } | null>;
   };
   storage: {
     getDataPath: () => Promise<string>;

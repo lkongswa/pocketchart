@@ -201,6 +201,10 @@ export default function SettingsPage() {
   const [toast, setToast] = useState<string | null>(null);
   const [dbPath, setDbPath] = useState<string>('');
   const [exporting, setExporting] = useState(false);
+  const [backupFolder, setBackupFolder] = useState<string | null>(null);
+  const [backupRetention, setBackupRetention] = useState<number>(10);
+  const [quickBackupLoading, setQuickBackupLoading] = useState(false);
+  const [backupFolderCloud, setBackupFolderCloud] = useState<{ isCloudSynced: boolean; providerDisplayName?: string } | null>(null);
   const [dataPath, setDataPath] = useState<string>('');
   const [defaultPath, setDefaultPath] = useState<string>('');
   const [logoBase64, setLogoBase64] = useState<string | null>(null);
@@ -393,6 +397,18 @@ export default function SettingsPage() {
     window.api.settings.get('cms1500_print_mode').then((val) => { if (val === 'full' || val === 'data-only') setCms1500PrintMode(val); }).catch(console.error);
     window.api.settings.get('cms1500_offset_x').then((val) => { if (val) setCms1500OffsetX(val); }).catch(console.error);
     window.api.settings.get('cms1500_offset_y').then((val) => { if (val) setCms1500OffsetY(val); }).catch(console.error);
+    // Load backup folder settings
+    window.api.settings.get('backup_folder').then((val) => {
+      if (val) {
+        setBackupFolder(val);
+        window.api.storage.detectCloud(val).then((cloud: any) => {
+          if (cloud?.isCloudSynced) setBackupFolderCloud(cloud);
+        }).catch(() => {});
+      }
+    }).catch(console.error);
+    window.api.settings.get('backup_retention_count').then((val) => {
+      if (val) setBackupRetention(parseInt(val, 10));
+    }).catch(console.error);
     // Load activation info
     loadActivationInfo();
   }, [loadLogoPreview]);
@@ -832,6 +848,66 @@ export default function SettingsPage() {
       setToast(err?.message === 'No clients to export' ? 'No clients to export.' : 'Failed to export charts. Please try again.');
     } finally {
       setExporting(false);
+    }
+  };
+
+  const handlePickBackupFolder = async () => {
+    try {
+      const result = await window.api.backup.pickBackupFolder();
+      if (!result) return;
+      setBackupFolder(result.folderPath);
+      setBackupFolderCloud(result.cloud?.isCloudSynced ? result.cloud : null);
+      setToast('Backup folder set');
+    } catch (err) {
+      console.error('Failed to set backup folder:', err);
+      setToast('Failed to set backup folder.');
+    }
+  };
+
+  const handleClearBackupFolder = async () => {
+    try {
+      await window.api.backup.clearBackupFolder();
+      setBackupFolder(null);
+      setBackupFolderCloud(null);
+      setToast('Backup folder cleared');
+    } catch (err) {
+      setToast('Failed to clear backup folder.');
+    }
+  };
+
+  const handleRetentionChange = async (value: number) => {
+    setBackupRetention(value);
+    await window.api.settings.set('backup_retention_count', String(value));
+  };
+
+  const handleQuickBackup = async () => {
+    try {
+      setQuickBackupLoading(true);
+      if (!backupFolder) {
+        await handleExportDb();
+        return;
+      }
+      const result = await window.api.backup.quickBackup();
+      if (result) {
+        const filename = result.filePath.split(/[/\\]/).pop();
+        let msg = `Backup saved: ${filename}`;
+        if (result.deletedCount > 0) {
+          msg += ` (${result.deletedCount} old backup${result.deletedCount > 1 ? 's' : ''} removed)`;
+        }
+        setToast(msg);
+      }
+    } catch (err: any) {
+      if (err?.message?.includes('BACKUP_FOLDER_NOT_FOUND')) {
+        setToast('Backup folder no longer exists. Please choose a new location.');
+        setBackupFolder(null);
+      } else if (err?.message?.includes('BACKUP_FOLDER_NOT_WRITABLE')) {
+        setToast('Cannot write to backup folder. Check permissions.');
+      } else {
+        console.error('Quick backup failed:', err);
+        setToast('Backup failed. Please try again.');
+      }
+    } finally {
+      setQuickBackupLoading(false);
     }
   };
 
@@ -2070,11 +2146,89 @@ export default function SettingsPage() {
         onToggle={() => toggleSection('backup-export')}
       >
         <div className="space-y-4">
+
+          {/* ── Backup Folder ── */}
+          <div className="p-4 bg-gray-50 rounded-lg border border-[var(--color-border)]">
+            <h4 className="text-sm font-semibold text-[var(--color-text)] mb-3">Backup Folder</h4>
+
+            {backupFolder ? (
+              <div className="space-y-3">
+                <div>
+                  <p className="text-xs text-[var(--color-text-secondary)] mb-1">Backups save here automatically:</p>
+                  <p className="text-sm font-mono text-[var(--color-text)] break-all bg-white px-3 py-2 rounded border border-[var(--color-border)]">{backupFolder}</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button className="btn-secondary gap-2 text-xs" onClick={handlePickBackupFolder}>
+                    <FolderOpen className="w-3 h-3" />
+                    Change Folder
+                  </button>
+                  <button className="btn-secondary gap-2 text-xs text-red-600 hover:text-red-700" onClick={handleClearBackupFolder}>
+                    <Trash2 className="w-3 h-3" />
+                    Clear
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-xs text-[var(--color-text-secondary)]">
+                  Set a folder for one-click backups. Without a folder, you'll be prompted to choose a location each time.
+                </p>
+                <button className="btn-primary gap-2" onClick={handlePickBackupFolder}>
+                  <FolderOpen className="w-4 h-4" />
+                  Choose Backup Folder
+                </button>
+              </div>
+            )}
+
+            {/* Cloud warning */}
+            {backupFolderCloud?.isCloudSynced && (
+              <div className="flex items-start gap-2 p-3 mt-3 bg-amber-50 rounded-lg border border-amber-200">
+                <ShieldCheck className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-700">
+                  This folder is synced by {backupFolderCloud.providerDisplayName}. Backup files containing clinical data will be uploaded. Ensure you have a BAA in place for HIPAA compliance.
+                </p>
+              </div>
+            )}
+
+            {/* Retention slider */}
+            {backupFolder && (
+              <div className="mt-3">
+                <label className="text-xs font-medium text-[var(--color-text)]">
+                  Keep last {backupRetention} backups
+                </label>
+                <input
+                  type="range"
+                  min={3}
+                  max={50}
+                  step={1}
+                  value={backupRetention}
+                  onChange={(e) => handleRetentionChange(parseInt(e.target.value, 10))}
+                  className="w-full mt-1 accent-[var(--color-primary)]"
+                />
+                <div className="flex justify-between text-[10px] text-[var(--color-text-secondary)]">
+                  <span>3</span>
+                  <span>50</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── Backup & Export Buttons ── */}
           <div className="flex items-center gap-3 flex-wrap">
-            <button className="btn-primary gap-2" onClick={handleExportDb} disabled={exporting}>
+            <button
+              className="btn-primary gap-2 bg-emerald-600 hover:bg-emerald-700"
+              onClick={handleQuickBackup}
+              disabled={quickBackupLoading || exporting}
+            >
               <Download className="w-4 h-4" />
-              {exporting ? 'Exporting...' : 'Export Database'}
+              {quickBackupLoading ? 'Backing up...' : backupFolder ? 'Back Up Now' : 'Export Database'}
             </button>
+            {backupFolder && (
+              <button className="btn-secondary gap-2" onClick={handleExportDb} disabled={exporting}>
+                <Download className="w-4 h-4" />
+                {exporting ? 'Exporting...' : 'Save As\u2026'}
+              </button>
+            )}
             <button className="btn-secondary gap-2" onClick={handleExportCsv} disabled={exporting}>
               <FileSpreadsheet className="w-4 h-4" />
               {exporting ? 'Exporting...' : 'Export All Clients (CSV)'}
@@ -2085,7 +2239,7 @@ export default function SettingsPage() {
             </button>
           </div>
 
-          {/* Cloud Export Warning */}
+          {/* Cloud Export Warning (from Save As dialog) */}
           {cloudExportWarning && (
             <div className="flex items-start gap-2 p-3 bg-amber-50 rounded-lg border border-amber-200">
               <ShieldCheck className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
@@ -2107,15 +2261,6 @@ export default function SettingsPage() {
               <p className="text-xs text-[var(--color-text-secondary)]">Database Location</p>
               <p className="text-sm font-mono text-[var(--color-text)] break-all">{dbPath}</p>
             </div>
-          </div>
-
-          <div className="p-3 bg-blue-50 rounded-lg">
-            <p className="text-xs text-blue-700 font-medium mb-1">Backup Recommendations</p>
-            <ul className="text-xs text-blue-600 space-y-1 list-disc list-inside">
-              <li>Export your database regularly (weekly or after major changes).</li>
-              <li>Store backups on an external drive or cloud storage for safety.</li>
-              <li>The CSV export is useful for importing client data into other systems.</li>
-            </ul>
           </div>
 
           {/* ── Restore Section ── */}
