@@ -2144,31 +2144,16 @@ const ClientDetailPage: React.FC = () => {
             </div>
           )}
 
-          {/* ── Two-Column: Invoices | Payments (drag to match) ── */}
-          {(draggedPaymentId || draggedInvoiceId) && (
-            <div
-              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-700 mb-2 cursor-pointer"
-              onClick={() => { setDraggedPaymentId(null); setDraggedInvoiceId(null); setDropTargetInvoiceId(null); setDropTargetPaymentId(null); }}
-            >
-              <Link2 size={12} /> {draggedPaymentId ? 'Drop on an unpaid invoice to match' : 'Drop on an unmatched payment to match'}
-              <span className="ml-auto text-blue-400 hover:text-blue-600">✕ cancel</span>
+          {/* ── Two-Column: Invoices | Payments (drag payment → invoice) ── */}
+          {draggedPaymentId && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-700 mb-2">
+              <Link2 size={12} /> Drop on an unpaid invoice to match
             </div>
           )}
-          <div className="grid grid-cols-2 gap-4" onClick={() => {
-            // Safety: clicking anywhere resets stuck drag state
-            if (draggedPaymentId || draggedInvoiceId) {
-              setDraggedPaymentId(null);
-              setDraggedInvoiceId(null);
-              setDropTargetInvoiceId(null);
-              setDropTargetPaymentId(null);
-            }
-          }}>
+          <div className="grid grid-cols-2 gap-4">
 
-            {/* LEFT: Recent Invoices (draggable + drop targets) */}
-            <div
-              onDragOver={(e) => { if (draggedInvoiceId) { e.preventDefault(); } }}
-              onDrop={(e) => { e.preventDefault(); setDraggedInvoiceId(null); setDropTargetPaymentId(null); }}
-            >
+            {/* LEFT: Invoices (drop targets for payments) */}
+            <div>
               <div className="flex items-center justify-between mb-2">
                 <h4 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">Invoices</h4>
                 <button className="text-xs text-[var(--color-primary)] hover:underline" onClick={() => navigate('/billing?tab=invoices')}>
@@ -2184,11 +2169,9 @@ const ClientDetailPage: React.FC = () => {
                   {invoices.slice(0, 6).map((invoice) => {
                     const isUnpaid = invoice.status !== 'paid' && invoice.status !== 'void';
                     const isOverdue = invoice.status === 'overdue';
-                    const isPaymentDropTarget = draggedPaymentId && isUnpaid;
-                    const isHoveredDrop = dropTargetInvoiceId === invoice.id;
-                    const canDragInvoice = isUnpaid && !draggedPaymentId && !draggedInvoiceId;
-                    const isDraggingThis = draggedInvoiceId === invoice.id;
-                    const rowAccent = isHoveredDrop
+                    const isDropTarget = draggedPaymentId && isUnpaid;
+                    const isHovered = dropTargetInvoiceId === invoice.id;
+                    const rowAccent = isHovered
                       ? 'border-l-4 border-l-blue-500 bg-blue-50 ring-2 ring-blue-300'
                       : isOverdue
                         ? 'border-l-4 border-l-red-400 bg-red-50/40'
@@ -2198,95 +2181,58 @@ const ClientDetailPage: React.FC = () => {
                     return (
                       <div
                         key={invoice.id}
-                        data-invoice-row
-                        className={`flex items-center justify-between px-3 py-2.5 ${rowAccent} ${isDraggingThis ? 'opacity-50 bg-blue-50' : 'hover:bg-gray-50'}`}
-                        onDragOver={isPaymentDropTarget ? (e) => {
+                        className={`flex items-center justify-between px-3 py-2.5 hover:bg-gray-50 ${rowAccent}`}
+                        onDragOver={isDropTarget ? (e) => {
                           e.preventDefault();
-                          e.dataTransfer.dropEffect = 'move';
                           setDropTargetInvoiceId(invoice.id);
                         } : undefined}
-                        onDragLeave={isPaymentDropTarget ? () => setDropTargetInvoiceId(null) : undefined}
-                        onDrop={isPaymentDropTarget ? (e) => {
+                        onDragLeave={isDropTarget ? () => setDropTargetInvoiceId(null) : undefined}
+                        onDrop={isDropTarget ? (e) => {
                           e.preventDefault();
-                          e.stopPropagation();
-                          const data = e.dataTransfer.getData('text/plain');
-                          const paymentId = parseInt(data, 10);
-                          if (paymentId && !data.startsWith('invoice:')) handleMatchPaymentToInvoice(paymentId, invoice.id);
+                          const paymentId = parseInt(e.dataTransfer.getData('text/plain'), 10);
+                          if (paymentId) handleMatchPaymentToInvoice(paymentId, invoice.id);
                           setDropTargetInvoiceId(null);
                           setDraggedPaymentId(null);
                         } : undefined}
                       >
-                        <div className="flex items-center gap-2 min-w-0">
-                          {isUnpaid && (
-                            <div
-                              draggable
-                              className="cursor-grab active:cursor-grabbing p-0.5 -ml-1 rounded hover:bg-gray-200 transition-colors"
-                              style={{ userSelect: 'none', WebkitUserSelect: 'none' }}
-                              onMouseDown={(e) => e.stopPropagation()}
-                              onDragStart={(e) => {
-                                e.stopPropagation();
-                                e.dataTransfer.setData('text/plain', `invoice:${invoice.id}`);
-                                e.dataTransfer.effectAllowed = 'move';
-                                const row = e.currentTarget.closest('[data-invoice-row]') as HTMLElement;
-                                if (row) e.dataTransfer.setDragImage(row, 50, 20);
-                                setDraggedInvoiceId(invoice.id);
-                              }}
-                              onDragEnd={() => { setDraggedInvoiceId(null); setDropTargetPaymentId(null); }}
-                            >
-                              <GripVertical size={12} className="text-gray-400" />
-                            </div>
-                          )}
-                          <div className="min-w-0">
-                            <p className="text-xs font-medium text-[var(--color-text)] truncate">{invoice.invoice_number}</p>
-                            <p className="text-[10px] text-[var(--color-text-secondary)]">
-                              {formatDate(invoice.invoice_date)}
-                            </p>
-                          </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium text-[var(--color-text)] truncate">{invoice.invoice_number}</p>
+                          <p className="text-[10px] text-[var(--color-text-secondary)]">{formatDate(invoice.invoice_date)}</p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <div className="text-right">
                             <p className="text-xs font-semibold text-[var(--color-text)]">{formatCurrency(invoice.total_amount)}</p>
-                            <span
-                              className={`inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
-                                (STATUS_COLORS[invoice.status] || STATUS_COLORS.draft).bg
-                              } ${(STATUS_COLORS[invoice.status] || STATUS_COLORS.draft).text}`}
-                            >
+                            <span className={`inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium ${(STATUS_COLORS[invoice.status] || STATUS_COLORS.draft).bg} ${(STATUS_COLORS[invoice.status] || STATUS_COLORS.draft).text}`}>
                               {invoice.status || 'draft'}
                             </span>
                           </div>
-                          {!draggedPaymentId && !draggedInvoiceId && (
-                            <div className="flex items-center gap-1">
+                          <div className="flex items-center gap-1">
+                            <button
+                              className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-[var(--color-primary)] transition-colors"
+                              title="Edit invoice"
+                              onClick={async () => {
+                                try {
+                                  const full = await window.api.invoices.get(invoice.id);
+                                  setEditingInvoice(full);
+                                  setShowInvoiceModal(true);
+                                } catch (err) {
+                                  console.error('Failed to load invoice:', err);
+                                }
+                              }}
+                            >
+                              <Eye size={12} />
+                            </button>
+                            {isUnpaid && (
                               <button
-                                className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-[var(--color-primary)] transition-colors"
-                                title="Edit invoice"
-                                onClick={async () => {
-                                  try {
-                                    const full = await window.api.invoices.get(invoice.id);
-                                    setEditingInvoice(full);
-                                    setShowInvoiceModal(true);
-                                  } catch (err) {
-                                    console.error('Failed to load invoice:', err);
-                                  }
-                                }}
+                                className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-emerald-600 transition-colors"
+                                onClick={() => handleGeneratePaymentLink(invoice.id)}
+                                disabled={generatingPaymentLink === invoice.id}
+                                title="Generate payment link"
                               >
-                                <Eye size={12} />
+                                {generatingPaymentLink === invoice.id ? <Loader2 size={10} className="animate-spin" /> : <ExternalLink size={10} />}
                               </button>
-                              {isUnpaid && (
-                                <button
-                                  className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-emerald-600 transition-colors"
-                                  onClick={() => handleGeneratePaymentLink(invoice.id)}
-                                  disabled={generatingPaymentLink === invoice.id}
-                                  title="Generate payment link"
-                                >
-                                  {generatingPaymentLink === invoice.id ? (
-                                    <Loader2 size={10} className="animate-spin" />
-                                  ) : (
-                                    <ExternalLink size={10} />
-                                  )}
-                                </button>
-                              )}
-                            </div>
-                          )}
+                            )}
+                          </div>
                         </div>
                       </div>
                     );
@@ -2295,11 +2241,8 @@ const ClientDetailPage: React.FC = () => {
               )}
             </div>
 
-            {/* RIGHT: Recent Payments (draggable + drop targets) */}
-            <div
-              onDragOver={(e) => { if (draggedPaymentId) { e.preventDefault(); } }}
-              onDrop={(e) => { e.preventDefault(); setDraggedPaymentId(null); setDropTargetInvoiceId(null); }}
-            >
+            {/* RIGHT: Payments (whole row draggable, like BillingPage) */}
+            <div>
               <div className="flex items-center justify-between mb-2">
                 <h4 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">Payments</h4>
                 <button className="text-xs text-[var(--color-primary)] hover:underline" onClick={() => navigate('/billing?tab=payments')}>
@@ -2314,58 +2257,25 @@ const ClientDetailPage: React.FC = () => {
                 <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
                   {payments.slice(0, 6).map((payment) => {
                     const isMatched = !!(payment as any).invoice_id;
-                    const isDraggablePayment = !isMatched && payment.amount > 0 && !draggedInvoiceId;
+                    const canDrag = !isMatched && payment.amount > 0;
                     const isDragging = draggedPaymentId === payment.id;
-                    const isInvoiceDropTarget = draggedInvoiceId && !isMatched && payment.amount > 0;
-                    const isHoveredPaymentDrop = dropTargetPaymentId === payment.id;
-                    const rowAccent = isHoveredPaymentDrop
-                      ? 'border-l-4 border-l-blue-500 bg-blue-50 ring-2 ring-blue-300'
-                      : isMatched
-                        ? 'border-l-4 border-l-emerald-400'
-                        : 'border-l-4 border-l-amber-400 bg-amber-50/30';
+                    const rowAccent = isMatched
+                      ? 'border-l-4 border-l-emerald-400'
+                      : 'border-l-4 border-l-amber-400 bg-amber-50/30';
                     return (
                       <div
                         key={payment.id}
-                        data-payment-row
-                        className={`flex items-center justify-between px-3 py-2.5 ${rowAccent} ${isDragging ? 'opacity-50 bg-blue-50' : 'hover:bg-gray-50'} cursor-default`}
-                        onDragOver={isInvoiceDropTarget ? (e) => {
-                          e.preventDefault();
-                          e.dataTransfer.dropEffect = 'move';
-                          setDropTargetPaymentId(payment.id);
-                        } : undefined}
-                        onDragLeave={isInvoiceDropTarget ? () => setDropTargetPaymentId(null) : undefined}
-                        onDrop={isInvoiceDropTarget ? (e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          const data = e.dataTransfer.getData('text/plain');
-                          if (data.startsWith('invoice:')) {
-                            const invoiceId = parseInt(data.split(':')[1], 10);
-                            if (invoiceId) handleMatchPaymentToInvoice(payment.id, invoiceId);
-                          }
-                          setDraggedInvoiceId(null);
-                          setDropTargetPaymentId(null);
-                        } : undefined}
+                        className={`flex items-center justify-between px-3 py-2.5 ${rowAccent} ${isDragging ? 'opacity-50 bg-blue-50' : 'hover:bg-gray-50'} ${canDrag ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                        draggable={canDrag}
+                        onDragStart={(e) => {
+                          if (!canDrag) return;
+                          e.dataTransfer.setData('text/plain', payment.id.toString());
+                          setDraggedPaymentId(payment.id);
+                        }}
+                        onDragEnd={() => { setDraggedPaymentId(null); setDropTargetInvoiceId(null); }}
                       >
                         <div className="flex items-center gap-2 min-w-0">
-                          {!isMatched && payment.amount > 0 && (
-                            <div
-                              draggable
-                              className="cursor-grab active:cursor-grabbing p-0.5 -ml-1 rounded hover:bg-gray-200 transition-colors"
-                              style={{ userSelect: 'none', WebkitUserSelect: 'none' }}
-                              onMouseDown={(e) => e.stopPropagation()}
-                              onDragStart={(e) => {
-                                e.stopPropagation();
-                                e.dataTransfer.setData('text/plain', payment.id.toString());
-                                e.dataTransfer.effectAllowed = 'move';
-                                const row = e.currentTarget.closest('[data-payment-row]') as HTMLElement;
-                                if (row) e.dataTransfer.setDragImage(row, 50, 20);
-                                setDraggedPaymentId(payment.id);
-                              }}
-                              onDragEnd={() => { setDraggedPaymentId(null); setDraggedInvoiceId(null); setDropTargetInvoiceId(null); setDropTargetPaymentId(null); }}
-                            >
-                              <GripVertical size={12} className="text-gray-400" />
-                            </div>
-                          )}
+                          {canDrag && <GripVertical size={12} className="text-gray-300 shrink-0" />}
                           <div className="min-w-0">
                             <p className="text-xs font-medium text-[var(--color-text)]">{formatDate(payment.payment_date)}</p>
                             <p className="text-[10px] text-[var(--color-text-secondary)]">
@@ -2378,15 +2288,13 @@ const ClientDetailPage: React.FC = () => {
                           <div className="text-right">
                             <p className="text-xs font-semibold text-emerald-600">+{formatCurrency(payment.amount)}</p>
                             {!isMatched && (
-                              <span className="inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700">
-                                unmatched
-                              </span>
+                              <span className="inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700">unmatched</span>
                             )}
                           </div>
                           {isMatched && (
                             <button
                               className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
-                              onClick={(e) => { e.stopPropagation(); handleUnmatchPayment(payment.id); }}
+                              onClick={() => handleUnmatchPayment(payment.id)}
                               title="Unmatch from invoice"
                             >
                               <XCircle size={12} />
