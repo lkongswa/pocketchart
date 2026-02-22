@@ -2146,11 +2146,23 @@ const ClientDetailPage: React.FC = () => {
 
           {/* ── Two-Column: Invoices | Payments (drag to match) ── */}
           {(draggedPaymentId || draggedInvoiceId) && (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-700 mb-2">
+            <div
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-700 mb-2 cursor-pointer"
+              onClick={() => { setDraggedPaymentId(null); setDraggedInvoiceId(null); setDropTargetInvoiceId(null); setDropTargetPaymentId(null); }}
+            >
               <Link2 size={12} /> {draggedPaymentId ? 'Drop on an unpaid invoice to match' : 'Drop on an unmatched payment to match'}
+              <span className="ml-auto text-blue-400 hover:text-blue-600">✕ cancel</span>
             </div>
           )}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-4" onClick={() => {
+            // Safety: clicking anywhere resets stuck drag state
+            if (draggedPaymentId || draggedInvoiceId) {
+              setDraggedPaymentId(null);
+              setDraggedInvoiceId(null);
+              setDropTargetInvoiceId(null);
+              setDropTargetPaymentId(null);
+            }
+          }}>
 
             {/* LEFT: Recent Invoices (draggable + drop targets) */}
             <div
@@ -2205,7 +2217,7 @@ const ClientDetailPage: React.FC = () => {
                         } : undefined}
                       >
                         <div className="flex items-center gap-2 min-w-0">
-                          {isUnpaid && !draggedPaymentId && !draggedInvoiceId && (
+                          {isUnpaid && (
                             <div
                               draggable
                               className="cursor-grab active:cursor-grabbing p-0.5 -ml-1 rounded hover:bg-gray-200 transition-colors"
@@ -2335,7 +2347,7 @@ const ClientDetailPage: React.FC = () => {
                         } : undefined}
                       >
                         <div className="flex items-center gap-2 min-w-0">
-                          {isDraggablePayment && (
+                          {!isMatched && payment.amount > 0 && (
                             <div
                               draggable
                               className="cursor-grab active:cursor-grabbing p-0.5 -ml-1 rounded hover:bg-gray-200 transition-colors"
