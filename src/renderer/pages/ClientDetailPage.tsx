@@ -46,8 +46,6 @@ import {
   Check,
   Inbox,
   CalendarCheck,
-  GripVertical,
-  Link2,
 } from 'lucide-react';
 import type {
   Client,
@@ -315,10 +313,11 @@ const ClientDetailPage: React.FC = () => {
   const [entities, setEntities] = useState<ContractedEntity[]>([]);
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<number>>(new Set());
   const [batchGenerating, setBatchGenerating] = useState(false);
-  const [draggedPaymentId, setDraggedPaymentId] = useState<number | null>(null);
-  const [draggedInvoiceId, setDraggedInvoiceId] = useState<number | null>(null);
-  const [dropTargetInvoiceId, setDropTargetInvoiceId] = useState<number | null>(null);
-  const [dropTargetPaymentId, setDropTargetPaymentId] = useState<number | null>(null);
+  // BACKBURNER: drag-to-match disabled — Electron DnD unreliable
+  // const [draggedPaymentId, setDraggedPaymentId] = useState<number | null>(null);
+  // const [draggedInvoiceId, setDraggedInvoiceId] = useState<number | null>(null);
+  // const [dropTargetInvoiceId, setDropTargetInvoiceId] = useState<number | null>(null);
+  // const [dropTargetPaymentId, setDropTargetPaymentId] = useState<number | null>(null);
   const [discountsExpanded, setDiscountsExpanded] = useState(false);
 
   // Discount state
@@ -656,50 +655,9 @@ const ClientDetailPage: React.FC = () => {
 
   // --- Billing Handlers ---
 
-  const handleMatchPaymentToInvoice = async (paymentId: number, invoiceId: number) => {
-    try {
-      const payment = payments.find(p => p.id === paymentId);
-      if (!payment) return;
-      await window.api.payments.update(paymentId, { invoice_id: invoiceId, notes: payment.notes });
-      const invoicePayments = payments.filter(p => (p as any).invoice_id === invoiceId).reduce((sum, p) => sum + p.amount, 0) + payment.amount;
-      const invoice = invoices.find(i => i.id === invoiceId);
-      if (invoice) {
-        const newStatus = invoicePayments >= invoice.total_amount ? 'paid' : invoicePayments > 0 ? 'partial' : invoice.status;
-        if (newStatus !== invoice.status) {
-          await window.api.invoices.update(invoiceId, { status: newStatus });
-        }
-      }
-      loadData();
-      setBillingToast('Payment matched to invoice');
-    } catch (err) {
-      console.error('Failed to match payment:', err);
-      setBillingToast('Failed to match payment');
-    }
-  };
-
-  const handleUnmatchPayment = async (paymentId: number) => {
-    try {
-      const payment = payments.find(p => p.id === paymentId);
-      if (!payment || !(payment as any).invoice_id) return;
-      const invId = (payment as any).invoice_id;
-      await window.api.payments.update(paymentId, { invoice_id: null, notes: payment.notes });
-      const remainingTotal = payments
-        .filter(p => (p as any).invoice_id === invId && p.id !== paymentId)
-        .reduce((sum, p) => sum + p.amount, 0);
-      const invoice = invoices.find(i => i.id === invId);
-      if (invoice) {
-        const newStatus = remainingTotal >= invoice.total_amount ? 'paid' : remainingTotal > 0 ? 'partial' : 'sent';
-        if (newStatus !== invoice.status) {
-          await window.api.invoices.update(invId, { status: newStatus });
-        }
-      }
-      loadData();
-      setBillingToast('Payment unmatched');
-    } catch (err) {
-      console.error('Failed to unmatch payment:', err);
-      setBillingToast('Failed to unmatch payment');
-    }
-  };
+  // BACKBURNER: drag-to-match disabled — Electron DnD unreliable
+  // const handleMatchPaymentToInvoice = async (paymentId: number, invoiceId: number) => { ... };
+  // const handleUnmatchPayment = async (paymentId: number) => { ... };
 
   const handleGeneratePaymentLink = async (invoiceId: number) => {
     setGeneratingPaymentLink(invoiceId);
@@ -2144,15 +2102,10 @@ const ClientDetailPage: React.FC = () => {
             </div>
           )}
 
-          {/* ── Two-Column: Invoices | Payments (drag payment → invoice) ── */}
-          {draggedPaymentId && (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-700 mb-2">
-              <Link2 size={12} /> Drop on an unpaid invoice to match
-            </div>
-          )}
+          {/* ── Two-Column: Invoices | Payments ── */}
           <div className="grid grid-cols-2 gap-4">
 
-            {/* LEFT: Invoices (drop targets for payments) */}
+            {/* LEFT: Invoices */}
             <div>
               <div className="flex items-center justify-between mb-2">
                 <h4 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">Invoices</h4>
@@ -2169,31 +2122,15 @@ const ClientDetailPage: React.FC = () => {
                   {invoices.slice(0, 6).map((invoice) => {
                     const isUnpaid = invoice.status !== 'paid' && invoice.status !== 'void';
                     const isOverdue = invoice.status === 'overdue';
-                    const isDropTarget = draggedPaymentId && isUnpaid;
-                    const isHovered = dropTargetInvoiceId === invoice.id;
-                    const rowAccent = isHovered
-                      ? 'border-l-4 border-l-blue-500 bg-blue-50 ring-2 ring-blue-300'
-                      : isOverdue
-                        ? 'border-l-4 border-l-red-400 bg-red-50/40'
-                        : isUnpaid
-                          ? 'border-l-4 border-l-amber-400 bg-amber-50/30'
-                          : 'border-l-4 border-l-emerald-400';
+                    const rowAccent = isOverdue
+                      ? 'border-l-4 border-l-red-400 bg-red-50/40'
+                      : isUnpaid
+                        ? 'border-l-4 border-l-amber-400 bg-amber-50/30'
+                        : 'border-l-4 border-l-emerald-400';
                     return (
                       <div
                         key={invoice.id}
                         className={`flex items-center justify-between px-3 py-2.5 hover:bg-gray-50 ${rowAccent}`}
-                        onDragOver={isDropTarget ? (e) => {
-                          e.preventDefault();
-                          setDropTargetInvoiceId(invoice.id);
-                        } : undefined}
-                        onDragLeave={isDropTarget ? () => setDropTargetInvoiceId(null) : undefined}
-                        onDrop={isDropTarget ? (e) => {
-                          e.preventDefault();
-                          const paymentId = parseInt(e.dataTransfer.getData('text/plain'), 10);
-                          if (paymentId) handleMatchPaymentToInvoice(paymentId, invoice.id);
-                          setDropTargetInvoiceId(null);
-                          setDraggedPaymentId(null);
-                        } : undefined}
                       >
                         <div className="min-w-0">
                           <p className="text-xs font-medium text-[var(--color-text)] truncate">{invoice.invoice_number}</p>
@@ -2241,7 +2178,7 @@ const ClientDetailPage: React.FC = () => {
               )}
             </div>
 
-            {/* RIGHT: Payments (whole row draggable, like BillingPage) */}
+            {/* RIGHT: Payments */}
             <div>
               <div className="flex items-center justify-between mb-2">
                 <h4 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">Payments</h4>
@@ -2257,32 +2194,20 @@ const ClientDetailPage: React.FC = () => {
                 <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
                   {payments.slice(0, 6).map((payment) => {
                     const isMatched = !!(payment as any).invoice_id;
-                    const canDrag = !isMatched && payment.amount > 0;
-                    const isDragging = draggedPaymentId === payment.id;
                     const rowAccent = isMatched
                       ? 'border-l-4 border-l-emerald-400'
                       : 'border-l-4 border-l-amber-400 bg-amber-50/30';
                     return (
                       <div
                         key={payment.id}
-                        className={`flex items-center justify-between px-3 py-2.5 ${rowAccent} ${isDragging ? 'opacity-50 bg-blue-50' : 'hover:bg-gray-50'} ${canDrag ? 'cursor-grab active:cursor-grabbing' : ''}`}
-                        draggable={canDrag}
-                        onDragStart={(e) => {
-                          if (!canDrag) return;
-                          e.dataTransfer.setData('text/plain', payment.id.toString());
-                          setDraggedPaymentId(payment.id);
-                        }}
-                        onDragEnd={() => { setDraggedPaymentId(null); setDropTargetInvoiceId(null); }}
+                        className={`flex items-center justify-between px-3 py-2.5 ${rowAccent} hover:bg-gray-50`}
                       >
-                        <div className="flex items-center gap-2 min-w-0">
-                          {canDrag && <GripVertical size={12} className="text-gray-300 shrink-0" />}
-                          <div className="min-w-0">
-                            <p className="text-xs font-medium text-[var(--color-text)]">{formatDate(payment.payment_date)}</p>
-                            <p className="text-[10px] text-[var(--color-text-secondary)]">
-                              {PAYMENT_METHOD_LABELS[payment.payment_method] || payment.payment_method || 'Other'}
-                              {payment.reference_number && ` · ${payment.reference_number}`}
-                            </p>
-                          </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium text-[var(--color-text)]">{formatDate(payment.payment_date)}</p>
+                          <p className="text-[10px] text-[var(--color-text-secondary)]">
+                            {PAYMENT_METHOD_LABELS[payment.payment_method] || payment.payment_method || 'Other'}
+                            {payment.reference_number && ` · ${payment.reference_number}`}
+                          </p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <div className="text-right">
@@ -2291,15 +2216,6 @@ const ClientDetailPage: React.FC = () => {
                               <span className="inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700">unmatched</span>
                             )}
                           </div>
-                          {isMatched && (
-                            <button
-                              className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
-                              onClick={() => handleUnmatchPayment(payment.id)}
-                              title="Unmatch from invoice"
-                            >
-                              <XCircle size={12} />
-                            </button>
-                          )}
                         </div>
                       </div>
                     );
