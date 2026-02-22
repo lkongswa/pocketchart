@@ -12,6 +12,8 @@ import {
   CalendarCheck,
   Receipt,
   DollarSign,
+  List,
+  LayoutGrid,
 } from 'lucide-react';
 import type { Client, Note, Appointment } from '../../shared/types';
 
@@ -60,6 +62,7 @@ export default function NotesOverviewPage() {
   const [tab, setTab] = useState<TabFilter>('due');
   const [searchQuery, setSearchQuery] = useState('');
   const [noteInvoiceMap, setNoteInvoiceMap] = useState<Record<number, { invoice_id: number; invoice_number: string; status: string }>>({});
+  const [missingNotesCompact, setMissingNotesCompact] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -260,36 +263,90 @@ export default function NotesOverviewPage() {
       {/* Missing Notes from Appointments */}
       {tab === 'due' && missingNotes.length > 0 && (
         <div className="mb-6">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-2 flex items-center gap-2">
-            <CalendarCheck size={14} className="text-amber-600" />
-            Appointments Missing Notes
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {missingNotes.map((item) => (
-              <div
-                key={item.appointment.id}
-                className="card p-3 border-l-4 border-l-amber-400 cursor-pointer hover:shadow-md transition-all"
-                onClick={() => navigate(`/clients/${item.clientId}/note/new`, {
-                  state: {
-                    appointmentDate: item.appointment.scheduled_date,
-                    appointmentTime: item.appointment.scheduled_time,
-                    appointmentDuration: item.appointment.duration_minutes,
-                  }
-                })}
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-2">
+              <CalendarCheck size={14} className="text-amber-600" />
+              Appointments Missing Notes
+              <span className="text-xs font-normal text-[var(--color-text-secondary)]">({missingNotes.length})</span>
+            </h3>
+            <div className="inline-flex shrink-0 border border-gray-200 rounded-lg overflow-hidden">
+              <button
+                className={`flex items-center gap-1 px-2 py-1 text-xs font-medium transition-colors ${
+                  missingNotesCompact ? 'bg-[var(--color-primary)] text-white' : 'bg-white text-[var(--color-text-secondary)] hover:bg-gray-50'
+                }`}
+                onClick={() => setMissingNotesCompact(true)}
+                title="Compact view"
               >
-                <p className="text-sm font-medium text-[var(--color-text)]">{item.clientName}</p>
-                <p className="text-xs text-[var(--color-text-secondary)]">
-                  {formatDate(item.appointment.scheduled_date)} at {formatTime12(item.appointment.scheduled_time)}
-                </p>
-                <div className="flex items-center gap-2 mt-1.5">
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">
+                <List size={12} />
+              </button>
+              <button
+                className={`flex items-center gap-1 px-2 py-1 text-xs font-medium transition-colors ${
+                  !missingNotesCompact ? 'bg-[var(--color-primary)] text-white' : 'bg-white text-[var(--color-text-secondary)] hover:bg-gray-50'
+                }`}
+                onClick={() => setMissingNotesCompact(false)}
+                title="Card view"
+              >
+                <LayoutGrid size={12} />
+              </button>
+            </div>
+          </div>
+
+          {missingNotesCompact ? (
+            /* ── Compact list view ── */
+            <div className="card overflow-hidden divide-y divide-[var(--color-border)]">
+              {missingNotes.map((item) => (
+                <div
+                  key={item.appointment.id}
+                  className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-gray-50 transition-colors"
+                  onClick={() => navigate(`/clients/${item.clientId}/note/new`, {
+                    state: {
+                      appointmentDate: item.appointment.scheduled_date,
+                      appointmentTime: item.appointment.scheduled_time,
+                      appointmentDuration: item.appointment.duration_minutes,
+                    }
+                  })}
+                >
+                  <div className="w-1 h-6 rounded-full bg-amber-400 shrink-0" />
+                  <span className="text-sm font-medium text-[var(--color-text)] min-w-[140px]">{item.clientName}</span>
+                  <span className="text-xs text-[var(--color-text-secondary)]">
+                    {formatDate(item.appointment.scheduled_date)} at {formatTime12(item.appointment.scheduled_time)}
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium ml-auto shrink-0">
                     {daysSince(item.appointment.scheduled_date)}d ago
                   </span>
-                  <span className="text-[10px] text-[var(--color-primary)] font-medium">+ Create Note</span>
+                  <span className="text-[10px] text-[var(--color-primary)] font-medium shrink-0">+ Create Note</span>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            /* ── Card grid view (original) ── */
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {missingNotes.map((item) => (
+                <div
+                  key={item.appointment.id}
+                  className="card p-3 border-l-4 border-l-amber-400 cursor-pointer hover:shadow-md transition-all"
+                  onClick={() => navigate(`/clients/${item.clientId}/note/new`, {
+                    state: {
+                      appointmentDate: item.appointment.scheduled_date,
+                      appointmentTime: item.appointment.scheduled_time,
+                      appointmentDuration: item.appointment.duration_minutes,
+                    }
+                  })}
+                >
+                  <p className="text-sm font-medium text-[var(--color-text)]">{item.clientName}</p>
+                  <p className="text-xs text-[var(--color-text-secondary)]">
+                    {formatDate(item.appointment.scheduled_date)} at {formatTime12(item.appointment.scheduled_time)}
+                  </p>
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">
+                      {daysSince(item.appointment.scheduled_date)}d ago
+                    </span>
+                    <span className="text-[10px] text-[var(--color-primary)] font-medium">+ Create Note</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

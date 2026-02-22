@@ -783,7 +783,8 @@ export default function BillingPage() {
     { id: 'invoices', label: 'Invoices', icon: <FileText className="w-4 h-4" /> },
     { id: 'payments', label: 'Payments', icon: <DollarSign className="w-4 h-4" /> },
     { id: 'cms1500', label: 'Claim Preview', icon: <ClipboardList className="w-4 h-4" /> },
-    { id: 'insurance', label: 'Insurance', icon: <Shield className="w-4 h-4" />, pro: true },
+    // ── Back-burnered for next feature push ──
+    // { id: 'insurance', label: 'Insurance', icon: <Shield className="w-4 h-4" />, pro: true },
     { id: 'analytics', label: 'Analytics', icon: <BarChart3 className="w-4 h-4" />, pro: true },
     { id: 'stripe', label: 'Stripe Payments', icon: <Zap className="w-4 h-4" />, pro: true },
   ];
@@ -1329,8 +1330,8 @@ export default function BillingPage() {
               </span>
             </div>
             <div className="flex items-center gap-3">
-              {/* Print mode toggle */}
-              <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5" title="CMS-1500 format">
+              {/* Print mode toggle — data-only back-burnered until form calibration is sorted */}
+              {/* <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5" title="CMS-1500 format">
                 <button
                   className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
                     cms1500PrintMode === 'full'
@@ -1353,7 +1354,7 @@ export default function BillingPage() {
                 >
                   Data Only
                 </button>
-              </div>
+              </div> */}
               {/* Output mode toggle */}
               <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
                 <button

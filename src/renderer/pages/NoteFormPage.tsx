@@ -1241,13 +1241,87 @@ export default function NoteFormPage() {
   };
 
   /** Save fixes from the Sign dialog WITHOUT signing — stay in note for continued editing */
-  const handleSaveFixesOnly = (fixes: ValidationFixes) => {
+  const handleSaveFixesOnly = async (fixes: ValidationFixes) => {
     applyFixesToState(fixes);
     setSignDialogOpen(false);
-    // Don't call handleSave(false) — that navigates away.
-    // The state updates from applyFixesToState will be picked up by the auto-save timer,
-    // or the user can click Sign again. Show a toast so they know the fix was applied.
-    setToast('Fixes applied — continue editing or try signing again');
+
+    // Explicitly persist the fixes NOW — don't rely on the auto-save timer.
+    // We can't use handleSave(false) because that navigates away.
+    // Instead, perform a direct IPC save with the merged fix values.
+    try {
+      const docFixes = fixes.documentFixes;
+      const mergedSubjective = docFixes.subjective ?? subjective;
+      const mergedObjective = docFixes.objective ?? objective;
+      const mergedAssessment = docFixes.assessment ?? assessment;
+      const mergedPlan = docFixes.plan ?? plan;
+      const mergedDateOfService = docFixes.date_of_service ?? dateOfService;
+      const filteredCptLines = cptLines.filter(l => l.code.trim());
+
+      const noteData: Record<string, any> = {
+        client_id: parseInt(clientId!, 10),
+        date_of_service: mergedDateOfService,
+        time_in: timeIn,
+        time_out: timeOut,
+        units: filteredCptLines.reduce((sum, l) => sum + (l.units || 0), 0),
+        cpt_code: filteredCptLines[0]?.code || '',
+        cpt_codes: JSON.stringify(filteredCptLines),
+        cpt_modifiers: JSON.stringify(cptModifiers),
+        place_of_service: placeOfService,
+        charge_amount: chargeAmount,
+        subjective: mergedSubjective,
+        objective: mergedObjective,
+        assessment: mergedAssessment,
+        plan: mergedPlan,
+        goals_addressed: JSON.stringify(goalsAddressed),
+        note_type: noteMode !== 'soap' ? noteMode : (isContractedVisit ? noteType : 'soap'),
+        entity_id: isContractedVisit ? entityId ?? undefined : undefined,
+        rate_override: isContractedVisit ? rateOverride ?? undefined : undefined,
+        rate_override_reason: isContractedVisit ? rateOverrideReason : '',
+        patient_name: isContractedVisit ? patientName : '',
+      };
+
+      // Merge discharge fixes
+      if (isDischarge) {
+        noteData.discharge_data = JSON.stringify({
+          ...dischargeData,
+          ...(docFixes.discharge_reason !== undefined ? { discharge_reason: docFixes.discharge_reason } : {}),
+          ...(docFixes.discharge_reason_detail !== undefined ? { discharge_reason_detail: docFixes.discharge_reason_detail } : {}),
+          ...(docFixes.current_level_of_function !== undefined ? { current_level_of_function: docFixes.current_level_of_function } : {}),
+        });
+      }
+
+      if (savedNoteId) {
+        await window.api.notes.update(savedNoteId, noteData);
+      } else {
+        const created = await window.api.notes.create(noteData as any);
+        if (created?.id) {
+          setSavedNoteId(created.id);
+          if (appointmentId) {
+            try { await window.api.appointments.linkNote(appointmentId, created.id); } catch {}
+          }
+        }
+      }
+
+      // Save goal fixes if present
+      if (Object.keys(fixes.goalFixes).length > 0 && savedNoteId) {
+        const mergedGoals = progressReportGoals.map(g => {
+          const fix = fixes.goalFixes[g.goal_id];
+          if (!fix) return g;
+          return {
+            ...g,
+            ...(fix.status_at_report ? { status_at_report: fix.status_at_report } : {}),
+            ...(fix.performance_data !== undefined ? { performance_data: fix.performance_data } : {}),
+          };
+        });
+        await window.api.progressReportGoals.upsert(savedNoteId, mergedGoals);
+      }
+
+      setLastAutoSaved(new Date().toLocaleTimeString());
+      setToast('Fixes applied — continue editing or try signing again');
+    } catch (err) {
+      console.error('Failed to save fixes:', err);
+      setToast('Fixes applied to form — save manually before leaving');
+    }
   };
 
   /** Handle client record updates from Fix-It dialog */

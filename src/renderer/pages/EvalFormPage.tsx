@@ -1682,7 +1682,7 @@ export default function EvalFormPage() {
     setTimeout(() => handleSave(true, docFixes, goalFixes), 50);
   };
 
-  /** Save fixes from the Sign dialog WITHOUT signing — just apply and close */
+  /** Save fixes from the Sign dialog WITHOUT signing — stay on page for continued editing */
   const handleSaveFixesOnly = (fixes: ValidationFixes) => {
     // Apply document fixes to eval content state (for UI display)
     if (Object.keys(fixes.documentFixes).length > 0) {
@@ -1693,10 +1693,11 @@ export default function EvalFormPage() {
     }
 
     setSignDialogOpen(false);
-    // Pass fixes directly into handleSave so they're merged at save time
+    // Pass fixes directly into handleSave so they're merged at save time.
+    // stayOnPage=true prevents navigation so user can continue editing.
     const docFixes = Object.keys(fixes.documentFixes).length > 0 ? fixes.documentFixes : undefined;
     const goalFixes = Object.keys(fixes.goalFixes).length > 0 ? fixes.goalFixes : undefined;
-    setTimeout(() => handleSave(false, docFixes, goalFixes), 50);
+    setTimeout(() => handleSave(false, docFixes, goalFixes, true), 50);
   };
 
   /** Handle client record updates from Fix-It dialog */
@@ -1707,7 +1708,7 @@ export default function EvalFormPage() {
     setClient(updated);
   };
 
-  const handleSave = async (sign: boolean, documentFixes?: Record<string, any>, goalFixes?: Record<number, any>) => {
+  const handleSave = async (sign: boolean, documentFixes?: Record<string, any>, goalFixes?: Record<number, any>, stayOnPage?: boolean) => {
     if (!clientId || !client || !content) return;
 
     // Cancel any pending auto-save to prevent it from overwriting signed_at
@@ -1872,8 +1873,12 @@ export default function EvalFormPage() {
       if (sign) {
         setExistingSignedAt(new Date().toISOString());
       }
-      setToast(sign ? 'Evaluation signed and saved' : 'Draft saved');
-      setTimeout(() => navigate(`/clients/${clientId}`), 500);
+      if (stayOnPage) {
+        setToast('Fixes applied — continue editing or try signing again');
+      } else {
+        setToast(sign ? 'Evaluation signed and saved' : 'Draft saved');
+        setTimeout(() => navigate(`/clients/${clientId}`), 500);
+      }
     } catch (err) {
       console.error('Failed to save evaluation:', err);
       setToast('Failed to save evaluation. Please try again.');

@@ -198,185 +198,186 @@ function uc(val: string | undefined | null): string {
 }
 
 // ── NUCC Typewriter Grid Coordinates ──
-// CMS-1500 designed for 10 CPI (7.2pt/char) × 6 LPI (12pt/line)
-// Coordinates from the NUCC field position reference
-// These are ballpark approximations — fine-tune after printing on real forms
+// CMS-1500 (02/12 revision) designed for 10 CPI (7.2pt/char) × 6 LPI (12pt/line)
+// Calibrated from physical CMS-1500 (02/12) measurements — fine-tune per printer using Settings offsets
+// All Y values: inches from top of letter paper × 72 pt/inch
+// All X values: inches from left edge × 72 pt/inch
 const NUCC = {
-  // Box 1 — Insurance type checkboxes (top row)
-  box1_medicare:  { x: 50,  y: 72 },
-  box1_medicaid:  { x: 109, y: 72 },
-  box1_tricare:   { x: 158, y: 72 },
-  box1_champva:   { x: 204, y: 72 },
-  box1_group:     { x: 246, y: 72 },
-  box1_feca:      { x: 296, y: 72 },
-  box1_other:     { x: 345, y: 72 },
+  // Box 1 — Insurance type checkboxes (top row, ~1.05" from top = 76pt)
+  box1_medicare:  { x: 50,  y: 76 },
+  box1_medicaid:  { x: 109, y: 76 },
+  box1_tricare:   { x: 158, y: 76 },
+  box1_champva:   { x: 204, y: 76 },
+  box1_group:     { x: 246, y: 76 },
+  box1_feca:      { x: 296, y: 76 },
+  box1_other:     { x: 345, y: 76 },
 
-  // Box 1a — Insured's ID Number
-  box1a: { x: 274, y: 86 },
+  // Box 1a — Insured's ID Number (~1.2" = 86pt)
+  box1a: { x: 310, y: 86 },
 
-  // Box 2 — Patient Name
-  box2: { x: 7, y: 122 },
+  // Box 2 — Patient Name (~1.7" = 122pt)
+  box2: { x: 18, y: 122 },
 
-  // Box 3 — Patient DOB and Sex
-  box3_dob: { x: 274, y: 108 },
-  box3_sex_m: { x: 394, y: 108 },
-  box3_sex_f: { x: 432, y: 108 },
+  // Box 3 — Patient DOB and Sex (~1.5" = 108pt)
+  box3_dob: { x: 310, y: 108 },
+  box3_sex_m: { x: 430, y: 108 },
+  box3_sex_f: { x: 468, y: 108 },
 
-  // Box 4 — Insured's Name
-  box4: { x: 274, y: 144 },
+  // Box 4 — Insured's Name (~1.95" = 140pt)
+  box4: { x: 310, y: 140 },
 
-  // Box 5 — Patient's Address
-  box5_street: { x: 7, y: 166 },
-  box5_city:   { x: 7, y: 187 },
+  // Box 5 — Patient's Address (~2.25" street = 162pt, ~2.6" CSZ = 187pt, ~2.85" phone = 205pt)
+  box5_street: { x: 18, y: 162 },
+  box5_city:   { x: 18, y: 187 },
   box5_state:  { x: 155, y: 187 },
   box5_zip:    { x: 200, y: 187 },
-  box5_phone:  { x: 7, y: 209 },
+  box5_phone:  { x: 18, y: 205 },
 
-  // Box 6 — Patient Relationship (checkboxes)
-  box6_self:   { x: 317, y: 144 },
-  box6_spouse: { x: 359, y: 144 },
-  box6_child:  { x: 399, y: 144 },
-  box6_other:  { x: 439, y: 144 },
+  // Box 6 — Patient Relationship (checkboxes, same row as Box 4, ~1.95" = 140pt)
+  box6_self:   { x: 350, y: 140 },
+  box6_spouse: { x: 392, y: 140 },
+  box6_child:  { x: 432, y: 140 },
+  box6_other:  { x: 472, y: 140 },
 
-  // Box 7 — Insured's Address
-  box7_street: { x: 274, y: 166 },
-  box7_city:   { x: 274, y: 187 },
-  box7_state:  { x: 425, y: 187 },
-  box7_zip:    { x: 470, y: 187 },
+  // Box 7 — Insured's Address (same rows as Box 5)
+  box7_street: { x: 310, y: 162 },
+  box7_city:   { x: 310, y: 187 },
+  box7_state:  { x: 460, y: 187 },
+  box7_zip:    { x: 505, y: 187 },
 
   // Box 8 — Reserved
-  // Box 9 — Other Insured's Name
-  box9: { x: 7, y: 223 },
+  // Box 9 — Other Insured's Name (~3.1" = 223pt)
+  box9: { x: 18, y: 223 },
   // Box 9a — Other Insured's Policy or Group Number
-  box9a: { x: 7, y: 245 },
+  box9a: { x: 18, y: 236 },
 
-  // Box 10 — Condition Related To
-  box10a_yes: { x: 207, y: 288 },
-  box10a_no:  { x: 237, y: 288 },
-  box10b_yes: { x: 207, y: 302 },
-  box10b_no:  { x: 237, y: 302 },
-  box10b_state: { x: 256, y: 302 },
-  box10c_yes: { x: 207, y: 317 },
-  box10c_no:  { x: 237, y: 317 },
+  // Box 10 — Condition Related To (~3.55" = 256pt, rows ~14pt apart)
+  box10a_yes: { x: 207, y: 256 },
+  box10a_no:  { x: 237, y: 256 },
+  box10b_yes: { x: 207, y: 270 },
+  box10b_no:  { x: 237, y: 270 },
+  box10b_state: { x: 256, y: 270 },
+  box10c_yes: { x: 207, y: 284 },
+  box10c_no:  { x: 237, y: 284 },
 
-  // Box 11 — Insured's Policy Group or FECA Number
-  box11: { x: 274, y: 223 },
-  // Box 11a — Insured's DOB and Sex
-  box11a_dob: { x: 304, y: 245 },
-  box11a_sex_m: { x: 440, y: 245 },
-  box11a_sex_f: { x: 478, y: 245 },
-  // Box 11b — Other Claim ID
-  box11b: { x: 274, y: 259 },
-  // Box 11c — Insurance Plan Name
-  box11c: { x: 274, y: 274 },
-  // Box 11d — Is There Another Health Benefit Plan?
-  box11d_yes: { x: 340, y: 288 },
-  box11d_no:  { x: 380, y: 288 },
+  // Box 11 — Insured's Policy Group or FECA Number (~3.1" = 223pt)
+  box11: { x: 310, y: 223 },
+  // Box 11a — Insured's DOB and Sex (~3.35" = 241pt)
+  box11a_dob: { x: 340, y: 241 },
+  box11a_sex_m: { x: 476, y: 241 },
+  box11a_sex_f: { x: 514, y: 241 },
+  // Box 11b — Other Claim ID (~3.55" = 256pt)
+  box11b: { x: 310, y: 256 },
+  // Box 11c — Insurance Plan Name (~3.75" = 270pt)
+  box11c: { x: 310, y: 270 },
+  // Box 11d — Is There Another Health Benefit Plan? (~3.95" = 284pt)
+  box11d_yes: { x: 376, y: 284 },
+  box11d_no:  { x: 416, y: 284 },
 
-  // Box 12 — Patient's or Authorized Person's Signature
-  box12:      { x: 7,   y: 338 },
-  box12_date: { x: 200, y: 338 },
+  // Box 12 — Patient's or Authorized Person's Signature (~4.55" = 328pt)
+  box12:      { x: 18,  y: 328 },
+  box12_date: { x: 200, y: 328 },
   // Box 13 — Insured's or Authorized Person's Signature
-  box13: { x: 274, y: 338 },
+  box13: { x: 310, y: 328 },
 
-  // Box 14 — Date of Current Illness
-  box14:           { x: 7,   y: 360 },
-  box14_qualifier: { x: 200, y: 360 },
+  // Box 14 — Date of Current Illness (~5.3" = 382pt)
+  box14:           { x: 18,  y: 382 },
+  box14_qualifier: { x: 200, y: 382 },
 
-  // Box 15 — Other Date (qual)
-  box15: { x: 274, y: 360 },
+  // Box 15 — Other Date (qual) (~5.3" = 382pt)
+  box15: { x: 310, y: 382 },
   // Box 16 — Dates Patient Unable to Work
-  box16_from: { x: 390, y: 360 },
-  box16_to:   { x: 470, y: 360 },
+  box16_from: { x: 426, y: 382 },
+  box16_to:   { x: 506, y: 382 },
 
-  // Box 17 — Name of Referring Provider
-  box17: { x: 7, y: 382 },
+  // Box 17 — Name of Referring Provider (~5.6" = 403pt)
+  box17: { x: 18, y: 403 },
   // Box 17a — ID Number of Referring Provider (qualifier)
-  box17a_qual: { x: 274, y: 382 },
-  // Box 17b — NPI
-  box17b: { x: 350, y: 396 },
+  box17a_qual: { x: 310, y: 403 },
+  // Box 17b — NPI (~5.75" = 414pt)
+  box17b: { x: 386, y: 414 },
 
   // Box 18 — Hospitalization Dates
-  box18_from: { x: 274, y: 396 },
-  box18_to:   { x: 390, y: 396 },
+  box18_from: { x: 310, y: 414 },
+  box18_to:   { x: 426, y: 414 },
 
-  // Box 19 — Additional Claim Information
-  box19: { x: 7, y: 418 },
+  // Box 19 — Additional Claim Information (~5.95" = 428pt)
+  box19: { x: 18, y: 428 },
 
   // Box 20 — Outside Lab
-  box20_yes:    { x: 340, y: 418 },
-  box20_no:     { x: 380, y: 418 },
-  box20_charges: { x: 440, y: 418 },
+  box20_yes:    { x: 376, y: 428 },
+  box20_no:     { x: 416, y: 428 },
+  box20_charges: { x: 476, y: 428 },
 
-  // Box 21 — Diagnosis Codes (ICD indicator + up to 12 codes)
-  box21_icd: { x: 7, y: 432 },
+  // Box 21 — Diagnosis Codes (ICD indicator + up to 12 codes, ~6.25" = 450pt)
+  box21_icd: { x: 18, y: 450 },
   // Diagnosis positions: 4 columns, 3 rows
-  // Col 0: x=7, Col 1: x=140, Col 2: x=274, Col 3: x=410
-  // Row 0: y=439, Row 1: y=450, Row 2: y=461
-  dx_colX: [7, 140, 274, 410] as readonly number[],
-  dx_rowY: [439, 450, 461] as readonly number[],
+  // Col 0: x=18, Col 1: x=155, Col 2: x=310, Col 3: x=446
+  // Row 0: y=461, Row 1: y=472, Row 2: y=482
+  dx_colX: [18, 155, 310, 446] as readonly number[],
+  dx_rowY: [461, 472, 482] as readonly number[],
 
-  // Box 22 — Resubmission Code / Original Ref Number
-  box22_code: { x: 7,   y: 468 },
-  box22_ref:  { x: 100, y: 468 },
+  // Box 22 — Resubmission Code / Original Ref Number (~6.85" = 493pt)
+  box22_code: { x: 18,  y: 493 },
+  box22_ref:  { x: 100, y: 493 },
   // Box 23 — Prior Authorization Number
-  box23: { x: 274, y: 468 },
+  box23: { x: 310, y: 493 },
 
   // Box 24 — Service Lines (up to 6 per page)
-  // Row Y positions: start at 497, ~18pt apart
-  svc_rowY: [497, 515, 533, 551, 569, 587] as readonly number[],
-  // Column X positions
-  svc_dateFrom:  7,
-  svc_dateTo:    72,
-  svc_pos:       130,
-  svc_emg:       144,
-  svc_cpt:       151,
-  svc_mod1:      202,
-  svc_mod2:      216,
-  svc_mod3:      230,
-  svc_mod4:      245,
-  svc_dxPtr:     259,
-  svc_charges:   288,
-  svc_units:     353,
-  svc_epsdt:     374,
-  svc_idQual:    389,
-  svc_npi:       403,
+  // Row Y positions: ~7.1" to ~8.35", each row ~18pt apart
+  svc_rowY: [511, 529, 547, 565, 583, 601] as readonly number[],
+  // Column X positions (per NUCC reference)
+  svc_dateFrom:  30,   // A. Date From  (~0.42")
+  svc_dateTo:    84,   // A. Date To    (~1.17")
+  svc_pos:       150,  // B. POS        (~2.08")
+  svc_emg:       170,  // C. EMG        (~2.36")
+  svc_cpt:       180,  // D. CPT/HCPCS  (~2.50")
+  svc_mod1:      230,  // D. Modifier 1 (~3.19")
+  svc_mod2:      250,  // D. Modifier 2 (~3.47")
+  svc_mod3:      270,  // D. Modifier 3 (~3.75")
+  svc_mod4:      290,  // D. Modifier 4 (~4.03")
+  svc_dxPtr:     310,  // E. Dx Pointer (~4.31")
+  svc_charges:   330,  // F. Charges    (~4.58")
+  svc_units:     400,  // G. Days/Units (~5.56")
+  svc_epsdt:     430,  // H. EPSDT      (~5.97")
+  svc_idQual:    450,  // I. ID Qual    (~6.25")
+  svc_npi:       470,  // J. NPI        (~6.53")
 
-  // Box 25 — Federal Tax ID Number
-  box25:     { x: 7,   y: 605 },
-  box25_ssn: { x: 155, y: 605 },
-  box25_ein: { x: 175, y: 605 },
+  // Box 25 — Federal Tax ID Number (~8.9" = 641pt)
+  box25:     { x: 18,  y: 641 },
+  box25_ssn: { x: 155, y: 641 },
+  box25_ein: { x: 175, y: 641 },
 
-  // Box 26 — Patient's Account Number
-  box26: { x: 200, y: 605 },
+  // Box 26 — Patient's Account Number (~8.9" = 641pt)
+  box26: { x: 200, y: 641 },
 
-  // Box 27 — Accept Assignment
-  box27_yes: { x: 350, y: 605 },
-  box27_no:  { x: 390, y: 605 },
+  // Box 27 — Accept Assignment (~8.9" = 641pt)
+  box27_yes: { x: 386, y: 641 },
+  box27_no:  { x: 426, y: 641 },
 
-  // Box 28 — Total Charge
-  box28: { x: 440, y: 605 },
+  // Box 28 — Total Charge (~8.9" = 641pt)
+  box28: { x: 476, y: 641 },
 
-  // Box 29 — Amount Paid
-  box29: { x: 7, y: 626 },
+  // Box 29 — Amount Paid (~9.05" = 652pt)
+  box29: { x: 18, y: 652 },
 
   // Box 30 — Reserved
-  // Box 31 — Signature of Physician
-  box31_sig:  { x: 7,   y: 655 },
-  box31_date: { x: 7,   y: 667 },
+  // Box 31 — Signature of Physician (~9.4" = 677pt, date ~9.55" = 688pt)
+  box31_sig:  { x: 18,  y: 677 },
+  box31_date: { x: 18,  y: 688 },
 
-  // Box 32 — Service Facility
-  box32_name:    { x: 200, y: 655 },
-  box32_addr:    { x: 200, y: 667 },
-  box32_csz:     { x: 200, y: 679 },
-  box32a_npi:    { x: 200, y: 720 },
+  // Box 32 — Service Facility (name ~9.4" = 677pt, addr = 688, CSZ = 698, NPI = 709)
+  box32_name:    { x: 200, y: 677 },
+  box32_addr:    { x: 200, y: 688 },
+  box32_csz:     { x: 200, y: 698 },
+  box32a_npi:    { x: 200, y: 709 },
 
-  // Box 33 — Billing Provider
-  box33_phone:   { x: 400, y: 641 },
-  box33_name:    { x: 400, y: 655 },
-  box33_addr:    { x: 400, y: 667 },
-  box33_csz:     { x: 400, y: 679 },
-  box33a_npi:    { x: 400, y: 720 },
+  // Box 33 — Billing Provider (phone ~9.25" = 666pt, name = 677, addr = 688, CSZ = 698, NPI = 709)
+  box33_phone:   { x: 400, y: 666 },
+  box33_name:    { x: 400, y: 677 },
+  box33_addr:    { x: 400, y: 688 },
+  box33_csz:     { x: 400, y: 698 },
+  box33a_npi:    { x: 400, y: 709 },
 };
 
 function drawCheckbox(doc: jsPDF, x: number, y: number, size: number = 6) {
@@ -855,46 +856,43 @@ function placePatientData(doc: jsPDF, data: CMS1500Data, opts: CMS1500Options) {
     return;
   }
 
-  // ── Full-chrome mode (existing code) ──
+  // ── Full-chrome mode — data positions derived from NUCC coordinates ──
   setBlackData(doc);
   doc.setFont('Courier', 'bold');
   doc.setFontSize(FONT_SIZE);
 
-  const midX = (LEFT + RIGHT) / 2;
+  // Box 1a: Insured ID
+  doc.text(data.insuredId, ox(NUCC.box1a.x, opts), oy(NUCC.box1a.y, opts));
 
-  // Box 1a: Insured ID — data entry area below checkbox row
-  doc.text(data.insuredId, ox(midX + 8, opts), oy(TOP + 36, opts));
+  // Box 2: Patient name
+  doc.text(data.patientName, ox(NUCC.box2.x, opts), oy(NUCC.box2.y, opts));
 
-  // Box 2: Patient name — data entry area below label
-  doc.text(data.patientName, ox(LEFT + 8, opts), oy(TOP + 53, opts));
+  // Box 3: DOB + Sex
+  doc.text(data.patientDob, ox(NUCC.box3_dob.x, opts), oy(NUCC.box3_dob.y, opts));
+  if (data.patientSex === 'M') doc.text('X', ox(NUCC.box3_sex_m.x, opts), oy(NUCC.box3_sex_m.y, opts));
+  if (data.patientSex === 'F') doc.text('X', ox(NUCC.box3_sex_f.x, opts), oy(NUCC.box3_sex_f.y, opts));
 
-  // Box 3: DOB — data entry area below label
-  doc.text(data.patientDob, ox(midX + 8, opts), oy(TOP + 53, opts));
-  // Sex checkbox
-  if (data.patientSex === 'M') doc.text('X', ox(midX + 161, opts), oy(TOP + 53, opts));
-  if (data.patientSex === 'F') doc.text('X', ox(midX + 189, opts), oy(TOP + 53, opts));
+  // Box 4: Insured name
+  doc.text(data.insuredName, ox(NUCC.box4.x, opts), oy(NUCC.box4.y, opts));
 
-  // Box 4: Insured name — data entry area below label
-  doc.text(data.insuredName, ox(LEFT + 8, opts), oy(TOP + 81, opts));
-
-  // Box 5: Patient address — data entry area below label
-  doc.text(data.patientAddress, ox(LEFT + 8, opts), oy(TOP + 109, opts));
-  doc.text(data.patientCity, ox(LEFT + 8, opts), oy(TOP + 128, opts));
-  doc.text(data.patientState, ox(LEFT + 140, opts), oy(TOP + 128, opts));
-  doc.text(data.patientZip, ox(LEFT + 180, opts), oy(TOP + 128, opts));
-  doc.text(data.patientPhone, ox(LEFT + 80, opts), oy(TOP + 137, opts));
+  // Box 5: Patient address
+  doc.text(data.patientAddress, ox(NUCC.box5_street.x, opts), oy(NUCC.box5_street.y, opts));
+  doc.text(data.patientCity, ox(NUCC.box5_city.x, opts), oy(NUCC.box5_city.y, opts));
+  doc.text(data.patientState, ox(NUCC.box5_state.x, opts), oy(NUCC.box5_state.y, opts));
+  doc.text(data.patientZip, ox(NUCC.box5_zip.x, opts), oy(NUCC.box5_zip.y, opts));
+  doc.text(data.patientPhone, ox(NUCC.box5_phone.x, opts), oy(NUCC.box5_phone.y, opts));
 
   // Box 6: Relationship
-  if (data.patientRelationship === 'self') doc.text('X', ox(midX + 11, opts), oy(TOP + 81, opts));
-  if (data.patientRelationship === 'spouse') doc.text('X', ox(midX + 53, opts), oy(TOP + 81, opts));
-  if (data.patientRelationship === 'child') doc.text('X', ox(midX + 93, opts), oy(TOP + 81, opts));
-  if (data.patientRelationship === 'other') doc.text('X', ox(midX + 133, opts), oy(TOP + 81, opts));
+  if (data.patientRelationship === 'self') doc.text('X', ox(NUCC.box6_self.x, opts), oy(NUCC.box6_self.y, opts));
+  if (data.patientRelationship === 'spouse') doc.text('X', ox(NUCC.box6_spouse.x, opts), oy(NUCC.box6_spouse.y, opts));
+  if (data.patientRelationship === 'child') doc.text('X', ox(NUCC.box6_child.x, opts), oy(NUCC.box6_child.y, opts));
+  if (data.patientRelationship === 'other') doc.text('X', ox(NUCC.box6_other.x, opts), oy(NUCC.box6_other.y, opts));
 
   // Box 7: Insured address
-  doc.text(data.insuredAddress, ox(midX + 8, opts), oy(TOP + 109, opts));
-  doc.text(data.insuredCity, ox(midX + 8, opts), oy(TOP + 128, opts));
-  doc.text(data.insuredState, ox(midX + 140, opts), oy(TOP + 128, opts));
-  doc.text(data.insuredZip, ox(midX + 180, opts), oy(TOP + 128, opts));
+  doc.text(data.insuredAddress, ox(NUCC.box7_street.x, opts), oy(NUCC.box7_street.y, opts));
+  doc.text(data.insuredCity, ox(NUCC.box7_city.x, opts), oy(NUCC.box7_city.y, opts));
+  doc.text(data.insuredState, ox(NUCC.box7_state.x, opts), oy(NUCC.box7_state.y, opts));
+  doc.text(data.insuredZip, ox(NUCC.box7_zip.x, opts), oy(NUCC.box7_zip.y, opts));
 }
 
 function placeInsuranceData(doc: jsPDF, data: CMS1500Data, opts: CMS1500Options) {
@@ -938,44 +936,42 @@ function placeInsuranceData(doc: jsPDF, data: CMS1500Data, opts: CMS1500Options)
     return;
   }
 
-  // ── Full-chrome mode (existing code) ──
+  // ── Full-chrome mode — data positions derived from NUCC coordinates ──
   setBlackData(doc);
   doc.setFont('Courier', 'bold');
   doc.setFontSize(FONT_SIZE);
 
-  const midX = (LEFT + RIGHT) / 2;
-
   // Box 9: Other insured name
-  doc.text(data.otherInsuredName, ox(LEFT + 8, opts), oy(TOP + 162, opts));
+  doc.text(data.otherInsuredName, ox(NUCC.box9.x, opts), oy(NUCC.box9.y, opts));
 
   // Box 10: Condition related
-  if (data.employmentRelated) doc.text('X', ox(LEFT + 171, opts), oy(TOP + 191, opts));
-  else doc.text('X', ox(LEFT + 201, opts), oy(TOP + 191, opts));
+  if (data.employmentRelated) doc.text('X', ox(NUCC.box10a_yes.x, opts), oy(NUCC.box10a_yes.y, opts));
+  else doc.text('X', ox(NUCC.box10a_no.x, opts), oy(NUCC.box10a_no.y, opts));
   if (data.autoAccident) {
-    doc.text('X', ox(LEFT + 171, opts), oy(TOP + 199, opts));
-    if (data.autoAccidentState) doc.text(data.autoAccidentState, ox(LEFT + 220, opts), oy(TOP + 199, opts));
+    doc.text('X', ox(NUCC.box10b_yes.x, opts), oy(NUCC.box10b_yes.y, opts));
+    if (data.autoAccidentState) doc.text(data.autoAccidentState, ox(NUCC.box10b_state.x, opts), oy(NUCC.box10b_state.y, opts));
   } else {
-    doc.text('X', ox(LEFT + 201, opts), oy(TOP + 199, opts));
+    doc.text('X', ox(NUCC.box10b_no.x, opts), oy(NUCC.box10b_no.y, opts));
   }
 
   // Box 11: Insured group
-  doc.text(data.insuredGroupNumber, ox(midX + 8, opts), oy(TOP + 162, opts));
+  doc.text(data.insuredGroupNumber, ox(NUCC.box11.x, opts), oy(NUCC.box11.y, opts));
 
   // Box 11a: Insured DOB/Sex
-  if (data.insuredDob) doc.text(data.insuredDob, ox(midX + 30, opts), oy(TOP + 181, opts));
+  if (data.insuredDob) doc.text(data.insuredDob, ox(NUCC.box11a_dob.x, opts), oy(NUCC.box11a_dob.y, opts));
 
   // Box 11c: Plan name
-  doc.text(data.insurancePlanName, ox(midX + 30, opts), oy(TOP + 208, opts));
+  doc.text(data.insurancePlanName, ox(NUCC.box11c.x, opts), oy(NUCC.box11c.y, opts));
 
   // Box 12: Patient signature
   doc.setFontSize(7);
-  doc.text(data.patientSignature, ox(LEFT + 60, opts), oy(TOP + 248, opts));
-  if (data.patientSignatureDate) doc.text(data.patientSignatureDate, ox(LEFT + 200, opts), oy(TOP + 248, opts));
+  doc.text(data.patientSignature, ox(NUCC.box12.x + 50, opts), oy(NUCC.box12.y, opts));
+  if (data.patientSignatureDate) doc.text(data.patientSignatureDate, ox(NUCC.box12_date.x, opts), oy(NUCC.box12_date.y, opts));
   doc.setFontSize(FONT_SIZE);
 
   // Box 13: Insured signature
   doc.setFontSize(7);
-  doc.text(data.insuredSignature, ox(midX + 60, opts), oy(TOP + 248, opts));
+  doc.text(data.insuredSignature, ox(NUCC.box13.x + 50, opts), oy(NUCC.box13.y, opts));
   doc.setFontSize(FONT_SIZE);
 }
 
@@ -999,47 +995,45 @@ function placeClaimData(doc: jsPDF, data: CMS1500Data, opts: CMS1500Options) {
     return;
   }
 
-  // ── Full-chrome mode (existing code) ──
+  // ── Full-chrome mode — data positions derived from NUCC coordinates ──
   setBlackData(doc);
   doc.setFont('Courier', 'bold');
   doc.setFontSize(FONT_SIZE);
 
-  const midX = (LEFT + RIGHT) / 2;
-
-  // Box 14: Date of illness — between hLines TOP+252 and TOP+280
+  // Box 14: Date of illness
   if (data.dateOfIllness) {
-    doc.text(data.dateOfIllness, ox(LEFT + 8, opts), oy(TOP + 270, opts));
+    doc.text(data.dateOfIllness, ox(NUCC.box14.x, opts), oy(NUCC.box14.y, opts));
   }
   if (data.dateOfIllnessQualifier) {
     doc.setFontSize(SMALL_FONT);
-    doc.text(data.dateOfIllnessQualifier, ox(LEFT + 200, opts), oy(TOP + 270, opts));
+    doc.text(data.dateOfIllnessQualifier, ox(NUCC.box14_qualifier.x, opts), oy(NUCC.box14_qualifier.y, opts));
     doc.setFontSize(FONT_SIZE);
   }
 
-  // Box 17: Referring provider — between hLines TOP+280 and TOP+308
+  // Box 17: Referring provider
   if (data.referringProvider) {
-    doc.text(data.referringProvider, ox(LEFT + 8, opts), oy(TOP + 298, opts));
+    doc.text(data.referringProvider, ox(NUCC.box17.x, opts), oy(NUCC.box17.y, opts));
   }
   if (data.referringProviderQualifier) {
-    doc.text(data.referringProviderQualifier, ox(midX + 8, opts), oy(TOP + 298, opts));
+    doc.text(data.referringProviderQualifier, ox(NUCC.box17a_qual.x, opts), oy(NUCC.box17a_qual.y, opts));
   }
   if (data.referringProviderNpi) {
-    doc.text(data.referringProviderNpi, ox(midX + 80, opts), oy(TOP + 298, opts));
+    doc.text(data.referringProviderNpi, ox(NUCC.box17b.x, opts), oy(NUCC.box17b.y, opts));
   }
 
-  // Box 19: Additional claim info — between hLines TOP+308 and TOP+336
+  // Box 19: Additional claim info
   if (data.additionalClaimInfo) {
     doc.setFontSize(6);
-    doc.text(data.additionalClaimInfo.slice(0, 80), ox(LEFT + 8, opts), oy(TOP + 348, opts));
+    doc.text(data.additionalClaimInfo.slice(0, 80), ox(NUCC.box19.x, opts), oy(NUCC.box19.y, opts));
     doc.setFontSize(FONT_SIZE);
   }
 
   // Box 22: Resubmission code
-  if (data.resubmissionCode) doc.text(data.resubmissionCode, ox(LEFT + 8, opts), oy(TOP + 374, opts));
-  if (data.originalRefNumber) doc.text(data.originalRefNumber, ox(LEFT + 100, opts), oy(TOP + 374, opts));
+  if (data.resubmissionCode) doc.text(data.resubmissionCode, ox(NUCC.box22_code.x, opts), oy(NUCC.box22_code.y, opts));
+  if (data.originalRefNumber) doc.text(data.originalRefNumber, ox(NUCC.box22_ref.x, opts), oy(NUCC.box22_ref.y, opts));
 
   // Box 23: Prior auth
-  doc.text(data.priorAuthNumber, ox(midX + 8, opts), oy(TOP + 374, opts));
+  doc.text(data.priorAuthNumber, ox(NUCC.box23.x, opts), oy(NUCC.box23.y, opts));
 }
 
 function placeDiagnoses(doc: jsPDF, data: CMS1500Data, opts: CMS1500Options) {
@@ -1059,25 +1053,19 @@ function placeDiagnoses(doc: jsPDF, data: CMS1500Data, opts: CMS1500Options) {
     return;
   }
 
-  // ── Full-chrome mode ──
+  // ── Full-chrome mode — data positions derived from NUCC coordinates ──
   setBlackData(doc);
   doc.setFont('Courier', 'bold');
   doc.setFontSize(FONT_SIZE);
 
-  // Box 21: Up to 12 diagnoses in 4 columns × 3 rows
-  // Chrome labels are at LEFT+8, TOP+358 with colWidth=130, rowHeight=10
-  // Data goes next to the letter label with 12pt offset for "A." prefix
-  const dxStartX = LEFT + 20;  // offset past the chrome "A." label
-  const dxStartY = TOP + 358;
-  const dxColWidth = 130;
-  const dxRowHeight = 10;
-
+  // Box 21: Up to 12 diagnoses in 4 columns × 3 rows — using NUCC grid
+  // Small offset (+12pt) past the chrome "A." label prefix
   for (let i = 0; i < Math.min(12, data.diagnoses.length); i++) {
     if (!data.diagnoses[i]) continue;
     const col = Math.floor(i / 3);
     const row = i % 3;
-    const x = dxStartX + col * dxColWidth;
-    const y = dxStartY + row * dxRowHeight;
+    const x = NUCC.dx_colX[col] + 12; // offset past "A." label
+    const y = NUCC.dx_rowY[row];
     doc.text(data.diagnoses[i], ox(x, opts), oy(y, opts));
   }
 }
@@ -1110,37 +1098,32 @@ function placeServiceLines(doc: jsPDF, data: CMS1500Data, page: number, opts: CM
     return;
   }
 
-  // ── Full-chrome mode ──
+  // ── Full-chrome mode — data positions derived from NUCC coordinates ──
   setBlackData(doc);
   doc.setFont('Courier', 'bold');
   doc.setFontSize(7);
 
   const startIdx = page * 6;
   const endIdx = Math.min(startIdx + 6, data.serviceLines.length);
-  // Service line rows: chrome draws rows at TOP+400 (header), data rows every 22pt
-  // Row numbers drawn at TOP+408 + i*22, data should be in same row
-  const lineStartY = TOP + 408;
-  const lineHeight = 22;
 
   for (let i = startIdx; i < endIdx; i++) {
     const line = data.serviceLines[i];
     const row = i - startIdx;
-    const y = lineStartY + row * lineHeight;
+    const y = NUCC.svc_rowY[row];
 
-    // Column positions aligned with chrome header columns
-    doc.text(line.dateFrom, ox(LEFT + 18, opts), oy(y, opts));       // A. FROM
-    doc.text(line.dateTo, ox(LEFT + 68, opts), oy(y, opts));         // A. TO
-    doc.text(line.placeOfService, ox(LEFT + 112, opts), oy(y, opts)); // B. POS
-    if (line.emg) doc.text(line.emg, ox(LEFT + 134, opts), oy(y, opts)); // C. EMG
-    doc.text(line.cptCode, ox(LEFT + 152, opts), oy(y, opts));       // D. CPT/HCPCS
-    if (line.modifier1) doc.text(line.modifier1, ox(LEFT + 204, opts), oy(y, opts)); // Modifier 1
-    if (line.modifier2) doc.text(line.modifier2, ox(LEFT + 220, opts), oy(y, opts)); // Modifier 2
-    if (line.modifier3) doc.text(line.modifier3, ox(LEFT + 236, opts), oy(y, opts)); // Modifier 3
-    if (line.modifier4) doc.text(line.modifier4, ox(LEFT + 252, opts), oy(y, opts)); // Modifier 4
-    doc.text(line.diagnosisPointers, ox(LEFT + 286, opts), oy(y, opts)); // E. Dx Pointer
-    doc.text(line.charges, ox(LEFT + 318, opts), oy(y, opts));       // F. Charges
-    doc.text(line.units, ox(LEFT + 378, opts), oy(y, opts));         // G. Units
-    doc.text(line.renderingNpi, ox(LEFT + 428, opts), oy(y, opts));  // J. Rendering NPI
+    doc.text(line.dateFrom, ox(NUCC.svc_dateFrom, opts), oy(y, opts));           // A. FROM
+    doc.text(line.dateTo, ox(NUCC.svc_dateTo, opts), oy(y, opts));               // A. TO
+    doc.text(line.placeOfService, ox(NUCC.svc_pos, opts), oy(y, opts));           // B. POS
+    if (line.emg) doc.text(line.emg, ox(NUCC.svc_emg, opts), oy(y, opts));       // C. EMG
+    doc.text(line.cptCode, ox(NUCC.svc_cpt, opts), oy(y, opts));                 // D. CPT/HCPCS
+    if (line.modifier1) doc.text(line.modifier1, ox(NUCC.svc_mod1, opts), oy(y, opts));
+    if (line.modifier2) doc.text(line.modifier2, ox(NUCC.svc_mod2, opts), oy(y, opts));
+    if (line.modifier3) doc.text(line.modifier3, ox(NUCC.svc_mod3, opts), oy(y, opts));
+    if (line.modifier4) doc.text(line.modifier4, ox(NUCC.svc_mod4, opts), oy(y, opts));
+    doc.text(line.diagnosisPointers, ox(NUCC.svc_dxPtr, opts), oy(y, opts));      // E. Dx Pointer
+    doc.text(line.charges, ox(NUCC.svc_charges, opts), oy(y, opts));              // F. Charges
+    doc.text(line.units, ox(NUCC.svc_units, opts), oy(y, opts));                  // G. Units
+    doc.text(line.renderingNpi, ox(NUCC.svc_npi, opts), oy(y, opts));             // J. Rendering NPI
   }
 }
 
@@ -1163,28 +1146,28 @@ function placeTotals(doc: jsPDF, data: CMS1500Data, opts: CMS1500Options) {
     return;
   }
 
-  // ── Full-chrome mode (existing code) ──
+  // ── Full-chrome mode — data positions derived from NUCC coordinates ──
   setBlackData(doc);
   doc.setFont('Courier', 'bold');
   doc.setFontSize(FONT_SIZE);
 
   // Box 25: Federal Tax ID
-  doc.text(data.federalTaxId, ox(LEFT + 8, opts), oy(TOP + 574, opts));
-  if (data.federalTaxIdType === 'SSN') doc.text('X', ox(LEFT + 131, opts), oy(TOP + 579, opts));
-  if (data.federalTaxIdType === 'EIN') doc.text('X', ox(LEFT + 154, opts), oy(TOP + 579, opts));
+  doc.text(data.federalTaxId, ox(NUCC.box25.x, opts), oy(NUCC.box25.y, opts));
+  if (data.federalTaxIdType === 'SSN') doc.text('X', ox(NUCC.box25_ssn.x, opts), oy(NUCC.box25_ssn.y, opts));
+  if (data.federalTaxIdType === 'EIN') doc.text('X', ox(NUCC.box25_ein.x, opts), oy(NUCC.box25_ein.y, opts));
 
   // Box 26: Patient account number
-  doc.text(data.patientAccountNumber, ox(LEFT + 208, opts), oy(TOP + 574, opts));
+  doc.text(data.patientAccountNumber, ox(NUCC.box26.x, opts), oy(NUCC.box26.y, opts));
 
   // Box 27: Accept assignment
-  if (data.acceptAssignment) doc.text('X', ox(LEFT + 349, opts), oy(TOP + 579, opts));
-  else doc.text('X', ox(LEFT + 381, opts), oy(TOP + 579, opts));
+  if (data.acceptAssignment) doc.text('X', ox(NUCC.box27_yes.x, opts), oy(NUCC.box27_yes.y, opts));
+  else doc.text('X', ox(NUCC.box27_no.x, opts), oy(NUCC.box27_no.y, opts));
 
-  // Box 28: Total charge — right-aligned in the box
-  if (data.totalCharge) doc.text('$ ' + data.totalCharge, ox(RIGHT - 120, opts), oy(TOP + 574, opts));
+  // Box 28: Total charge
+  if (data.totalCharge) doc.text('$ ' + data.totalCharge, ox(NUCC.box28.x, opts), oy(NUCC.box28.y, opts));
 
   // Box 29: Amount paid
-  doc.text(data.amountPaid, ox(LEFT + 8, opts), oy(TOP + 604, opts));
+  doc.text(data.amountPaid, ox(NUCC.box29.x, opts), oy(NUCC.box29.y, opts));
 }
 
 function placeProviderData(doc: jsPDF, data: CMS1500Data, opts: CMS1500Options) {
@@ -1209,36 +1192,33 @@ function placeProviderData(doc: jsPDF, data: CMS1500Data, opts: CMS1500Options) 
     return;
   }
 
-  // ── Full-chrome mode ──
+  // ── Full-chrome mode — data positions derived from NUCC coordinates ──
   setBlackData(doc);
   doc.setFont('Courier', 'bold');
   doc.setFontSize(7);
 
-  // Box 31: Physician signature — data area between hLines TOP+610 and TOP+660
-  doc.text(data.physicianSignature, ox(LEFT + 8, opts), oy(TOP + 650, opts));
-  doc.text(data.physicianSignatureDate, ox(LEFT + 8, opts), oy(TOP + 658, opts));
+  // Box 31: Physician signature
+  doc.text(data.physicianSignature, ox(NUCC.box31_sig.x, opts), oy(NUCC.box31_sig.y, opts));
+  doc.text(data.physicianSignatureDate, ox(NUCC.box31_date.x, opts), oy(NUCC.box31_date.y, opts));
 
-  // Box 32: Service facility — left edge at LEFT+192
-  doc.text(data.serviceFacilityName, ox(LEFT + 200, opts), oy(TOP + 636, opts));
-  doc.text(data.serviceFacilityAddress, ox(LEFT + 200, opts), oy(TOP + 646, opts));
+  // Box 32: Service facility
+  doc.text(data.serviceFacilityName, ox(NUCC.box32_name.x, opts), oy(NUCC.box32_name.y, opts));
+  doc.text(data.serviceFacilityAddress, ox(NUCC.box32_addr.x, opts), oy(NUCC.box32_addr.y, opts));
   doc.text(
     `${data.serviceFacilityCity}${data.serviceFacilityState ? ', ' + data.serviceFacilityState : ''} ${data.serviceFacilityZip}`,
-    ox(LEFT + 200, opts), oy(TOP + 656, opts)
+    ox(NUCC.box32_csz.x, opts), oy(NUCC.box32_csz.y, opts)
   );
-  // Box 32a NPI — below main data, in the "a. NPI" labeled sub-area
-  doc.text(data.serviceFacilityNpi, ox(LEFT + 230, opts), oy(TOP + 672, opts));
+  doc.text(data.serviceFacilityNpi, ox(NUCC.box32a_npi.x + 30, opts), oy(NUCC.box32a_npi.y, opts));
 
-  // Box 33: Billing provider — left edge at RIGHT-180
-  // Phone goes at the top of the box (first line, before provider name)
-  doc.text(data.billingProviderPhone, ox(RIGHT - 100, opts), oy(TOP + 626, opts));
-  doc.text(data.billingProviderName, ox(RIGHT - 172, opts), oy(TOP + 636, opts));
-  doc.text(data.billingProviderAddress, ox(RIGHT - 172, opts), oy(TOP + 646, opts));
+  // Box 33: Billing provider
+  doc.text(data.billingProviderPhone, ox(NUCC.box33_phone.x + 60, opts), oy(NUCC.box33_phone.y, opts));
+  doc.text(data.billingProviderName, ox(NUCC.box33_name.x, opts), oy(NUCC.box33_name.y, opts));
+  doc.text(data.billingProviderAddress, ox(NUCC.box33_addr.x, opts), oy(NUCC.box33_addr.y, opts));
   doc.text(
     `${data.billingProviderCity}${data.billingProviderState ? ', ' + data.billingProviderState : ''} ${data.billingProviderZip}`,
-    ox(RIGHT - 172, opts), oy(TOP + 656, opts)
+    ox(NUCC.box33_csz.x, opts), oy(NUCC.box33_csz.y, opts)
   );
-  // Box 33a NPI — in the "a. NPI" labeled sub-area
-  doc.text(data.billingProviderNpi, ox(RIGHT - 148, opts), oy(TOP + 682, opts));
+  doc.text(data.billingProviderNpi, ox(NUCC.box33a_npi.x + 24, opts), oy(NUCC.box33a_npi.y, opts));
 }
 
 // ── Alignment Test Page ──
@@ -1264,15 +1244,17 @@ export function generateAlignmentTestPage(options: Partial<CMS1500Options> = {})
     doc.text(`Current offsets: X=${opts.offsetX}pt, Y=${opts.offsetY}pt`, PAGE_W / 2, 79, { align: 'center' });
   }
 
-  // Crosshairs at key landmark positions on the CMS-1500
+  // Crosshairs derived directly from the NUCC coordinate object — never duplicate positions
   const landmarks = [
-    { x: LEFT + 8,   y: TOP + 20,  label: 'Box 1a (top-left data area)' },
-    { x: RIGHT - 8,  y: TOP + 20,  label: 'Box 1a (top-right)' },
-    { x: LEFT + 8,   y: TOP + 50,  label: 'Box 2 (patient name)' },
-    { x: LEFT + 8,   y: TOP + 415, label: 'Service Line 1 (first line)' },
-    { x: LEFT + 8,   y: TOP + 574, label: 'Box 25 (tax ID)' },
-    { x: LEFT + 8,   y: TOP + 650, label: 'Box 31 (signature)' },
-    { x: RIGHT - 50, y: TOP + 650, label: 'Box 33 (billing provider)' },
+    { x: NUCC.box1a.x,          y: NUCC.box1a.y,          label: 'Box 1a (insured ID)' },
+    { x: NUCC.box2.x,           y: NUCC.box2.y,           label: 'Box 2 (patient name)' },
+    { x: NUCC.box5_street.x,    y: NUCC.box5_street.y,    label: 'Box 5 (patient address)' },
+    { x: NUCC.box21_icd.x,      y: NUCC.box21_icd.y,      label: 'Box 21 (diagnosis)' },
+    { x: NUCC.svc_dateFrom,     y: NUCC.svc_rowY[0],      label: 'Box 24 Line 1 (first service line)' },
+    { x: NUCC.svc_dateFrom,     y: NUCC.svc_rowY[5],      label: 'Box 24 Line 6 (last service line)' },
+    { x: NUCC.box25.x,          y: NUCC.box25.y,          label: 'Box 25 (tax ID)' },
+    { x: NUCC.box31_sig.x,      y: NUCC.box31_sig.y,      label: 'Box 31 (signature)' },
+    { x: NUCC.box33_name.x,     y: NUCC.box33_name.y,     label: 'Box 33 (billing provider)' },
   ];
 
   for (const lm of landmarks) {

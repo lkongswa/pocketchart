@@ -1726,7 +1726,8 @@ export default function SettingsPage() {
         )}
       </CollapsibleSection>
 
-      {/* CMS-1500 Paper Claims */}
+      {/* CMS-1500 Paper Claims — back-burnered for next feature push */}
+      {false && (
       <CollapsibleSection
         icon={<Printer className="w-5 h-5" />}
         title="CMS-1500 Paper Claims"
@@ -1849,6 +1850,7 @@ export default function SettingsPage() {
           </div>
         </div>
       </CollapsibleSection>
+      )}
 
       {/* ═══ SECURITY & DATA ═══ */}
       <div className="flex items-center gap-2 mt-6 mb-3">
@@ -2625,6 +2627,8 @@ export default function SettingsPage() {
         </div>
       </CollapsibleSection>
 
+      {/* Clearinghouse — back-burnered for next feature push */}
+      {false && (
       <CollapsibleSection
         icon={<Shield className="w-5 h-5" />}
         title="Clearinghouse"
@@ -2707,14 +2711,14 @@ export default function SettingsPage() {
               </div>
               {clearinghouseTestResult && (
                 <div className={`p-3 rounded-lg text-xs ${
-                  clearinghouseTestResult.success
+                  clearinghouseTestResult?.success
                     ? 'bg-green-50 border border-green-200 text-green-700'
                     : 'bg-red-50 border border-red-200 text-red-700'
                 }`}>
-                  {clearinghouseTestResult.success ? (
-                    <span className="flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> {clearinghouseTestResult.message}</span>
+                  {clearinghouseTestResult?.success ? (
+                    <span className="flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> {clearinghouseTestResult?.message}</span>
                   ) : (
-                    <span className="flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" /> {clearinghouseTestResult.message}</span>
+                    <span className="flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" /> {clearinghouseTestResult?.message}</span>
                   )}
                 </div>
               )}
@@ -2780,6 +2784,7 @@ export default function SettingsPage() {
           </div>
         </div>
       </CollapsibleSection>
+      )}
 
       {/* ═══ APPEARANCE & ACCESSIBILITY ═══ */}
       <div className="flex items-center gap-2 mt-6 mb-3">

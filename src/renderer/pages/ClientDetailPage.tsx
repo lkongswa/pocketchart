@@ -283,6 +283,7 @@ const ClientDetailPage: React.FC = () => {
   // Collapsible sections
   const [showAllNotes, setShowAllNotes] = useState(false);
   const [showAllGoals, setShowAllGoals] = useState(false);
+  const [showActiveGoals, setShowActiveGoals] = useState(true);
   const [showInactiveGoals, setShowInactiveGoals] = useState(false);
   const [goalStatusMenuId, setGoalStatusMenuId] = useState<number | null>(null);
   const [expandedGoalIdx, setExpandedGoalIdx] = useState<number | null>(null); // all goals collapsed by default
@@ -355,9 +356,9 @@ const ClientDetailPage: React.FC = () => {
 
   // Tab state with context-aware selection
   type ClientTab = 'clinical' | 'billing' | 'documents';
-  const [savedTab, setSavedTab] = useLocalPreference<ClientTab>('client-detail-tab', 'clinical');
+  const [, setSavedTab] = useLocalPreference<ClientTab>('client-detail-tab', 'clinical');
   const [activeTab, setActiveTab] = useState<ClientTab>(
-    routeState.defaultTab || (savedTab as ClientTab) || 'clinical'
+    routeState.defaultTab || 'clinical'
   );
   const handleTabChange = (tab: ClientTab) => {
     setActiveTab(tab);
@@ -1214,7 +1215,16 @@ const ClientDetailPage: React.FC = () => {
               <>
                 {/* ── Active Goals Accordion ── */}
                 {allActiveGoals.length > 0 && (
-                  <div className="p-3 space-y-2">
+                  <div>
+                    <button
+                      className="w-full flex items-center gap-2 px-4 py-2.5 text-xs font-medium text-[var(--color-text-secondary)] hover:bg-gray-50 transition-colors"
+                      onClick={() => setShowActiveGoals(!showActiveGoals)}
+                    >
+                      {showActiveGoals ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                      Active Goals ({allActiveGoals.length})
+                    </button>
+                    {showActiveGoals && (
+                    <div className="p-3 pt-0 space-y-2">
                     {activeGoalCards.map((card, idx) => {
                       const goal = allActiveGoals[idx];
                       const isEstablished = isEstablishedGoal(goal);
@@ -1277,6 +1287,8 @@ const ClientDetailPage: React.FC = () => {
                         />
                       );
                     })}
+                  </div>
+                    )}
                   </div>
                 )}
 

@@ -48,6 +48,24 @@ const B = ({ children }: { children: React.ReactNode }) => (
   <span className="text-sm font-medium text-[var(--color-text)]">{children}</span>
 );
 
+/** Small inline button to re-show the onboarding checklist on the Dashboard */
+function ResetChecklistButton() {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      className="mt-2 text-xs text-[var(--color-primary)] hover:underline flex items-center gap-1"
+      onClick={async () => {
+        await window.api.settings.set('onboarding_checklist_dismissed', 'false');
+        await window.api.settings.set('onboarding_checklist_all_done_seen', 'false');
+        setDone(true);
+      }}
+    >
+      <CheckSquare className="w-3.5 h-3.5" />
+      {done ? 'Checklist will appear on your Dashboard' : 'Re-show the Getting Started checklist on Dashboard'}
+    </button>
+  );
+}
+
 function HelpSection({ section, defaultOpen }: { section: HelpSectionData; defaultOpen?: boolean }) {
   const [isOpen, setIsOpen] = useState(defaultOpen ?? true);
   return (
@@ -114,6 +132,7 @@ const allSections: HelpSectionData[] = [
             you directly to the relevant page.
           </li>
         </ul>
+        <ResetChecklistButton />
       </>
     ),
   },

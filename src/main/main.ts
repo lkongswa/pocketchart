@@ -8515,7 +8515,7 @@ function buildGfePdf(
   if (client?.address) { doc.text(`Address: ${client.address}`, marginLeft, y); y += 14; }
   const clientCityStateZip = [client?.city, client?.state, client?.zip].filter(Boolean).join(', ');
   if (clientCityStateZip) { doc.text(`         ${clientCityStateZip}`, marginLeft, y); y += 14; }
-  y += 6;
+  y += 14;
 
   // ── Diagnosis ──
   checkPageBreak(50);
@@ -8550,7 +8550,7 @@ function buildGfePdf(
       }
     } catch { /* ignore parse errors */ }
   }
-  y += 6;
+  y += 14;
 
   // ── Expected Services Table ──
   checkPageBreak(60);
@@ -8612,11 +8612,13 @@ function buildGfePdf(
   doc.line(colX.rate - 20, y, pageWidth - marginRight, y);
   y += 18;
 
-  doc.setFontSize(12);
+  doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(PDF_COLORS.heading[0], PDF_COLORS.heading[1], PDF_COLORS.heading[2]);
-  doc.text('ESTIMATED TOTAL:', colX.rate - 20, y);
-  doc.text(formatCurrency(estimatedTotal), colX.total, y);
+  const totalStr = formatCurrency(estimatedTotal);
+  const totalWidth = doc.getTextWidth(totalStr);
+  doc.text('ESTIMATED TOTAL:', colX.total - totalWidth - 8, y, { align: 'right' });
+  doc.text(totalStr, pageWidth - marginRight, y, { align: 'right' });
   y += 30;
 
   // ── Disclaimers ──
