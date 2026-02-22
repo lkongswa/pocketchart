@@ -29,7 +29,7 @@ interface MissingNote {
   clientId: number;
 }
 
-type TabFilter = 'due' | 'drafts' | 'overdue' | 'all' | 'progress_reports';
+type TabFilter = 'due' | 'all' | 'progress_reports';
 
 function formatDate(dateStr: string): string {
   if (!dateStr) return '';
@@ -153,12 +153,8 @@ export default function NotesOverviewPage() {
   const getDisplayItems = () => {
     switch (tab) {
       case 'due':
-        // Show drafts (unsigned notes) - this is the to-do queue
+        // Show drafts (unsigned notes) — displayed in right column
         return drafts.filter(matchesSearch);
-      case 'drafts':
-        return drafts.filter(matchesSearch);
-      case 'overdue':
-        return overdue.filter(matchesSearch);
       case 'progress_reports':
         return progressReports.filter(matchesSearch);
       case 'all':
@@ -211,62 +207,41 @@ export default function NotesOverviewPage() {
         </div>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-        <div
-          className="card p-4 cursor-pointer hover:shadow-md transition-all hover:border-teal-300"
+      {/* Summary Stat Pills */}
+      <div className="flex flex-wrap gap-2 mb-6">
+        <button
+          className={`flex items-center gap-2 px-4 py-2 rounded-full border transition-all text-sm cursor-pointer ${tab === 'due' ? 'border-teal-400 bg-teal-50 shadow-sm' : 'border-[var(--color-border)] bg-white hover:shadow-md hover:border-teal-300'}`}
           onClick={() => setTab('due')}
         >
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-teal-50">
-              <CalendarCheck size={20} className="text-teal-500" />
-            </div>
-            <div>
-              <p className="text-xl font-bold text-[var(--color-text)]">{notesDue + drafts.length}</p>
-              <p className="text-xs text-[var(--color-text-secondary)]">Notes Due</p>
-              <p className="text-[10px] text-[var(--color-text-secondary)]">{notesDue} appts missing notes · {drafts.length} drafts</p>
-            </div>
-          </div>
-        </div>
-        <div
-          className="card p-4 cursor-pointer hover:shadow-md transition-all hover:border-teal-300"
-          onClick={() => setTab('drafts')}
+          <CalendarCheck size={14} className="text-teal-500" />
+          <span className="font-bold text-[var(--color-text)]">{notesDue + drafts.length}</span>
+          <span className="text-[var(--color-text-secondary)]">Notes Due</span>
+          {overdue.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-red-100 text-red-700">{overdue.length} late</span>
+          )}
+        </button>
+        <button
+          className={`flex items-center gap-2 px-4 py-2 rounded-full border transition-all text-sm cursor-pointer ${tab === 'progress_reports' ? 'border-teal-400 bg-teal-50 shadow-sm' : 'border-[var(--color-border)] bg-white hover:shadow-md hover:border-teal-300'}`}
+          onClick={() => setTab('progress_reports')}
         >
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-teal-50">
-              <PenLine size={20} className="text-teal-500" />
-            </div>
-            <div>
-              <p className="text-xl font-bold text-[var(--color-text)]">{drafts.length}</p>
-              <p className="text-xs text-[var(--color-text-secondary)]">Drafts in Progress</p>
-              <p className="text-[10px] text-[var(--color-text-secondary)]">Started but not signed</p>
-            </div>
-          </div>
-        </div>
-        <div
-          className="card p-4 cursor-pointer hover:shadow-md transition-all hover:border-teal-300"
-          onClick={() => setTab('overdue')}
+          <FileText size={14} className="text-teal-500" />
+          <span className="font-bold text-[var(--color-text)]">{progressReports.length}</span>
+          <span className="text-[var(--color-text-secondary)]">Progress Reports</span>
+        </button>
+        <button
+          className={`flex items-center gap-2 px-4 py-2 rounded-full border transition-all text-sm cursor-pointer ${tab === 'all' ? 'border-teal-400 bg-teal-50 shadow-sm' : 'border-[var(--color-border)] bg-white hover:shadow-md hover:border-teal-300'}`}
+          onClick={() => setTab('all')}
         >
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-teal-50">
-              <AlertTriangle size={20} className="text-teal-500" />
-            </div>
-            <div>
-              <p className="text-xl font-bold text-[var(--color-text)]">{overdue.length}</p>
-              <p className="text-xs text-[var(--color-text-secondary)]">Overdue</p>
-              <p className="text-[10px] text-[var(--color-text-secondary)]">More than 48 hours since service</p>
-            </div>
-          </div>
-        </div>
+          <span className="font-bold text-[var(--color-text)]">{allNotes.length}</span>
+          <span className="text-[var(--color-text-secondary)]">All Notes</span>
+        </button>
       </div>
 
       {/* Tabs & Search */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
           {([
-            { key: 'due' as TabFilter, label: 'Notes Due', count: drafts.length },
-            { key: 'drafts' as TabFilter, label: 'Drafts', count: drafts.length },
-            { key: 'overdue' as TabFilter, label: 'Overdue', count: overdue.length },
+            { key: 'due' as TabFilter, label: 'Notes Due', count: notesDue + drafts.length },
             { key: 'progress_reports' as TabFilter, label: 'Progress Reports', count: progressReports.length },
             { key: 'all' as TabFilter, label: 'All Notes', count: allNotes.length },
           ]).map((t) => (
@@ -296,95 +271,109 @@ export default function NotesOverviewPage() {
         </div>
       </div>
 
-      {/* Missing Notes — inside Notes Due tab only */}
-      {tab === 'due' && missingNotes.length > 0 && (
-        <div className="mb-4">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-2">
+      {/* ══════════ NOTES DUE: Two-Column Layout ══════════ */}
+      {tab === 'due' && (
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          {/* LEFT: Appointments Missing Notes */}
+          <div>
+            <div className="flex items-center gap-2 mb-2">
               <CalendarCheck size={14} className="text-amber-600" />
-              Appointments Missing Notes
-              <span className="text-xs font-normal text-[var(--color-text-secondary)]">({missingNotes.length})</span>
-            </h3>
-            <div className="inline-flex shrink-0 border border-gray-200 rounded-lg overflow-hidden">
-              <button
-                className={`flex items-center gap-1 px-2 py-1 text-xs font-medium transition-colors ${
-                  missingNotesCompact ? 'bg-[var(--color-primary)] text-white' : 'bg-white text-[var(--color-text-secondary)] hover:bg-gray-50'
-                }`}
-                onClick={() => setMissingNotesCompact(true)}
-                title="Compact view"
-              >
-                <List size={12} />
-              </button>
-              <button
-                className={`flex items-center gap-1 px-2 py-1 text-xs font-medium transition-colors ${
-                  !missingNotesCompact ? 'bg-[var(--color-primary)] text-white' : 'bg-white text-[var(--color-text-secondary)] hover:bg-gray-50'
-                }`}
-                onClick={() => setMissingNotesCompact(false)}
-                title="Card view"
-              >
-                <LayoutGrid size={12} />
-              </button>
+              <h3 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">Missing Notes</h3>
+              {missingNotes.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700">{missingNotes.length}</span>
+              )}
             </div>
-          </div>
-
-          {missingNotesCompact ? (
-            <div className="card overflow-hidden divide-y divide-[var(--color-border)]">
-              {missingNotes.map((item) => (
-                <div
-                  key={item.appointment.id}
-                  className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-gray-50 transition-colors"
-                  onClick={() => navigate(`/clients/${item.clientId}/note/new`, {
-                    state: {
-                      appointmentDate: item.appointment.scheduled_date,
-                      appointmentTime: item.appointment.scheduled_time,
-                      appointmentDuration: item.appointment.duration_minutes,
-                    }
-                  })}
-                >
-                  <div className="w-1 h-6 rounded-full bg-amber-400 shrink-0" />
-                  <span className="text-sm font-medium text-[var(--color-text)] min-w-[140px]">{item.clientName}</span>
-                  <span className="text-xs text-[var(--color-text-secondary)]">
-                    {formatDate(item.appointment.scheduled_date)} at {formatTime12(item.appointment.scheduled_time)}
-                  </span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium ml-auto shrink-0">
-                    {daysSince(item.appointment.scheduled_date)}d ago
-                  </span>
-                  <span className="text-[10px] text-[var(--color-primary)] font-medium shrink-0">+ Create Note</span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {missingNotes.map((item) => (
-                <div
-                  key={item.appointment.id}
-                  className="card p-3 border-l-4 border-l-amber-400 cursor-pointer hover:shadow-md transition-all"
-                  onClick={() => navigate(`/clients/${item.clientId}/note/new`, {
-                    state: {
-                      appointmentDate: item.appointment.scheduled_date,
-                      appointmentTime: item.appointment.scheduled_time,
-                      appointmentDuration: item.appointment.duration_minutes,
-                    }
-                  })}
-                >
-                  <p className="text-sm font-medium text-[var(--color-text)]">{item.clientName}</p>
-                  <p className="text-xs text-[var(--color-text-secondary)]">
-                    {formatDate(item.appointment.scheduled_date)} at {formatTime12(item.appointment.scheduled_time)}
-                  </p>
-                  <div className="flex items-center gap-2 mt-1.5">
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">
+            {missingNotes.length === 0 ? (
+              <div className="card p-6 text-center text-xs text-[var(--color-text-secondary)]">
+                All appointments have notes. Nice!
+              </div>
+            ) : (
+              <div className="card overflow-hidden divide-y divide-[var(--color-border)]">
+                {missingNotes.map((item) => (
+                  <div
+                    key={item.appointment.id}
+                    className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-gray-50 transition-colors"
+                    onClick={() => navigate(`/clients/${item.clientId}/note/new`, {
+                      state: {
+                        appointmentDate: item.appointment.scheduled_date,
+                        appointmentTime: item.appointment.scheduled_time,
+                        appointmentDuration: item.appointment.duration_minutes,
+                      }
+                    })}
+                  >
+                    <div className="w-1 h-5 rounded-full bg-amber-400 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium text-[var(--color-text)] truncate">{item.clientName}</p>
+                      <p className="text-[10px] text-[var(--color-text-secondary)]">
+                        {formatDate(item.appointment.scheduled_date)}{item.appointment.scheduled_time ? ` at ${formatTime12(item.appointment.scheduled_time)}` : ''}
+                      </p>
+                    </div>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium shrink-0">
                       {daysSince(item.appointment.scheduled_date)}d ago
                     </span>
-                    <span className="text-[10px] text-[var(--color-primary)] font-medium">+ Create Note</span>
+                    <span className="text-[10px] text-[var(--color-primary)] font-medium shrink-0">+ Create</span>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* RIGHT: Incomplete / Draft Notes */}
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <PenLine size={14} className="text-blue-600" />
+              <h3 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">Drafts / Incomplete</h3>
+              {drafts.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-blue-100 text-blue-700">{drafts.length}</span>
+              )}
+              {overdue.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-red-100 text-red-700">{overdue.length} late</span>
+              )}
             </div>
-          )}
+            {drafts.length === 0 ? (
+              <div className="card p-6 text-center text-xs text-[var(--color-text-secondary)]">
+                No unsigned notes. All caught up!
+              </div>
+            ) : (
+              <div className="card overflow-hidden divide-y divide-[var(--color-border)]">
+                {drafts.filter(matchesSearch).map((item) => {
+                  const daysOld = daysSince(item.note.date_of_service);
+                  const isLate = daysOld > 2;
+                  return (
+                    <div
+                      key={item.note.id}
+                      className={`flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-gray-50 transition-colors ${isLate ? 'border-l-4 border-l-red-400 bg-red-50/30' : 'border-l-4 border-l-blue-300'}`}
+                      onClick={() => navigate(`/clients/${item.clientId}/note/${item.note.id}`)}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium text-[var(--color-text)] truncate flex items-center gap-1">
+                          {item.clientName}
+                          {item.note.note_type === 'progress_report' && (
+                            <span className="px-1 py-0.5 rounded text-[9px] font-semibold bg-teal-100 text-teal-700">PR</span>
+                          )}
+                        </p>
+                        <p className="text-[10px] text-[var(--color-text-secondary)]">
+                          {formatDate(item.note.date_of_service)}
+                          {item.note.cpt_code && ` · ${item.note.cpt_code}`}
+                        </p>
+                      </div>
+                      <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium shrink-0 ${
+                        isLate ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+                      }`}>
+                        <PenLine size={9} />
+                        {isLate ? `Late (${daysOld}d)` : 'Draft'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      {/* Notes List */}
+      {/* Notes Table (shown for all tabs, drafts for 'due' tab are in the two-column above) */}
+      {tab !== 'due' && (
       <div className="card overflow-hidden">
         {/* Table Header */}
         <div className="grid grid-cols-[1fr_140px_100px_100px_80px_80px_80px] gap-4 px-5 py-3 bg-gray-50 border-b border-[var(--color-border)] text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">
@@ -401,11 +390,7 @@ export default function NotesOverviewPage() {
         <div className="divide-y divide-[var(--color-border)]">
           {displayItems.length === 0 ? (
             <div className="px-5 py-12 text-center text-[var(--color-text-secondary)] text-sm">
-              {tab === 'due' || tab === 'drafts'
-                ? 'No unsigned notes. All caught up! 🎉'
-                : tab === 'overdue'
-                ? 'No overdue notes. Great job staying on top of documentation!'
-                : tab === 'progress_reports'
+              {tab === 'progress_reports'
                 ? 'No progress reports found.'
                 : 'No notes found matching your criteria.'}
             </div>
@@ -507,6 +492,7 @@ export default function NotesOverviewPage() {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

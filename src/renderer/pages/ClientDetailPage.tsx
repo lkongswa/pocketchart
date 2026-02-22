@@ -46,6 +46,8 @@ import {
   Check,
   Inbox,
   CalendarCheck,
+  GripVertical,
+  Link2,
 } from 'lucide-react';
 import type {
   Client,
@@ -313,6 +315,9 @@ const ClientDetailPage: React.FC = () => {
   const [entities, setEntities] = useState<ContractedEntity[]>([]);
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<number>>(new Set());
   const [batchGenerating, setBatchGenerating] = useState(false);
+  const [draggedPaymentId, setDraggedPaymentId] = useState<number | null>(null);
+  const [dropTargetInvoiceId, setDropTargetInvoiceId] = useState<number | null>(null);
+  const [discountsExpanded, setDiscountsExpanded] = useState(false);
 
   // Discount state
   const [clientDiscounts, setClientDiscounts] = useState<ClientDiscount[]>([]);
@@ -648,6 +653,51 @@ const ClientDetailPage: React.FC = () => {
   };
 
   // --- Billing Handlers ---
+
+  const handleMatchPaymentToInvoice = async (paymentId: number, invoiceId: number) => {
+    try {
+      const payment = payments.find(p => p.id === paymentId);
+      if (!payment) return;
+      await window.api.payments.update(paymentId, { invoice_id: invoiceId, notes: payment.notes });
+      const invoicePayments = payments.filter(p => (p as any).invoice_id === invoiceId).reduce((sum, p) => sum + p.amount, 0) + payment.amount;
+      const invoice = invoices.find(i => i.id === invoiceId);
+      if (invoice) {
+        const newStatus = invoicePayments >= invoice.total_amount ? 'paid' : invoicePayments > 0 ? 'partial' : invoice.status;
+        if (newStatus !== invoice.status) {
+          await window.api.invoices.update(invoiceId, { status: newStatus });
+        }
+      }
+      loadData();
+      setBillingToast('Payment matched to invoice');
+    } catch (err) {
+      console.error('Failed to match payment:', err);
+      setBillingToast('Failed to match payment');
+    }
+  };
+
+  const handleUnmatchPayment = async (paymentId: number) => {
+    try {
+      const payment = payments.find(p => p.id === paymentId);
+      if (!payment || !(payment as any).invoice_id) return;
+      const invId = (payment as any).invoice_id;
+      await window.api.payments.update(paymentId, { invoice_id: null, notes: payment.notes });
+      const remainingTotal = payments
+        .filter(p => (p as any).invoice_id === invId && p.id !== paymentId)
+        .reduce((sum, p) => sum + p.amount, 0);
+      const invoice = invoices.find(i => i.id === invId);
+      if (invoice) {
+        const newStatus = remainingTotal >= invoice.total_amount ? 'paid' : remainingTotal > 0 ? 'partial' : 'sent';
+        if (newStatus !== invoice.status) {
+          await window.api.invoices.update(invId, { status: newStatus });
+        }
+      }
+      loadData();
+      setBillingToast('Payment unmatched');
+    } catch (err) {
+      console.error('Failed to unmatch payment:', err);
+      setBillingToast('Failed to unmatch payment');
+    }
+  };
 
   const handleGeneratePaymentLink = async (invoiceId: number) => {
     setGeneratingPaymentLink(invoiceId);
@@ -1827,99 +1877,110 @@ const ClientDetailPage: React.FC = () => {
       {/* ══════════ BILLING TAB ══════════ */}
       {activeTab === 'billing' && <>
 
-      {/* ══════════ DISCOUNTS & PACKAGES ══════════ */}
-      <SectionCard
-        color="emerald"
-        icon={<DollarSign size={18} />}
-        title="Discounts & Packages"
-        actions={
+      {/* ══════════ DISCOUNTS & PACKAGES (collapsible) ══════════ */}
+      <div className="rounded-lg border border-[var(--color-border)] overflow-hidden">
+        <button
+          className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors"
+          onClick={() => setDiscountsExpanded(!discountsExpanded)}
+        >
+          <div className="flex items-center gap-2">
+            {discountsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            <DollarSign size={14} className="text-emerald-600" />
+            <span className="text-xs font-semibold text-[var(--color-text)]">Discounts & Packages</span>
+            {activeDiscounts.length > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-100 text-emerald-700">
+                {activeDiscounts.length} active
+              </span>
+            )}
+          </div>
           <button
             className="btn-ghost btn-sm text-xs gap-1"
-            onClick={() => setShowDiscountModal(true)}
+            onClick={(e) => { e.stopPropagation(); setShowDiscountModal(true); }}
           >
-            <Plus size={12} /> Add Discount
+            <Plus size={12} /> Add
           </button>
-        }
-      >
-        <div className="p-4">
-          {activeDiscounts.map((disc) => (
-            <div key={disc.id} className="mb-3 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <ClientDiscountBadge discount={disc} />
-                  {disc.notes && (
-                    <span className="text-xs text-[var(--color-text-secondary)]">{disc.notes}</span>
-                  )}
-                </div>
-                <button
-                  className="text-xs text-red-500 hover:text-red-700"
-                  onClick={async () => {
-                    await window.api.clientDiscounts.update(disc.id, { status: 'cancelled' });
-                    loadData();
-                  }}
-                >
-                  Cancel
-                </button>
-              </div>
-              {(disc.discount_type === 'package' || disc.discount_type === 'flat_rate') && (
-                <div className="mt-2">
-                  {(() => {
-                    const total = disc.discount_type === 'package'
-                      ? disc.total_sessions || 0
-                      : disc.flat_rate_sessions || 0;
-                    const used = disc.discount_type === 'package'
-                      ? disc.sessions_used || 0
-                      : disc.flat_rate_sessions_used || 0;
-                    const pct = total > 0 ? (used / total) * 100 : 0;
-                    return (
-                      <div>
-                        <div className="flex justify-between text-xs text-[var(--color-text-secondary)] mb-1">
-                          <span>{used} of {total} sessions used</span>
-                          <span>{total - used} remaining</span>
-                        </div>
-                        <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full rounded-full transition-all ${pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                            style={{ width: `${Math.min(100, pct)}%` }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
-              )}
-            </div>
-          ))}
-
-          {clientDiscounts.filter(d => d.status !== 'active').length > 0 && (
-            <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
-              {clientDiscounts.filter(d => d.status !== 'active').slice(0, 3).map(d => (
-                <div key={d.id} className="flex items-center justify-between px-4 py-2">
+        </button>
+        {discountsExpanded && (
+          <div className="p-4 border-t border-[var(--color-border)]">
+            {activeDiscounts.map((disc) => (
+              <div key={disc.id} className="mb-3 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-[var(--color-text-secondary)]">{d.label || d.discount_type}</span>
-                    <span className={`badge text-xs ${
-                      d.status === 'exhausted' ? 'bg-gray-100 text-gray-600' :
-                      d.status === 'expired' ? 'bg-amber-100 text-amber-700' :
-                      'bg-red-100 text-red-600'
-                    }`}>
-                      {d.status}
+                    <ClientDiscountBadge discount={disc} />
+                    {disc.notes && (
+                      <span className="text-xs text-[var(--color-text-secondary)]">{disc.notes}</span>
+                    )}
+                  </div>
+                  <button
+                    className="text-xs text-red-500 hover:text-red-700"
+                    onClick={async () => {
+                      await window.api.clientDiscounts.update(disc.id, { status: 'cancelled' });
+                      loadData();
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+                {(disc.discount_type === 'package' || disc.discount_type === 'flat_rate') && (
+                  <div className="mt-2">
+                    {(() => {
+                      const total = disc.discount_type === 'package'
+                        ? disc.total_sessions || 0
+                        : disc.flat_rate_sessions || 0;
+                      const used = disc.discount_type === 'package'
+                        ? disc.sessions_used || 0
+                        : disc.flat_rate_sessions_used || 0;
+                      const pct = total > 0 ? (used / total) * 100 : 0;
+                      return (
+                        <div>
+                          <div className="flex justify-between text-xs text-[var(--color-text-secondary)] mb-1">
+                            <span>{used} of {total} sessions used</span>
+                            <span>{total - used} remaining</span>
+                          </div>
+                          <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all ${pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                              style={{ width: `${Math.min(100, pct)}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {clientDiscounts.filter(d => d.status !== 'active').length > 0 && (
+              <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+                {clientDiscounts.filter(d => d.status !== 'active').slice(0, 3).map(d => (
+                  <div key={d.id} className="flex items-center justify-between px-4 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-[var(--color-text-secondary)]">{d.label || d.discount_type}</span>
+                      <span className={`badge text-xs ${
+                        d.status === 'exhausted' ? 'bg-gray-100 text-gray-600' :
+                        d.status === 'expired' ? 'bg-amber-100 text-amber-700' :
+                        'bg-red-100 text-red-600'
+                      }`}>
+                        {d.status}
+                      </span>
+                    </div>
+                    <span className="text-xs text-[var(--color-text-secondary)]">
+                      {d.created_at ? new Date(d.created_at).toLocaleDateString() : ''}
                     </span>
                   </div>
-                  <span className="text-xs text-[var(--color-text-secondary)]">
-                    {d.created_at ? new Date(d.created_at).toLocaleDateString() : ''}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
 
-          {clientDiscounts.length === 0 && activeDiscounts.length === 0 && (
-            <div className="rounded-lg border border-dashed border-[var(--color-border)] p-4 text-center text-sm text-[var(--color-text-secondary)]">
-              No discounts or packages. Add one to offer special pricing.
-            </div>
-          )}
-        </div>
-      </SectionCard>
+            {clientDiscounts.length === 0 && activeDiscounts.length === 0 && (
+              <div className="rounded-lg border border-dashed border-[var(--color-border)] p-4 text-center text-sm text-[var(--color-text-secondary)]">
+                No discounts or packages. Add one to offer special pricing.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* ══════════ FULL-WIDTH: BILLING SECTION ══════════ */}
       <SectionCard
@@ -2081,10 +2142,15 @@ const ClientDetailPage: React.FC = () => {
             </div>
           )}
 
-          {/* ── Two-Column: Invoices | Payments ── */}
+          {/* ── Two-Column: Invoices | Payments (drag to match) ── */}
+          {draggedPaymentId && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-700 mb-2">
+              <Link2 size={12} /> Drag the payment onto an unpaid invoice to match them
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-4">
 
-            {/* LEFT: Recent Invoices */}
+            {/* LEFT: Recent Invoices (drop targets) */}
             <div>
               <div className="flex items-center justify-between mb-2">
                 <h4 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">Invoices</h4>
@@ -2101,16 +2167,21 @@ const ClientDetailPage: React.FC = () => {
                   {invoices.slice(0, 6).map((invoice) => {
                     const isUnpaid = invoice.status !== 'paid' && invoice.status !== 'void';
                     const isOverdue = invoice.status === 'overdue';
-                    const rowAccent = isOverdue
-                      ? 'border-l-4 border-l-red-400 bg-red-50/40'
-                      : isUnpaid
-                        ? 'border-l-4 border-l-amber-400 bg-amber-50/30'
-                        : 'border-l-4 border-l-emerald-400';
+                    const isDropTarget = draggedPaymentId && isUnpaid;
+                    const isHoveredDrop = dropTargetInvoiceId === invoice.id;
+                    const rowAccent = isHoveredDrop
+                      ? 'border-l-4 border-l-blue-500 bg-blue-50 ring-2 ring-blue-300 scale-[1.01]'
+                      : isOverdue
+                        ? 'border-l-4 border-l-red-400 bg-red-50/40'
+                        : isUnpaid
+                          ? 'border-l-4 border-l-amber-400 bg-amber-50/30'
+                          : 'border-l-4 border-l-emerald-400';
                     return (
                       <div
                         key={invoice.id}
-                        className={`flex items-center justify-between px-3 py-2.5 hover:bg-gray-50 cursor-pointer transition-colors ${rowAccent}`}
+                        className={`flex items-center justify-between px-3 py-2.5 cursor-pointer transition-all ${rowAccent} ${isDropTarget ? 'border-dashed' : ''}`}
                         onClick={async () => {
+                          if (draggedPaymentId) return;
                           try {
                             const full = await window.api.invoices.get(invoice.id);
                             setEditingInvoice(full);
@@ -2119,9 +2190,22 @@ const ClientDetailPage: React.FC = () => {
                             console.error('Failed to load invoice:', err);
                           }
                         }}
+                        onDragOver={isDropTarget ? (e) => {
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = 'link';
+                          setDropTargetInvoiceId(invoice.id);
+                        } : undefined}
+                        onDragLeave={isDropTarget ? () => setDropTargetInvoiceId(null) : undefined}
+                        onDrop={isDropTarget ? (e) => {
+                          e.preventDefault();
+                          const paymentId = parseInt(e.dataTransfer.getData('text/plain'), 10);
+                          if (paymentId) handleMatchPaymentToInvoice(paymentId, invoice.id);
+                          setDropTargetInvoiceId(null);
+                          setDraggedPaymentId(null);
+                        } : undefined}
                       >
                         <div className="flex items-center gap-2 min-w-0">
-                          {isUnpaid && (
+                          {isUnpaid && !draggedPaymentId && (
                             <div onClick={(e) => e.stopPropagation()}>
                               <input
                                 type="checkbox"
@@ -2154,7 +2238,7 @@ const ClientDetailPage: React.FC = () => {
                               {invoice.status || 'draft'}
                             </span>
                           </div>
-                          {isUnpaid && (
+                          {isUnpaid && !draggedPaymentId && (
                             <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                               <button
                                 className="btn-primary px-1.5 py-1 text-[10px] gap-0.5 rounded"
@@ -2192,7 +2276,7 @@ const ClientDetailPage: React.FC = () => {
               )}
             </div>
 
-            {/* RIGHT: Recent Payments */}
+            {/* RIGHT: Recent Payments (draggable) */}
             <div>
               <div className="flex items-center justify-between mb-2">
                 <h4 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">Payments</h4>
@@ -2207,30 +2291,53 @@ const ClientDetailPage: React.FC = () => {
               ) : (
                 <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
                   {payments.slice(0, 6).map((payment) => {
-                    // Color code: matched payments green, unmatched amber
                     const isMatched = !!(payment as any).invoice_id;
+                    const isDraggable = !isMatched && payment.amount > 0;
+                    const isDragging = draggedPaymentId === payment.id;
                     const rowAccent = isMatched
                       ? 'border-l-4 border-l-emerald-400'
                       : 'border-l-4 border-l-amber-400 bg-amber-50/30';
                     return (
                       <div
                         key={payment.id}
-                        className={`flex items-center justify-between px-3 py-2.5 hover:bg-gray-50 cursor-pointer transition-colors ${rowAccent}`}
-                        onClick={() => navigate(`/billing?tab=payments&paymentId=${payment.id}`)}
+                        className={`flex items-center justify-between px-3 py-2.5 transition-all ${rowAccent} ${isDragging ? 'opacity-50 bg-blue-50' : 'hover:bg-gray-50'} ${isDraggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
+                        draggable={isDraggable}
+                        onDragStart={isDraggable ? (e) => {
+                          e.dataTransfer.setData('text/plain', payment.id.toString());
+                          e.dataTransfer.effectAllowed = 'link';
+                          setDraggedPaymentId(payment.id);
+                        } : undefined}
+                        onDragEnd={() => { setDraggedPaymentId(null); setDropTargetInvoiceId(null); }}
                       >
-                        <div className="min-w-0">
-                          <p className="text-xs font-medium text-[var(--color-text)]">{formatDate(payment.payment_date)}</p>
-                          <p className="text-[10px] text-[var(--color-text-secondary)]">
-                            {PAYMENT_METHOD_LABELS[payment.payment_method] || payment.payment_method || 'Other'}
-                            {payment.reference_number && ` · ${payment.reference_number}`}
-                          </p>
+                        <div className="flex items-center gap-2 min-w-0">
+                          {isDraggable && (
+                            <GripVertical size={12} className="text-gray-400 shrink-0" />
+                          )}
+                          <div className="min-w-0">
+                            <p className="text-xs font-medium text-[var(--color-text)]">{formatDate(payment.payment_date)}</p>
+                            <p className="text-[10px] text-[var(--color-text-secondary)]">
+                              {PAYMENT_METHOD_LABELS[payment.payment_method] || payment.payment_method || 'Other'}
+                              {payment.reference_number && ` · ${payment.reference_number}`}
+                            </p>
+                          </div>
                         </div>
-                        <div className="text-right shrink-0">
-                          <p className="text-xs font-semibold text-emerald-600">+{formatCurrency(payment.amount)}</p>
-                          {!isMatched && (
-                            <span className="inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700">
-                              unmatched
-                            </span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <div className="text-right">
+                            <p className="text-xs font-semibold text-emerald-600">+{formatCurrency(payment.amount)}</p>
+                            {!isMatched && (
+                              <span className="inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700">
+                                unmatched
+                              </span>
+                            )}
+                          </div>
+                          {isMatched && (
+                            <button
+                              className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors"
+                              onClick={(e) => { e.stopPropagation(); handleUnmatchPayment(payment.id); }}
+                              title="Unmatch from invoice"
+                            >
+                              <XCircle size={12} />
+                            </button>
                           )}
                         </div>
                       </div>
