@@ -307,6 +307,7 @@ const ClientDetailPage: React.FC = () => {
   const [checkingPaymentStatus, setCheckingPaymentStatus] = useState<number | null>(null);
   const [billingToast, setBillingToast] = useState<string | null>(null);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [editingInvoice, setEditingInvoice] = useState<(Invoice & { items: any[] }) | null>(null);
   const [newlyCreatedInvoice, setNewlyCreatedInvoice] = useState<Invoice | null>(null);
   const [feeSchedule, setFeeSchedule] = useState<FeeScheduleEntry[]>([]);
   const [entities, setEntities] = useState<ContractedEntity[]>([]);
@@ -2080,135 +2081,166 @@ const ClientDetailPage: React.FC = () => {
             </div>
           )}
 
-          {/* Recent Invoices - Clickable */}
-          <div className="mb-6">
-            <div className="flex items-center justify-between px-4 py-2.5 -mx-5 bg-gray-50 border-y border-[var(--color-border)] mb-3">
-              <h4 className="text-sm font-semibold text-[var(--color-text)]">Recent Invoices</h4>
-              <button className="text-xs text-[var(--color-primary)] hover:underline" onClick={() => navigate('/billing?tab=invoices')}>
-                View All
-              </button>
-            </div>
-            {invoices.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center text-sm text-[var(--color-text-secondary)]">
-                No invoices yet. Create one to start billing.
+          {/* ── Two-Column: Invoices | Payments ── */}
+          <div className="grid grid-cols-2 gap-4">
+
+            {/* LEFT: Recent Invoices */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">Invoices</h4>
+                <button className="text-xs text-[var(--color-primary)] hover:underline" onClick={() => navigate('/billing?tab=invoices')}>
+                  View All
+                </button>
               </div>
-            ) : (
-              <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
-                {invoices.slice(0, 5).map((invoice) => (
-                  <div
-                    key={invoice.id}
-                    className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
-                    onClick={() => navigate(`/billing?tab=invoices&invoiceId=${invoice.id}`)}
-                  >
-                    <div className="flex items-center gap-4">
-                      {/* Checkbox for batch selection */}
-                      {invoice.status !== 'paid' && invoice.status !== 'void' && (
-                        <div onClick={(e) => e.stopPropagation()}>
-                          <input
-                            type="checkbox"
-                            className="rounded"
-                            checked={selectedInvoiceIds.has(invoice.id)}
-                            onChange={(e) => {
-                              const next = new Set(selectedInvoiceIds);
-                              if (e.target.checked) next.add(invoice.id);
-                              else next.delete(invoice.id);
-                              setSelectedInvoiceIds(next);
-                            }}
-                          />
+              {invoices.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-[var(--color-border)] p-4 text-center text-xs text-[var(--color-text-secondary)]">
+                  No invoices yet.
+                </div>
+              ) : (
+                <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
+                  {invoices.slice(0, 6).map((invoice) => {
+                    const isUnpaid = invoice.status !== 'paid' && invoice.status !== 'void';
+                    const isOverdue = invoice.status === 'overdue';
+                    const rowAccent = isOverdue
+                      ? 'border-l-4 border-l-red-400 bg-red-50/40'
+                      : isUnpaid
+                        ? 'border-l-4 border-l-amber-400 bg-amber-50/30'
+                        : 'border-l-4 border-l-emerald-400';
+                    return (
+                      <div
+                        key={invoice.id}
+                        className={`flex items-center justify-between px-3 py-2.5 hover:bg-gray-50 cursor-pointer transition-colors ${rowAccent}`}
+                        onClick={async () => {
+                          try {
+                            const full = await window.api.invoices.get(invoice.id);
+                            setEditingInvoice(full);
+                            setShowInvoiceModal(true);
+                          } catch (err) {
+                            console.error('Failed to load invoice:', err);
+                          }
+                        }}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          {isUnpaid && (
+                            <div onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                className="rounded w-3.5 h-3.5"
+                                checked={selectedInvoiceIds.has(invoice.id)}
+                                onChange={(e) => {
+                                  const next = new Set(selectedInvoiceIds);
+                                  if (e.target.checked) next.add(invoice.id);
+                                  else next.delete(invoice.id);
+                                  setSelectedInvoiceIds(next);
+                                }}
+                              />
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <p className="text-xs font-medium text-[var(--color-text)] truncate">{invoice.invoice_number}</p>
+                            <p className="text-[10px] text-[var(--color-text-secondary)]">
+                              {formatDate(invoice.invoice_date)}
+                            </p>
+                          </div>
                         </div>
-                      )}
-                      <div>
-                        <p className="text-sm font-medium text-[var(--color-text)]">{invoice.invoice_number}</p>
-                        <p className="text-xs text-[var(--color-text-secondary)]">
-                          {formatDate(invoice.invoice_date)}
-                          {invoice.due_date && ` - Due ${formatDate(invoice.due_date)}`}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      <div className="text-right">
-                        <p className="text-sm font-medium text-[var(--color-text)]">{formatCurrency(invoice.total_amount)}</p>
-                        <span
-                          className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-                            (STATUS_COLORS[invoice.status] || STATUS_COLORS.draft).bg
-                          } ${(STATUS_COLORS[invoice.status] || STATUS_COLORS.draft).text}`}
-                        >
-                          {invoice.status || 'draft'}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                        {invoice.status !== 'paid' && invoice.status !== 'void' && (
-                          <>
-                            <button
-                              className="btn-primary btn-sm gap-1"
-                              onClick={() => handleGeneratePaymentLink(invoice.id)}
-                              disabled={generatingPaymentLink === invoice.id}
+                        <div className="flex items-center gap-2 shrink-0">
+                          <div className="text-right">
+                            <p className="text-xs font-semibold text-[var(--color-text)]">{formatCurrency(invoice.total_amount)}</p>
+                            <span
+                              className={`inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
+                                (STATUS_COLORS[invoice.status] || STATUS_COLORS.draft).bg
+                              } ${(STATUS_COLORS[invoice.status] || STATUS_COLORS.draft).text}`}
                             >
-                              {generatingPaymentLink === invoice.id ? (
-                                <Loader2 size={12} className="animate-spin" />
-                              ) : (
-                                <ExternalLink size={12} />
-                              )}
-                              Pay
-                            </button>
-                            {invoice.stripe_payment_link_url && (
+                              {invoice.status || 'draft'}
+                            </span>
+                          </div>
+                          {isUnpaid && (
+                            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                               <button
-                                className="btn-secondary btn-sm gap-1"
-                                onClick={() => handleCheckPaymentStatus(invoice.id)}
-                                disabled={checkingPaymentStatus === invoice.id}
-                                title="Check payment status"
+                                className="btn-primary px-1.5 py-1 text-[10px] gap-0.5 rounded"
+                                onClick={() => handleGeneratePaymentLink(invoice.id)}
+                                disabled={generatingPaymentLink === invoice.id}
+                                title="Generate payment link"
                               >
-                                {checkingPaymentStatus === invoice.id ? (
-                                  <Loader2 size={12} className="animate-spin" />
+                                {generatingPaymentLink === invoice.id ? (
+                                  <Loader2 size={10} className="animate-spin" />
                                 ) : (
-                                  <RefreshCw size={12} />
+                                  <ExternalLink size={10} />
                                 )}
                               </button>
-                            )}
-                          </>
-                        )}
+                              {invoice.stripe_payment_link_url && (
+                                <button
+                                  className="btn-secondary px-1.5 py-1 text-[10px] rounded"
+                                  onClick={() => handleCheckPaymentStatus(invoice.id)}
+                                  disabled={checkingPaymentStatus === invoice.id}
+                                  title="Check payment status"
+                                >
+                                  {checkingPaymentStatus === invoice.id ? (
+                                    <Loader2 size={10} className="animate-spin" />
+                                  ) : (
+                                    <RefreshCw size={10} />
+                                  )}
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Recent Payments - Clickable */}
-          <div>
-            <div className="flex items-center justify-between px-4 py-2.5 -mx-5 bg-gray-50 border-y border-[var(--color-border)] mb-3">
-              <h4 className="text-sm font-semibold text-[var(--color-text)]">Recent Payments</h4>
-              <button className="text-xs text-[var(--color-primary)] hover:underline" onClick={() => navigate('/billing?tab=payments')}>
-                View All
-              </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-            {payments.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center text-sm text-[var(--color-text-secondary)]">
-                No payments recorded yet.
-              </div>
-            ) : (
-              <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
-                {payments.slice(0, 5).map((payment) => (
-                  <div
-                    key={payment.id}
-                    className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
-                    onClick={() => navigate(`/billing?tab=payments&paymentId=${payment.id}`)}
-                  >
-                    <div>
-                      <p className="text-sm font-medium text-[var(--color-text)]">{formatDate(payment.payment_date)}</p>
-                      <p className="text-xs text-[var(--color-text-secondary)]">
-                        {PAYMENT_METHOD_LABELS[payment.payment_method] || payment.payment_method || 'Other'}
-                        {payment.reference_number && ` - Ref: ${payment.reference_number}`}
-                      </p>
-                    </div>
-                    <p className="font-medium text-emerald-600">+{formatCurrency(payment.amount)}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
 
+            {/* RIGHT: Recent Payments */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">Payments</h4>
+                <button className="text-xs text-[var(--color-primary)] hover:underline" onClick={() => navigate('/billing?tab=payments')}>
+                  View All
+                </button>
+              </div>
+              {payments.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-[var(--color-border)] p-4 text-center text-xs text-[var(--color-text-secondary)]">
+                  No payments recorded yet.
+                </div>
+              ) : (
+                <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
+                  {payments.slice(0, 6).map((payment) => {
+                    // Color code: matched payments green, unmatched amber
+                    const isMatched = !!(payment as any).invoice_id;
+                    const rowAccent = isMatched
+                      ? 'border-l-4 border-l-emerald-400'
+                      : 'border-l-4 border-l-amber-400 bg-amber-50/30';
+                    return (
+                      <div
+                        key={payment.id}
+                        className={`flex items-center justify-between px-3 py-2.5 hover:bg-gray-50 cursor-pointer transition-colors ${rowAccent}`}
+                        onClick={() => navigate(`/billing?tab=payments&paymentId=${payment.id}`)}
+                      >
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium text-[var(--color-text)]">{formatDate(payment.payment_date)}</p>
+                          <p className="text-[10px] text-[var(--color-text-secondary)]">
+                            {PAYMENT_METHOD_LABELS[payment.payment_method] || payment.payment_method || 'Other'}
+                            {payment.reference_number && ` · ${payment.reference_number}`}
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-xs font-semibold text-emerald-600">+{formatCurrency(payment.amount)}</p>
+                          {!isMatched && (
+                            <span className="inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700">
+                              unmatched
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+          </div>
         </div>
       </SectionCard>
 
@@ -2517,23 +2549,29 @@ const ClientDetailPage: React.FC = () => {
       {showInvoiceModal && client && (
         <InvoiceModal
           isOpen={showInvoiceModal}
-          onClose={() => setShowInvoiceModal(false)}
+          onClose={() => { setShowInvoiceModal(false); setEditingInvoice(null); }}
           onSave={async (invoice) => {
             setShowInvoiceModal(false);
+            setEditingInvoice(null);
             const invoicesData = await window.api.invoices.list({ clientId });
             setInvoices(invoicesData);
-            setBillingToast('Invoice created');
-            // Check if Stripe is connected to offer payment link
-            try {
-              const hasSk = await window.api.secureStorage.exists('stripe_secret_key');
-              if (hasSk && invoice.status !== 'paid') {
-                setNewlyCreatedInvoice(invoice);
-              }
-            } catch { /* no stripe */ }
+            if (!editingInvoice) {
+              setBillingToast('Invoice created');
+              // Check if Stripe is connected to offer payment link
+              try {
+                const hasSk = await window.api.secureStorage.exists('stripe_secret_key');
+                if (hasSk && invoice.status !== 'paid') {
+                  setNewlyCreatedInvoice(invoice);
+                }
+              } catch { /* no stripe */ }
+            } else {
+              setBillingToast('Invoice updated');
+            }
           }}
           clients={client ? [client] : []}
           entities={entities}
           feeSchedule={feeSchedule}
+          invoice={editingInvoice || undefined}
           preSelectedClientId={client.id}
         />
       )}
