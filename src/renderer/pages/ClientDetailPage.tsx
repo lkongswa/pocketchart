@@ -2186,27 +2186,8 @@ const ClientDetailPage: React.FC = () => {
                     return (
                       <div
                         key={invoice.id}
-                        className={`flex items-center justify-between px-3 py-2.5 cursor-pointer ${rowAccent} ${isDraggingThis ? 'opacity-50 bg-blue-50' : 'hover:bg-gray-50'} ${canDragInvoice ? 'cursor-grab active:cursor-grabbing' : ''}`}
-                        style={canDragInvoice ? { userSelect: 'none', WebkitUserSelect: 'none' } : undefined}
-                        draggable={canDragInvoice || undefined}
-                        onMouseDown={canDragInvoice ? (e) => { e.preventDefault(); } : undefined}
-                        onDragStart={canDragInvoice ? (e) => {
-                          e.dataTransfer.setData('text/plain', `invoice:${invoice.id}`);
-                          e.dataTransfer.effectAllowed = 'move';
-                          if (e.currentTarget) e.dataTransfer.setDragImage(e.currentTarget, 50, 20);
-                          setDraggedInvoiceId(invoice.id);
-                        } : undefined}
-                        onDragEnd={() => { setDraggedInvoiceId(null); setDropTargetPaymentId(null); }}
-                        onClick={async () => {
-                          if (draggedPaymentId || draggedInvoiceId) return;
-                          try {
-                            const full = await window.api.invoices.get(invoice.id);
-                            setEditingInvoice(full);
-                            setShowInvoiceModal(true);
-                          } catch (err) {
-                            console.error('Failed to load invoice:', err);
-                          }
-                        }}
+                        data-invoice-row
+                        className={`flex items-center justify-between px-3 py-2.5 ${rowAccent} ${isDraggingThis ? 'opacity-50 bg-blue-50' : 'hover:bg-gray-50'}`}
                         onDragOver={isPaymentDropTarget ? (e) => {
                           e.preventDefault();
                           e.dataTransfer.dropEffect = 'move';
@@ -2223,9 +2204,25 @@ const ClientDetailPage: React.FC = () => {
                           setDraggedPaymentId(null);
                         } : undefined}
                       >
-                        <div className="flex items-center gap-2 min-w-0" style={canDragInvoice || isPaymentDropTarget ? { pointerEvents: 'none' } : undefined}>
+                        <div className="flex items-center gap-2 min-w-0">
                           {isUnpaid && !draggedPaymentId && !draggedInvoiceId && (
-                            <GripVertical size={12} className="text-gray-400 shrink-0" />
+                            <div
+                              draggable
+                              className="cursor-grab active:cursor-grabbing p-0.5 -ml-1 rounded hover:bg-gray-200 transition-colors"
+                              style={{ userSelect: 'none', WebkitUserSelect: 'none' }}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onDragStart={(e) => {
+                                e.stopPropagation();
+                                e.dataTransfer.setData('text/plain', `invoice:${invoice.id}`);
+                                e.dataTransfer.effectAllowed = 'move';
+                                const row = e.currentTarget.closest('[data-invoice-row]') as HTMLElement;
+                                if (row) e.dataTransfer.setDragImage(row, 50, 20);
+                                setDraggedInvoiceId(invoice.id);
+                              }}
+                              onDragEnd={() => { setDraggedInvoiceId(null); setDropTargetPaymentId(null); }}
+                            >
+                              <GripVertical size={12} className="text-gray-400" />
+                            </div>
                           )}
                           <div className="min-w-0">
                             <p className="text-xs font-medium text-[var(--color-text)] truncate">{invoice.invoice_number}</p>
@@ -2234,7 +2231,7 @@ const ClientDetailPage: React.FC = () => {
                             </p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2 shrink-0" style={canDragInvoice || isPaymentDropTarget ? { pointerEvents: 'none' } : undefined}>
+                        <div className="flex items-center gap-2 shrink-0">
                           <div className="text-right">
                             <p className="text-xs font-semibold text-[var(--color-text)]">{formatCurrency(invoice.total_amount)}</p>
                             <span
@@ -2245,31 +2242,34 @@ const ClientDetailPage: React.FC = () => {
                               {invoice.status || 'draft'}
                             </span>
                           </div>
-                          {isUnpaid && !draggedPaymentId && !draggedInvoiceId && (
-                            <div className="flex items-center gap-1" style={{ pointerEvents: 'auto' }} onClick={(e) => e.stopPropagation()}>
+                          {!draggedPaymentId && !draggedInvoiceId && (
+                            <div className="flex items-center gap-1">
                               <button
-                                className="btn-primary px-1.5 py-1 text-[10px] gap-0.5 rounded"
-                                onClick={() => handleGeneratePaymentLink(invoice.id)}
-                                disabled={generatingPaymentLink === invoice.id}
-                                title="Generate payment link"
+                                className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-[var(--color-primary)] transition-colors"
+                                title="Edit invoice"
+                                onClick={async () => {
+                                  try {
+                                    const full = await window.api.invoices.get(invoice.id);
+                                    setEditingInvoice(full);
+                                    setShowInvoiceModal(true);
+                                  } catch (err) {
+                                    console.error('Failed to load invoice:', err);
+                                  }
+                                }}
                               >
-                                {generatingPaymentLink === invoice.id ? (
-                                  <Loader2 size={10} className="animate-spin" />
-                                ) : (
-                                  <ExternalLink size={10} />
-                                )}
+                                <Eye size={12} />
                               </button>
-                              {invoice.stripe_payment_link_url && (
+                              {isUnpaid && (
                                 <button
-                                  className="btn-secondary px-1.5 py-1 text-[10px] rounded"
-                                  onClick={() => handleCheckPaymentStatus(invoice.id)}
-                                  disabled={checkingPaymentStatus === invoice.id}
-                                  title="Check payment status"
+                                  className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-emerald-600 transition-colors"
+                                  onClick={() => handleGeneratePaymentLink(invoice.id)}
+                                  disabled={generatingPaymentLink === invoice.id}
+                                  title="Generate payment link"
                                 >
-                                  {checkingPaymentStatus === invoice.id ? (
+                                  {generatingPaymentLink === invoice.id ? (
                                     <Loader2 size={10} className="animate-spin" />
                                   ) : (
-                                    <RefreshCw size={10} />
+                                    <ExternalLink size={10} />
                                   )}
                                 </button>
                               )}
@@ -2314,17 +2314,8 @@ const ClientDetailPage: React.FC = () => {
                     return (
                       <div
                         key={payment.id}
-                        className={`flex items-center justify-between px-3 py-2.5 ${rowAccent} ${isDragging ? 'opacity-50 bg-blue-50' : 'hover:bg-gray-50'} ${isDraggablePayment ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
-                        style={isDraggablePayment ? { userSelect: 'none', WebkitUserSelect: 'none' } : undefined}
-                        draggable={isDraggablePayment || undefined}
-                        onMouseDown={isDraggablePayment ? (e) => { e.preventDefault(); } : undefined}
-                        onDragStart={isDraggablePayment ? (e) => {
-                          e.dataTransfer.setData('text/plain', payment.id.toString());
-                          e.dataTransfer.effectAllowed = 'move';
-                          if (e.currentTarget) e.dataTransfer.setDragImage(e.currentTarget, 50, 20);
-                          setDraggedPaymentId(payment.id);
-                        } : undefined}
-                        onDragEnd={() => { setDraggedPaymentId(null); setDraggedInvoiceId(null); setDropTargetInvoiceId(null); setDropTargetPaymentId(null); }}
+                        data-payment-row
+                        className={`flex items-center justify-between px-3 py-2.5 ${rowAccent} ${isDragging ? 'opacity-50 bg-blue-50' : 'hover:bg-gray-50'} cursor-default`}
                         onDragOver={isInvoiceDropTarget ? (e) => {
                           e.preventDefault();
                           e.dataTransfer.dropEffect = 'move';
@@ -2343,9 +2334,25 @@ const ClientDetailPage: React.FC = () => {
                           setDropTargetPaymentId(null);
                         } : undefined}
                       >
-                        <div className="flex items-center gap-2 min-w-0" style={{ pointerEvents: 'none' }}>
-                          {(isDraggablePayment || isInvoiceDropTarget) && !isMatched && (
-                            <GripVertical size={12} className="text-gray-400 shrink-0" />
+                        <div className="flex items-center gap-2 min-w-0">
+                          {isDraggablePayment && (
+                            <div
+                              draggable
+                              className="cursor-grab active:cursor-grabbing p-0.5 -ml-1 rounded hover:bg-gray-200 transition-colors"
+                              style={{ userSelect: 'none', WebkitUserSelect: 'none' }}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onDragStart={(e) => {
+                                e.stopPropagation();
+                                e.dataTransfer.setData('text/plain', payment.id.toString());
+                                e.dataTransfer.effectAllowed = 'move';
+                                const row = e.currentTarget.closest('[data-payment-row]') as HTMLElement;
+                                if (row) e.dataTransfer.setDragImage(row, 50, 20);
+                                setDraggedPaymentId(payment.id);
+                              }}
+                              onDragEnd={() => { setDraggedPaymentId(null); setDraggedInvoiceId(null); setDropTargetInvoiceId(null); setDropTargetPaymentId(null); }}
+                            >
+                              <GripVertical size={12} className="text-gray-400" />
+                            </div>
                           )}
                           <div className="min-w-0">
                             <p className="text-xs font-medium text-[var(--color-text)]">{formatDate(payment.payment_date)}</p>
@@ -2355,7 +2362,7 @@ const ClientDetailPage: React.FC = () => {
                             </p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2 shrink-0" style={isDraggablePayment ? { pointerEvents: 'none' } : undefined}>
+                        <div className="flex items-center gap-2 shrink-0">
                           <div className="text-right">
                             <p className="text-xs font-semibold text-emerald-600">+{formatCurrency(payment.amount)}</p>
                             {!isMatched && (
