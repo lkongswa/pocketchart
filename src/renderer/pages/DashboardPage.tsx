@@ -8,7 +8,6 @@ import {
   UserPlus,
   CalendarDays,
   Clock,
-  Activity,
   ShieldAlert,
   X,
   ClipboardList,
@@ -29,11 +28,6 @@ interface DashboardStats {
   unpaidInvoiceCount: number;
 }
 
-interface RecentNote {
-  note: Note;
-  clientName: string;
-}
-
 const BACKUP_REMINDER_DAYS = 7;
 
 const DashboardPage: React.FC = () => {
@@ -46,7 +40,6 @@ const DashboardPage: React.FC = () => {
     outstandingBalance: 0,
     unpaidInvoiceCount: 0,
   });
-  const [recentNotes, setRecentNotes] = useState<RecentNote[]>([]);
   const [upcomingAppointments, setUpcomingAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [showBackupReminder, setShowBackupReminder] = useState(false);
@@ -155,29 +148,19 @@ const DashboardPage: React.FC = () => {
       weekEnd.setDate(weekStart.getDate() + 6);
       const weekEndStr = weekEnd.toISOString().split('T')[0];
 
-      // Load notes for all clients to count this week's notes and get recent ones
-      const allNotes: RecentNote[] = [];
+      // Load notes for all clients to count this week's notes
       let notesThisWeek = 0;
+      let unsignedNotes = 0;
 
       for (const client of allClients) {
         const clientNotes: Note[] = await window.api.notes.listByClient(client.id);
         for (const note of clientNotes) {
-          allNotes.push({
-            note,
-            clientName: `${client.first_name} ${client.last_name}`,
-          });
           if (note.date_of_service >= weekStartStr && note.date_of_service <= weekEndStr) {
             notesThisWeek++;
           }
+          if (!note.signed_at) unsignedNotes++;
         }
       }
-
-      // Sort all notes by date descending and take the 5 most recent
-      allNotes.sort((a, b) =>
-        b.note.date_of_service.localeCompare(a.note.date_of_service) ||
-        b.note.created_at.localeCompare(a.note.created_at)
-      );
-      setRecentNotes(allNotes.slice(0, 5));
 
       // Load upcoming appointments (today and forward)
       const appointments: Appointment[] = await window.api.appointments.list({
@@ -185,11 +168,8 @@ const DashboardPage: React.FC = () => {
       });
       const upcoming = appointments
         .filter((appt) => appt.status === 'scheduled')
-        .slice(0, 5);
+        .slice(0, 10);
       setUpcomingAppointments(upcoming);
-
-      // Count unsigned notes
-      const unsignedNotes = allNotes.filter((item) => !item.note.signed_at).length;
 
       // Outstanding balance
       const balanceData = await window.api.dashboard.getOutstandingBalance().catch(() => ({ outstanding: 0, unpaidCount: 0 }));
@@ -364,126 +344,72 @@ const DashboardPage: React.FC = () => {
         />
       )}
 
-      {/* Stat Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+      {/* Compact Stat Bar — single row of clickable pills */}
+      <div className="flex flex-wrap gap-2 mb-6">
         {statCards.map((card) => (
-          <div
+          <button
             key={card.label}
-            className={`card p-5 cursor-pointer hover:shadow-md transition-all group ${card.hoverBorder || 'hover:border-teal-300'}`}
+            className={`flex items-center gap-2 px-4 py-2 rounded-full border border-[var(--color-border)] bg-white hover:shadow-md hover:border-teal-300 transition-all text-sm cursor-pointer`}
             onClick={card.onClick}
           >
-            <div className="flex items-center gap-4">
-              <div
-                className={`flex items-center justify-center w-12 h-12 rounded-lg ${card.bgClass} group-hover:scale-105 transition-transform`}
-              >
-                {card.icon}
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-[var(--color-text)]">
-                  {card.isCurrency
-                    ? `$${card.count.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                    : card.count}
-                </p>
-                <p className="text-sm text-[var(--color-text-secondary)]">{card.label}</p>
-                {card.subtitle && (
-                  <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">{card.subtitle}</p>
-                )}
-              </div>
-            </div>
-          </div>
+            <span className="text-base font-bold text-[var(--color-text)]">
+              {card.isCurrency
+                ? `$${card.count.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+                : card.count}
+            </span>
+            <span className="text-[var(--color-text-secondary)]">{card.label}</span>
+          </button>
         ))}
       </div>
 
-      {/* Two Column Layout: Recent Activity + Upcoming Appointments */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Recent Activity */}
-        <div className="card">
-          <div className="flex items-center gap-2 px-5 py-4 border-b border-[var(--color-border)]">
-            <Activity size={18} className="text-teal-500" />
-            <h2 className="section-title mb-0">Recent Activity</h2>
-          </div>
-          <div>
-            {recentNotes.length === 0 ? (
-              <div className="px-5 py-8 text-center text-[var(--color-text-secondary)] text-sm">
-                No recent notes found.
-              </div>
-            ) : (
-              recentNotes.map((item) => (
-                <div
-                  key={item.note.id}
-                  className="flex items-center gap-2 px-5 py-2 hover:bg-gray-50 cursor-pointer transition-colors text-xs"
-                  onClick={() =>
-                    navigate(
-                      `/clients/${item.note.client_id}/note/${item.note.id}`
-                    )
-                  }
-                >
-                  <span className="text-[var(--color-text-secondary)] shrink-0">
-                    {formatDate(item.note.date_of_service)}
-                  </span>
-                  <span className="text-[var(--color-text-secondary)]">&middot;</span>
-                  <span className="text-[var(--color-text-secondary)] shrink-0">SOAP Note</span>
-                  <span className="text-[var(--color-text-secondary)]">&middot;</span>
-                  <span className="font-medium text-[var(--color-text)] truncate">{item.clientName}</span>
-                  <span className="text-[var(--color-text-secondary)]">&middot;</span>
-                  <span className={`shrink-0 ${item.note.signed_at ? 'text-emerald-600' : 'text-amber-600'}`}>
-                    {item.note.signed_at ? '\u2713 Signed' : 'Draft'}
-                  </span>
-                </div>
-              ))
-            )}
-          </div>
+      {/* Upcoming Appointments — primary content block, full width */}
+      <div className="card">
+        <div className="flex items-center gap-2 px-5 py-4 border-b border-[var(--color-border)]">
+          <Clock size={18} className="text-teal-500" />
+          <h2 className="section-title mb-0">Upcoming Appointments</h2>
         </div>
-
-        {/* Upcoming Appointments */}
-        <div className="card">
-          <div className="flex items-center gap-2 px-5 py-4 border-b border-[var(--color-border)]">
-            <Clock size={18} className="text-teal-500" />
-            <h2 className="section-title mb-0">Upcoming Appointments</h2>
-          </div>
-          <div className="divide-y divide-[var(--color-border)]">
-            {upcomingAppointments.length === 0 ? (
-              <div className="px-5 py-8 text-center text-[var(--color-text-secondary)] text-sm">
-                No upcoming appointments.
-              </div>
-            ) : (
-              upcomingAppointments.map((appt) => (
-                <div
-                  key={appt.id}
-                  className="px-5 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
-                  onClick={() => navigate('/calendar', { state: { date: appt.scheduled_date, view: 'week' } })}
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-[var(--color-text)]">
-                        {appt.first_name} {appt.last_name}
-                      </p>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        {appt.client_discipline && (
-                          <span
-                            className={`badge-${appt.client_discipline.toLowerCase()}`}
-                          >
-                            {appt.client_discipline}
-                          </span>
-                        )}
-                        <span className="text-xs text-[var(--color-text-secondary)]">
-                          {appt.duration_minutes} min
+        <div className="divide-y divide-[var(--color-border)]">
+          {upcomingAppointments.length === 0 ? (
+            <div className="px-5 py-8 text-center text-[var(--color-text-secondary)] text-sm">
+              No upcoming appointments.
+            </div>
+          ) : (
+            upcomingAppointments.map((appt) => (
+              <div
+                key={appt.id}
+                className="px-5 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
+                onClick={() => navigate('/calendar', { state: { date: appt.scheduled_date, view: 'week' } })}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-[var(--color-text)]">
+                      {appt.first_name} {appt.last_name}
+                    </p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      {appt.client_discipline && (
+                        <span
+                          className={`badge-${appt.client_discipline.toLowerCase()}`}
+                        >
+                          {appt.client_discipline}
                         </span>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm font-medium text-[var(--color-text)]">
-                        {formatDate(appt.scheduled_date)}
-                      </p>
-                      <p className="text-xs text-[var(--color-text-secondary)]">
-                        {formatTime(appt.scheduled_time)}
-                      </p>
+                      )}
+                      <span className="text-xs text-[var(--color-text-secondary)]">
+                        {appt.duration_minutes} min
+                      </span>
                     </div>
                   </div>
+                  <div className="text-right">
+                    <p className="text-sm font-medium text-[var(--color-text)]">
+                      {formatDate(appt.scheduled_date)}
+                    </p>
+                    <p className="text-xs text-[var(--color-text-secondary)]">
+                      {formatTime(appt.scheduled_time)}
+                    </p>
+                  </div>
                 </div>
-              ))
-            )}
-          </div>
+              </div>
+            ))
+          )}
         </div>
       </div>
 

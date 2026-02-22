@@ -9,7 +9,7 @@
     --color-accent-light: #fb923c;
     --color-bg: #f8fafc;
     --color-surface: #ffffff;
-    --color-border: #e2e8f0;
+    --color-border: #cbd5e1;
     --color-text: #1e293b;
     --color-text-secondary: #64748b;
     --color-success: #22c55e;
@@ -123,7 +123,13 @@
   }
 
   .card {
-    @apply bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm;
+    @apply bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)];
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
+  }
+
+  .card-elevated {
+    @apply bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)];
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.10), 0 1px 3px rgba(0, 0, 0, 0.08);
   }
 
   .input {
@@ -197,7 +203,7 @@
 
   .sidebar-link-active {
     @apply flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium text-[var(--color-primary)] cursor-pointer;
-    background-color: var(--color-hover);
+    background-color: rgba(13, 148, 136, 0.08);
   }
 
   .page-header {

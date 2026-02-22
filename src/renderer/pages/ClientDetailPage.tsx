@@ -188,6 +188,17 @@ const formatDate = (dateStr: string): string => {
   }
 };
 
+/** DOB displayed as compact M/D/YYYY (e.g. 9/3/2019) */
+const formatDob = (dateStr: string): string => {
+  if (!dateStr) return '--';
+  try {
+    const d = new Date(dateStr + 'T00:00:00');
+    return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+  } catch {
+    return dateStr;
+  }
+};
+
 const truncate = (str: string, max: number): string => {
   if (!str) return '';
   return str.length > max ? str.slice(0, max) + '...' : str;
@@ -285,6 +296,7 @@ const ClientDetailPage: React.FC = () => {
   const [showAllNotes, setShowAllNotes] = useState(false);
   const [showAllGoals, setShowAllGoals] = useState(false);
   const [showActiveGoals, setShowActiveGoals] = useState(false);
+  const [headerExpanded, setHeaderExpanded] = useState(false);
   const [showInactiveGoals, setShowInactiveGoals] = useState(false);
   const [goalStatusMenuId, setGoalStatusMenuId] = useState<number | null>(null);
   const [expandedGoalIdx, setExpandedGoalIdx] = useState<number | null>(null); // all goals collapsed by default
@@ -860,34 +872,26 @@ const ClientDetailPage: React.FC = () => {
       {/* Chart Completeness Indicator */}
       <ChartCompleteness result={chartCompleteness} onCompleteChart={handleCompleteChart} />
 
-      {/* ══════════ HEADER CARD WITH COLLAPSIBLE SECTIONS ══════════ */}
-      <div className="card p-5">
-        {/* Main Header Row */}
-        <div className="flex items-start justify-between mb-4">
-          <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-full bg-gradient-to-br from-teal-400 to-teal-600 flex items-center justify-center text-white text-xl font-bold shrink-0">
+      {/* ══════════ HEADER CARD — COMPACT BY DEFAULT ══════════ */}
+      <div className="card p-4">
+        {/* Compact Header Row: Avatar + Name + Badges + Details Toggle + Actions */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-teal-400 to-teal-600 flex items-center justify-center text-white text-sm font-bold shrink-0">
               {client.first_name[0]}{client.last_name[0]}
             </div>
-            <div>
-              <div className="flex items-center gap-2.5 mb-1">
-                <h1 className="text-2xl font-bold text-[var(--color-text)]">
-                  {client.first_name} {client.last_name}
-                </h1>
-                <span className={statusBadgeClass[client.status]}>{statusLabel[client.status]}</span>
-                <span className={disciplineBadgeClass[client.discipline]}>{client.discipline}</span>
-              </div>
-              <div className="flex items-center gap-4 text-sm text-[var(--color-text-secondary)]">
-                {client.dob && (
-                  <span className="flex items-center gap-1"><Calendar size={13} /> {formatDate(client.dob)}</span>
-                )}
-                {client.phone && (
-                  <span className="flex items-center gap-1"><Phone size={13} /> {client.phone}</span>
-                )}
-                {client.email && (
-                  <span className="flex items-center gap-1"><Mail size={13} /> {client.email}</span>
-                )}
-              </div>
-            </div>
+            <h1 className="text-xl font-bold text-[var(--color-text)]">
+              {client.first_name} {client.last_name}
+            </h1>
+            <span className={statusBadgeClass[client.status]}>{statusLabel[client.status]}</span>
+            <span className={disciplineBadgeClass[client.discipline]}>{client.discipline}</span>
+            <button
+              className="btn-ghost btn-sm gap-1 text-[var(--color-text-secondary)]"
+              onClick={() => setHeaderExpanded(!headerExpanded)}
+            >
+              {headerExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              {headerExpanded ? 'Less' : 'Details'}
+            </button>
           </div>
           <div className="flex items-center gap-2">
             <button className="btn-secondary btn-sm gap-1.5" onClick={() => setEditModalOpen(true)}>
@@ -942,121 +946,160 @@ const ClientDetailPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Collapsible Info Sections — Clinical Row */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <CollapsibleInfo
-            icon={<User size={14} />}
-            title="Demographics"
-            isComplete={demographicsComplete}
-            onEdit={() => setEditModalOpen(true)}
-            color="blue"
-          >
-            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">DOB</span><span>{formatDate(client.dob)}</span></div>
-            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Sex</span><span>{client.gender ? client.gender.charAt(0).toUpperCase() + client.gender.slice(1) : '--'}</span></div>
-            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Phone</span><span>{client.phone || '--'}</span></div>
-            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Email</span><span className="truncate ml-2">{client.email || '--'}</span></div>
-            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Address</span><span className="truncate ml-2">{client.address || '--'}</span></div>
-          </CollapsibleInfo>
+        {/* Expanded Details: DOB, Phone, Email */}
+        {headerExpanded && (
+          <div className="flex items-center gap-4 text-sm text-[var(--color-text-secondary)] mt-3 ml-13 pl-0.5">
+            {client.dob && (
+              <span className="flex items-center gap-1"><Calendar size={13} /> {formatDob(client.dob)}</span>
+            )}
+            {client.phone && (
+              <span className="flex items-center gap-1"><Phone size={13} /> {client.phone}</span>
+            )}
+            {client.email && (
+              <span className="flex items-center gap-1"><Mail size={13} /> {client.email}</span>
+            )}
+            {client.address && (
+              <span className="flex items-center gap-1"><MapPin size={13} /> {client.address}</span>
+            )}
+          </div>
+        )}
 
-          <CollapsibleInfo
-            icon={<Stethoscope size={14} />}
-            title="Diagnosis"
-            isComplete={diagnosisComplete}
-            onEdit={() => setEditModalOpen(true)}
-            color="violet"
-          >
-            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Primary Dx</span><span>{client.primary_dx_code || '--'}</span></div>
-            {client.primary_dx_description && <p className="text-xs text-[var(--color-text-secondary)] italic">{client.primary_dx_description}</p>}
-            {(() => {
-              try {
-                const secDx = JSON.parse(client.secondary_dx || '[]');
-                if (Array.isArray(secDx) && secDx.length > 0) {
-                  return secDx.map((dx: any, i: number) => (
-                    <div key={i} className="flex justify-between">
-                      <span className="text-[var(--color-text-secondary)]">Dx {String.fromCharCode(66 + i)}</span>
-                      <span>{dx.code}</span>
-                    </div>
-                  ));
-                }
-              } catch {}
-              return null;
-            })()}
-            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Default CPT</span><span>{client.default_cpt_code || '--'}</span></div>
-          </CollapsibleInfo>
-
-          <CollapsibleInfo
-            icon={<Activity size={14} />}
-            title="Referral"
-            isComplete={referringComplete}
-            onEdit={() => setEditModalOpen(true)}
-            color="amber"
-          >
-            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Physician</span><span>{client.referring_physician || '--'}</span></div>
-            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">NPI</span><span>{client.referring_npi || '--'}</span></div>
-            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Fax</span><span>{client.referring_fax || '--'}</span></div>
-          </CollapsibleInfo>
-
-          <CollapsibleInfo
-            icon={<Shield size={14} />}
-            title="Doc Compliance"
-            isComplete={true}
-            color="teal"
-          >
-            <p className="text-xs text-[var(--color-text-secondary)]">Note frequency, recertification dates & progress report alerts</p>
-            <button className="mt-2 text-xs text-[var(--color-primary)] hover:underline" onClick={() => handleTabChange('clinical')}>
-              View Details
-            </button>
-          </CollapsibleInfo>
+        {/* Compact completeness strip (always visible) */}
+        <div className="flex items-center gap-3 mt-3 flex-wrap">
+          {[
+            { label: 'Demographics', complete: demographicsComplete, color: 'blue' },
+            { label: 'Diagnosis', complete: diagnosisComplete, color: 'violet' },
+            { label: 'Referral', complete: referringComplete, color: 'amber' },
+            { label: 'Compliance', complete: true, color: 'teal' },
+            { label: 'Insurance', complete: insuranceComplete, color: 'emerald' },
+            { label: 'Docs', complete: documents.length > 0, color: 'slate' },
+            { label: 'Claims', complete: claimInfoComplete, color: 'violet' },
+          ].map(({ label, complete, color }) => (
+            <span key={label} className="flex items-center gap-1 text-xs text-[var(--color-text-secondary)]">
+              <span className={`w-2 h-2 rounded-full ${complete ? `bg-${color}-500` : 'bg-gray-300'}`} />
+              {label}
+            </span>
+          ))}
         </div>
 
-        {/* Collapsible Info Sections — Business Row */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          <CollapsibleInfo
-            icon={<Shield size={14} />}
-            title="Insurance"
-            isComplete={insuranceComplete}
-            onEdit={() => setEditModalOpen(true)}
-            color="emerald"
-          >
-            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Payer</span><span>{client.insurance_payer || '--'}</span></div>
-            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Member ID</span><span>{client.insurance_member_id || '--'}</span></div>
-            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Group</span><span>{client.insurance_group || '--'}</span></div>
-          </CollapsibleInfo>
+        {/* Expanded: Full CollapsibleInfo sections */}
+        {headerExpanded && (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+              <CollapsibleInfo
+                icon={<User size={14} />}
+                title="Demographics"
+                isComplete={demographicsComplete}
+                onEdit={() => setEditModalOpen(true)}
+                color="blue"
+              >
+                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">DOB</span><span>{formatDob(client.dob)}</span></div>
+                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Sex</span><span>{client.gender ? client.gender.charAt(0).toUpperCase() + client.gender.slice(1) : '--'}</span></div>
+                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Phone</span><span>{client.phone || '--'}</span></div>
+                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Email</span><span className="truncate ml-2">{client.email || '--'}</span></div>
+                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Address</span><span className="truncate ml-2">{client.address || '--'}</span></div>
+              </CollapsibleInfo>
 
-          <CollapsibleInfo
-            icon={<FolderOpen size={14} />}
-            title={`Documents (${documents.length})`}
-            isComplete={documents.length > 0}
-            color="slate"
-          >
-            <div className="space-y-1.5">
-              {documents.slice(0, 3).map((doc) => (
-                <div key={doc.id} className="flex items-center justify-between text-xs">
-                  <span className="truncate">{doc.original_name}</span>
-                  <button className="text-[var(--color-primary)] hover:underline" onClick={() => handleOpenDocument(doc.id)}>View</button>
-                </div>
-              ))}
-              {documents.length > 3 && <p className="text-xs text-[var(--color-text-secondary)]">+{documents.length - 3} more</p>}
-              {documents.length === 0 && <p className="text-xs text-[var(--color-text-secondary)]">No documents</p>}
+              <CollapsibleInfo
+                icon={<Stethoscope size={14} />}
+                title="Diagnosis"
+                isComplete={diagnosisComplete}
+                onEdit={() => setEditModalOpen(true)}
+                color="violet"
+              >
+                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Primary Dx</span><span>{client.primary_dx_code || '--'}</span></div>
+                {client.primary_dx_description && <p className="text-xs text-[var(--color-text-secondary)] italic">{client.primary_dx_description}</p>}
+                {(() => {
+                  try {
+                    const secDx = JSON.parse(client.secondary_dx || '[]');
+                    if (Array.isArray(secDx) && secDx.length > 0) {
+                      return secDx.map((dx: any, i: number) => (
+                        <div key={i} className="flex justify-between">
+                          <span className="text-[var(--color-text-secondary)]">Dx {String.fromCharCode(66 + i)}</span>
+                          <span>{dx.code}</span>
+                        </div>
+                      ));
+                    }
+                  } catch {}
+                  return null;
+                })()}
+                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Default CPT</span><span>{client.default_cpt_code || '--'}</span></div>
+              </CollapsibleInfo>
+
+              <CollapsibleInfo
+                icon={<Activity size={14} />}
+                title="Referral"
+                isComplete={referringComplete}
+                onEdit={() => setEditModalOpen(true)}
+                color="amber"
+              >
+                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Physician</span><span>{client.referring_physician || '--'}</span></div>
+                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">NPI</span><span>{client.referring_npi || '--'}</span></div>
+                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Fax</span><span>{client.referring_fax || '--'}</span></div>
+              </CollapsibleInfo>
+
+              <CollapsibleInfo
+                icon={<Shield size={14} />}
+                title="Doc Compliance"
+                isComplete={true}
+                color="teal"
+              >
+                <p className="text-xs text-[var(--color-text-secondary)]">Note frequency, recertification dates & progress report alerts</p>
+                <button className="mt-2 text-xs text-[var(--color-primary)] hover:underline" onClick={() => handleTabChange('clinical')}>
+                  View Details
+                </button>
+              </CollapsibleInfo>
             </div>
-            <button className="mt-2 text-xs text-[var(--color-primary)] hover:underline flex items-center gap-1" onClick={() => handleTabChange('documents')}>
-              <Upload size={10} /> Manage Documents
-            </button>
-          </CollapsibleInfo>
 
-          <CollapsibleInfo
-            icon={<FileText size={14} />}
-            title="Claim Info"
-            isComplete={claimInfoComplete}
-            onEdit={() => setEditModalOpen(true)}
-            color="violet"
-          >
-            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Onset</span><span>{client.onset_date ? formatDate(client.onset_date) : '--'}</span></div>
-            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Assignment</span><span>{client.claim_accept_assignment === 'Y' ? 'Yes' : client.claim_accept_assignment === 'N' ? 'No' : '--'}</span></div>
-            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Prior Auth</span><span>{client.prior_auth_number || '--'}</span></div>
-            <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Patient Sig</span><span>{client.patient_signature_source || '--'}</span></div>
-          </CollapsibleInfo>
-        </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-3">
+              <CollapsibleInfo
+                icon={<Shield size={14} />}
+                title="Insurance"
+                isComplete={insuranceComplete}
+                onEdit={() => setEditModalOpen(true)}
+                color="emerald"
+              >
+                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Payer</span><span>{client.insurance_payer || '--'}</span></div>
+                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Member ID</span><span>{client.insurance_member_id || '--'}</span></div>
+                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Group</span><span>{client.insurance_group || '--'}</span></div>
+              </CollapsibleInfo>
+
+              <CollapsibleInfo
+                icon={<FolderOpen size={14} />}
+                title={`Documents (${documents.length})`}
+                isComplete={documents.length > 0}
+                color="slate"
+              >
+                <div className="space-y-1.5">
+                  {documents.slice(0, 3).map((doc) => (
+                    <div key={doc.id} className="flex items-center justify-between text-xs">
+                      <span className="truncate">{doc.original_name}</span>
+                      <button className="text-[var(--color-primary)] hover:underline" onClick={() => handleOpenDocument(doc.id)}>View</button>
+                    </div>
+                  ))}
+                  {documents.length > 3 && <p className="text-xs text-[var(--color-text-secondary)]">+{documents.length - 3} more</p>}
+                  {documents.length === 0 && <p className="text-xs text-[var(--color-text-secondary)]">No documents</p>}
+                </div>
+                <button className="mt-2 text-xs text-[var(--color-primary)] hover:underline flex items-center gap-1" onClick={() => handleTabChange('documents')}>
+                  <Upload size={10} /> Manage Documents
+                </button>
+              </CollapsibleInfo>
+
+              <CollapsibleInfo
+                icon={<FileText size={14} />}
+                title="Claim Info"
+                isComplete={claimInfoComplete}
+                onEdit={() => setEditModalOpen(true)}
+                color="violet"
+              >
+                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Onset</span><span>{client.onset_date ? formatDate(client.onset_date) : '--'}</span></div>
+                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Assignment</span><span>{client.claim_accept_assignment === 'Y' ? 'Yes' : client.claim_accept_assignment === 'N' ? 'No' : '--'}</span></div>
+                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Prior Auth</span><span>{client.prior_auth_number || '--'}</span></div>
+                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Patient Sig</span><span>{client.patient_signature_source || '--'}</span></div>
+              </CollapsibleInfo>
+            </div>
+          </>
+        )}
       </div>
 
       {/* ══════════ COMPLIANCE BANNER ══════════ */}

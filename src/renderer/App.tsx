@@ -21,7 +21,7 @@ import {
   Lock,
   MessageSquare,
   CheckCircle,
-  Printer,
+  Send,
 } from 'lucide-react';
 import FeedbackModal from './components/FeedbackModal';
 import FaxPage from './pages/FaxPage';
@@ -89,7 +89,7 @@ const navGroups: NavGroup[] = [
     color: '#2563eb', // deep blue
     items: [
       { to: '/billing', label: 'Billing', icon: <DollarSign size={18} /> },
-      { to: '/fax', label: 'Fax Center', icon: <Printer size={18} /> },
+      { to: '/fax', label: 'Fax Center', icon: <Send size={18} /> },
       { to: '/entities', label: 'Contracts', icon: <Building2 size={18} />, matchPrefix: '/entities' },
       { to: '/mileage', label: 'Mileage', icon: <Car size={18} /> },
       { to: '/reports', label: 'Year-End Summary', icon: <FileSpreadsheet size={18} /> },

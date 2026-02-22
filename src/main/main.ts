@@ -9106,6 +9106,36 @@ function createPdfHelpers(doc: any, options?: { client?: any; practice?: any }) 
     y += lines.length * 14;
   };
 
+  /** Eval field with colored left-border bar (matches SOAP section style) */
+  const addEvalField = (label: string, value: string, color?: [number, number, number]) => {
+    if (!value || value === '--' || value.trim() === '' || value.trim() === '-') return;
+    checkPageBreak(30);
+    const barColor = color || PDF_COLORS.accent;
+    y += 6; // 6-8pt spacing between eval field blocks
+    const startY = y;
+    // Bold label
+    doc.setFontSize(PDF_FONTS.fieldLabel);
+    doc.setFont('helvetica', 'bold');
+    setColor(barColor);
+    doc.text(`${label}:`, marginLeft + 8, y);
+    y += 13;
+    // Content
+    doc.setFontSize(PDF_FONTS.body);
+    doc.setFont('helvetica', 'normal');
+    setColor(PDF_COLORS.body);
+    const lines = doc.splitTextToSize(value, maxWidth - 16);
+    for (const line of lines) {
+      checkPageBreak(15);
+      doc.text(line, marginLeft + 10, y);
+      y += 14;
+    }
+    // Draw left border bar
+    setFill(barColor);
+    const barLen = y - startY + 2;
+    doc.rect(marginLeft, startY - 12, 2.5, barLen, 'F');
+    setColor(PDF_COLORS.body);
+  };
+
   /** Wrapped body text */
   const addWrappedText = (text: string, indent = 0) => {
     if (!text) return;
@@ -9251,14 +9281,14 @@ function createPdfHelpers(doc: any, options?: { client?: any; practice?: any }) 
 
   /** Render a goal row with type + status badges */
   const addGoalRow = (goal: any) => {
-    checkPageBreak(30);
+    checkPageBreak(36);
     let bx = marginLeft;
     // Type badge
     const gType = (goal.goal_type || 'STG').toUpperCase();
     const typeBg = gType === 'LTG' ? PDF_COLORS.accentLight : PDF_COLORS.stgBg;
     const typeText = gType === 'LTG' ? PDF_COLORS.accent : PDF_COLORS.stgText;
     const tw = drawBadge(gType, bx, y, typeBg, typeText);
-    bx += tw + 6;
+    bx += tw + 4;
     // Status badge
     const st = (goal.status || 'active').toLowerCase();
     const stLabel = st.charAt(0).toUpperCase() + st.slice(1);
@@ -9269,10 +9299,10 @@ function createPdfHelpers(doc: any, options?: { client?: any; practice?: any }) 
     else if (st === 'not met' || st === 'not_met') { stBg = PDF_COLORS.notMetBg; stText = PDF_COLORS.notMetText; }
     const sw = drawBadge(stLabel, bx, y, stBg, stText);
     bx += sw + 8;
-    // Goal text
+    // Goal text (muted for met goals)
     doc.setFontSize(PDF_FONTS.body);
     doc.setFont('helvetica', 'normal');
-    setColor(PDF_COLORS.body);
+    setColor(st === 'met' ? PDF_COLORS.light : PDF_COLORS.body);
     const goalTextW = pageWidth - marginRight - bx;
     const gLines = doc.splitTextToSize(goal.goal_text || '', goalTextW);
     if (gLines.length > 0) {
@@ -9284,32 +9314,37 @@ function createPdfHelpers(doc: any, options?: { client?: any; practice?: any }) 
         doc.text(gLines[li], marginLeft + 10, y);
       }
     }
-    y += 6;
-    // Target/Met dates
+    y += 8;
+    // Target/Met dates on own line, indented, lighter/smaller font
     if (goal.target_date) {
-      doc.setFontSize(PDF_FONTS.metadata);
+      doc.setFontSize(7);
       doc.setFont('helvetica', 'normal');
       setColor(PDF_COLORS.light);
-      doc.text(`Target: ${goal.target_date}${goal.met_date ? '   Met: ' + goal.met_date : ''}`, marginLeft + 10, y);
+      let dateStr = `Target: ${goal.target_date}`;
+      if (goal.met_date) dateStr += `  |  Met: ${goal.met_date}`;
+      doc.text(dateStr, marginLeft + 10, y);
       y += 10;
     }
-    y += 4;
+    y += 8; // 8pt breathing room between goals
     setColor(PDF_COLORS.body);
   };
 
   /** Note header bar for individual note PDFs */
   const addNoteHeader = (note: any) => {
     checkPageBreak(42);
-    // Background bar
-    setFill(PDF_COLORS.cardBg);
+    // Background bar — slightly stronger than cardBg for clear "new note" signal
+    setFill(PDF_COLORS.accentLight);
     doc.roundedRect(marginLeft, y - 4, maxWidth, 32, 2, 2, 'F');
+    // Left accent bar on note header
+    setFill(PDF_COLORS.accent);
+    doc.rect(marginLeft, y - 4, 3, 32, 'F');
 
-    // Date left
+    // Date left — larger, bolder for clear visual anchor
     const dateFormatted = formatPdfDate(note.date_of_service);
-    doc.setFontSize(12);
+    doc.setFontSize(13);
     doc.setFont('helvetica', 'bold');
     setColor(PDF_COLORS.heading);
-    doc.text(dateFormatted, marginLeft + 8, y + 10);
+    doc.text(dateFormatted, marginLeft + 10, y + 10);
 
     // CPT right-aligned
     let cptStr = '';
@@ -9330,7 +9365,7 @@ function createPdfHelpers(doc: any, options?: { client?: any; practice?: any }) 
       let rightX = pageWidth - marginRight - 8;
       // Signed badge
       if (note.signed_at) {
-        const bw = drawBadge('\u2713 Signed', rightX - 50, y + 10, PDF_COLORS.activeBg, PDF_COLORS.signedGreen);
+        const bw = drawBadge('Signed', rightX - 50, y + 10, PDF_COLORS.activeBg, PDF_COLORS.signedGreen);
         rightX -= (bw + 10);
       } else {
         const bw = drawBadge('Draft', rightX - 34, y + 10, PDF_COLORS.dcBg, PDF_COLORS.dcGray);
@@ -9343,7 +9378,7 @@ function createPdfHelpers(doc: any, options?: { client?: any; practice?: any }) 
     } else {
       // Just signed badge
       if (note.signed_at) {
-        drawBadge('\u2713 Signed', pageWidth - marginRight - 58, y + 10, PDF_COLORS.activeBg, PDF_COLORS.signedGreen);
+        drawBadge('Signed', pageWidth - marginRight - 58, y + 10, PDF_COLORS.activeBg, PDF_COLORS.signedGreen);
       } else {
         drawBadge('Draft', pageWidth - marginRight - 42, y + 10, PDF_COLORS.dcBg, PDF_COLORS.dcGray);
       }
@@ -9387,19 +9422,15 @@ function createPdfHelpers(doc: any, options?: { client?: any; practice?: any }) 
     y += 8;
   };
 
-  /** Note separator for chart export */
+  /** Note separator for chart export — strong visual boundary between notes */
   const addNoteSeparator = () => {
-    y += 8;
+    y += 18; // 18pt padding above divider
     setDraw(PDF_COLORS.divider);
+    doc.setLineWidth(1);
+    doc.line(marginLeft, y, pageWidth - marginRight, y);
     doc.setLineWidth(0.3);
-    const sepStart = marginLeft + maxWidth * 0.2;
-    const sepEnd = pageWidth - marginRight - maxWidth * 0.2;
-    // Dashed effect via short segments
-    for (let sx = sepStart; sx < sepEnd; sx += 8) {
-      doc.line(sx, y, Math.min(sx + 4, sepEnd), y);
-    }
     setDraw([0, 0, 0]);
-    y += 8;
+    y += 18; // 18pt padding below divider
   };
 
   /** Practice header + client footer on every page */
@@ -9509,11 +9540,19 @@ function createPdfHelpers(doc: any, options?: { client?: any; practice?: any }) 
     }
   };
 
-  /** Signature block */
+  /** Signature block — professional layout with clear spacing */
   const addSignatureBlock = (signatureTyped: string, signatureImage?: string, signedAt?: string) => {
     if (!signatureTyped && !signatureImage) return;
-    checkPageBreak(80);
-    y += 14;
+    checkPageBreak(100);
+    y += 16; // 16pt top padding before signature
+
+    // Subtle horizontal rule above signature (like a paper signature line)
+    setDraw(PDF_COLORS.divider);
+    doc.setLineWidth(0.5);
+    doc.line(marginLeft, y, marginLeft + 200, y);
+    doc.setLineWidth(0.3);
+    setDraw([0, 0, 0]);
+    y += 6;
 
     // Drawn signature image
     if (signatureImage) {
@@ -9522,26 +9561,18 @@ function createPdfHelpers(doc: any, options?: { client?: any; practice?: any }) 
         doc.addImage(signatureImage, sigFormat, marginLeft, y, 150, 45);
         y += 50;
       } catch {}
-    } else {
-      // Signature line if no drawn signature
-      setDraw(PDF_COLORS.divider);
-      doc.setLineWidth(0.5);
-      doc.line(marginLeft, y + 2, marginLeft + 150, y + 2);
-      doc.setLineWidth(0.3);
-      setDraw([0, 0, 0]);
-      y += 8;
     }
 
-    // Typed name
+    // Typed name — bold, prominent
     if (signatureTyped) {
-      doc.setFontSize(PDF_FONTS.fieldLabel);
-      doc.setFont('helvetica', 'oblique');
+      doc.setFontSize(PDF_FONTS.fieldValue);
+      doc.setFont('helvetica', 'bold');
       setColor(PDF_COLORS.heading);
       doc.text(signatureTyped, marginLeft, y);
-      y += 12;
+      y += 14;
     }
 
-    // Signed date
+    // Signed date on separate line, smaller & lighter
     if (signedAt) {
       doc.setFontSize(PDF_FONTS.footerText);
       doc.setFont('helvetica', 'normal');
@@ -9549,6 +9580,7 @@ function createPdfHelpers(doc: any, options?: { client?: any; practice?: any }) 
       doc.text(`Signed: ${new Date(signedAt).toLocaleString()}`, marginLeft, y);
       y += 10;
     }
+    y += 8; // 8pt bottom padding after signature
     setColor(PDF_COLORS.body);
     doc.setFont('helvetica', 'normal');
   };
@@ -9603,7 +9635,7 @@ function createPdfHelpers(doc: any, options?: { client?: any; practice?: any }) 
     pageWidth, pageHeight, marginLeft, marginRight, maxWidth,
     get y() { return y; },
     set y(val: number) { y = val; },
-    checkPageBreak, addSectionHeader, addField, addEmphasisField, addWrappedText,
+    checkPageBreak, addSectionHeader, addField, addEmphasisField, addEvalField, addWrappedText,
     addSOAPSection, addClientInfoCard, addGoalRow, addNoteHeader,
     startCard, endCard, addNoteSeparator,
     addHeaderFooter, addSignatureBlock, addPhysicianSignatureLine,
@@ -9808,7 +9840,7 @@ function buildSingleEvalPdf(client: any, evalItem: any): Buffer {
   // Signed badge
   if (evalItem.signed_at) {
     const labelW = doc.getTextWidth(`${evalTypeLabel} \u2014 ${dateFormatted}  `);
-    h.drawBadge('\u2713 Signed', h.marginLeft + labelW, h.y, PDF_COLORS.activeBg, PDF_COLORS.signedGreen);
+    h.drawBadge('Signed', h.marginLeft + labelW, h.y, PDF_COLORS.activeBg, PDF_COLORS.signedGreen);
   }
   h.setColor(PDF_COLORS.body);
   h.y += 16;
@@ -10090,7 +10122,7 @@ function buildSingleNotePdf(client: any, note: any, pdfSections: any[]): Buffer 
         h.addSectionHeader('Discharge Recommendations');
         for (const rec of dcData.recommendations || []) {
           const recLabel = DISCHARGE_RECOMMENDATION_LABELS[rec] || rec;
-          h.addField('\u2713', recLabel);
+          h.addField('-', recLabel);
           if (rec === 'referral' && dcData.referral_to) h.addField('  Referred to', dcData.referral_to);
           if (rec === 'return_to_therapy' && dcData.return_to_therapy_if) h.addField('  Return if', dcData.return_to_therapy_if);
           if (rec === 'equipment' && dcData.equipment_details) h.addField('  Equipment', dcData.equipment_details);
@@ -10170,6 +10202,14 @@ function buildClientChartPdf(clientId: number): Buffer {
       clinical_impression: 'Clinical Impression',
       precautions: 'Precautions / Contraindications', goals: 'Goals',
       treatment_plan: 'Treatment Plan', frequency_duration: 'Frequency & Duration',
+      // Additional eval fields (camelCase → Title Case)
+      chiefComplaint: 'Chief Complaint', history: 'History',
+      observations: 'Observations', testResults: 'Test Results',
+      recommendations: 'Recommendations', plan: 'Plan',
+      currentComplaints: 'Current Complaints', clinicalImpression: 'Clinical Impression',
+      rehabilitationPotential: 'Rehabilitation Potential', treatmentPlan: 'Treatment Plan',
+      frequencyDuration: 'Frequency & Duration', medicalHistory: 'Medical History',
+      priorLevelOfFunction: 'Prior Level of Function', referralSource: 'Referral Source',
     };
     const objFields: Record<string, string> = {
       rom: 'ROM', strength_mmt: 'Strength / MMT', posture: 'Posture',
@@ -10200,7 +10240,7 @@ function buildClientChartPdf(clientId: number): Buffer {
       // Signed badge
       if (evalItem.signed_at) {
         const lineW = dateW + doc.getTextWidth(`${evalItem.discipline} \u2014 ${evalTypeLabel}  `);
-        h.drawBadge('\u2713 Signed', h.marginLeft + 4 + lineW, h.y, PDF_COLORS.activeBg, PDF_COLORS.signedGreen);
+        h.drawBadge('Signed', h.marginLeft + 4 + lineW, h.y, PDF_COLORS.activeBg, PDF_COLORS.signedGreen);
       }
       h.setColor(PDF_COLORS.body);
       h.y += 14;
@@ -10219,17 +10259,19 @@ function buildClientChartPdf(clientId: number): Buffer {
             for (const [key, val] of Object.entries(content)) {
               if (key === 'goal_entries' || key === 'created_goal_ids' || key === 'objective_assessment') continue;
               if (!val || (typeof val === 'string' && !val.trim())) continue;
-              const label = evalFieldLabels[key] || key;
+              const label = evalFieldLabels[key] || objFields[key] ||
+                key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()).replace(/_/g, ' ').trim();
               if (emphasisKeys.has(key)) {
-                h.addEmphasisField(label, String(val));
+                h.addEvalField(label, String(val), PDF_COLORS.accent);
               } else {
-                h.addField(label, String(val));
+                h.addEvalField(label, String(val));
               }
             }
             if (content.objective_assessment && typeof content.objective_assessment === 'object') {
               const populated = Object.entries(content.objective_assessment as Record<string, string>)
                 .filter(([_, v]) => v && v.trim());
               if (populated.length > 0) {
+                h.y += 6;
                 doc.setFontSize(PDF_FONTS.fieldLabel);
                 doc.setFont('helvetica', 'bold');
                 h.setColor(PDF_COLORS.accent);
@@ -10238,7 +10280,9 @@ function buildClientChartPdf(clientId: number): Buffer {
                 h.y += 13;
                 h.setColor(PDF_COLORS.body);
                 for (const [oKey, oVal] of populated) {
-                  h.addField(objFields[oKey] || oKey, String(oVal));
+                  const oLabel = objFields[oKey] ||
+                    oKey.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()).replace(/_/g, ' ').trim();
+                  h.addEvalField(oLabel, String(oVal));
                 }
               }
             }
@@ -10393,7 +10437,7 @@ function buildClientChartPdf(clientId: number): Buffer {
             h.setColor(PDF_COLORS.body);
             for (const rec of dcData.recommendations || []) {
               const recLabel = DISCHARGE_RECOMMENDATION_LABELS[rec] || rec;
-              h.addField('\u2713', recLabel);
+              h.addField('-', recLabel);
             }
             if (dcData.additional_recommendations) h.addWrappedText(dcData.additional_recommendations, 10);
           }

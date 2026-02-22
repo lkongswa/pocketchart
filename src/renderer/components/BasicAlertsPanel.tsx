@@ -178,16 +178,9 @@ export default function BasicAlertsPanel() {
     })
     .filter(Boolean) as AlertCategory[];
 
-  // "All clear" state
+  // Hide entirely when nothing needs attention (1D dashboard polish)
   if (categories.length === 0) {
-    return (
-      <div className="mb-6">
-        <div className="flex items-center justify-center gap-2 px-4 py-4 rounded-lg bg-emerald-50 border border-emerald-200">
-          <CheckCircle size={16} className="text-emerald-500" />
-          <p className="text-sm font-medium text-emerald-700">All caught up! No items need attention.</p>
-        </div>
-      </div>
-    );
+    return null;
   }
 
   const urgencyStyles = {

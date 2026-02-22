@@ -204,7 +204,7 @@ const ClientsPage: React.FC = () => {
                     </span>
                   </td>
                   <td className="table-cell text-[var(--color-text-secondary)]">
-                    {formatDate(client.dob)}
+                    {client.dob ? (() => { try { const d = new Date(client.dob + 'T00:00:00'); return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`; } catch { return client.dob; } })() : '--'}
                   </td>
                   <td className="table-cell">
                     <span className={disciplineBadgeClass[client.discipline]}>
