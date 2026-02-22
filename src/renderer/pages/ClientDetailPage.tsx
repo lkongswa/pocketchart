@@ -45,6 +45,7 @@ import {
   Printer,
   Check,
   Inbox,
+  CalendarCheck,
 } from 'lucide-react';
 import type {
   Client,
@@ -283,7 +284,7 @@ const ClientDetailPage: React.FC = () => {
   // Collapsible sections
   const [showAllNotes, setShowAllNotes] = useState(false);
   const [showAllGoals, setShowAllGoals] = useState(false);
-  const [showActiveGoals, setShowActiveGoals] = useState(true);
+  const [showActiveGoals, setShowActiveGoals] = useState(false);
   const [showInactiveGoals, setShowInactiveGoals] = useState(false);
   const [goalStatusMenuId, setGoalStatusMenuId] = useState<number | null>(null);
   const [expandedGoalIdx, setExpandedGoalIdx] = useState<number | null>(null); // all goals collapsed by default
@@ -796,6 +797,16 @@ const ClientDetailPage: React.FC = () => {
   const activeGoals = goals.filter((g) => g.status === 'active');
   const unsignedNotes = notes.filter((n) => !n.signed_at);
   const displayNotes = showAllNotes ? notes : notes.slice(0, 5);
+
+  // Appointments missing notes — past, non-cancelled, no linked note
+  const today = new Date();
+  const noteIdSet = new Set(notes.map(n => n.id));
+  const missingNoteAppts = appointments.filter(appt => {
+    if (appt.status === 'cancelled') return false;
+    if (appt.note_id && noteIdSet.has(appt.note_id)) return false;
+    const apptDate = new Date(appt.scheduled_date + 'T00:00:00');
+    return apptDate <= today;
+  });
 
   // Goal partitions: established (part of signed docs) vs pending (informal)
   const isEstablishedGoal = (g: Goal) => g.source_document_id != null;
@@ -1410,6 +1421,47 @@ const ClientDetailPage: React.FC = () => {
 
         {/* RIGHT COLUMN: SOAP Notes (7 cols) */}
         <div className="col-span-7">
+          {/* Appointments missing notes */}
+          {missingNoteAppts.length > 0 && (
+            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 overflow-hidden">
+              <div className="flex items-center gap-2 px-3 py-2">
+                <CalendarCheck size={14} className="text-amber-600 shrink-0" />
+                <span className="text-xs font-medium text-amber-800">
+                  {missingNoteAppts.length} appointment{missingNoteAppts.length !== 1 ? 's' : ''} missing notes
+                </span>
+              </div>
+              <div className="divide-y divide-amber-200">
+                {missingNoteAppts.slice(0, 5).map((appt) => (
+                  <div
+                    key={appt.id}
+                    className="flex items-center gap-3 px-3 py-1.5 hover:bg-amber-100/50 cursor-pointer transition-colors"
+                    onClick={() => navigate(`/clients/${clientId}/note/new`, {
+                      state: {
+                        appointmentDate: appt.scheduled_date,
+                        appointmentTime: appt.scheduled_time,
+                        appointmentDuration: appt.duration_minutes,
+                      }
+                    })}
+                  >
+                    <div className="w-1 h-4 rounded-full bg-amber-400 shrink-0" />
+                    <span className="text-xs text-amber-900">{formatDate(appt.scheduled_date)}</span>
+                    {appt.scheduled_time && (
+                      <span className="text-xs text-amber-700">
+                        {new Date(`2000-01-01T${appt.scheduled_time}`).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                      </span>
+                    )}
+                    <span className="text-[10px] text-amber-600 ml-auto">+ Create Note</span>
+                  </div>
+                ))}
+                {missingNoteAppts.length > 5 && (
+                  <div className="px-3 py-1.5 text-[10px] text-amber-600">
+                    +{missingNoteAppts.length - 5} more
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           <SectionCard
             color="blue"
             icon={<FileText size={18} />}
