@@ -180,27 +180,41 @@ export default function SignConfirmDialog({
     [fixes]
   );
 
+  const [processing, setProcessing] = useState(false);
+
   const handleFixAndSign = async () => {
-    const validationFixes = buildValidationFixes();
+    try {
+      setProcessing(true);
+      const validationFixes = buildValidationFixes();
 
-    // Apply client fixes via IPC
-    if (Object.keys(validationFixes.clientFixes).length > 0 && onClientUpdate) {
-      await onClientUpdate(validationFixes.clientFixes);
+      // Apply client fixes via IPC
+      if (Object.keys(validationFixes.clientFixes).length > 0 && onClientUpdate) {
+        await onClientUpdate(validationFixes.clientFixes);
+      }
+
+      onConfirm(validationFixes);
+    } catch (err) {
+      console.error('Fix & Sign failed:', err);
+      setProcessing(false);
     }
-
-    onConfirm(validationFixes);
   };
 
   const handleSaveAndClose = async () => {
     if (!onSaveAndClose) return;
-    const validationFixes = buildValidationFixes();
+    try {
+      setProcessing(true);
+      const validationFixes = buildValidationFixes();
 
-    // Apply client fixes via IPC
-    if (Object.keys(validationFixes.clientFixes).length > 0 && onClientUpdate) {
-      await onClientUpdate(validationFixes.clientFixes);
+      // Apply client fixes via IPC
+      if (Object.keys(validationFixes.clientFixes).length > 0 && onClientUpdate) {
+        await onClientUpdate(validationFixes.clientFixes);
+      }
+
+      onSaveAndClose(validationFixes);
+    } catch (err) {
+      console.error('Apply Fixes failed:', err);
+      setProcessing(false);
     }
-
-    onSaveAndClose(validationFixes);
   };
 
   if (!isOpen) return null;
@@ -505,30 +519,30 @@ export default function SignConfirmDialog({
               : 'Fill in the required fields above to enable signing.'}
           </p>
           <div className="flex items-center gap-3">
-            <button onClick={onClose} className="btn-secondary">Go Back</button>
+            <button onClick={onClose} className="btn-secondary" disabled={processing}>Go Back</button>
             {onSaveAndClose && (
               <button
                 onClick={handleSaveAndClose}
-                disabled={!hasAnyFixes}
+                disabled={!hasAnyFixes || processing}
                 className={`px-4 py-2 text-sm font-medium rounded-lg border-2 transition-colors ${
-                  hasAnyFixes
+                  hasAnyFixes && !processing
                     ? 'border-blue-400 text-blue-700 bg-white hover:bg-blue-50'
                     : 'border-gray-300 text-gray-400 bg-gray-50 cursor-not-allowed'
                 }`}
               >
-                Apply Fixes
+                {processing ? 'Applying\u2026' : 'Apply Fixes'}
               </button>
             )}
             <button
               onClick={handleFixAndSign}
-              disabled={!allErrorsResolved}
+              disabled={!allErrorsResolved || processing}
               className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border-2 transition-colors ${
-                allErrorsResolved
+                allErrorsResolved && !processing
                   ? 'border-green-500 text-green-700 bg-white hover:bg-green-50'
                   : 'border-gray-300 text-gray-400 bg-gray-50 cursor-not-allowed'
               }`}
             >
-              Fix & Sign
+              {processing ? 'Signing\u2026' : 'Fix & Sign'}
             </button>
           </div>
         </div>
