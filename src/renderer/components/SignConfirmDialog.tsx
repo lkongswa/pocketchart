@@ -183,36 +183,45 @@ export default function SignConfirmDialog({
   const [processing, setProcessing] = useState(false);
 
   const handleFixAndSign = async () => {
+    console.log('[SignDialog] Fix & Sign clicked', { allErrorsResolved, processing, fixKeys: Object.keys(fixes) });
     try {
       setProcessing(true);
       const validationFixes = buildValidationFixes();
+      console.log('[SignDialog] Built fixes:', JSON.stringify(validationFixes, null, 2));
 
       // Apply client fixes via IPC
       if (Object.keys(validationFixes.clientFixes).length > 0 && onClientUpdate) {
+        console.log('[SignDialog] Applying client fixes...');
         await onClientUpdate(validationFixes.clientFixes);
+        console.log('[SignDialog] Client fixes applied');
       }
 
+      console.log('[SignDialog] Calling onConfirm...');
       onConfirm(validationFixes);
     } catch (err) {
-      console.error('Fix & Sign failed:', err);
+      console.error('[SignDialog] Fix & Sign failed:', err);
       setProcessing(false);
     }
   };
 
   const handleSaveAndClose = async () => {
+    console.log('[SignDialog] Apply Fixes clicked', { hasAnyFixes, processing, fixKeys: Object.keys(fixes) });
     if (!onSaveAndClose) return;
     try {
       setProcessing(true);
       const validationFixes = buildValidationFixes();
+      console.log('[SignDialog] Built fixes:', JSON.stringify(validationFixes, null, 2));
 
       // Apply client fixes via IPC
       if (Object.keys(validationFixes.clientFixes).length > 0 && onClientUpdate) {
+        console.log('[SignDialog] Applying client fixes...');
         await onClientUpdate(validationFixes.clientFixes);
+        console.log('[SignDialog] Client fixes applied');
       }
 
       onSaveAndClose(validationFixes);
     } catch (err) {
-      console.error('Apply Fixes failed:', err);
+      console.error('[SignDialog] Apply Fixes failed:', err);
       setProcessing(false);
     }
   };
@@ -425,7 +434,7 @@ export default function SignConfirmDialog({
     );
   }
 
-  // ─── State 4: Only unfixable errors (no sign possible) ───
+  // ─── State 4: Has unfixable errors (can't sign, but can still fix other items) ───
   if (isBlocked) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -439,20 +448,46 @@ export default function SignConfirmDialog({
             </button>
           </div>
           <div className="px-6 py-4 space-y-2 overflow-y-auto flex-1">
+            {/* Unfixable errors — must go back to resolve */}
             {unfixableErrors.map(issue => renderIssueRow(issue))}
-            {/* Also show fixable issues if any — user can fix those here */}
-            {fixableErrors.length > 0 && fixableErrors.map(issue => renderIssueRow(issue))}
-          </div>
-          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[var(--color-border)] shrink-0">
-            <button onClick={onClose} className="btn-secondary">Go Back</button>
-            {onSaveAndClose && hasAnyFixes && (
-              <button
-                onClick={handleSaveAndClose}
-                className="px-4 py-2 text-sm font-medium rounded-lg border-2 border-blue-400 text-blue-700 bg-white hover:bg-blue-50 transition-colors"
-              >
-                Apply Fixes
-              </button>
+            {/* Fixable issues — can be fixed right here */}
+            {fixableErrors.length > 0 && (
+              <>
+                <div className="border-t border-[var(--color-border)]/50 my-1" />
+                <p className="text-xs text-[var(--color-text-secondary)] italic">
+                  You can fix these items here, then go back to resolve the remaining issues:
+                </p>
+                {fixableErrors.map(issue => renderIssueRow(issue))}
+              </>
             )}
+            {/* Warnings */}
+            {warnings.length > 0 && (
+              <>
+                <div className="border-t border-[var(--color-border)]/50 my-1" />
+                {warnings.map(issue => renderIssueRow(issue))}
+              </>
+            )}
+          </div>
+          <div className="flex items-center justify-between px-6 py-4 border-t border-[var(--color-border)] shrink-0">
+            <p className="text-xs text-[var(--color-text-secondary)] max-w-xs">
+              Resolve the items above, then go back to complete the remaining fields.
+            </p>
+            <div className="flex items-center gap-3">
+              <button onClick={onClose} className="btn-secondary">Go Back</button>
+              {onSaveAndClose && fixableErrors.length > 0 && (
+                <button
+                  onClick={handleSaveAndClose}
+                  disabled={!hasAnyFixes || processing}
+                  className={`px-4 py-2 text-sm font-medium rounded-lg border-2 transition-colors ${
+                    hasAnyFixes && !processing
+                      ? 'border-blue-400 text-blue-700 bg-white hover:bg-blue-50'
+                      : 'border-gray-300 text-gray-400 bg-gray-50 cursor-not-allowed'
+                  }`}
+                >
+                  {processing ? 'Applying\u2026' : 'Apply Fixes'}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
