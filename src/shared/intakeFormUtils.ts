@@ -102,7 +102,28 @@ export function replaceVariables(
   result = result.replace(/\{\{date\}\}/g, now.toLocaleDateString('en-US'));
   result = result.replace(/\{\{year\}\}/g, String(now.getFullYear()));
 
-  return result;
+  return cleanupReplacedContent(result);
+}
+
+/**
+ * Post-replacement cleanup: remove artifacts from empty variable substitutions.
+ * Handles dangling commas (", ,"), empty label lines ("Phone: "), and excess blank lines.
+ */
+function cleanupReplacedContent(text: string): string {
+  let result = text;
+  // Collapse comma artifacts: ", ," or ",  ," from empty city/state/zip
+  result = result.replace(/,\s*,/g, ',');
+  // Remove trailing commas on a line (e.g. "Address: ,")
+  result = result.replace(/,\s*$/gm, '');
+  // Remove leading commas on a line
+  result = result.replace(/^\s*,\s*/gm, '');
+  // Remove lines that are just "Label:" with only whitespace/commas after colon
+  result = result.replace(/^[A-Za-z\s]+:\s*[,\s]*$/gm, '');
+  // Remove lines that are only commas and/or whitespace
+  result = result.replace(/^\s*[,\s]*$/gm, '');
+  // Collapse 3+ consecutive newlines into 2
+  result = result.replace(/\n{3,}/g, '\n\n');
+  return result.trim();
 }
 
 /**

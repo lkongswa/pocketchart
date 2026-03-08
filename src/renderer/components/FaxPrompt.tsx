@@ -7,9 +7,11 @@ interface FaxPromptProps {
   clientId: number;
   clientName: string;
   physicianName: string;
+  physicianId?: number;
   faxNumber: string;
   documentType: 'note' | 'eval';
   documentId: number;
+  onFaxSent?: () => void;
 }
 
 export default function FaxPrompt({
@@ -18,9 +20,11 @@ export default function FaxPrompt({
   clientId,
   clientName,
   physicianName,
+  physicianId,
   faxNumber,
   documentType,
   documentId,
+  onFaxSent,
 }: FaxPromptProps) {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
@@ -36,10 +40,15 @@ export default function FaxPrompt({
     setSending(true);
     try {
       await window.api.fax.send({
+        documentId,
+        docType: documentType,
         faxNumber,
         clientId,
+        physicianId,
+        requestSignature: true,
       });
       setSent(true);
+      onFaxSent?.();
       setTimeout(onClose, 1500);
     } catch (err) {
       console.error('Failed to fax:', err);

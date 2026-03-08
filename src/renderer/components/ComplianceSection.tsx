@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Shield, AlertTriangle, CheckCircle, RotateCcw, Settings } from 'lucide-react';
-import type { ComplianceTracking, CompliancePreset } from '@shared/types';
+import type { ComplianceTracking, CompliancePreset, RecertSignatureStatus } from '@shared/types';
+import RecertStepper from './RecertStepper';
 
 interface ComplianceSectionProps {
   clientId: number;
@@ -18,6 +19,7 @@ export default function ComplianceSection({ clientId, card }: ComplianceSectionP
   const [compliance, setCompliance] = useState<ComplianceTracking | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
+  const [hasEval, setHasEval] = useState(false);
 
   // Edit form state
   const [preset, setPreset] = useState<CompliancePreset>('none');
@@ -29,8 +31,12 @@ export default function ComplianceSection({ clientId, card }: ComplianceSectionP
   const loadCompliance = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await window.api.compliance.getByClient(clientId);
+      const [data, evals] = await Promise.all([
+        window.api.compliance.getByClient(clientId),
+        window.api.evaluations.listByClient(clientId),
+      ]);
       setCompliance(data);
+      setHasEval(Array.isArray(evals) && evals.length > 0);
       if (data) {
         setPreset(data.compliance_preset);
         setProgressVisits(data.progress_visit_threshold);
@@ -98,6 +104,24 @@ export default function ComplianceSection({ clientId, card }: ComplianceSectionP
       loadCompliance();
     } catch (err) {
       console.error('Failed to reset recert:', err);
+    }
+  };
+
+  const handleUpdateSignatureStatus = async (newStatus: RecertSignatureStatus) => {
+    try {
+      await window.api.compliance.updateSignatureStatus(clientId, newStatus);
+      loadCompliance();
+    } catch (err) {
+      console.error('Failed to update signature status:', err);
+    }
+  };
+
+  const handleClearEvalGate = async () => {
+    try {
+      await window.api.compliance.clearEvalGate(clientId, true);
+      loadCompliance();
+    } catch (err) {
+      console.error('Failed to clear eval gate:', err);
     }
   };
 
@@ -239,34 +263,15 @@ export default function ComplianceSection({ clientId, card }: ComplianceSectionP
 
   if (card === 'recert') {
     return (
-      <div className={`card p-3 border-l-4 ${recertOverdue ? 'border-l-red-400 bg-red-50/50' : 'border-l-green-400 bg-green-50/50'}`}>
-        <div className="flex items-center justify-between mb-1">
-          <h4 className="text-xs font-semibold text-[var(--color-text)] flex items-center gap-1.5">
-            {recertOverdue ? <AlertTriangle size={12} className="text-red-500" /> : <CheckCircle size={12} className="text-green-500" />}
-            Recertification
-          </h4>
-          <div className="flex items-center gap-1">
-            <button className="btn-ghost p-1" onClick={handleResetRecertCounter} title="Reset date">
-              <RotateCcw size={11} />
-            </button>
-            <button className="btn-ghost p-1 text-xs" onClick={() => setEditing(true)} title="Settings">
-              <Settings size={11} />
-            </button>
-          </div>
-        </div>
-        <div className="space-y-0.5 text-xs">
-          <p className="text-[var(--color-text)]">
-            MD Signature: {compliance.recert_md_signature_received
-              ? <span className="text-green-600 font-medium">Received</span>
-              : <span className="text-amber-600 font-medium">Pending</span>}
-          </p>
-          {recertDue && (
-            <p className={recertOverdue ? 'text-red-600 font-medium' : 'text-[var(--color-text-secondary)]'}>
-              {recertOverdue ? 'OVERDUE' : 'Due'}: {recertDue.toLocaleDateString()}
-            </p>
-          )}
-        </div>
-      </div>
+      <RecertStepper
+        compliance={compliance}
+        hasEval={hasEval}
+        compact
+        onAdvanceStatus={handleUpdateSignatureStatus}
+        onClearEvalGate={handleClearEvalGate}
+        onResetRecert={handleResetRecertCounter}
+        onEditSettings={() => setEditing(true)}
+      />
     );
   }
 
@@ -304,34 +309,14 @@ export default function ComplianceSection({ clientId, card }: ComplianceSectionP
         </div>
 
         {/* Recertification Status */}
-        <div className={`card p-4 border-l-4 ${recertOverdue ? 'border-l-red-400 bg-red-50/50' : 'border-l-green-400 bg-green-50/50'}`}>
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-1.5">
-              {recertOverdue ? <AlertTriangle size={14} className="text-red-500" /> : <CheckCircle size={14} className="text-green-500" />}
-              Recertification
-            </h4>
-            <button className="btn-ghost btn-sm" onClick={handleResetRecertCounter} title="Reset date">
-              <RotateCcw size={12} />
-            </button>
-          </div>
-          <div className="space-y-1 text-xs">
-            {compliance.last_recert_date && (
-              <p className="text-[var(--color-text-secondary)]">
-                Last recert: {new Date(compliance.last_recert_date).toLocaleDateString()}
-              </p>
-            )}
-            {recertDue && (
-              <p className={recertOverdue ? 'text-red-600 font-medium' : 'text-[var(--color-text-secondary)]'}>
-                {recertOverdue ? 'OVERDUE' : 'Due'}: {recertDue.toLocaleDateString()}
-              </p>
-            )}
-            <p className="text-[var(--color-text)]">
-              MD Signature: {compliance.recert_md_signature_received
-                ? <span className="text-green-600 font-medium">Received</span>
-                : <span className="text-amber-600 font-medium">Pending</span>}
-            </p>
-          </div>
-        </div>
+        <RecertStepper
+          compliance={compliance}
+          hasEval={hasEval}
+          onAdvanceStatus={handleUpdateSignatureStatus}
+          onClearEvalGate={handleClearEvalGate}
+          onResetRecert={handleResetRecertCounter}
+          onEditSettings={() => setEditing(true)}
+        />
       </div>
 
       {/* Info bar */}

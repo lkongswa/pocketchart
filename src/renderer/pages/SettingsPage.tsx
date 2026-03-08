@@ -259,6 +259,9 @@ export default function SettingsPage() {
   const [clearinghouseTesting, setClearinghouseTesting] = useState(false);
   const [clearinghouseTestResult, setClearinghouseTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
+  // Brand accent color state
+  const [brandAccentColor, setBrandAccentColor] = useState('#2E8D87'); // Default teal
+
   // Signature state
   const [signatureName, setSignatureName] = useState('');
   const [signatureCredentials, setSignatureCredentials] = useState('');
@@ -369,6 +372,9 @@ export default function SettingsPage() {
     window.api.storage.getDataPath().then(setDataPath).catch(console.error);
     window.api.storage.getDefaultPath().then(setDefaultPath).catch(console.error);
     loadLogoPreview();
+    window.api.settings.get('brand_accent_color').then((val) => {
+      if (val) setBrandAccentColor(val);
+    }).catch(console.error);
     window.api.settings.get('default_session_length').then((val) => {
       if (val) setDefaultSessionLength(parseInt(val, 10));
     }).catch(console.error);
@@ -977,6 +983,15 @@ export default function SettingsPage() {
     }
   };
 
+  const handleBrandColorChange = async (color: string) => {
+    setBrandAccentColor(color);
+    try {
+      await window.api.settings.set('brand_accent_color', color);
+    } catch (err) {
+      console.error('Failed to save brand color:', err);
+    }
+  };
+
   const handleUploadLogo = async () => {
     try {
       const result = await window.api.logo.upload();
@@ -1212,6 +1227,53 @@ export default function SettingsPage() {
               <p className="text-xs text-[var(--color-text-secondary)]">
                 Supported formats: PNG, JPG. Recommended size: 300x100px.
               </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Brand Accent Color */}
+        <div className="mb-6 pb-6 border-b border-[var(--color-border)]">
+          <div className="flex items-center gap-2 mb-3">
+            <Palette className="w-4 h-4 text-[var(--color-text-secondary)]" />
+            <h3 className="text-sm font-semibold text-[var(--color-text)]">Brand Color</h3>
+          </div>
+          <p className="text-xs text-[var(--color-text-secondary)] mb-3">
+            This color is used as the accent on intake forms, headers, and section styling.
+          </p>
+          <div className="flex items-center gap-3 flex-wrap">
+            {[
+              { hex: '#2E8D87', label: 'Teal' },
+              { hex: '#2563EB', label: 'Blue' },
+              { hex: '#7C3AED', label: 'Purple' },
+              { hex: '#059669', label: 'Emerald' },
+              { hex: '#D97706', label: 'Amber' },
+              { hex: '#DC2626', label: 'Red' },
+              { hex: '#4B5563', label: 'Slate' },
+              { hex: '#0891B2', label: 'Cyan' },
+            ].map(({ hex, label }) => (
+              <button
+                key={hex}
+                type="button"
+                title={label}
+                className={`w-8 h-8 rounded-full border-2 transition-all cursor-pointer ${
+                  brandAccentColor.toUpperCase() === hex.toUpperCase()
+                    ? 'border-[var(--color-text)] scale-110 shadow-md'
+                    : 'border-transparent hover:border-gray-300 hover:scale-105'
+                }`}
+                style={{ backgroundColor: hex }}
+                onClick={() => handleBrandColorChange(hex)}
+              />
+            ))}
+            <div className="flex items-center gap-2 ml-2">
+              <label className="text-xs text-[var(--color-text-secondary)]">Custom:</label>
+              <input
+                type="color"
+                value={brandAccentColor}
+                onChange={(e) => handleBrandColorChange(e.target.value)}
+                className="w-8 h-8 rounded cursor-pointer border border-[var(--color-border)]"
+                style={{ padding: 0 }}
+              />
+              <span className="text-xs font-mono text-[var(--color-text-secondary)]">{brandAccentColor.toUpperCase()}</span>
             </div>
           </div>
         </div>

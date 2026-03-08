@@ -59,6 +59,10 @@ const CPT_DISCIPLINE_MAP: Record<string, string[]> = {
   '92524': ['ST'],              // SLP Eval — Voice
   '92610': ['ST'],              // Swallowing Function Eval
 
+  // ── SLP AAC Codes ──
+  '92609': ['ST'],              // Therapeutic service for AAC device
+  '92618': ['ST'],              // Re-evaluation of AAC device
+
   // ── SLP Group ──
   '92508': ['ST'],              // Speech/Language Treatment (Group)
 

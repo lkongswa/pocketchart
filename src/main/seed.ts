@@ -463,6 +463,8 @@ function getCPTCodesForDiscipline(discipline: string): Array<{ cpt_code: string;
         { cpt_code: '92610', description: 'Swallowing function evaluation', default_units: 1, amount: 175.00, is_timed: 0 },
         { cpt_code: '97129', description: 'Cognitive function intervention, first 15 min', default_units: 1, amount: 50.00, is_timed: 1 },
         { cpt_code: '97130', description: 'Cognitive function intervention, add-on 15 min', default_units: 1, amount: 38.00, is_timed: 1 },
+        { cpt_code: '92609', description: 'Therapeutic service for AAC device', default_units: 1, amount: 125.00, is_timed: 0 },
+        { cpt_code: '92618', description: 'Re-evaluation of AAC device', default_units: 1, amount: 100.00, is_timed: 0 },
       ];
     case 'MFT':
       return [
@@ -586,4 +588,230 @@ export function autoFixFeeSchedule(db: BetterSqlite3.Database): void {
   } catch {
     // Silently fail
   }
+}
+
+// Backfill missing CPT codes into existing fee schedules (e.g. 92609/92618 for AAC)
+export function backfillMissingCPTCodes(db: BetterSqlite3.Database): void {
+  try {
+    const feeCount = (db.prepare('SELECT COUNT(*) as count FROM fee_schedule').get() as any)?.count || 0;
+    if (feeCount === 0) return; // Will be seeded fresh by seedFeeSchedule
+
+    // Get discipline
+    let discipline: string | undefined;
+    try {
+      const practiceRow = db.prepare("SELECT discipline FROM practice WHERE id = 1").get() as any;
+      discipline = practiceRow?.discipline;
+    } catch { /* practice table may not exist yet */ }
+    if (!discipline) {
+      try {
+        const settingsRow = db.prepare("SELECT value FROM settings WHERE key = 'provider_discipline'").get() as any;
+        discipline = settingsRow?.value;
+      } catch { /* ignore */ }
+    }
+    if (!discipline) return;
+
+    const expectedCodes = getCPTCodesForDiscipline(discipline);
+    if (expectedCodes.length === 0) return;
+
+    const currentCodes = new Set(
+      (db.prepare('SELECT cpt_code FROM fee_schedule').all() as any[]).map((r: any) => r.cpt_code)
+    );
+
+    const today = new Date().toISOString().slice(0, 10);
+    const insertFee = db.prepare(
+      'INSERT INTO fee_schedule (cpt_code, description, default_units, amount, effective_date, is_timed) VALUES (?, ?, ?, ?, ?, ?)'
+    );
+
+    for (const code of expectedCodes) {
+      if (!currentCodes.has(code.cpt_code)) {
+        insertFee.run(code.cpt_code, code.description, code.default_units, code.amount, today, code.is_timed);
+      }
+    }
+  } catch {
+    // Silently fail
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Pediatric & AAC Content Seed
+// ══════════════════════════════════════════════════════════════════════
+
+export function seedPediatricContent(db: BetterSqlite3.Database): void {
+  // Sentinel: skip if already seeded
+  const sentinel = db.prepare(
+    "SELECT id FROM note_bank WHERE discipline = 'ST' AND category = 'peds' AND section = 'S' AND phrase LIKE 'Caregiver reports ___ (new words%'"
+  ).get();
+  if (sentinel) return;
+
+  const ins = db.prepare(
+    'INSERT INTO note_bank (discipline, category, section, phrase, is_default, is_favorite) VALUES (?, ?, ?, ?, 1, 0)'
+  );
+  const safeInsert = (discipline: string, category: string, section: string, phrase: string) => {
+    const exists = db.prepare(
+      'SELECT id FROM note_bank WHERE discipline = ? AND section = ? AND phrase = ?'
+    ).get(discipline, section, phrase);
+    if (!exists) {
+      ins.run(discipline, category, section, phrase);
+    }
+  };
+
+  const tx = db.transaction(() => {
+    // ── ST Pediatric Subjective ──
+    safeInsert('ST', 'peds', 'S', 'Caregiver reports ___ (new words/sounds/behaviors) since last session.');
+    safeInsert('ST', 'peds', 'S', 'Caregiver reports concerns regarding ___ (speech clarity/language development/feeding/social communication).');
+    safeInsert('ST', 'peds', 'S', 'Per parent report, child is using ___ words/signs at home.');
+    safeInsert('ST', 'peds', 'S', 'Teacher reports child is ___ (participating in circle time/following classroom routines/struggling with ___).');
+    safeInsert('ST', 'peds', 'S', 'Caregiver reports child has been practicing ___ at home.');
+    safeInsert('ST', 'peds', 'S', 'Child arrived cooperative/fussy/tired and required ___ to engage in session.');
+    safeInsert('ST', 'peds', 'S', 'Caregiver reports no new concerns since last session.');
+    safeInsert('ST', 'peds', 'S', 'Per IEP team feedback, child is ___ in the classroom setting.');
+
+    // ── ST Pediatric Feeding Subjective ──
+    safeInsert('ST', 'peds_feeding', 'S', 'Caregiver reports child is accepting/refusing ___ textures at mealtimes.');
+    safeInsert('ST', 'peds_feeding', 'S', 'Caregiver reports child is a picky eater with limited diet of ___ foods.');
+    safeInsert('ST', 'peds_feeding', 'S', 'Per parent, child gags/coughs/vomits with ___ food textures.');
+    safeInsert('ST', 'peds_feeding', 'S', 'Caregiver reports mealtime duration of ___ minutes with ___ (refusal behaviors/gagging/throwing food).');
+
+    // ── ST AAC Subjective ──
+    safeInsert('ST', 'aac', 'S', 'Caregiver reports child is using AAC device at home for ___ (requests/comments/greetings).');
+    safeInsert('ST', 'aac', 'S', 'Caregiver reports ___ (increased/decreased) AAC use since last session.');
+    safeInsert('ST', 'aac', 'S', 'Per teacher/aide, child uses AAC device in classroom for ___.');
+    safeInsert('ST', 'aac', 'S', 'Caregiver reports communication partner training has been ___ (helpful/challenging).');
+
+    // ── ST Pediatric Objective ──
+    safeInsert('ST', 'peds', 'O', 'Child produced ___ different words/word approximations during session.');
+    safeInsert('ST', 'peds', 'O', 'Child demonstrated joint attention for ___ exchanges during ___ activity.');
+    safeInsert('ST', 'peds', 'O', 'Child used ___ (gestures/signs/words/word combinations) to communicate ___ (wants/needs/comments).');
+    safeInsert('ST', 'peds', 'O', 'MLU measured at ___ morphemes during ___ (structured/play-based) activity.');
+    safeInsert('ST', 'peds', 'O', 'Child followed ___-step directions with ___% accuracy given ___ cues.');
+    safeInsert('ST', 'peds', 'O', 'Child identified ___/___ vocabulary items in structured activity.');
+    safeInsert('ST', 'peds', 'O', 'Child initiated communication ___ times during ___ minute session.');
+    safeInsert('ST', 'peds', 'O', 'Child imitated ___ (sounds/words/phrases) with ___ (spontaneous/modeled) production.');
+    safeInsert('ST', 'peds', 'O', 'Child engaged in parallel/interactive play for ___ minutes.');
+    safeInsert('ST', 'peds', 'O', 'Child demonstrated turn-taking for ___ exchanges with ___ cueing.');
+    safeInsert('ST', 'peds', 'O', 'Child used ___ word combinations (e.g., agent+action, action+object) with ___% spontaneity.');
+    safeInsert('ST', 'peds', 'O', 'Child answered wh-questions (who/what/where/when/why) with ___% accuracy.');
+    safeInsert('ST', 'peds', 'O', 'Child retold narrative with ___/___ story elements (character, setting, problem, resolution).');
+
+    // ── ST Phonological Awareness Objective ──
+    safeInsert('ST', 'Phonological Awareness', 'O', 'Child identified ___/___ rhyming pairs. Segmented syllables in ___-syllable words with ___% accuracy.');
+    safeInsert('ST', 'Phonological Awareness', 'O', 'Child demonstrated phonological awareness: ___ (initial sound identification/blending/segmenting) with ___% accuracy.');
+
+    // ── ST Pediatric Feeding Objective ──
+    safeInsert('ST', 'peds_feeding', 'O', 'Child accepted ___/___ food items presented. Tolerated ___ texture(s) without adverse response.');
+    safeInsert('ST', 'peds_feeding', 'O', 'Child demonstrated ___ (anterior/lateral/rotary) chew pattern for ___ textures.');
+    safeInsert('ST', 'peds_feeding', 'O', 'Oral motor exam: lip closure ___, tongue lateralization ___, jaw grading ___.');
+    safeInsert('ST', 'peds_feeding', 'O', 'Child used ___ (fingers/utensil) for self-feeding with ___ accuracy.');
+    safeInsert('ST', 'peds_feeding', 'O', 'Child tolerated ___ (food exploration/touching/smelling/tasting) with ___ (minimal/moderate/significant) behavioral response.');
+    safeInsert('ST', 'peds_feeding', 'O', 'Sensory-based food exposure: child ___ (touched/smelled/licked/tasted/chewed/swallowed) ___ novel foods.');
+
+    // ── ST AAC Objective ──
+    safeInsert('ST', 'aac', 'O', 'Child navigated to target symbol on AAC device with ___ (independent/physical/gestural/verbal) cueing.');
+    safeInsert('ST', 'aac', 'O', 'Child produced ___ (single symbol/multi-symbol) messages using AAC device for ___ (requesting/commenting/answering/greeting).');
+    safeInsert('ST', 'aac', 'O', 'Child combined ___ symbols on AAC device to create ___ (2-word/3-word) phrases.');
+    safeInsert('ST', 'aac', 'O', 'Aided language input provided by clinician during ___ activity. Child observed/imitated ___ of modeled symbols.');
+    safeInsert('ST', 'aac', 'O', 'Child used core vocabulary words (___, ___, ___) across ___ activities.');
+    safeInsert('ST', 'aac', 'O', 'Child demonstrated multimodal communication using ___ (AAC/gestures/vocalizations/signs) across ___ contexts.');
+    safeInsert('ST', 'aac', 'O', 'Communication partner training: caregiver demonstrated ___ (modeling/expectant delay/expansion) with ___% accuracy.');
+
+    // ── ST Pediatric Pragmatics Objective ──
+    safeInsert('ST', 'peds_pragmatics', 'O', 'Child maintained topic for ___ conversational turns with ___ cueing.');
+    safeInsert('ST', 'peds_pragmatics', 'O', 'Child used appropriate greetings/farewells with ___ (spontaneous/prompted) production.');
+    safeInsert('ST', 'peds_pragmatics', 'O', 'Child identified emotions in ___ (pictures/stories/role-play) with ___% accuracy.');
+    safeInsert('ST', 'peds_pragmatics', 'O', 'Child demonstrated perspective-taking by ___ with ___ cueing.');
+    safeInsert('ST', 'peds_pragmatics', 'O', 'Child demonstrated appropriate play skills: ___ (functional/symbolic/pretend) play observed.');
+
+    // ── ST Pediatric Assessment ──
+    safeInsert('ST', 'peds', 'A', 'Child is making ___ (good/steady/slow) progress toward communication goals.');
+    safeInsert('ST', 'peds', 'A', 'Performance reflects emerging ___ (language/speech/social communication) skills.');
+    safeInsert('ST', 'peds', 'A', 'Child demonstrates developmental gains in ___ compared to initial evaluation.');
+    safeInsert('ST', 'peds', 'A', 'Child responded well to ___ (play-based/naturalistic/structured) intervention approach.');
+    safeInsert('ST', 'peds', 'A', 'Skilled intervention continues to be necessary for ___ (language stimulation/articulation/AAC training/feeding therapy).');
+    safeInsert('ST', 'peds', 'A', 'Caregiver carryover of strategies is ___ (excellent/improving/limited), impacting generalization of skills.');
+
+    // ── ST AAC Assessment ──
+    safeInsert('ST', 'aac', 'A', 'Child demonstrates increased communicative competence with AAC system.');
+    safeInsert('ST', 'aac', 'A', 'AAC system continues to be appropriate for child\'s communication needs. ___ (No/Minor/Significant) modifications recommended.');
+    safeInsert('ST', 'aac', 'A', 'Communication partner training is yielding ___ (positive/variable) results in generalization of AAC use.');
+
+    // ── ST Pediatric Feeding Assessment ──
+    safeInsert('ST', 'peds_feeding', 'A', 'Child demonstrates ___ (expanded/unchanged/reduced) food repertoire compared to baseline.');
+    safeInsert('ST', 'peds_feeding', 'A', 'Feeding therapy is targeting ___ (oral motor skills/texture tolerance/self-feeding/mealtime behavior).');
+
+    // ── ST Pediatric Plan ──
+    safeInsert('ST', 'peds', 'P', 'Continue current POC. Focus on ___ in next session using ___ (play-based/structured/naturalistic) approach.');
+    safeInsert('ST', 'peds', 'P', 'Caregiver education provided: ___ (language stimulation strategies/aided language input/feeding strategies).');
+    safeInsert('ST', 'peds', 'P', 'Home practice recommendations: ___.');
+    safeInsert('ST', 'peds', 'P', 'Coordinate with ___ (classroom teacher/OT/PT/BCBA) regarding ___.');
+    safeInsert('ST', 'peds', 'P', 'IEP meeting scheduled/recommended to discuss ___.');
+
+    // ── ST AAC Plan ──
+    safeInsert('ST', 'aac', 'P', 'Continue AAC training. Add ___ vocabulary to device for next session.');
+    safeInsert('ST', 'aac', 'P', 'Communication partner training: practice ___ (modeling/expectant delay/aided language input) at home.');
+    safeInsert('ST', 'aac', 'P', 'Program AAC device with ___ (core words/fringe vocabulary/activity-specific pages) before next session.');
+    safeInsert('ST', 'aac', 'P', 'AAC device adjustment: ___ (layout change/vocabulary expansion/access method modification) recommended.');
+
+    // ── ST Pediatric Feeding Plan ──
+    safeInsert('ST', 'peds_feeding', 'P', 'Continue feeding therapy. Advance food exposure hierarchy to ___.');
+    safeInsert('ST', 'peds_feeding', 'P', 'Caregiver education on ___ (mealtime positioning/food presentation/responsive feeding strategies).');
+
+    // ── OT Pediatric Subjective ──
+    safeInsert('OT', 'peds', 'S', 'Caregiver reports child has been ___ (more/less) independent with ___ since last session.');
+    safeInsert('OT', 'peds', 'S', 'Teacher reports child is ___ (having difficulty with/improving in) ___ (handwriting/classroom participation/self-care tasks).');
+    safeInsert('OT', 'peds_sensory', 'S', 'Caregiver reports child is ___ (avoiding/seeking) ___ sensory input.');
+    safeInsert('OT', 'peds', 'S', 'Caregiver reports meltdowns/behavioral challenges during ___ (transitions/dressing/grooming).');
+    safeInsert('OT', 'peds', 'S', 'Caregiver reports child has limited food repertoire of ___ items.');
+
+    // ── OT Pediatric Objective ──
+    safeInsert('OT', 'peds_fine_motor', 'O', 'Child demonstrated ___ grasp on writing tool. Letter formation: ___ accuracy.');
+    safeInsert('OT', 'peds_fine_motor', 'O', 'Child cut along ___ (straight/curved/complex) line within ___" accuracy.');
+    safeInsert('OT', 'peds_fine_motor', 'O', 'Child completed ___ (bead stringing/lacing/pegboard) in ___ with ___ hand dominance.');
+    safeInsert('OT', 'peds_fine_motor', 'O', 'Bilateral coordination: child demonstrated ___ pattern during ___ task.');
+    safeInsert('OT', 'peds_sensory', 'O', 'Child tolerated ___ sensory input for ___ (seconds/minutes) with ___ (calm/dysregulated) response.');
+    safeInsert('OT', 'peds_sensory', 'O', 'Child used ___ self-regulation strategy with ___ cueing.');
+    safeInsert('OT', 'peds_sensory', 'O', 'Arousal level: child presented as ___ (under-responsive/over-responsive/well-regulated) during ___ activity.');
+    safeInsert('OT', 'peds_sensory', 'O', 'Sensory diet activities ___ (facilitated/did not facilitate) improved attention and regulation for ___ min.');
+    safeInsert('OT', 'peds_ADL', 'O', 'Child completed ___ (buttoning/zipping/snapping/shoe tying) with ___ assist.');
+    safeInsert('OT', 'peds_ADL', 'O', 'Child demonstrated ___ (age-appropriate/emerging/delayed) self-feeding skills with ___ utensil.');
+    safeInsert('OT', 'peds_play', 'O', 'Child engaged in ___ (constructive/pretend/cooperative) play for ___ minutes.');
+    safeInsert('OT', 'peds_visual_motor', 'O', 'Child copied ___ (shapes/letters/designs) with ___ accuracy. Spatial organization: ___.');
+
+    // ── OT Pediatric Assessment ──
+    safeInsert('OT', 'peds', 'A', 'Child demonstrates ___ gains in ___ (fine motor/sensory processing/self-care) since evaluation.');
+    safeInsert('OT', 'peds', 'A', 'Skilled OT continues to be necessary for ___ (sensory integration/fine motor/ADL training/handwriting).');
+    safeInsert('OT', 'peds', 'A', 'Child responded well to ___ (sensory diet/therapeutic play/structured task) approach.');
+
+    // ── OT Pediatric Plan ──
+    safeInsert('OT', 'peds', 'P', 'Continue current POC. Focus on ___ using ___ (sensory integration/play-based/task-specific) approach.');
+    safeInsert('OT', 'peds', 'P', 'Home program updated: ___ (sensory diet/fine motor activities/handwriting practice).');
+    safeInsert('OT', 'peds', 'P', 'Classroom accommodations recommended: ___.');
+    safeInsert('OT', 'peds', 'P', 'Coordinate with ___ (teacher/SLP/PT/parent) regarding ___.');
+
+    // ── PT Pediatric Subjective ──
+    safeInsert('PT', 'peds', 'S', 'Caregiver reports child is ___ (crawling/cruising/walking) at home with ___ (independence/assistance).');
+    safeInsert('PT', 'peds', 'S', 'Caregiver reports concerns with ___ (balance/coordination/motor milestones/gait pattern).');
+    safeInsert('PT', 'peds', 'S', 'Caregiver reports child is ___ (keeping up with/falling behind) peers in gross motor activities.');
+    safeInsert('PT', 'peds', 'S', 'Per school, child has difficulty with ___ (PE/playground/stairs/sitting at desk).');
+
+    // ── PT Pediatric Objective ──
+    safeInsert('PT', 'peds_gross_motor', 'O', 'Child demonstrated ___ (rolling/crawling/pulling to stand/cruising/independent walking) with ___ quality of movement.');
+    safeInsert('PT', 'peds_gross_motor', 'O', 'Child walked ___ feet with ___ (narrow/wide) base of support and ___ (reciprocal/non-reciprocal) arm swing.');
+    safeInsert('PT', 'peds_gross_motor', 'O', 'Child navigated stairs with ___ pattern (step-to/reciprocal) and ___ (railing/hand-hold/independent).');
+    safeInsert('PT', 'peds_gross_motor', 'O', 'Child maintained ___ (sitting/standing/single-leg stance) balance for ___ seconds.');
+    safeInsert('PT', 'peds_gross_motor', 'O', 'Gross motor skills: child performed ___ (jumping/hopping/skipping/galloping/ball skills) with ___ proficiency.');
+    safeInsert('PT', 'peds_gross_motor', 'O', 'Postural control: child demonstrated ___ (head control/trunk stability/core strength) during ___ activity.');
+    safeInsert('PT', 'peds_gross_motor', 'O', 'Child transitioned between positions (floor-to-stand) using ___ pattern with ___ assist.');
+
+    // ── PT Pediatric Assessment ──
+    safeInsert('PT', 'peds', 'A', 'Child demonstrates ___ gains in gross motor skills since initial evaluation.');
+    safeInsert('PT', 'peds', 'A', 'Skilled PT continues to be necessary for ___ (gross motor development/balance training/gait training/strengthening).');
+    safeInsert('PT', 'peds', 'A', 'Child responded well to ___ (neurodevelopmental/play-based/task-specific) intervention approach.');
+
+    // ── PT Pediatric Plan ──
+    safeInsert('PT', 'peds', 'P', 'Continue current POC. Focus on ___ using ___ (play-based/NDT/task-specific) approach.');
+    safeInsert('PT', 'peds', 'P', 'Home program updated: ___ (tummy time/balance activities/strengthening exercises).');
+    safeInsert('PT', 'peds', 'P', 'Coordinate with ___ (OT/teacher/orthotist) regarding ___.');
+  });
+
+  tx();
 }

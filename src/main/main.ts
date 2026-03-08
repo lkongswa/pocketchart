@@ -4193,6 +4193,35 @@ function registerIpcHandlers() {
     return db.prepare('SELECT * FROM client_documents WHERE id = ?').get(result.lastInsertRowid);
   });
 
+  // Upload document from a file path directly (for drag-and-drop)
+  safeHandle('documents:uploadFromPath', (_event, data: {
+    clientId: number;
+    filePath: string;
+    category?: string;
+  }) => {
+    if (!fs.existsSync(data.filePath)) throw new Error('File not found');
+
+    const originalName = path.basename(data.filePath);
+    const ext = path.extname(data.filePath);
+    const fileStats = fs.statSync(data.filePath);
+    const fileType = ext.toLowerCase().replace('.', '');
+    const uuidName = `${uuidv4()}${ext}`;
+
+    const dataDir = getDataPath();
+    const clientDocsDir = path.join(dataDir, 'documents', String(data.clientId));
+    fs.mkdirSync(clientDocsDir, { recursive: true });
+
+    const destPath = path.join(clientDocsDir, uuidName);
+    fs.copyFileSync(data.filePath, destPath);
+
+    const result = db.prepare(`
+      INSERT INTO client_documents (client_id, filename, original_name, file_type, file_size, category)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(data.clientId, uuidName, originalName, fileType, fileStats.size, data.category || 'other');
+
+    return db.prepare('SELECT * FROM client_documents WHERE id = ?').get(result.lastInsertRowid);
+  });
+
   safeHandle('documents:updateMeta', (_event, data: {
     documentId: number;
     certification_period_start?: string;
@@ -6702,9 +6731,46 @@ function registerIpcHandlers() {
       SET last_recert_date = ?,
           next_recert_due = date(?, '+' || recert_day_threshold || ' days'),
           recert_md_signature_received = 0,
+          recert_md_signature_status = 'not_sent',
+          recert_md_signature_sent_at = NULL,
+          recert_eval_cleared = 0,
           updated_at = CURRENT_TIMESTAMP
       WHERE client_id = ?
     `).run(now, now, clientId);
+    return db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(clientId);
+  });
+
+  safeHandle('compliance:updateSignatureStatus', (_event, clientId: number, status: string) => {
+    requireTier('basic');
+    const allowed = ['not_sent', 'sent', 'received'];
+    if (!allowed.includes(status)) {
+      throw new Error(`Invalid signature status: ${status}`);
+    }
+
+    const fields: string[] = ['recert_md_signature_status = ?', 'updated_at = CURRENT_TIMESTAMP'];
+    const values: any[] = [status];
+
+    if (status === 'sent') {
+      fields.push('recert_md_signature_sent_at = ?');
+      values.push(new Date().toISOString());
+    }
+    if (status === 'received') {
+      fields.push('recert_md_signature_received = 1');
+    }
+    if (status === 'not_sent') {
+      fields.push('recert_md_signature_sent_at = NULL');
+      fields.push('recert_md_signature_received = 0');
+    }
+
+    values.push(clientId);
+    db.prepare(`UPDATE compliance_tracking SET ${fields.join(', ')} WHERE client_id = ?`).run(...values);
+    return db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(clientId);
+  });
+
+  safeHandle('compliance:clearEvalGate', (_event, clientId: number, cleared: boolean) => {
+    requireTier('basic');
+    db.prepare(`UPDATE compliance_tracking SET recert_eval_cleared = ?, updated_at = CURRENT_TIMESTAMP WHERE client_id = ?`)
+      .run(cleared ? 1 : 0, clientId);
     return db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(clientId);
   });
 
@@ -7371,13 +7437,15 @@ function registerIpcHandlers() {
       return { ...row, sections: JSON.parse(row.sections || '[]') };
     });
 
-    const practiceRow = db.prepare("SELECT value FROM settings WHERE key = 'practice_info'").get() as any;
-    const practiceInfo = practiceRow ? JSON.parse(practiceRow.value) : {};
+    const practiceInfo = db.prepare('SELECT * FROM practice WHERE id = 1').get() as any || {};
 
     let clientInfo: any = undefined;
     if (data.clientId) {
       clientInfo = db.prepare('SELECT * FROM clients WHERE id = ?').get(data.clientId);
     }
+
+    const brandColorRow = db.prepare("SELECT value FROM settings WHERE key = 'brand_accent_color'").get() as any;
+    const brandAccentColor = brandColorRow?.value || null;
 
     const pdfBytes = await generateIntakePdf({
       templates,
@@ -7394,6 +7462,7 @@ function registerIpcHandlers() {
       clientInfo,
       fillable: data.fillable,
       logoBase64: getLogoBase64(),
+      brandAccentColor,
     });
 
     const base64Pdf = Buffer.from(pdfBytes).toString('base64');
@@ -7718,6 +7787,22 @@ function registerIpcHandlers() {
         UPDATE fax_log SET document_id = ?, client_id = ?, matched_confidence = 'exact', status = 'matched'
         WHERE id = ?
       `).run(docResult.lastInsertRowid, data.clientId, data.faxLogId);
+    }
+
+    // Auto-advance recert stepper when receiving signed POC or recertification
+    if (['signed_poc', 'recertification'].includes(data.category)) {
+      const complianceRow = db.prepare(
+        'SELECT tracking_enabled FROM compliance_tracking WHERE client_id = ?'
+      ).get(data.clientId) as any;
+      if (complianceRow?.tracking_enabled) {
+        db.prepare(`
+          UPDATE compliance_tracking
+          SET recert_md_signature_status = 'received',
+              recert_md_signature_received = 1,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE client_id = ?
+        `).run(data.clientId);
+      }
     }
 
     return db.prepare('SELECT * FROM fax_log WHERE id = ?').get(data.faxLogId);

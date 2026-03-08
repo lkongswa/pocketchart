@@ -59,6 +59,8 @@ export const UNTIMED_CPT_CODES = new Set([
   '97150', // Group Therapy
   '92508', // Speech/Language Treatment (Group)
   '92610', // Swallowing Function Evaluation
+  '92609', // AAC Device Therapeutic Service (untimed, service-based)
+  '92618', // AAC Device Re-Evaluation (untimed, service-based)
 ]);
 
 // Disciplines that use the 8-minute rule

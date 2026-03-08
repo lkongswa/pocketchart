@@ -39,9 +39,11 @@ import GoalProgressTimeline from '../components/GoalProgressTimeline';
 import { METRIC_OPTIONS, calculateProgress, getMetricDirection } from '../../shared/goal-metrics';
 import type { ValidationIssue, ValidationFixes } from '../../shared/types/validation';
 import SignConfirmDialog from '../components/SignConfirmDialog';
+import FaxPrompt from '../components/FaxPrompt';
 import CptCombobox from '../components/CptCombobox';
 import { validateEightMinuteRule, appliesTo as eightMinRuleApplies, formatIndicatorSummary, calculateTreatmentMinutes } from '../../shared/eightMinuteRule';
 import { checkDisciplineCptMismatch, formatMismatchWarning } from '../../shared/cptDisciplineMap';
+import { getContextCategories } from '../../shared/clinicalContext';
 
 // Place of service options
 const PLACE_OF_SERVICE_OPTIONS = [
@@ -194,11 +196,13 @@ export default function NoteFormPage() {
   const [justSigned, setJustSigned] = useState(false);
   const [savedNoteId, setSavedNoteId] = useState<number | null>(null);
   const [showProNudge, setShowProNudge] = useState(false);
+  const [showFaxPrompt, setShowFaxPrompt] = useState(false);
 
   // Autosave state
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [lastAutoSaved, setLastAutoSaved] = useState<string | null>(null);
   const [creatingInvoice, setCreatingInvoice] = useState(false);
+  const [generatingSuperbill, setGeneratingSuperbill] = useState(false);
   const [existingInvoice, setExistingInvoice] = useState<{ invoice_id: number; invoice_number: string; status: string } | null>(null);
 
   // Refs for textareas (for cursor insertion)
@@ -242,6 +246,28 @@ export default function NoteFormPage() {
         .filter(Boolean)
     )];
   }, [goals, goalsAddressed]);
+
+  // Context-aware categories from client diagnosis + age
+  const contextCategories = useMemo(() => {
+    if (!client) return [];
+    return getContextCategories({
+      dob: client.dob,
+      primaryDxCode: client.primary_dx_code,
+      secondaryDx: client.secondary_dx,
+      discipline: client.discipline,
+    });
+  }, [client?.dob, client?.primary_dx_code, client?.secondary_dx, client?.discipline]);
+
+  // Combined priority: addressed goals first, then diagnosis/age context
+  const combinedPriority = useMemo(() => {
+    const combined = [...addressedCategories];
+    for (const cat of contextCategories) {
+      if (!combined.some(c => c.toLowerCase() === cat.toLowerCase())) {
+        combined.push(cat);
+      }
+    }
+    return combined;
+  }, [addressedCategories, contextCategories]);
 
   // Discharge state
   const [dischargeData, setDischargeData] = useState<DischargeData>({
@@ -1541,6 +1567,10 @@ export default function NoteFormPage() {
           setSavedNoteId(resultNoteId);
           setJustSigned(true);
           setExistingSignedAt(new Date().toISOString());
+          // Show fax prompt if client has referring physician with fax
+          if (resultNoteId && client?.referring_fax?.trim()) {
+            setShowFaxPrompt(true);
+          }
           // Pro nudge for Basic users (once per month)
           if (!isPro) {
             try {
@@ -1599,6 +1629,27 @@ export default function NoteFormPage() {
       setToast('Failed to create invoice');
     } finally {
       setCreatingInvoice(false);
+    }
+  };
+
+  const handleGenerateSuperbill = async () => {
+    if (!clientId || !savedNoteId) return;
+    try {
+      setGeneratingSuperbill(true);
+      const result = await window.api.superbill.generate({
+        clientId: parseInt(clientId, 10),
+        noteIds: [savedNoteId],
+      });
+      await window.api.superbill.save({
+        base64Pdf: result.base64Pdf,
+        filename: result.filename,
+      });
+      setToast('Superbill saved');
+    } catch (err) {
+      console.error('Failed to generate superbill:', err);
+      setToast('Failed to generate superbill');
+    } finally {
+      setGeneratingSuperbill(false);
     }
   };
 
@@ -2281,7 +2332,7 @@ export default function NoteFormPage() {
           anchorRef={getNoteBankButtonRef('S')}
           placeholder={NOTE_FORMAT_SECTIONS[noteFormat][0].placeholder}
           disabled={!!existingSignedAt}
-          priorityCategories={addressedCategories}
+          priorityCategories={combinedPriority}
         />
 
         {/* Section 2 (Objective / Assessment / Intervention) */}
@@ -2299,7 +2350,7 @@ export default function NoteFormPage() {
           anchorRef={getNoteBankButtonRef('O')}
           placeholder={NOTE_FORMAT_SECTIONS[noteFormat][1].placeholder}
           disabled={!!existingSignedAt}
-          priorityCategories={addressedCategories}
+          priorityCategories={combinedPriority}
         />
 
         {/* ── Goal Progress (Progress Report only) ── */}
@@ -2515,7 +2566,7 @@ export default function NoteFormPage() {
                 discipline={discipline}
                 section="A"
                 anchorRef={assessmentBtnRef}
-                priorityCategories={addressedCategories}
+                priorityCategories={combinedPriority}
               />
             </div>
           </div>
@@ -2528,7 +2579,7 @@ export default function NoteFormPage() {
               onInsert={getNoteBankInsertHandler('A')}
               maxChips={6}
               onOpenFullBank={() => setNoteBankOpen('A')}
-              priorityCategories={addressedCategories}
+              priorityCategories={combinedPriority}
             />
           </div>
 
@@ -2616,7 +2667,7 @@ export default function NoteFormPage() {
             anchorRef={getNoteBankButtonRef('P')}
             placeholder={NOTE_FORMAT_SECTIONS[noteFormat][3].placeholder}
             disabled={!!existingSignedAt}
-            priorityCategories={addressedCategories}
+            priorityCategories={combinedPriority}
           />
         )}
 
@@ -3003,7 +3054,7 @@ export default function NoteFormPage() {
                     Note signed and saved
                   </p>
                   <p className="text-xs text-emerald-700 mt-1">
-                    Would you like to create an invoice for this session?
+                    What would you like to do next?
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -3011,7 +3062,15 @@ export default function NoteFormPage() {
                     className="btn-ghost btn-sm"
                     onClick={() => navigate(`/clients/${clientId}`)}
                   >
-                    Skip
+                    Back to Chart
+                  </button>
+                  <button
+                    className="btn-secondary btn-sm flex items-center gap-1.5"
+                    onClick={handleGenerateSuperbill}
+                    disabled={generatingSuperbill}
+                  >
+                    <FileText className="w-4 h-4" />
+                    {generatingSuperbill ? 'Generating...' : 'Superbill'}
                   </button>
                   <button
                     className="btn-primary btn-sm flex items-center gap-1.5"
@@ -3409,6 +3468,25 @@ export default function NoteFormPage() {
         issues={signDialogIssues}
         onClientUpdate={handleClientUpdate}
         clientName={client ? `${client.first_name} ${client.last_name}`.trim() : undefined}
+      />
+
+      <FaxPrompt
+        isOpen={showFaxPrompt}
+        onClose={() => setShowFaxPrompt(false)}
+        clientId={parseInt(clientId!, 10)}
+        clientName={client ? `${client.first_name} ${client.last_name}`.trim() : ''}
+        physicianName={client?.referring_physician || ''}
+        physicianId={client?.referring_physician_id || undefined}
+        faxNumber={client?.referring_fax || ''}
+        documentType="note"
+        documentId={savedNoteId!}
+        onFaxSent={async () => {
+          try {
+            await window.api.compliance.updateSignatureStatus(parseInt(clientId!, 10), 'sent');
+          } catch (err) {
+            console.error('Failed to advance recert stepper:', err);
+          }
+        }}
       />
     </div>
   );

@@ -25,12 +25,7 @@ export const DEFAULT_INTAKE_TEMPLATES: DefaultIntakeTemplate[] = [
       {
         id: 'pi_demographics',
         title: 'Patient Demographics',
-        content: `PATIENT INFORMATION FORM
-{{practice_name}}
-{{practice_address}}, {{practice_city}}, {{practice_state}} {{practice_zip}}
-Phone: {{practice_phone}}
-
-Date: {{date}}
+        content: `Date: {{date}}
 
 Patient Name: {{client_first_name}} {{client_last_name}}
 Date of Birth: {{client_dob}}
@@ -47,9 +42,7 @@ Occupation: _____________________________________________`,
       {
         id: 'pi_emergency_contact',
         title: 'Emergency Contact',
-        content: `EMERGENCY CONTACT
-
-Name: ___________________________________________________
+        content: `Name: ___________________________________________________
 Relationship: ___________________________________________
 Phone: __________________________________________________
 Address: ________________________________________________`,
@@ -59,9 +52,7 @@ Address: ________________________________________________`,
       {
         id: 'pi_insurance',
         title: 'Insurance Information',
-        content: `INSURANCE INFORMATION
-
-Primary Insurance: {{client_insurance_payer}}
+        content: `Primary Insurance: {{client_insurance_payer}}
 Member ID: {{client_insurance_member_id}}
 Group Number: {{client_insurance_group}}
 
@@ -78,9 +69,7 @@ Group Number: ___________________________________________`,
       {
         id: 'pi_medical_history',
         title: 'Medical History',
-        content: `MEDICAL HISTORY
-
-Primary Diagnosis: {{client_primary_dx}}
+        content: `Primary Diagnosis: {{client_primary_dx}}
 Referring Physician: {{client_referring_physician}}
 
 Current Medications (list all):
@@ -114,10 +103,7 @@ Do you have any of the following conditions?
       {
         id: 'ctt_consent',
         title: 'Consent for Treatment',
-        content: `CONSENT TO EVALUATE AND TREAT
-{{practice_name}}
-
-I, _______________________________, hereby authorize {{practice_name}} and its licensed practitioners to evaluate and treat me (or the minor named below) for the conditions identified through evaluation and as prescribed by my referring physician.
+        content: `I, _______________________________, hereby authorize {{practice_name}} and its licensed practitioners to evaluate and treat me (or the minor named below) for the conditions identified through evaluation and as prescribed by my referring physician.
 
 I understand that:
 
@@ -137,9 +123,7 @@ Patient Name (minor): ___________________________________`,
       {
         id: 'ctt_signature',
         title: 'Signature',
-        content: `SIGNATURES
-
-_________________________________________    ____________
+        content: `_________________________________________    ____________
 Patient/Guardian Signature                    Date
 
 _________________________________________
@@ -161,10 +145,7 @@ Relationship to Patient (if applicable)`,
       {
         id: 'hipaa_notice',
         title: 'Notice of Privacy Practices',
-        content: `NOTICE OF PRIVACY PRACTICES ACKNOWLEDGMENT
-{{practice_name}}
-
-THIS NOTICE DESCRIBES HOW MEDICAL INFORMATION ABOUT YOU MAY BE USED AND DISCLOSED AND HOW YOU CAN GET ACCESS TO THIS INFORMATION. PLEASE REVIEW IT CAREFULLY.
+        content: `THIS NOTICE DESCRIBES HOW MEDICAL INFORMATION ABOUT YOU MAY BE USED AND DISCLOSED AND HOW YOU CAN GET ACCESS TO THIS INFORMATION. PLEASE REVIEW IT CAREFULLY.
 
 Our Commitment to Your Privacy:
 {{practice_name}} is dedicated to maintaining the privacy of your protected health information (PHI). We are required by law to maintain the privacy of PHI, provide you with notice of our legal duties and privacy practices, and follow the terms of the Notice currently in effect.
@@ -194,9 +175,7 @@ Address: {{practice_address}}, {{practice_city}}, {{practice_state}} {{practice_
       {
         id: 'hipaa_acknowledgment',
         title: 'Acknowledgment',
-        content: `ACKNOWLEDGMENT OF RECEIPT
-
-I acknowledge that I have received a copy of {{practice_name}}'s Notice of Privacy Practices. I understand that I may request a copy of this notice at any time.
+        content: `I acknowledge that I have received a copy of {{practice_name}}'s Notice of Privacy Practices. I understand that I may request a copy of this notice at any time.
 
 _________________________________________    ____________
 Patient/Guardian Signature                    Date
@@ -220,10 +199,7 @@ Printed Name
       {
         id: 'fa_terms',
         title: 'Financial Terms',
-        content: `FINANCIAL AGREEMENT & PAYMENT POLICY
-{{practice_name}}
-
-Thank you for choosing {{practice_name}} for your care. We are committed to providing you with the best possible service. Please read and understand the following financial policies:
+        content: `Thank you for choosing {{practice_name}} for your care. We are committed to providing you with the best possible service. Please read and understand the following financial policies:
 
 Payment Responsibility:
 - Payment is due at the time of service unless other arrangements have been made.
@@ -242,9 +218,7 @@ Insurance:
       {
         id: 'fa_cancellation',
         title: 'Cancellation Policy',
-        content: `CANCELLATION / NO-SHOW POLICY
-
-- Please provide at least 24 hours notice for cancellations.
+        content: `- Please provide at least 24 hours notice for cancellations.
 - Late cancellations (less than 24 hours) may result in a cancellation fee.
 - Repeated no-shows may result in discharge from our practice.
 - We understand that emergencies happen and will consider each situation individually.`,
@@ -254,9 +228,7 @@ Insurance:
       {
         id: 'fa_signature',
         title: 'Agreement Signature',
-        content: `FINANCIAL AGREEMENT
-
-I have read and understand the financial policies outlined above. I agree to be financially responsible for charges not covered by my insurance.
+        content: `I have read and understand the financial policies outlined above. I agree to be financially responsible for charges not covered by my insurance.
 
 I authorize {{practice_name}} to release any medical information necessary to process insurance claims on my behalf.
 
@@ -279,10 +251,7 @@ Printed Name`,
       {
         id: 'roi_authorization',
         title: 'Authorization',
-        content: `AUTHORIZATION TO RELEASE/OBTAIN MEDICAL INFORMATION
-{{practice_name}}
-
-Patient Name: {{client_first_name}} {{client_last_name}}
+        content: `Patient Name: {{client_first_name}} {{client_last_name}}
 Date of Birth: {{client_dob}}
 
 I hereby authorize the release of my medical information as described below:
@@ -316,9 +285,7 @@ Purpose of Disclosure:
       {
         id: 'roi_terms',
         title: 'Terms & Signature',
-        content: `TERMS OF AUTHORIZATION
-
-- This authorization is valid for one year from the date of signature unless otherwise specified: Expiration Date: ______________
+        content: `- This authorization is valid for one year from the date of signature unless otherwise specified: Expiration Date: ______________
 - I understand that I may revoke this authorization at any time by providing written notice.
 - I understand that information released may be subject to re-disclosure and no longer protected by HIPAA.
 - I understand that treatment or payment will not be conditioned on signing this authorization.
@@ -346,10 +313,7 @@ Relationship to Patient (if applicable)`,
       {
         id: 'aob_assignment',
         title: 'Assignment of Benefits',
-        content: `ASSIGNMENT OF BENEFITS
-{{practice_name}}
-
-Patient Name: {{client_first_name}} {{client_last_name}}
+        content: `Patient Name: {{client_first_name}} {{client_last_name}}
 Date of Birth: {{client_dob}}
 Insurance Company: {{client_insurance_payer}}
 Member ID: {{client_insurance_member_id}}
@@ -373,9 +337,7 @@ I understand that:
       {
         id: 'aob_signature',
         title: 'Signature',
-        content: `SIGNATURES
-
-_________________________________________    ____________
+        content: `_________________________________________    ____________
 Patient/Guardian Signature                    Date
 
 _________________________________________

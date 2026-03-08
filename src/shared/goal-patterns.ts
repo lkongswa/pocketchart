@@ -435,6 +435,314 @@ const ST_PATTERNS: GoalPattern[] = [
     ],
     compositionOrder: ['system', 'function', 'context', 'metric_target', 'cueing', 'consistency', 'baseline_suffix', 'timeframe'],
   },
+
+  // ── Pediatric: Early Language ──
+  {
+    id: 'st_early_language',
+    discipline: 'ST',
+    category: 'Language Expression',
+    label: 'Early Language / First Words',
+    icon: '👶',
+    verb: 'use',
+    measurement_type: 'frequency',
+    components: [
+      {
+        key: 'modality',
+        label: 'Communication Modality',
+        type: 'chip_multi',
+        options: ['words', 'word approximations', 'signs', 'gestures', 'vocalizations'],
+      },
+      {
+        key: 'function',
+        label: 'Communicative Function',
+        type: 'chip_multi',
+        options: ['request', 'protest', 'comment', 'greet', 'label', 'call attention'],
+      },
+      {
+        key: 'context',
+        label: 'Context',
+        type: 'chip_single',
+        options: ['play-based activity', 'structured activity', 'daily routines', 'snack/mealtime'],
+      },
+      {
+        key: 'cueing',
+        label: 'Cueing Level (Target)',
+        type: 'chip_single',
+        options: ['spontaneously', 'given model', 'given gestural cues', 'given hand-over-hand'],
+      },
+      { key: 'consistency', label: 'Consistency Criterion', type: 'consistency' },
+    ],
+    compositionOrder: ['modality', 'function', 'context', 'metric_target', 'cueing', 'consistency', 'baseline_suffix', 'timeframe'],
+  },
+
+  // ── Pediatric: Joint Attention ──
+  {
+    id: 'st_joint_attention',
+    discipline: 'ST',
+    category: 'Pragmatics',
+    label: 'Joint Attention / Social Engagement',
+    icon: '👀',
+    verb: 'demonstrate',
+    measurement_type: 'frequency',
+    components: [
+      {
+        key: 'skill',
+        label: 'Target Skill',
+        type: 'chip_single',
+        options: ['joint attention (following point)', 'joint attention (initiating point)', 'shared gaze', 'turn-taking', 'responding to name', 'social referencing'],
+      },
+      {
+        key: 'context',
+        label: 'Context',
+        type: 'chip_single',
+        options: ['play-based activity', 'structured activity', 'social interaction', 'daily routines'],
+      },
+      {
+        key: 'cueing',
+        label: 'Cueing Level (Target)',
+        type: 'chip_single',
+        options: ['independently', 'given verbal cue', 'given gestural cue', 'given physical prompt'],
+      },
+      { key: 'consistency', label: 'Consistency Criterion', type: 'consistency' },
+    ],
+    compositionOrder: ['skill', 'context', 'metric_target', 'cueing', 'consistency', 'baseline_suffix', 'timeframe'],
+  },
+
+  // ── AAC: Vocabulary Expansion ──
+  {
+    id: 'st_aac_vocabulary',
+    discipline: 'ST',
+    category: 'AAC',
+    label: 'AAC Vocabulary Expansion',
+    icon: '📖',
+    verb: 'use',
+    measurement_type: 'frequency',
+    components: [
+      {
+        key: 'vocab_type',
+        label: 'Vocabulary Type',
+        type: 'chip_single',
+        options: ['core vocabulary', 'fringe vocabulary', 'activity-specific vocabulary', 'social phrases'],
+      },
+      {
+        key: 'message_length',
+        label: 'Message Length',
+        type: 'chip_single',
+        options: ['single symbols', '2-symbol combinations', '3+ symbol combinations', 'full sentences'],
+      },
+      {
+        key: 'function',
+        label: 'Communicative Function',
+        type: 'chip_multi',
+        options: ['request', 'comment', 'answer questions', 'ask questions', 'greet', 'describe', 'narrate'],
+      },
+      {
+        key: 'cueing',
+        label: 'Cueing Level (Target)',
+        type: 'chip_single',
+        options: ['independently', 'given indirect model', 'given direct model', 'given gestural cues', 'given physical guidance'],
+      },
+      { key: 'consistency', label: 'Consistency Criterion', type: 'consistency' },
+    ],
+    compositionOrder: ['vocab_type', 'message_length', 'function', 'metric_target', 'cueing', 'consistency', 'baseline_suffix', 'timeframe'],
+  },
+
+  // ── AAC: Communication Partner Training ──
+  {
+    id: 'st_aac_partner',
+    discipline: 'ST',
+    category: 'AAC',
+    label: 'Communication Partner Training',
+    icon: '🤝',
+    verb: 'demonstrate',
+    measurement_type: 'percentage',
+    components: [
+      {
+        key: 'partner',
+        label: 'Communication Partner',
+        type: 'chip_single',
+        options: ['parent/caregiver', 'teacher', 'classroom aide', 'sibling', 'peer'],
+      },
+      {
+        key: 'strategy',
+        label: 'Strategy',
+        type: 'chip_multi',
+        options: ['aided language stimulation', 'expectant delay', 'modeling on device', 'expansion of message', 'responding to all communication attempts', 'providing communication opportunities'],
+      },
+      {
+        key: 'context',
+        label: 'Context',
+        type: 'chip_single',
+        options: ['daily routines', 'play', 'mealtimes', 'classroom activities', 'community outings'],
+      },
+      { key: 'consistency', label: 'Consistency Criterion', type: 'consistency' },
+    ],
+    compositionOrder: ['partner', 'strategy', 'context', 'metric_target', 'consistency', 'baseline_suffix', 'timeframe'],
+  },
+
+  // ── Pediatric: Social Communication ──
+  {
+    id: 'st_social_communication',
+    discipline: 'ST',
+    category: 'Pragmatics',
+    label: 'Social Communication Skills',
+    icon: '🗨️',
+    verb: 'demonstrate',
+    measurement_type: 'percentage',
+    components: [
+      {
+        key: 'skill',
+        label: 'Target Skill',
+        type: 'chip_single',
+        options: [
+          'initiate interaction with peers',
+          'maintain conversational topic for ___ turns',
+          'use appropriate greetings/farewells',
+          'recognize/label emotions in others',
+          "take another person's perspective",
+          'understand nonliteral language (idioms, sarcasm)',
+          'repair communication breakdowns',
+          'use appropriate voice volume/proximity',
+        ],
+      },
+      {
+        key: 'context',
+        label: 'Context',
+        type: 'chip_single',
+        options: ['structured activity', 'peer interaction', 'classroom', 'play-based activity', 'community setting'],
+      },
+      {
+        key: 'cueing',
+        label: 'Cueing Level (Target)',
+        type: 'chip_single',
+        options: ['independently', 'given visual support', 'given verbal cue', 'given modeling'],
+      },
+      { key: 'consistency', label: 'Consistency Criterion', type: 'consistency' },
+    ],
+    compositionOrder: ['skill', 'context', 'metric_target', 'cueing', 'consistency', 'baseline_suffix', 'timeframe'],
+  },
+
+  // ── Pediatric: Phonological Awareness ──
+  {
+    id: 'st_phono_awareness',
+    discipline: 'ST',
+    category: 'Phonological Awareness',
+    label: 'Phonological Awareness Skill',
+    icon: '📚',
+    verb: 'demonstrate',
+    measurement_type: 'percentage',
+    components: [
+      {
+        key: 'skill',
+        label: 'Target Skill',
+        type: 'chip_single',
+        options: [
+          'identify rhyming words',
+          'produce rhyming words',
+          'segment words into syllables',
+          'blend syllables into words',
+          'identify initial sounds',
+          'identify final sounds',
+          'blend phonemes into words',
+          'segment words into phonemes',
+          'manipulate phonemes (delete/substitute)',
+        ],
+      },
+      {
+        key: 'context',
+        label: 'Context',
+        type: 'chip_single',
+        options: ['structured activity', 'literacy-based activity', 'play-based activity', 'with visual support'],
+      },
+      {
+        key: 'cueing',
+        label: 'Cueing Level (Target)',
+        type: 'chip_single',
+        options: ['independently', 'given phonemic cue', 'given visual cue', 'given model'],
+      },
+      { key: 'consistency', label: 'Consistency Criterion', type: 'consistency' },
+    ],
+    compositionOrder: ['skill', 'context', 'metric_target', 'cueing', 'consistency', 'baseline_suffix', 'timeframe'],
+  },
+
+  // ── Pediatric: Feeding / Food Acceptance ──
+  {
+    id: 'st_peds_feeding',
+    discipline: 'ST',
+    category: 'Feeding/Swallowing',
+    label: 'Pediatric Feeding / Food Acceptance',
+    icon: '🍎',
+    verb: 'tolerate',
+    measurement_type: 'frequency',
+    components: [
+      {
+        key: 'target',
+        label: 'Target',
+        type: 'chip_single',
+        options: [
+          'accept novel foods to mouth',
+          'chew and swallow ___ texture',
+          'tolerate ___ texture on plate without aversive response',
+          'self-feed with ___ (spoon/fork)',
+          'drink from ___ (open cup/straw/sippy cup)',
+          'transition from ___ to ___ texture',
+        ],
+      },
+      {
+        key: 'food_category',
+        label: 'Food Category',
+        type: 'chip_multi',
+        options: ['puree', 'soft solid', 'mixed texture', 'crunchy', 'chewy', 'wet/slippery', 'novel foods'],
+      },
+      {
+        key: 'context',
+        label: 'Context',
+        type: 'chip_single',
+        options: ['therapy session', 'mealtime', 'snack time', 'food exploration activity'],
+      },
+      {
+        key: 'cueing',
+        label: 'Cueing Level (Target)',
+        type: 'chip_single',
+        options: ['independently', 'given verbal encouragement', 'given modeling', 'given hand-over-hand', 'with SOS/food chaining approach'],
+      },
+      { key: 'consistency', label: 'Consistency Criterion', type: 'consistency' },
+    ],
+    compositionOrder: ['target', 'food_category', 'context', 'metric_target', 'cueing', 'consistency', 'baseline_suffix', 'timeframe'],
+  },
+
+  // ── Pediatric: Narrative / Story Retell ──
+  {
+    id: 'st_narrative',
+    discipline: 'ST',
+    category: 'Language Expression',
+    label: 'Narrative / Story Retell',
+    icon: '📖',
+    verb: 'retell',
+    measurement_type: 'percentage',
+    components: [
+      {
+        key: 'elements',
+        label: 'Story Elements',
+        type: 'chip_multi',
+        options: ['character', 'setting', 'initiating event/problem', 'response/action', 'resolution/ending', 'temporal/causal connectors'],
+      },
+      {
+        key: 'task',
+        label: 'Task Type',
+        type: 'chip_single',
+        options: ['retell a familiar story', 'retell after one hearing', 'generate a personal narrative', 'generate a fictional narrative'],
+      },
+      {
+        key: 'cueing',
+        label: 'Cueing Level (Target)',
+        type: 'chip_single',
+        options: ['independently', 'given visual supports', 'given verbal cues', 'given story map/graphic organizer'],
+      },
+      { key: 'consistency', label: 'Consistency Criterion', type: 'consistency' },
+    ],
+    compositionOrder: ['task', 'elements', 'metric_target', 'cueing', 'consistency', 'baseline_suffix', 'timeframe'],
+  },
 ];
 
 // ══════════════════════════════════════════════════════════════════════

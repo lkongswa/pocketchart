@@ -305,6 +305,10 @@ const DashboardPage: React.FC = () => {
             <UserPlus size={16} className="mr-2" />
             New Client
           </button>
+          <button className="btn-secondary" onClick={() => navigate('/clients')}>
+            <PenLine size={16} className="mr-2" />
+            Start Note
+          </button>
           <button className="btn-secondary" onClick={() => navigate('/calendar')}>
             <CalendarDays size={16} className="mr-2" />
             View Calendar
@@ -420,7 +424,7 @@ const DashboardPage: React.FC = () => {
             upcomingAppointments.map((appt) => (
               <div
                 key={appt.id}
-                className="px-5 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
+                className="group px-5 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
                 onClick={() => navigate('/calendar', { state: { date: appt.scheduled_date, view: 'week' } })}
               >
                 <div className="flex items-center justify-between">
@@ -441,13 +445,32 @@ const DashboardPage: React.FC = () => {
                       </span>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm font-medium text-[var(--color-text)]">
-                      {formatDate(appt.scheduled_date)}
-                    </p>
-                    <p className="text-xs text-[var(--color-text-secondary)]">
-                      {formatTime(appt.scheduled_time)}
-                    </p>
+                  <div className="flex items-center gap-3">
+                    <button
+                      className="btn-ghost p-1.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                      title="Write Note"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/clients/${appt.client_id}/note/new`, {
+                          state: {
+                            appointmentId: appt.id,
+                            appointmentDate: appt.scheduled_date,
+                            appointmentTime: appt.scheduled_time,
+                            appointmentDuration: appt.duration_minutes,
+                          },
+                        });
+                      }}
+                    >
+                      <PenLine size={14} className="text-teal-600" />
+                    </button>
+                    <div className="text-right">
+                      <p className="text-sm font-medium text-[var(--color-text)]">
+                        {formatDate(appt.scheduled_date)}
+                      </p>
+                      <p className="text-xs text-[var(--color-text-secondary)]">
+                        {formatTime(appt.scheduled_time)}
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>

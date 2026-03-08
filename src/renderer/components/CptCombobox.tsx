@@ -82,6 +82,21 @@ export default function CptCombobox({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      // Always prevent Enter from bubbling to the parent form
+      e.preventDefault();
+      if (showDropdown && highlightIdx >= 0 && highlightIdx < suggestions.length) {
+        selectEntry(suggestions[highlightIdx]);
+      } else {
+        // Accept whatever the user typed as a raw CPT code
+        const raw = query.trim().split(/\s/)[0]; // take first token (the code)
+        if (raw) {
+          onChange(raw);
+        }
+        setShowDropdown(false);
+      }
+      return;
+    }
     if (!showDropdown) return;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -89,9 +104,6 @@ export default function CptCombobox({
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       setHighlightIdx(prev => Math.max(prev - 1, 0));
-    } else if (e.key === 'Enter' && highlightIdx >= 0 && highlightIdx < suggestions.length) {
-      e.preventDefault();
-      selectEntry(suggestions[highlightIdx]);
     } else if (e.key === 'Escape') {
       setShowDropdown(false);
     }

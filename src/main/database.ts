@@ -9,7 +9,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { app } from 'electron';
 import Store from 'electron-store';
-import { seedDefaultData, seedDefaultQuickChips, seedPayers, seedFeeSchedule, seedMFTData, seedCategoryAlignedPhrases, autoFixFeeSchedule } from './seed';
+import { seedDefaultData, seedDefaultQuickChips, seedPayers, seedFeeSchedule, seedMFTData, seedCategoryAlignedPhrases, autoFixFeeSchedule, backfillMissingCPTCodes, seedPediatricContent } from './seed';
 
 let db: InstanceType<typeof Database>;
 
@@ -125,10 +125,12 @@ export function initDatabase(masterKeyHex?: string): void {
   seedDefaultQuickChips(db);
   seedMFTData(db);
   seedCategoryAlignedPhrases(db);
+  seedPediatricContent(db);
   // V2/V3 billing seed data (run after migrations create tables)
   seedPayers(db);
   seedFeeSchedule(db);
   autoFixFeeSchedule(db);
+  backfillMissingCPTCodes(db);
 }
 
 /**
@@ -2208,6 +2210,33 @@ function runMigrations(): void {
         db.exec('CREATE INDEX IF NOT EXISTS idx_gfe_status ON good_faith_estimates(status)');
       },
     },
+    {
+      version: 53,
+      description: 'Add recert workflow stepper: 3-state signature status + sent_at timestamp',
+      up: () => {
+        if (!columnExists('compliance_tracking', 'recert_md_signature_status')) {
+          db.exec("ALTER TABLE compliance_tracking ADD COLUMN recert_md_signature_status TEXT DEFAULT 'not_sent'");
+        }
+        if (!columnExists('compliance_tracking', 'recert_md_signature_sent_at')) {
+          db.exec("ALTER TABLE compliance_tracking ADD COLUMN recert_md_signature_sent_at TEXT DEFAULT NULL");
+        }
+        // Migrate existing boolean data into the new column
+        db.exec(`
+          UPDATE compliance_tracking
+          SET recert_md_signature_status = 'received'
+          WHERE recert_md_signature_received = 1
+        `);
+      },
+    },
+    {
+      version: 54,
+      description: 'Add recert_eval_cleared flag for skipping eval requirement in recert workflow',
+      up: () => {
+        if (!columnExists('compliance_tracking', 'recert_eval_cleared')) {
+          db.exec("ALTER TABLE compliance_tracking ADD COLUMN recert_eval_cleared INTEGER DEFAULT 0");
+        }
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
@@ -3182,14 +3211,19 @@ export function importSelectedClients(
                 progress_visit_threshold, progress_day_threshold, recert_day_threshold,
                 visits_since_last_progress, last_progress_date, last_recert_date,
                 next_progress_due, next_recert_due, recert_md_signature_received,
+                recert_md_signature_status, recert_md_signature_sent_at,
+                recert_eval_cleared,
                 physician_order_required, physician_order_expiration, physician_order_document_id,
                 created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `).run(
               newClientId, c.tracking_enabled ? 1 : 0, c.compliance_preset || 'none',
               c.progress_visit_threshold || 10, c.progress_day_threshold || 30, c.recert_day_threshold || 90,
               c.visits_since_last_progress || 0, c.last_progress_date, c.last_recert_date,
               c.next_progress_due, c.next_recert_due, c.recert_md_signature_received ? 1 : 0,
+              c.recert_md_signature_status || (c.recert_md_signature_received ? 'received' : 'not_sent'),
+              c.recert_md_signature_sent_at || null,
+              c.recert_eval_cleared ? 1 : 0,
               c.physician_order_required ? 1 : 0, c.physician_order_expiration, null,
               c.created_at, c.updated_at
             );

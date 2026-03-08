@@ -981,6 +981,16 @@ export default function CalendarPage() {
           >
             <Edit3 size={14} /> Edit
           </button>
+          <button
+            className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 text-blue-700 flex items-center gap-2 transition-colors"
+            onClick={() => {
+              const appt = contextMenu.appointment;
+              setContextMenu(null);
+              handleNoteClick(appt);
+            }}
+          >
+            <FileText size={14} /> Write Note
+          </button>
           <div className="border-t border-[var(--color-border)] my-1" />
           {contextMenu.appointment.status === 'scheduled' && (
             <>

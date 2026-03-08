@@ -694,6 +694,7 @@ export interface VaultDocument {
 // ── Compliance Engine Types ──
 
 export type CompliancePreset = 'medicare' | 'custom' | 'none';
+export type RecertSignatureStatus = 'not_sent' | 'sent' | 'received';
 
 export interface ComplianceTracking {
   id: number;
@@ -709,6 +710,9 @@ export interface ComplianceTracking {
   next_progress_due: string | null;
   next_recert_due: string | null;
   recert_md_signature_received: boolean;
+  recert_md_signature_status: RecertSignatureStatus;
+  recert_md_signature_sent_at: string | null;
+  recert_eval_cleared: boolean;
   physician_order_required: boolean;
   physician_order_expiration: string | null;
   physician_order_document_id: number | null;
@@ -1720,6 +1724,11 @@ export interface PocketChartAPI {
       physician_name?: string;
       category?: string;
     }) => Promise<ClientDocument>;
+    uploadFromPath: (data: {
+      clientId: number;
+      filePath: string;
+      category?: string;
+    }) => Promise<ClientDocument>;
     list: (data: { clientId: number }) => Promise<ClientDocument[]>;
     open: (data: { documentId: number }) => Promise<string>;
     delete: (data: { documentId: number }) => Promise<boolean>;
@@ -1994,6 +2003,8 @@ export interface PocketChartAPI {
     incrementVisit: (clientId: number) => Promise<ComplianceTracking>;
     resetProgressCounter: (clientId: number) => Promise<ComplianceTracking>;
     resetRecertCounter: (clientId: number) => Promise<ComplianceTracking>;
+    updateSignatureStatus: (clientId: number, status: RecertSignatureStatus) => Promise<ComplianceTracking>;
+    clearEvalGate: (clientId: number, cleared: boolean) => Promise<ComplianceTracking>;
     getAlerts: () => Promise<ComplianceAlert[]>;
     getDueItems: (clientId: number) => Promise<ComplianceAlert[]>;
   };

@@ -234,6 +234,11 @@ const api = {
       sent_date?: string;
       physician_name?: string;
     }) => ipcRenderer.invoke('documents:upload', data),
+    uploadFromPath: (data: {
+      clientId: number;
+      filePath: string;
+      category?: string;
+    }) => ipcRenderer.invoke('documents:uploadFromPath', data),
     updateMeta: (data: {
       documentId: number;
       certification_period_start?: string;
@@ -507,6 +512,8 @@ const api = {
     incrementVisit: (clientId: number) => ipcRenderer.invoke('compliance:incrementVisit', clientId),
     resetProgressCounter: (clientId: number) => ipcRenderer.invoke('compliance:resetProgressCounter', clientId),
     resetRecertCounter: (clientId: number) => ipcRenderer.invoke('compliance:resetRecertCounter', clientId),
+    updateSignatureStatus: (clientId: number, status: string) => ipcRenderer.invoke('compliance:updateSignatureStatus', clientId, status),
+    clearEvalGate: (clientId: number, cleared: boolean) => ipcRenderer.invoke('compliance:clearEvalGate', clientId, cleared),
     getAlerts: () => ipcRenderer.invoke('compliance:getAlerts'),
     getDueItems: (clientId: number) => ipcRenderer.invoke('compliance:getDueItems', clientId),
   },

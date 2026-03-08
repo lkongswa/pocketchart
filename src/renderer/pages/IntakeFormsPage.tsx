@@ -25,28 +25,19 @@ export default function IntakeFormsPage() {
 
   // Load practice info + logo for preview
   useEffect(() => {
-    window.api.settings.get('practice_name').then((name: string | null) => {
-      if (!name) return;
-      Promise.all([
-        window.api.settings.get('practice_phone'),
-        window.api.settings.get('practice_address'),
-        window.api.settings.get('practice_city'),
-        window.api.settings.get('practice_state'),
-        window.api.settings.get('practice_zip'),
-        window.api.settings.get('practice_npi'),
-        window.api.settings.get('practice_tax_id'),
-      ]).then(([phone, address, city, state, zip, npi, tax_id]) => {
+    window.api.practice.get().then((practice: any) => {
+      if (practice) {
         setPracticeInfo({
-          name: name || '',
-          phone: phone || '',
-          address: address || '',
-          city: city || '',
-          state: state || '',
-          zip: zip || '',
-          npi: npi || '',
-          tax_id: tax_id || '',
+          name: practice.name || '',
+          phone: practice.phone || '',
+          address: practice.address || '',
+          city: practice.city || '',
+          state: practice.state || '',
+          zip: practice.zip || '',
+          npi: practice.npi || '',
+          tax_id: practice.tax_id || '',
         });
-      });
+      }
     });
     // Load practice logo
     window.api.logo.getBase64().then((data: string | null) => {

@@ -138,6 +138,10 @@ export const ICD10_CODES: ICD10Entry[] = [
   // ── Developmental (Pediatric) ──
   { code: 'F82', description: 'Specific developmental disorder of motor function' },
   { code: 'F84.0', description: 'Autistic disorder' },
+  { code: 'F84.3', description: 'Other childhood disintegrative disorder' },
+  { code: 'F84.5', description: "Asperger's syndrome" },
+  { code: 'F84.8', description: 'Other pervasive developmental disorders' },
+  { code: 'F84.9', description: 'Pervasive developmental disorder, unspecified' },
   { code: 'F88', description: 'Other disorders of psychological development' },
   { code: 'F89', description: 'Unspecified disorder of psychological development' },
   { code: 'F90.0', description: 'ADHD, predominantly inattentive type' },
@@ -147,6 +151,50 @@ export const ICD10_CODES: ICD10Entry[] = [
   { code: 'R62.0', description: 'Delayed milestone in childhood' },
   { code: 'R62.50', description: 'Unspecified lack of expected normal physiological development' },
   { code: 'Q67.4', description: 'Other congenital deformities of skull, face and jaw' },
+
+  // ── Genetic / Congenital ──
+  { code: 'Q90.9', description: 'Down syndrome, unspecified' },
+  { code: 'Q99.2', description: 'Fragile X syndrome' },
+  { code: 'Q35.1', description: 'Cleft hard palate' },
+  { code: 'Q35.3', description: 'Cleft soft palate' },
+  { code: 'Q35.5', description: 'Cleft hard palate with cleft soft palate' },
+  { code: 'Q37.9', description: 'Unspecified cleft palate with cleft lip' },
+
+  // ── Pediatric Feeding ──
+  { code: 'R63.3', description: 'Feeding difficulties' },
+  { code: 'R63.30', description: 'Feeding difficulties, unspecified' },
+  { code: 'R63.31', description: 'Pediatric feeding disorder, acute' },
+  { code: 'R63.32', description: 'Pediatric feeding disorder, chronic' },
+  { code: 'P92.9', description: 'Feeding problem of newborn, unspecified' },
+
+  // ── Additional Developmental / Literacy ──
+  { code: 'F80.4', description: 'Speech/language development delay due to hearing loss' },
+  { code: 'F81.0', description: 'Specific reading disorder (dyslexia)' },
+  { code: 'F81.1', description: 'Specific spelling disorder' },
+  { code: 'F81.81', description: 'Disorder of written expression' },
+  { code: 'R48.0', description: 'Dyslexia and alexia' },
+  { code: 'Z13.42', description: 'Encounter for screening for global developmental delays' },
+  { code: 'Z13.49', description: 'Encounter for screening for other developmental delays' },
+
+  // ── Hearing-Related (impacts SLP) ──
+  { code: 'H90.5', description: 'Unspecified sensorineural hearing loss, bilateral' },
+  { code: 'H90.6', description: 'Mixed conductive and sensorineural hearing loss, bilateral' },
+  { code: 'H91.90', description: 'Unspecified hearing loss, unspecified ear' },
+
+  // ── Pediatric Neuro ──
+  { code: 'G80.0', description: 'Spastic quadriplegic cerebral palsy' },
+  { code: 'G80.1', description: 'Spastic diplegic cerebral palsy' },
+  { code: 'G80.2', description: 'Spastic hemiplegic cerebral palsy' },
+  { code: 'G80.8', description: 'Other cerebral palsy' },
+  { code: 'G80.9', description: 'Cerebral palsy, unspecified' },
+  { code: 'G71.0', description: 'Muscular dystrophy' },
+  { code: 'S06.0X0A', description: 'Concussion without loss of consciousness, initial encounter' },
+  { code: 'S06.0X9A', description: 'Concussion with loss of consciousness, unspecified, initial' },
+
+  // ── Pediatric Orthopedic (PT) ──
+  { code: 'Q66.0', description: 'Congenital talipes equinovarus (clubfoot)' },
+  { code: 'Q65.9', description: 'Congenital deformity of hip, unspecified' },
+  { code: 'M41.119', description: 'Juvenile idiopathic scoliosis, site unspecified' },
 
   // ── Mental Health (MFT) ──
   { code: 'F32.0', description: 'Major depressive disorder, single episode, mild' },

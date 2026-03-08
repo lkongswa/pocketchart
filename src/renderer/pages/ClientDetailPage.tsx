@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useLocalPreference } from '../hooks/useLocalPreference';
 import {
@@ -91,6 +91,7 @@ import InvoiceModal from '../components/InvoiceModal';
 import GoodFaithEstimateModal from '../components/GoodFaithEstimateModal';
 import TrialExpiredModal from '../components/TrialExpiredModal';
 import FaxSendModal from '../components/FaxSendModal';
+import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
 import { useTrialGuard } from '../hooks/useTrialGuard';
 import { useChartCompleteness } from '../hooks/useChartCompleteness';
 import { useClaimReadiness } from '../hooks/useClaimReadiness';
@@ -337,6 +338,14 @@ const ClientDetailPage: React.FC = () => {
   const [faxDocType, setFaxDocType] = useState<'eval' | 'note' | 'document' | undefined>(undefined);
   const [faxTracking, setFaxTracking] = useState<FaxTrackingEntry[]>([]);
   // CMS-1500 preview removed — now saves directly via dialog
+
+  // Context menu state for notes/evals (Phase C)
+  const [noteContextMenu, setNoteContextMenu] = useState<{ x: number; y: number; note: Note } | null>(null);
+  const [evalContextMenu, setEvalContextMenu] = useState<{ x: number; y: number; eval: Evaluation } | null>(null);
+
+  // Drag-and-drop state for documents (Phase E)
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const dragCounterRef = useRef(0);
 
   // Document upload form state
   const [uploadCategory, setUploadCategory] = useState<ClientDocumentCategory>('other');
@@ -651,6 +660,88 @@ const ClientDetailPage: React.FC = () => {
       setDeletingEvalId(evalId);
       setTimeout(() => setDeletingEvalId((prev) => (prev === evalId ? null : prev)), 3000);
     }
+  };
+
+  // --- Context menu builders (Phase C) ---
+
+  const getNoteContextMenuItems = (note: Note): ContextMenuItem[] => {
+    if (note.signed_at) {
+      return [
+        { label: 'View Note', icon: <Eye size={14} />, onClick: () => navigate(`/clients/${clientId}/note/${note.id}`) },
+        { label: 'Generate Superbill', icon: <Receipt size={14} />, onClick: () => navigate(`/clients/${clientId}/superbill`, { state: { preselectedNoteIds: [note.id] } }) },
+        { label: 'Fax to Physician', icon: <Printer size={14} />, onClick: () => { setFaxDocumentId(note.id); setFaxDocType('note'); setShowFaxModal(true); } },
+        { label: 'Amend', icon: <Edit size={14} />, onClick: () => navigate(`/clients/${clientId}/note/${note.id}`, { state: { amend: true } }), dividerBefore: true },
+      ];
+    }
+    return [
+      { label: 'Edit', icon: <Edit size={14} />, onClick: () => navigate(`/clients/${clientId}/note/${note.id}`) },
+      { label: 'Delete', icon: <Trash2 size={14} />, className: 'text-red-600', onClick: () => handleDeleteNote(note.id) },
+    ];
+  };
+
+  const getEvalContextMenuItems = (evalItem: Evaluation): ContextMenuItem[] => {
+    if (evalItem.signed_at) {
+      return [
+        { label: 'View Eval', icon: <Eye size={14} />, onClick: () => navigate(`/clients/${clientId}/eval/${evalItem.id}`) },
+        { label: 'Fax to Physician', icon: <Printer size={14} />, onClick: () => { setFaxDocumentId(evalItem.id); setFaxDocType('eval'); setShowFaxModal(true); } },
+      ];
+    }
+    return [
+      { label: 'Edit', icon: <Edit size={14} />, onClick: () => navigate(`/clients/${clientId}/eval/${evalItem.id}`) },
+      { label: 'Delete', icon: <Trash2 size={14} />, className: 'text-red-600', onClick: () => handleDeleteEval(evalItem.id) },
+    ];
+  };
+
+  // --- Drag-and-drop handlers (Phase E) ---
+
+  const handleDocDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current += 1;
+    if (dragCounterRef.current === 1) setIsDraggingFile(true);
+  };
+
+  const handleDocDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current === 0) setIsDraggingFile(false);
+  };
+
+  const handleDocDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDocDrop = async (e: React.DragEvent, category: string = 'other') => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingFile(false);
+    dragCounterRef.current = 0;
+
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const filePath = (file as any).path;
+      if (!filePath) continue;
+      try {
+        await window.api.documents.uploadFromPath({
+          clientId,
+          filePath,
+          category,
+        });
+      } catch (err) {
+        console.error('Failed to upload dropped file:', err);
+      }
+    }
+
+    // Refresh documents list
+    try {
+      const docsData = await window.api.documents.list({ clientId });
+      setDocuments(docsData);
+    } catch {}
   };
 
   // --- Billing Handlers ---
@@ -1203,6 +1294,10 @@ const ClientDetailPage: React.FC = () => {
                     key={evalItem.id}
                     className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
                     onClick={() => navigate(`/clients/${clientId}/eval/${evalItem.id}`)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setEvalContextMenu({ x: e.clientX, y: e.clientY, eval: evalItem });
+                    }}
                   >
                     <div className="flex items-center gap-3">
                       <span className="text-sm font-medium text-[var(--color-text)]">
@@ -1570,6 +1665,10 @@ const ClientDetailPage: React.FC = () => {
                       key={note.id}
                       className="flex items-center gap-2 px-4 py-2 hover:bg-gray-50 cursor-pointer transition-colors text-xs"
                       onClick={() => navigate(`/clients/${clientId}/note/${note.id}`)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setNoteContextMenu({ x: e.clientX, y: e.clientY, note });
+                      }}
                     >
                       <span className="text-[var(--color-text)] font-medium shrink-0">{formatDate(note.date_of_service)}</span>
                       <span className="text-[var(--color-text-secondary)]">&middot;</span>
@@ -1630,6 +1729,10 @@ const ClientDetailPage: React.FC = () => {
                       key={note.id}
                       className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
                       onClick={() => navigate(`/clients/${clientId}/note/${note.id}`)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setNoteContextMenu({ x: e.clientX, y: e.clientY, note });
+                      }}
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         <span className="text-sm font-medium text-[var(--color-text)] w-24 shrink-0">
@@ -2366,6 +2469,22 @@ const ClientDetailPage: React.FC = () => {
         </div>
       </SectionCard>
 
+        <div
+          className="relative"
+          onDragEnter={handleDocDragEnter}
+          onDragLeave={handleDocDragLeave}
+          onDragOver={handleDocDragOver}
+          onDrop={(e) => handleDocDrop(e)}
+        >
+          {/* Drop overlay */}
+          {isDraggingFile && (
+            <div className="absolute inset-0 z-40 bg-blue-50/90 border-2 border-dashed border-blue-400 rounded-xl flex flex-col items-center justify-center gap-3 pointer-events-none">
+              <Upload size={36} className="text-blue-500" />
+              <p className="text-sm font-semibold text-blue-700">Drop files to upload</p>
+              <p className="text-xs text-blue-500">Files will be categorized as &quot;Other&quot;</p>
+            </div>
+          )}
+
         <SectionCard
           color="slate"
           icon={<FolderOpen size={18} />}
@@ -2452,11 +2571,15 @@ const ClientDetailPage: React.FC = () => {
               })}
             {documents.filter((d) => docCategoryFilter === 'all' || d.category === docCategoryFilter).length === 0 && (
               <div className="px-6 py-8 text-center text-[var(--color-text-secondary)] text-sm">
-                No documents {docCategoryFilter !== 'all' ? 'in this category' : 'uploaded yet'}.
+                <Upload size={24} className="mx-auto mb-2 text-[var(--color-text-tertiary)] opacity-40" />
+                {docCategoryFilter !== 'all'
+                  ? 'No documents in this category.'
+                  : 'Drag and drop files here, or click Upload above.'}
               </div>
             )}
           </div>
         </SectionCard>
+        </div>
       </>}
 
       {/* ══════════ DISCOUNT MODAL ══════════ */}
@@ -2593,6 +2716,24 @@ const ClientDetailPage: React.FC = () => {
 
       {/* Trial Expired Modal */}
       {showExpiredModal && <TrialExpiredModal onClose={dismissExpiredModal} />}
+
+      {/* Right-click context menus (Phase C) */}
+      {noteContextMenu && (
+        <ContextMenu
+          x={noteContextMenu.x}
+          y={noteContextMenu.y}
+          items={getNoteContextMenuItems(noteContextMenu.note)}
+          onClose={() => setNoteContextMenu(null)}
+        />
+      )}
+      {evalContextMenu && (
+        <ContextMenu
+          x={evalContextMenu.x}
+          y={evalContextMenu.y}
+          items={getEvalContextMenuItems(evalContextMenu.eval)}
+          onClose={() => setEvalContextMenu(null)}
+        />
+      )}
     </div>
   );
 };
