@@ -87,9 +87,8 @@ export default function PhysicianCombobox({
     setQuery(val);
     setShowDropdown(true);
     setHighlightIdx(-1);
-    if (!val.trim()) {
-      onChange(null, '');
-    }
+    // Always propagate the typed value so parent stays in sync
+    onChange(null, val);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

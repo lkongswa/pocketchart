@@ -19,8 +19,10 @@ import {
   ChevronDown,
   ChevronRight,
   Receipt,
+  AlertTriangle,
 } from 'lucide-react';
-import type { Client, Evaluation, Discipline, GoalType, EvalGoalEntry, CptLine, PlaceOfService, SOAPSection, MeasurementType, PatternOverride } from '../../shared/types';
+import type { Client, Evaluation, Discipline, GoalType, EvalGoalEntry, CptLine, PlaceOfService, SOAPSection, MeasurementType, PatternOverride, Physician } from '../../shared/types';
+import FaxPrompt from '../components/FaxPrompt';
 import { composeGoalText as sharedComposeGoalText, isAutoComposedGoalText, metricValueToNumeric } from '../../shared/compose-goal-text';
 import type { GoalPattern } from '../../shared/goal-patterns';
 import { getPatternById, applyOverrides, customPatternToGoalPattern } from '../../shared/goal-patterns';
@@ -39,6 +41,7 @@ import CptCombobox from '../components/CptCombobox';
 import { validateEightMinuteRule, appliesTo as eightMinRuleApplies, formatIndicatorSummary, calculateTreatmentMinutes } from '../../shared/eightMinuteRule';
 import { checkDisciplineCptMismatch, formatMismatchWarning } from '../../shared/cptDisciplineMap';
 import SmartTextarea from '../components/SmartTextarea';
+import PhysicianCombobox from '../components/PhysicianCombobox';
 import QuickChips from '../components/QuickChips';
 import NoteBankPopover from '../components/NoteBankPopover';
 import { useEvalSections } from '../hooks/useEvalSections';
@@ -100,6 +103,8 @@ interface SessionNoteData {
 
 interface EvalContent {
   referral_source: string;
+  referral_physician_id?: number | null;
+  referral_physician_npi?: string;
   medical_history: string;
   prior_level_of_function: string;
   current_complaints: string;
@@ -118,9 +123,9 @@ interface EvalContent {
 }
 
 const CATEGORY_OPTIONS: Record<Discipline, string[]> = {
-  PT: ['Mobility', 'Strength', 'Balance', 'ROM', 'Pain Management', 'Gait', 'Functional Activity', 'Endurance', 'Transfers', 'Posture'],
-  OT: ['ADLs', 'Fine Motor', 'Visual Motor', 'Sensory Processing', 'Handwriting', 'Self-Care', 'Feeding', 'Upper Extremity', 'Cognitive', 'Play Skills'],
-  ST: ['Articulation', 'Language Comprehension', 'Language Expression', 'Fluency', 'Voice', 'Pragmatics', 'Phonological Awareness', 'Feeding/Swallowing', 'AAC', 'Cognitive-Communication'],
+  PT: ['Mobility', 'Strength', 'Balance', 'ROM', 'Pain Management', 'Gait', 'Functional Activity', 'Endurance', 'Transfers', 'Posture', 'Gross Motor Development', 'Coordination'],
+  OT: ['ADLs', 'Fine Motor', 'Visual Motor', 'Sensory Processing', 'Handwriting', 'Self-Care', 'Feeding', 'Upper Extremity', 'Cognitive', 'Play Skills', 'Self-Regulation'],
+  ST: ['Articulation', 'Language Comprehension', 'Language Expression', 'Early Language', 'Fluency', 'Voice', 'Pragmatics', 'Social Communication', 'Phonological Awareness', 'Feeding/Swallowing', 'AAC', 'Cognitive-Communication', 'Literacy'],
   MFT: ['Depression', 'Anxiety', 'Trauma', 'Relationship', 'Family Systems', 'Coping Skills', 'Self-Esteem', 'Grief', 'Behavioral', 'Communication'],
 };
 
@@ -132,18 +137,29 @@ const TREATMENT_PLAN_CHIPS: Record<Discipline, string[]> = {
     'Gait training', 'Balance training', 'Modalities (e-stim, US, heat/cold)',
     'Functional mobility training', 'Patient/caregiver education',
     'Home exercise program', 'Aquatic therapy', 'Stretching/flexibility',
+    'Gross motor training', 'Developmental positioning',
+    'NDT/neurodevelopmental treatment', 'Play-based gross motor intervention',
+    'Orthotics/bracing education', 'Coordination/ball skills training',
   ],
   OT: [
     'ADL training', 'Fine motor training', 'Therapeutic exercise',
     'Neuromuscular re-education', 'Sensory integration', 'Cognitive retraining',
     'Splinting/orthotics', 'Visual-motor training', 'Feeding therapy',
     'Home modification education', 'Adaptive equipment training',
+    'Handwriting intervention', 'Sensory diet implementation',
+    'Self-regulation training', 'Play-based intervention',
+    'School-based accommodations', 'Caregiver/teacher training',
   ],
   ST: [
     'Articulation therapy', 'Language intervention', 'Fluency shaping',
     'Voice therapy', 'Dysphagia management', 'Cognitive-communication training',
-    'AAC training', 'Oral motor exercises', 'Pragmatic language training',
-    'Phonological awareness', 'Parent/caregiver training',
+    'AAC training', 'Aided language stimulation', 'Core vocabulary instruction',
+    'Oral motor exercises', 'Pragmatic language training',
+    'Phonological awareness training', 'Parent/caregiver training',
+    'Play-based intervention', 'Naturalistic intervention',
+    'Narrative intervention', 'Social skills training',
+    'Literacy intervention', 'Feeding therapy (SOS/food chaining)',
+    'Communication partner training', 'Sensory-motor speech approach',
   ],
   MFT: [
     'Individual psychotherapy', 'Couples therapy', 'Family therapy',
@@ -575,6 +591,7 @@ export default function EvalFormPage() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [signDialogOpen, setSignDialogOpen] = useState(false);
+  const [showFaxPrompt, setShowFaxPrompt] = useState(false);
   const [signDialogIssues, setSignDialogIssues] = useState<ValidationIssue[]>([]);
 
   const [evalDate, setEvalDate] = useState(appointmentDate || todayISO());
@@ -623,6 +640,11 @@ export default function EvalFormPage() {
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [lastAutoSaved, setLastAutoSaved] = useState<string | null>(null);
   const isDirty = useRef(false); // true once user edits any field
+
+  // Physician sync state
+  const [physicianSyncBanner, setPhysicianSyncBanner] = useState<{ name: string; id?: number; npi?: string; fax?: string; cleared?: boolean } | null>(null);
+  const lastClientCheckRef = useRef<number>(0);
+  const evalPhysicianIdAtLoad = useRef<number | null | undefined>(undefined); // tracks physician ID from when eval was loaded
 
   // ── Section collapsing & outline nav ──
   const {
@@ -824,6 +846,33 @@ export default function EvalFormPage() {
               setSnModifiers(parsed.session_note.cpt_modifiers);
             }
           }
+
+          // ── Client → Eval physician sync check (for unsigned drafts) ──
+          evalPhysicianIdAtLoad.current = parsed.referral_physician_id ?? null;
+          if (!evaluation.signed_at) {
+            const clientMD = clientData.referring_physician?.trim() || '';
+            const clientMDId = clientData.referring_physician_id;
+            const evalMD = (parsed.referral_source || '').trim();
+            const evalMDId = parsed.referral_physician_id;
+
+            if (clientMD && (clientMDId !== evalMDId || clientMD !== evalMD)) {
+              // Client has a (different) physician — offer to update eval
+              setPhysicianSyncBanner({
+                name: clientMD,
+                id: clientMDId ?? undefined,
+                npi: clientData.referring_npi || undefined,
+                fax: clientData.referring_fax || undefined,
+              });
+            } else if (!clientMD && evalMD && evalMDId) {
+              // Client physician was cleared — offer to clear eval too
+              setPhysicianSyncBanner({
+                name: '',
+                cleared: true,
+              });
+            } else {
+              setPhysicianSyncBanner(null);
+            }
+          }
         } catch {
           setContent(emptyContent(discipline));
         }
@@ -839,7 +888,9 @@ export default function EvalFormPage() {
             const base = emptyContent(discipline);
             const prePopulated: EvalContent = {
               ...base,
-              referral_source: parsed.referral_source || [clientData.referring_physician, clientData.referral_source].filter(Boolean).join(' — ') || '',
+              referral_source: parsed.referral_source || (clientData.referring_physician_id && clientData.referring_physician ? clientData.referring_physician : [clientData.referring_physician, clientData.referral_source].filter(Boolean).join(' — ') || ''),
+              referral_physician_id: parsed.referral_physician_id ?? clientData.referring_physician_id ?? null,
+              referral_physician_npi: parsed.referral_physician_npi || clientData.referring_npi || '',
               medical_history: parsed.medical_history || '',
               prior_level_of_function: '', // blank — user fills new CLOF
               current_complaints: '', // blank — user fills new complaints
@@ -922,16 +973,28 @@ export default function EvalFormPage() {
             setToast('Pre-populated from prior evaluation — review and update fields');
           } else {
             const freshContent = emptyContent(discipline);
-            const refParts = [clientData.referring_physician, clientData.referral_source].filter(Boolean);
-            if (refParts.length > 0) freshContent.referral_source = refParts.join(' — ');
+            if (clientData.referring_physician_id && clientData.referring_physician) {
+              freshContent.referral_source = clientData.referring_physician;
+            } else {
+              const refParts = [clientData.referring_physician, clientData.referral_source].filter(Boolean);
+              if (refParts.length > 0) freshContent.referral_source = refParts.join(' — ');
+            }
+            freshContent.referral_physician_id = clientData.referring_physician_id ?? null;
+            freshContent.referral_physician_npi = clientData.referring_npi || '';
             setContent(freshContent);
             setToast('No prior signed evaluation found — starting fresh');
           }
         } catch (err) {
           console.error('Failed to load prior eval for reassessment:', err);
           const fallbackContent = emptyContent(discipline);
-          const refParts2 = [clientData.referring_physician, clientData.referral_source].filter(Boolean);
-          if (refParts2.length > 0) fallbackContent.referral_source = refParts2.join(' — ');
+          if (clientData.referring_physician_id && clientData.referring_physician) {
+            fallbackContent.referral_source = clientData.referring_physician;
+          } else {
+            const refParts2 = [clientData.referring_physician, clientData.referral_source].filter(Boolean);
+            if (refParts2.length > 0) fallbackContent.referral_source = refParts2.join(' — ');
+          }
+          fallbackContent.referral_physician_id = clientData.referring_physician_id ?? null;
+          fallbackContent.referral_physician_npi = clientData.referring_npi || '';
           setContent(fallbackContent);
         }
         // Pre-fill signature from settings
@@ -946,8 +1009,15 @@ export default function EvalFormPage() {
       } else {
         const newContent = emptyContent(discipline);
         // Auto-populate referral source from client record
-        const refParts = [clientData.referring_physician, clientData.referral_source].filter(Boolean);
-        if (refParts.length > 0) newContent.referral_source = refParts.join(' — ');
+        if (clientData.referring_physician_id && clientData.referring_physician) {
+          // Physician from directory — use just the name so combobox can match
+          newContent.referral_source = clientData.referring_physician;
+        } else {
+          const refParts = [clientData.referring_physician, clientData.referral_source].filter(Boolean);
+          if (refParts.length > 0) newContent.referral_source = refParts.join(' — ');
+        }
+        newContent.referral_physician_id = clientData.referring_physician_id ?? null;
+        newContent.referral_physician_npi = clientData.referring_npi || '';
 
         // Load existing client goals (async first, then batch setState)
         let completedGoalsList: any[] = [];
@@ -1013,6 +1083,60 @@ export default function EvalFormPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // ── Client → Eval physician sync (detect changes when window regains focus) ──
+  useEffect(() => {
+    if (!clientId || existingSignedAt) return; // Skip for signed evals
+
+    const checkClientSync = async () => {
+      const now = Date.now();
+      if (now - lastClientCheckRef.current < 5000) return; // Throttle: max once per 5s
+      lastClientCheckRef.current = now;
+
+      try {
+        const freshClient = await window.api.clients.get(parseInt(clientId, 10));
+        if (!freshClient) return;
+
+        // Update local client state silently
+        setClient(freshClient);
+
+        // Compare client's physician with eval's
+        const clientMD = freshClient.referring_physician?.trim() || '';
+        const clientMDId = freshClient.referring_physician_id;
+
+        setContent(prev => {
+          if (!prev) return prev;
+          const evalMD = prev.referral_source?.trim() || '';
+          const evalMDId = prev.referral_physician_id;
+
+          // If client has a physician and it differs from eval
+          if (clientMD && (clientMDId !== evalMDId || clientMD !== evalMD)) {
+            setPhysicianSyncBanner({
+              name: clientMD,
+              id: clientMDId ?? undefined,
+              npi: freshClient.referring_npi || undefined,
+              fax: freshClient.referring_fax || undefined,
+            });
+          } else {
+            setPhysicianSyncBanner(null);
+          }
+          return prev; // Don't modify content
+        });
+      } catch { /* ignore */ }
+    };
+
+    const handleFocus = () => checkClientSync();
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') checkClientSync();
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [clientId, existingSignedAt]);
 
   useEffect(() => {
     if (toast) {
@@ -1708,6 +1832,57 @@ export default function EvalFormPage() {
     setClient(updated);
   };
 
+  // ── Eval → Client physician sync ──
+  const syncPhysicianToClient = useCallback(async (physician: Physician) => {
+    if (!client) return;
+    // Already the same physician on client?
+    if (client.referring_physician_id === physician.id) return;
+
+    const currentMD = client.referring_physician?.trim();
+    if (currentMD && currentMD !== physician.name) {
+      const ok = window.confirm(
+        `The client chart currently has "${currentMD}" as the referring physician.\n\nUpdate it to "${physician.name}"?`
+      );
+      if (!ok) return;
+    }
+
+    try {
+      // Fetch full client record, merge physician fields, then save
+      const fullClient = await window.api.clients.get(client.id);
+      await window.api.clients.update(client.id, {
+        ...fullClient,
+        referring_physician: physician.name,
+        referring_physician_id: physician.id,
+        referring_npi: physician.npi || '',
+        referring_fax: physician.fax_number || '',
+      });
+      const updated = await window.api.clients.get(client.id);
+      setClient(updated);
+      setToast(`Client chart updated — referring physician set to ${physician.name}`);
+    } catch (err) {
+      console.error('Failed to sync physician to client:', err);
+    }
+  }, [client]);
+
+  const clearPhysicianFromClient = useCallback(async () => {
+    if (!client) return;
+    try {
+      const fullClient = await window.api.clients.get(client.id);
+      await window.api.clients.update(client.id, {
+        ...fullClient,
+        referring_physician: '',
+        referring_physician_id: null,
+        referring_npi: '',
+        referring_fax: '',
+      });
+      const updated = await window.api.clients.get(client.id);
+      setClient(updated);
+      setToast('Referring physician cleared from client chart');
+    } catch (err) {
+      console.error('Failed to clear physician from client:', err);
+    }
+  }, [client]);
+
   const handleSave = async (sign: boolean, documentFixes?: Record<string, any>, goalFixes?: Record<number, any>, stayOnPage?: boolean) => {
     if (!clientId || !client || !content) return;
 
@@ -1875,6 +2050,9 @@ export default function EvalFormPage() {
       }
       if (stayOnPage) {
         setToast('Fixes applied — continue editing or try signing again');
+      } else if (sign && savedEvalId && client?.referring_fax?.trim()) {
+        setToast('Evaluation signed and saved');
+        setShowFaxPrompt(true);
       } else {
         setToast(sign ? 'Evaluation signed and saved' : 'Draft saved');
         setTimeout(() => navigate(`/clients/${clientId}`), 500);
@@ -2051,12 +2229,89 @@ export default function EvalFormPage() {
           onToggle={() => toggleSection('referralSource')}
           sectionRef={(el) => { sectionRefs.current['referralSource'] = el; }}
         >
-          <input
-            type="text"
-            className="input"
-            placeholder="Referring physician, self-referral, etc."
+          {/* Amber sync banner: client chart physician differs from eval */}
+          {physicianSyncBanner && (
+            <div className="flex items-center gap-2 px-3 py-2 mb-2 rounded-lg bg-amber-50 border border-amber-200 text-sm">
+              <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+              <span className="flex-1 text-amber-800">
+                {physicianSyncBanner.cleared
+                  ? <>Referring physician was <strong>removed</strong> from the client chart. Clear it from this eval too?</>
+                  : <>Client chart was updated to <strong>{physicianSyncBanner.name}</strong>. Update this eval to match?</>
+                }
+              </span>
+              <button
+                type="button"
+                className="px-2 py-1 text-xs rounded bg-white border border-amber-300 text-amber-700 hover:bg-amber-100"
+                onClick={() => setPhysicianSyncBanner(null)}
+              >
+                Keep Current
+              </button>
+              <button
+                type="button"
+                className="px-2 py-1 text-xs rounded bg-amber-500 text-white hover:bg-amber-600"
+                onClick={() => {
+                  isDirty.current = true;
+                  if (physicianSyncBanner.cleared) {
+                    setContent(prev => prev ? {
+                      ...prev,
+                      referral_source: '',
+                      referral_physician_id: null,
+                      referral_physician_npi: '',
+                    } : prev);
+                    setToast('Referral source cleared to match client chart');
+                  } else {
+                    setContent(prev => prev ? {
+                      ...prev,
+                      referral_source: physicianSyncBanner.name,
+                      referral_physician_id: physicianSyncBanner.id ?? null,
+                      referral_physician_npi: physicianSyncBanner.npi || '',
+                    } : prev);
+                    setToast('Referral source updated to match client chart');
+                  }
+                  setPhysicianSyncBanner(null);
+                }}
+              >
+                {physicianSyncBanner.cleared ? 'Clear' : 'Update'}
+              </button>
+            </div>
+          )}
+
+          <PhysicianCombobox
             value={content.referral_source}
-            onChange={(e) => updateField('referral_source', e.target.value)}
+            onChange={(physician, name) => {
+              isDirty.current = true;
+              if (physician) {
+                // Selected a physician from dropdown — store metadata + sync to client
+                evalPhysicianIdAtLoad.current = physician.id;
+                setContent(prev => prev ? {
+                  ...prev,
+                  referral_source: physician.name,
+                  referral_physician_id: physician.id,
+                  referral_physician_npi: physician.npi || '',
+                } : prev);
+                setPhysicianSyncBanner(null); // Dismiss banner if present
+                syncPhysicianToClient(physician);
+              } else {
+                // Free-text typing — update name, clear physician metadata
+                setContent(prev => prev ? {
+                  ...prev,
+                  referral_source: name,
+                  referral_physician_id: null,
+                  referral_physician_npi: '',
+                } : prev);
+                // If field was fully cleared and there was a physician before, offer to clear client too
+                if (!name.trim() && (evalPhysicianIdAtLoad.current || client?.referring_physician_id)) {
+                  evalPhysicianIdAtLoad.current = null; // prevent re-prompting
+                  const ok = window.confirm(
+                    `Clear the referring physician from the client chart as well?`
+                  );
+                  if (ok) {
+                    clearPhysicianFromClient();
+                  }
+                }
+              }
+            }}
+            placeholder="Search physicians or type referral source..."
           />
         </EvalSectionWrapper>
 
@@ -2888,6 +3143,28 @@ export default function EvalFormPage() {
         issues={signDialogIssues}
         onClientUpdate={handleClientUpdate}
         clientName={client ? `${client.first_name} ${client.last_name}`.trim() : undefined}
+      />
+
+      <FaxPrompt
+        isOpen={showFaxPrompt}
+        onClose={() => {
+          setShowFaxPrompt(false);
+          navigate(`/clients/${clientId}`);
+        }}
+        clientId={parseInt(clientId!, 10)}
+        clientName={client ? `${client.first_name} ${client.last_name}`.trim() : ''}
+        physicianName={client?.referring_physician || ''}
+        physicianId={client?.referring_physician_id || undefined}
+        faxNumber={client?.referring_fax || ''}
+        documentType="eval"
+        documentId={savedEvalId!}
+        onFaxSent={async () => {
+          try {
+            await window.api.compliance.updateSignatureStatus(parseInt(clientId!, 10), 'sent');
+          } catch (err) {
+            console.error('Failed to advance recert stepper:', err);
+          }
+        }}
       />
     </div>
   );
