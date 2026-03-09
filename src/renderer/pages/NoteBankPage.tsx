@@ -67,7 +67,7 @@ export default function NoteBankPage({ embedded }: NoteBankPageProps = {}) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState({ discipline: 'PT' as Discipline | 'ALL', category: '', section: 'S' as SOAPSection, phrase: '' });
+  const [editForm, setEditForm] = useState({ discipline: 'PT' as Discipline | 'ALL', category: '', section: 'S' as SOAPSection | 'rehab_potential', phrase: '' });
 
   // New phrase form state
   const [newPhrase, setNewPhrase] = useState({
@@ -394,7 +394,7 @@ export default function NoteBankPage({ embedded }: NoteBankPageProps = {}) {
                             <option value="OT">OT</option>
                             <option value="ST">ST</option>
                           </select>
-                          <select className="select text-sm" value={editForm.section} onChange={(e) => setEditForm((p) => ({ ...p, section: e.target.value as SOAPSection }))}>
+                          <select className="select text-sm" value={editForm.section} onChange={(e) => setEditForm((p) => ({ ...p, section: e.target.value as SOAPSection | 'rehab_potential' }))}>
                             <option value="S">Subjective</option>
                             <option value="O">Objective</option>
                             <option value="A">Assessment</option>

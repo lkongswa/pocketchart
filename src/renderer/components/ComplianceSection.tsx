@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Shield, AlertTriangle, CheckCircle, RotateCcw, Settings } from 'lucide-react';
 import type { ComplianceTracking, CompliancePreset, RecertSignatureStatus } from '@shared/types';
 import RecertStepper from './RecertStepper';
@@ -94,6 +94,33 @@ export default function ComplianceSection({ clientId, card }: ComplianceSectionP
       loadCompliance();
     } catch (err) {
       console.error('Failed to reset counter:', err);
+    }
+  };
+
+  // Inline visit count editing
+  const [editingVisitCount, setEditingVisitCount] = useState(false);
+  const [visitCountInput, setVisitCountInput] = useState('');
+  const visitInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editingVisitCount) visitInputRef.current?.focus();
+  }, [editingVisitCount]);
+
+  const startEditVisitCount = () => {
+    setVisitCountInput(String(compliance?.visits_since_last_progress ?? 0));
+    setEditingVisitCount(true);
+  };
+
+  const commitVisitCount = async () => {
+    setEditingVisitCount(false);
+    const num = parseInt(visitCountInput, 10);
+    if (isNaN(num) || num < 0) return;
+    if (num === compliance?.visits_since_last_progress) return;
+    try {
+      await window.api.compliance.setVisitCount(clientId, num);
+      loadCompliance();
+    } catch (err) {
+      console.error('Failed to set visit count:', err);
     }
   };
 
@@ -249,7 +276,25 @@ export default function ComplianceSection({ clientId, card }: ComplianceSectionP
         </div>
         <div className="space-y-0.5 text-xs">
           <p className="text-[var(--color-text)]">
-            Visits since last: <strong>{compliance.visits_since_last_progress}</strong> / {compliance.progress_visit_threshold}
+            Visits since last:{' '}
+            {editingVisitCount ? (
+              <input
+                ref={visitInputRef}
+                type="number"
+                min={0}
+                className="inline-block w-10 px-1 py-0 text-xs font-bold border border-[var(--color-border)] rounded text-center"
+                value={visitCountInput}
+                onChange={(e) => setVisitCountInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') commitVisitCount(); if (e.key === 'Escape') setEditingVisitCount(false); }}
+                onBlur={commitVisitCount}
+              />
+            ) : (
+              <strong
+                className="cursor-pointer hover:underline hover:text-blue-600"
+                onClick={startEditVisitCount}
+                title="Click to adjust visit count"
+              >{compliance.visits_since_last_progress}</strong>
+            )} / {compliance.progress_visit_threshold}
           </p>
           {progressDue && (
             <p className={progressOverdue ? 'text-red-600 font-medium' : 'text-[var(--color-text-secondary)]'}>
@@ -293,7 +338,25 @@ export default function ComplianceSection({ clientId, card }: ComplianceSectionP
           </div>
           <div className="space-y-1 text-xs">
             <p className="text-[var(--color-text)]">
-              Visits since last: <strong>{compliance.visits_since_last_progress}</strong> / {compliance.progress_visit_threshold}
+              Visits since last:{' '}
+              {editingVisitCount ? (
+                <input
+                  ref={visitInputRef}
+                  type="number"
+                  min={0}
+                  className="inline-block w-12 px-1 py-0 text-xs font-bold border border-[var(--color-border)] rounded text-center"
+                  value={visitCountInput}
+                  onChange={(e) => setVisitCountInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') commitVisitCount(); if (e.key === 'Escape') setEditingVisitCount(false); }}
+                  onBlur={commitVisitCount}
+                />
+              ) : (
+                <strong
+                  className="cursor-pointer hover:underline hover:text-blue-600"
+                  onClick={startEditVisitCount}
+                  title="Click to adjust visit count"
+                >{compliance.visits_since_last_progress}</strong>
+              )} / {compliance.progress_visit_threshold}
             </p>
             {compliance.last_progress_date && (
               <p className="text-[var(--color-text-secondary)]">

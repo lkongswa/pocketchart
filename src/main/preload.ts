@@ -510,6 +510,7 @@ const api = {
     getByClient: (clientId: number) => ipcRenderer.invoke('compliance:getByClient', clientId),
     updateSettings: (clientId: number, data: any) => ipcRenderer.invoke('compliance:updateSettings', clientId, data),
     incrementVisit: (clientId: number) => ipcRenderer.invoke('compliance:incrementVisit', clientId),
+    setVisitCount: (clientId: number, count: number) => ipcRenderer.invoke('compliance:setVisitCount', clientId, count),
     resetProgressCounter: (clientId: number) => ipcRenderer.invoke('compliance:resetProgressCounter', clientId),
     resetRecertCounter: (clientId: number) => ipcRenderer.invoke('compliance:resetRecertCounter', clientId),
     updateSignatureStatus: (clientId: number, status: string) => ipcRenderer.invoke('compliance:updateSignatureStatus', clientId, status),

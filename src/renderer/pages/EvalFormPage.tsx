@@ -20,6 +20,7 @@ import {
   ChevronRight,
   Receipt,
   AlertTriangle,
+  Sparkles,
 } from 'lucide-react';
 import type { Client, Evaluation, Discipline, GoalType, EvalGoalEntry, CptLine, PlaceOfService, SOAPSection, MeasurementType, PatternOverride, Physician } from '../../shared/types';
 import FaxPrompt from '../components/FaxPrompt';
@@ -44,7 +45,13 @@ import SmartTextarea from '../components/SmartTextarea';
 import PhysicianCombobox from '../components/PhysicianCombobox';
 import QuickChips from '../components/QuickChips';
 import NoteBankPopover from '../components/NoteBankPopover';
+import ContextMenu from '../components/ContextMenu';
+import type { ContextMenuItem } from '../components/ContextMenu';
+import { useRehabChips } from '../hooks/useRehabChips';
+import type { RehabChip, RehabChipCategory } from '../hooks/useRehabChips';
 import { useEvalSections } from '../hooks/useEvalSections';
+import { getGoalCategoriesFromPlan } from '../../shared/intervention-goal-map';
+import { getPatternsForCategory } from '../../shared/goal-patterns';
 
 // ── Types ──
 
@@ -407,36 +414,44 @@ const DISCIPLINE_LABELS: Record<Discipline, string> = {
 const REHAB_RATINGS = ['Good', 'Fair', 'Poor'] as const;
 type RehabRating = typeof REHAB_RATINGS[number];
 
-const REHAB_REASON_CHIPS: string[] = [
-  'patient demonstrates motivation',
-  'family/caregiver support available',
-  'prior functional level consistent with expected recovery',
-  'good cognitive awareness',
-  'active participation in treatment',
-  'responds well to therapeutic interventions',
-  'medical complexity limits progress',
-  'limited support system',
-  'cognitive deficits may slow progress',
-  'multiple comorbidities present',
-];
-
-/** Build a proper narrative from rating + selected reasons */
-function composeRehabNarrative(rating: RehabRating | null, reasons: string[]): string {
-  if (!rating && reasons.length === 0) return '';
-  if (!rating && reasons.length > 0) return reasons.join(', ') + '.';
-  if (rating && reasons.length === 0) return `Rehabilitation potential is ${rating.toLowerCase()}.`;
-  // rating + reasons
-  if (reasons.length === 1) {
-    return `Rehabilitation potential is ${rating!.toLowerCase()} due to ${reasons[0]}.`;
-  }
+/** Join a list of reasons into prose with Oxford comma */
+function joinReasons(reasons: string[]): string {
+  if (reasons.length === 0) return '';
+  if (reasons.length === 1) return reasons[0];
   const allButLast = reasons.slice(0, -1).join(', ');
-  const last = reasons[reasons.length - 1];
-  return `Rehabilitation potential is ${rating!.toLowerCase()} due to ${allButLast}, and ${last}.`;
+  return `${allButLast}, and ${reasons[reasons.length - 1]}`;
 }
 
-/** Parse active reasons from the current narrative text */
-function parseActiveReasons(text: string): string[] {
-  return REHAB_REASON_CHIPS.filter((r) => text.toLowerCase().includes(r.toLowerCase()));
+/** Build a two-sentence narrative from rating + rehab reasons + medical necessity reasons */
+function composeRehabNarrative(
+  rating: RehabRating | null,
+  rehabReasons: string[],
+  medNecessityReasons: string[] = [],
+): string {
+  const parts: string[] = [];
+
+  // Rehab potential sentence
+  if (rating && rehabReasons.length > 0) {
+    parts.push(`Rehabilitation potential is ${rating.toLowerCase()} due to ${joinReasons(rehabReasons)}.`);
+  } else if (rating) {
+    parts.push(`Rehabilitation potential is ${rating.toLowerCase()}.`);
+  } else if (rehabReasons.length > 0) {
+    parts.push(`Rehabilitation potential is supported by ${joinReasons(rehabReasons)}.`);
+  }
+
+  // Medical necessity sentence
+  if (medNecessityReasons.length > 0) {
+    parts.push(`Treatment is medically necessary because ${joinReasons(medNecessityReasons)}.`);
+  }
+
+  return parts.join(' ');
+}
+
+/** Parse active reasons from the current narrative text using dynamic chip list */
+function parseActiveReasons(text: string, chips: RehabChip[]): string[] {
+  return chips
+    .filter((c) => text.toLowerCase().includes(c.phrase.toLowerCase()))
+    .map((c) => c.phrase);
 }
 
 const RehabPotentialSection = React.memo(function RehabPotentialSection({
@@ -444,43 +459,246 @@ const RehabPotentialSection = React.memo(function RehabPotentialSection({
   onChange,
   evalType = 'initial',
   hideHeader = false,
+  discipline = 'PT' as Discipline,
 }: {
   value: string;
   onChange: (val: string) => void;
   evalType?: 'initial' | 'reassessment' | 'discharge';
   hideHeader?: boolean;
+  discipline?: Discipline;
 }) {
+  const { chips, addChip, updateChip, deleteChip } = useRehabChips(discipline);
+
+  // Context menu state
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; chip: RehabChip } | null>(null);
+
+  // Inline editing state
+  const [editingChipId, setEditingChipId] = useState<number | null>(null);
+  const [editText, setEditText] = useState('');
+  const editInputRef = useRef<HTMLInputElement>(null);
+
+  // Inline add state — which category group is adding
+  const [addingCategory, setAddingCategory] = useState<RehabChipCategory | null>(null);
+  const [addText, setAddText] = useState('');
+  const addInputRef = useRef<HTMLInputElement>(null);
+
+  // Focus input refs when editing/adding
+  useEffect(() => {
+    if (editingChipId !== null) editInputRef.current?.focus();
+  }, [editingChipId]);
+  useEffect(() => {
+    if (addingCategory !== null) addInputRef.current?.focus();
+  }, [addingCategory]);
+
   // Parse current rating from value
   const currentRating = REHAB_RATINGS.find((r) =>
     value.toLowerCase().includes(`potential is ${r.toLowerCase()}`)
   ) || null;
 
-  const activeReasons = parseActiveReasons(value);
+  // Split chips by category
+  const rehabChips = chips.filter((c) => c.category === 'rehab_potential');
+  const medNecessityChips = chips.filter((c) => c.category === 'medical_necessity');
+
+  // Parse active reasons per category
+  const activeRehabReasons = parseActiveReasons(value, rehabChips);
+  const activeMedReasons = parseActiveReasons(value, medNecessityChips);
+  // Combined for convenience (context menu, edit, delete checks)
+  const activeReasons = [...activeRehabReasons, ...activeMedReasons];
+
+  const recompose = (
+    rating: RehabRating | null,
+    rehab: string[],
+    med: string[],
+  ) => onChange(composeRehabNarrative(rating, rehab, med));
 
   const selectRating = (rating: RehabRating) => {
     if (currentRating === rating) {
-      // Toggle off — rebuild with no rating
-      onChange(composeRehabNarrative(null, activeReasons));
+      recompose(null, activeRehabReasons, activeMedReasons);
       return;
     }
-    onChange(composeRehabNarrative(rating, activeReasons));
+    recompose(rating, activeRehabReasons, activeMedReasons);
   };
 
-  const toggleReasonChip = (reason: string) => {
-    const isActive = activeReasons.some(r => r.toLowerCase() === reason.toLowerCase());
-    let newReasons: string[];
+  const toggleReasonChip = (reason: string, category: RehabChipCategory) => {
+    let newRehab = [...activeRehabReasons];
+    let newMed = [...activeMedReasons];
+    const target = category === 'rehab_potential' ? newRehab : newMed;
+    const isActive = target.some(r => r.toLowerCase() === reason.toLowerCase());
     if (isActive) {
-      newReasons = activeReasons.filter(r => r.toLowerCase() !== reason.toLowerCase());
+      const filtered = target.filter(r => r.toLowerCase() !== reason.toLowerCase());
+      if (category === 'rehab_potential') newRehab = filtered; else newMed = filtered;
     } else {
-      newReasons = [...activeReasons, reason];
+      target.push(reason);
     }
-    onChange(composeRehabNarrative(currentRating, newReasons));
+    recompose(currentRating, newRehab, newMed);
+  };
+
+  // Context menu handlers
+  const handleChipRightClick = (e: React.MouseEvent, chip: RehabChip) => {
+    e.preventDefault();
+    setCtxMenu({ x: e.clientX, y: e.clientY, chip });
+  };
+
+  const startEdit = (chip: RehabChip) => {
+    setEditingChipId(chip.id);
+    setEditText(chip.phrase);
+    setCtxMenu(null);
+  };
+
+  const commitEdit = async () => {
+    if (editingChipId === null || !editText.trim()) {
+      setEditingChipId(null);
+      return;
+    }
+    const oldChip = chips.find((c) => c.id === editingChipId);
+    if (oldChip && editText.trim() !== oldChip.phrase) {
+      const wasActive = activeReasons.some(r => r.toLowerCase() === oldChip.phrase.toLowerCase());
+      await updateChip(editingChipId, editText.trim());
+      if (wasActive) {
+        const mapFn = (r: string) => r.toLowerCase() === oldChip.phrase.toLowerCase() ? editText.trim() : r;
+        recompose(
+          currentRating,
+          activeRehabReasons.map(mapFn),
+          activeMedReasons.map(mapFn),
+        );
+      }
+    }
+    setEditingChipId(null);
+  };
+
+  const handleDelete = async (chip: RehabChip) => {
+    setCtxMenu(null);
+    const wasActive = activeReasons.some(r => r.toLowerCase() === chip.phrase.toLowerCase());
+    await deleteChip(chip.id);
+    if (wasActive) {
+      const filterFn = (r: string) => r.toLowerCase() !== chip.phrase.toLowerCase();
+      recompose(
+        currentRating,
+        activeRehabReasons.filter(filterFn),
+        activeMedReasons.filter(filterFn),
+      );
+    }
+  };
+
+  const startAdd = (category: RehabChipCategory) => {
+    setAddingCategory(category);
+    setAddText('');
+  };
+
+  const commitAdd = async () => {
+    if (!addingCategory || !addText.trim()) {
+      setAddingCategory(null);
+      setAddText('');
+      return;
+    }
+    await addChip(addText.trim(), addingCategory);
+    // Auto-toggle the new chip on in the correct category
+    const newRehab = addingCategory === 'rehab_potential'
+      ? [...activeRehabReasons, addText.trim()] : activeRehabReasons;
+    const newMed = addingCategory === 'medical_necessity'
+      ? [...activeMedReasons, addText.trim()] : activeMedReasons;
+    recompose(currentRating, newRehab, newMed);
+    setAddingCategory(null);
+    setAddText('');
   };
 
   const ratingColors: Record<RehabRating, { active: string; inactive: string }> = {
     Good: { active: 'bg-emerald-500 text-white border-emerald-500', inactive: 'bg-white text-emerald-700 border-emerald-300 hover:bg-emerald-50' },
     Fair: { active: 'bg-amber-500 text-white border-amber-500', inactive: 'bg-white text-amber-700 border-amber-300 hover:bg-amber-50' },
     Poor: { active: 'bg-red-500 text-white border-red-500', inactive: 'bg-white text-red-700 border-red-300 hover:bg-red-50' },
+  };
+
+  const chipColors: Record<RehabChipCategory, { active: string; inactive: string }> = {
+    rehab_potential: {
+      active: 'bg-teal-100 text-teal-700 border-teal-300',
+      inactive: 'bg-gray-50 text-[var(--color-text-secondary)] border-[var(--color-border)] hover:bg-teal-50 hover:text-teal-600',
+    },
+    medical_necessity: {
+      active: 'bg-blue-100 text-blue-700 border-blue-300',
+      inactive: 'bg-gray-50 text-[var(--color-text-secondary)] border-[var(--color-border)] hover:bg-blue-50 hover:text-blue-600',
+    },
+  };
+
+  const renderChipGroup = (groupChips: RehabChip[], category: RehabChipCategory, label: string) => {
+    const colors = chipColors[category];
+    const dotColor = category === 'rehab_potential' ? 'bg-teal-400' : 'bg-blue-400';
+    return (
+      <div className="mb-2">
+        <div className="flex items-center gap-1.5 mb-1.5">
+          <span className={`w-2 h-2 rounded-full ${dotColor}`} />
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">
+            {label}
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {groupChips.map((chip) => {
+            const isActive = activeReasons.some(r => r.toLowerCase() === chip.phrase.toLowerCase());
+            const displayLabel = chip.phrase.charAt(0).toUpperCase() + chip.phrase.slice(1);
+
+            // Inline editing mode for this chip
+            if (editingChipId === chip.id) {
+              return (
+                <input
+                  key={chip.id}
+                  ref={editInputRef}
+                  type="text"
+                  className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border outline-none ${colors.active} w-56`}
+                  value={editText}
+                  onChange={(e) => setEditText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitEdit();
+                    if (e.key === 'Escape') setEditingChipId(null);
+                  }}
+                  onBlur={commitEdit}
+                />
+              );
+            }
+
+            return (
+              <button
+                key={chip.id}
+                type="button"
+                className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border transition-colors cursor-pointer ${
+                  isActive ? colors.active : colors.inactive
+                }`}
+                onClick={() => toggleReasonChip(chip.phrase, category)}
+                onContextMenu={(e) => handleChipRightClick(e, chip)}
+                title="Click to toggle · Right-click to edit/delete"
+              >
+                {displayLabel}
+              </button>
+            );
+          })}
+
+          {/* Inline add input */}
+          {addingCategory === category ? (
+            <input
+              ref={addInputRef}
+              type="text"
+              className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border outline-none ${colors.active} w-56`}
+              placeholder="Type new phrase..."
+              value={addText}
+              onChange={(e) => setAddText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitAdd();
+                if (e.key === 'Escape') { setAddingCategory(null); setAddText(''); }
+              }}
+              onBlur={commitAdd}
+            />
+          ) : (
+            <button
+              type="button"
+              className={`inline-flex items-center gap-0.5 px-2 py-1 rounded-full text-xs font-medium border border-dashed transition-colors cursor-pointer ${colors.inactive}`}
+              onClick={() => startAdd(category)}
+              title={`Add ${label.toLowerCase()} chip`}
+            >
+              <Plus className="w-3 h-3" />
+              Add
+            </button>
+          )}
+        </div>
+      </div>
+    );
   };
 
   const innerContent = (
@@ -496,13 +714,13 @@ const RehabPotentialSection = React.memo(function RehabPotentialSection({
         <span className="text-xs font-medium text-[var(--color-text-secondary)] mr-1">Rating:</span>
         {REHAB_RATINGS.map((rating) => {
           const isSelected = currentRating === rating;
-          const colors = ratingColors[rating];
+          const rColors = ratingColors[rating];
           return (
             <button
               key={rating}
               type="button"
               className={`px-4 py-1.5 rounded-full text-sm font-semibold border transition-colors ${
-                isSelected ? colors.active : colors.inactive
+                isSelected ? rColors.active : rColors.inactive
               }`}
               onClick={() => selectRating(rating)}
             >
@@ -512,36 +730,41 @@ const RehabPotentialSection = React.memo(function RehabPotentialSection({
         })}
       </div>
 
-      {/* Reason chips */}
-      <div className="flex flex-wrap gap-1.5 mb-3">
-        {REHAB_REASON_CHIPS.map((reason) => {
-          const isActive = activeReasons.some(r => r.toLowerCase() === reason.toLowerCase());
-          const displayLabel = reason.charAt(0).toUpperCase() + reason.slice(1);
-          return (
-            <button
-              key={reason}
-              type="button"
-              className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border transition-colors cursor-pointer ${
-                isActive
-                  ? 'bg-violet-100 text-violet-700 border-violet-300'
-                  : 'bg-gray-50 text-[var(--color-text-secondary)] border-[var(--color-border)] hover:bg-violet-50 hover:text-violet-600'
-              }`}
-              onClick={() => toggleReasonChip(reason)}
-            >
-              {displayLabel}
-            </button>
-          );
-        })}
-      </div>
+      {/* Color-coded reason chip groups */}
+      {renderChipGroup(rehabChips, 'rehab_potential', 'Rehab Potential')}
+      {renderChipGroup(medNecessityChips, 'medical_necessity', 'Medical Necessity')}
 
       {/* Editable textarea */}
       <textarea
-        className="textarea"
+        className="textarea mt-1"
         rows={3}
         placeholder="Select a rating and reasons above, or type freely..."
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />
+
+      {/* Context menu portal */}
+      {ctxMenu && (
+        <ContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          onClose={() => setCtxMenu(null)}
+          items={[
+            {
+              label: 'Edit',
+              icon: <PenLine className="w-3.5 h-3.5" />,
+              onClick: () => startEdit(ctxMenu.chip),
+            },
+            {
+              label: 'Delete',
+              icon: <Trash2 className="w-3.5 h-3.5" />,
+              onClick: () => handleDelete(ctxMenu.chip),
+              className: 'text-red-600 hover:!bg-red-50',
+              dividerBefore: true,
+            },
+          ]}
+        />
+      )}
     </>
   );
 
@@ -1357,15 +1580,25 @@ export default function EvalFormPage() {
     }
   };
 
-  // ── Treatment Plan chip insert ──
+  // ── Treatment Plan chip toggle ──
 
-  const insertTreatmentChip = (chip: string) => {
+  const toggleTreatmentChip = (chip: string) => {
     isDirty.current = true;
     setContent((prev) => {
       if (!prev) return prev;
       const current = prev.treatment_plan.trim();
-      const separator = current ? '; ' : '';
-      return { ...prev, treatment_plan: current + separator + chip };
+      // Parse existing chips (semicolon-separated, trimmed)
+      const existing = current ? current.split(';').map(s => s.trim()).filter(Boolean) : [];
+      const alreadyPresent = existing.some(e => e.toLowerCase() === chip.toLowerCase());
+      let updated: string[];
+      if (alreadyPresent) {
+        // Remove the chip
+        updated = existing.filter(e => e.toLowerCase() !== chip.toLowerCase());
+      } else {
+        // Add the chip
+        updated = [...existing, chip];
+      }
+      return { ...prev, treatment_plan: updated.join('; ') };
     });
   };
 
@@ -1492,6 +1725,71 @@ export default function EvalFormPage() {
   const handleGoalCustomPattern = useCallback((idx: number) => {
     updateGoalField(idx, { pattern_id: 'custom_freeform', components: undefined });
   }, [updateGoalField]);
+
+  // ── Generate Goals from Treatment Plan ──
+
+  const generateGoalsFromPlan = useCallback(() => {
+    if (!content) return;
+    const disc = disciplineRef.current;
+    const categories = getGoalCategoriesFromPlan(disc, content.treatment_plan);
+    if (categories.length === 0) return;
+
+    // Filter out categories that already have a goal entry
+    const existingCats = new Set(goalEntries.map(g => g.category));
+    const newCats = categories.filter(cat => !existingCats.has(cat));
+    if (newCats.length === 0) {
+      setToast('All goal categories from your treatment plan are already covered');
+      return;
+    }
+
+    const cgp = customGoalPatternsRef.current;
+    const po = patternOverridesRef.current;
+
+    const newEntries: EvalGoalEntry[] = newCats.map(cat => {
+      // Find the first matching pattern for this category
+      let patterns = getPatternsForCategory(disc, cat);
+      // Also check custom patterns
+      const customMatches = cgp.filter(p => p.discipline === disc && p.category === cat);
+      const allPatterns = [...patterns, ...customMatches];
+
+      let patternId = '';
+      let defaultComponents: Record<string, any> = {};
+      const mt = (CATEGORY_DEFAULT_MEASUREMENT[cat] || 'percentage') as MeasurementType;
+      const inst = mt === 'standardized_score' ? (DEFAULT_INSTRUMENTS[cat] || '') : '';
+
+      if (allPatterns.length > 0) {
+        let pattern = allPatterns[0];
+        if (po.length > 0) pattern = applyOverrides(pattern, po);
+        patternId = pattern.id;
+        for (const comp of pattern.components) {
+          if (comp.defaultValue !== undefined) {
+            defaultComponents[comp.key] = comp.defaultValue;
+          }
+        }
+      }
+
+      return {
+        goal_text: '',
+        goal_type: 'STG' as GoalType,
+        category: cat,
+        target_date: '',
+        measurement_type: mt,
+        baseline: 0,
+        target: 0,
+        baseline_value: '',
+        target_value: '',
+        instrument: inst,
+        pattern_id: patternId,
+        components: Object.keys(defaultComponents).length > 0 ? defaultComponents : undefined,
+      };
+    });
+
+    isDirty.current = true;
+    const startIdx = goalEntries.length;
+    setGoalEntries(prev => [...prev, ...newEntries]);
+    setExpandedGoalIdx(startIdx); // Expand the first new goal
+    setToast(`Added ${newEntries.length} goal${newEntries.length > 1 ? 's' : ''} from treatment plan`);
+  }, [content, goalEntries, patternOverridesRef]);
 
   // ── Session Note SOAP helpers ──
 
@@ -2014,6 +2312,9 @@ export default function EvalFormPage() {
       }
 
       // Auto-create a billable note if session_note has SOAP content
+      // The notes:create handler will increment the compliance visit counter.
+      // If no note is created, we explicitly increment below.
+      let autoNoteCreated = false;
       if (sign && (sessionNote.subjective?.trim() || sessionNote.objective?.trim() || sessionNote.assessment?.trim() || sessionNote.plan?.trim())) {
         try {
           const filteredCptLines = sessionNote.cpt_codes.filter(l => l.code.trim());
@@ -2038,9 +2339,18 @@ export default function EvalFormPage() {
             note_type: 'soap',
             patient_name: client ? `${client.first_name} ${client.last_name}`.trim() : '',
           });
+          autoNoteCreated = true;
         } catch (err) {
           console.error('Failed to auto-create session note from eval:', err);
         }
+      }
+
+      // If signed but no session note was auto-created, the eval itself is still
+      // a billable visit — explicitly increment the compliance counter.
+      if (sign && !autoNoteCreated) {
+        try {
+          await window.api.compliance.incrementVisit(cid);
+        } catch { /* compliance tracking may not exist */ }
       }
 
       // Mark form clean to prevent blocker/autosave from overwriting signed_at
@@ -2338,27 +2648,6 @@ export default function EvalFormPage() {
           />
         </EvalSectionWrapper>
 
-        {/* Prior / Current Level of Function */}
-        <EvalSectionWrapper
-          id="priorLevelOfFunction"
-          title={evalType === 'reassessment' ? 'Current Level of Function' : 'Prior Level of Function'}
-          status={getSectionStatus('priorLevelOfFunction')}
-          isExpanded={expandedSections['priorLevelOfFunction'] ?? true}
-          onToggle={() => toggleSection('priorLevelOfFunction')}
-          sectionRef={(el) => { sectionRefs.current['priorLevelOfFunction'] = el; }}
-        >
-          <textarea
-            className="textarea"
-            rows={3}
-            placeholder={evalType === 'reassessment'
-              ? "Patient's current functional status at time of reassessment..."
-              : "Patient's functional status prior to current condition..."
-            }
-            value={content.prior_level_of_function}
-            onChange={(e) => updateField('prior_level_of_function', e.target.value)}
-          />
-        </EvalSectionWrapper>
-
         {/* Current Complaints */}
         <EvalSectionWrapper
           id="currentComplaints"
@@ -2458,6 +2747,27 @@ export default function EvalFormPage() {
           </div>
         </EvalSectionWrapper>
 
+        {/* Prior / Current Level of Function */}
+        <EvalSectionWrapper
+          id="priorLevelOfFunction"
+          title={evalType === 'reassessment' ? 'Current Level of Function' : 'Prior Level of Function'}
+          status={getSectionStatus('priorLevelOfFunction')}
+          isExpanded={expandedSections['priorLevelOfFunction'] ?? true}
+          onToggle={() => toggleSection('priorLevelOfFunction')}
+          sectionRef={(el) => { sectionRefs.current['priorLevelOfFunction'] = el; }}
+        >
+          <textarea
+            className="textarea"
+            rows={3}
+            placeholder={evalType === 'reassessment'
+              ? "Patient's current functional status at time of reassessment..."
+              : "Patient's functional status prior to current condition..."
+            }
+            value={content.prior_level_of_function}
+            onChange={(e) => updateField('prior_level_of_function', e.target.value)}
+          />
+        </EvalSectionWrapper>
+
         {/* Clinical Impression */}
         <EvalSectionWrapper
           id="clinicalImpression"
@@ -2498,24 +2808,51 @@ export default function EvalFormPage() {
             onChange={(val) => updateField('rehabilitation_potential', val)}
             evalType={evalType}
             hideHeader
+            discipline={discipline}
           />
         </EvalSectionWrapper>
 
-        {/* Precautions / Contraindications */}
+        {/* Treatment Plan */}
         <EvalSectionWrapper
-          id="precautions"
-          title="Precautions / Contraindications"
-          status={getSectionStatus('precautions')}
-          isExpanded={expandedSections['precautions'] ?? true}
-          onToggle={() => toggleSection('precautions')}
-          sectionRef={(el) => { sectionRefs.current['precautions'] = el; }}
+          id="treatmentPlan"
+          title="Treatment Plan"
+          status={getSectionStatus('treatmentPlan')}
+          isExpanded={expandedSections['treatmentPlan'] ?? true}
+          onToggle={() => toggleSection('treatmentPlan')}
+          sectionRef={(el) => { sectionRefs.current['treatmentPlan'] = el; }}
+          badge={priorFieldKeys.has('treatment_plan') ? (
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-700">
+              UPDATE
+            </span>
+          ) : undefined}
         >
+          {/* Quick chips for treatment plan (toggle on/off) */}
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {(TREATMENT_PLAN_CHIPS[discipline] || []).map((chip) => {
+              const planItems = (content.treatment_plan || '').split(';').map(s => s.trim().toLowerCase()).filter(Boolean);
+              const isActive = planItems.includes(chip.toLowerCase());
+              return (
+                <button
+                  key={chip}
+                  type="button"
+                  className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border transition-colors cursor-pointer ${
+                    isActive
+                      ? 'bg-teal-100 text-teal-700 border-teal-300'
+                      : 'bg-gray-50 text-[var(--color-text-secondary)] border-[var(--color-border)] hover:bg-teal-50 hover:text-teal-600'
+                  }`}
+                  onClick={() => toggleTreatmentChip(chip)}
+                >
+                  {chip}
+                </button>
+              );
+            })}
+          </div>
           <textarea
             className="textarea"
-            rows={3}
-            placeholder="Fall risk, weight-bearing restrictions, cardiac precautions, aspiration risk, swallowing precautions, behavioral considerations..."
-            value={content.precautions}
-            onChange={(e) => updateField('precautions', e.target.value)}
+            rows={4}
+            placeholder="Planned interventions, modalities, techniques... (click chips above to add)"
+            value={content.treatment_plan}
+            onChange={(e) => updateField('treatment_plan', e.target.value)}
           />
         </EvalSectionWrapper>
 
@@ -2529,27 +2866,42 @@ export default function EvalFormPage() {
           onToggle={() => toggleSection('goals')}
           sectionRef={(el) => { sectionRefs.current['goals'] = el; }}
           badge={!existingSignedAt ? (
-            <button
-              type="button"
-              className="btn-ghost btn-sm gap-1 text-xs ml-auto"
-              onClick={(e) => {
-                e.stopPropagation();
-                const newIdx = goalEntries.length;
-                updateGoalEntries(prev => {
-                  const cat = (CATEGORY_OPTIONS[discipline] || [])[0] || '';
-                  const mt = CATEGORY_DEFAULT_MEASUREMENT[cat] || 'percentage';
-                  const inst = mt === 'standardized_score' ? (DEFAULT_INSTRUMENTS[cat] || '') : '';
-                  return [
-                    ...prev,
-                    { goal_text: '', goal_type: 'STG' as GoalType, category: cat, target_date: '', measurement_type: mt as MeasurementType, baseline: 0, target: 0, baseline_value: '', target_value: '', instrument: inst, pattern_id: '', components: undefined },
-                  ];
-                });
-                setExpandedGoalIdx(newIdx);
-              }}
-            >
-              <Plus size={14} />
-              Add Goal
-            </button>
+            <div className="flex items-center gap-1 ml-auto">
+              {content.treatment_plan?.trim() && (
+                <button
+                  type="button"
+                  className="btn-ghost btn-sm gap-1 text-xs text-violet-600 hover:text-violet-700"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    generateGoalsFromPlan();
+                  }}
+                >
+                  <Sparkles size={14} />
+                  Generate from Plan
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn-ghost btn-sm gap-1 text-xs"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const newIdx = goalEntries.length;
+                  updateGoalEntries(prev => {
+                    const cat = (CATEGORY_OPTIONS[discipline] || [])[0] || '';
+                    const mt = CATEGORY_DEFAULT_MEASUREMENT[cat] || 'percentage';
+                    const inst = mt === 'standardized_score' ? (DEFAULT_INSTRUMENTS[cat] || '') : '';
+                    return [
+                      ...prev,
+                      { goal_text: '', goal_type: 'STG' as GoalType, category: cat, target_date: '', measurement_type: mt as MeasurementType, baseline: 0, target: 0, baseline_value: '', target_value: '', instrument: inst, pattern_id: '', components: undefined },
+                    ];
+                  });
+                  setExpandedGoalIdx(newIdx);
+                }}
+              >
+                <Plus size={14} />
+                Add Goal
+              </button>
+            </div>
           ) : undefined}
         >
           {/* Legacy free-text goals (backward compat) */}
@@ -2665,45 +3017,6 @@ export default function EvalFormPage() {
           </EvalSectionWrapper>
         )}
 
-        {/* Treatment Plan */}
-        <EvalSectionWrapper
-          id="treatmentPlan"
-          title="Treatment Plan"
-          status={getSectionStatus('treatmentPlan')}
-          isExpanded={expandedSections['treatmentPlan'] ?? true}
-          onToggle={() => toggleSection('treatmentPlan')}
-          sectionRef={(el) => { sectionRefs.current['treatmentPlan'] = el; }}
-          badge={priorFieldKeys.has('treatment_plan') ? (
-            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-700">
-              UPDATE
-            </span>
-          ) : undefined}
-        >
-          {/* Quick chips for treatment plan */}
-          <div className="flex flex-wrap gap-1.5 mb-3">
-            {(TREATMENT_PLAN_CHIPS[discipline] || []).map((chip) => (
-              <button
-                key={chip}
-                type="button"
-                className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium
-                  bg-teal-50 text-teal-700 border border-teal-200
-                  hover:bg-teal-100 active:bg-teal-200
-                  transition-colors cursor-pointer"
-                onClick={() => insertTreatmentChip(chip)}
-              >
-                {chip}
-              </button>
-            ))}
-          </div>
-          <textarea
-            className="textarea"
-            rows={4}
-            placeholder="Planned interventions, modalities, techniques... (click chips above to add)"
-            value={content.treatment_plan}
-            onChange={(e) => updateField('treatment_plan', e.target.value)}
-          />
-        </EvalSectionWrapper>
-
         {/* Frequency & Duration */}
         <EvalSectionWrapper
           id="frequencyDuration"
@@ -2797,6 +3110,24 @@ export default function EvalFormPage() {
             placeholder="e.g., 2x/week for 8 weeks"
             value={content.frequency_duration}
             onChange={(e) => updateField('frequency_duration', e.target.value)}
+          />
+        </EvalSectionWrapper>
+
+        {/* Precautions / Contraindications */}
+        <EvalSectionWrapper
+          id="precautions"
+          title="Precautions / Contraindications"
+          status={getSectionStatus('precautions')}
+          isExpanded={expandedSections['precautions'] ?? true}
+          onToggle={() => toggleSection('precautions')}
+          sectionRef={(el) => { sectionRefs.current['precautions'] = el; }}
+        >
+          <textarea
+            className="textarea"
+            rows={3}
+            placeholder="Fall risk, weight-bearing restrictions, cardiac precautions, aspiration risk, swallowing precautions, behavioral considerations..."
+            value={content.precautions}
+            onChange={(e) => updateField('precautions', e.target.value)}
           />
         </EvalSectionWrapper>
 

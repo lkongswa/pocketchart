@@ -815,3 +815,77 @@ export function seedPediatricContent(db: BetterSqlite3.Database): void {
 
   tx();
 }
+
+// ── Rehab Potential / Medical Necessity Chips ──
+
+export function seedRehabChips(db: BetterSqlite3.Database): void {
+  const sentinel = db.prepare(
+    "SELECT id FROM note_bank WHERE section = 'rehab_potential' AND phrase = 'patient demonstrates motivation'"
+  ).get();
+
+  if (!sentinel) {
+    // Fresh install — insert all chips with correct categories
+    const ins = db.prepare(
+      'INSERT INTO note_bank (discipline, category, section, phrase, is_default, is_favorite) VALUES (?, ?, ?, ?, 1, 1)'
+    );
+
+    const tx = db.transaction(() => {
+      // Rehab Potential chips (teal) — all 10 original reasons
+      ins.run('ALL', 'rehab_potential', 'rehab_potential', 'patient demonstrates motivation');
+      ins.run('ALL', 'rehab_potential', 'rehab_potential', 'family/caregiver support available');
+      ins.run('ALL', 'rehab_potential', 'rehab_potential', 'prior functional level consistent with expected recovery');
+      ins.run('ALL', 'rehab_potential', 'rehab_potential', 'good cognitive awareness');
+      ins.run('ALL', 'rehab_potential', 'rehab_potential', 'active participation in treatment');
+      ins.run('ALL', 'rehab_potential', 'rehab_potential', 'responds well to therapeutic interventions');
+      ins.run('ALL', 'rehab_potential', 'rehab_potential', 'medical complexity limits progress');
+      ins.run('ALL', 'rehab_potential', 'rehab_potential', 'limited support system');
+      ins.run('ALL', 'rehab_potential', 'rehab_potential', 'cognitive deficits may slow progress');
+      ins.run('ALL', 'rehab_potential', 'rehab_potential', 'multiple comorbidities present');
+
+      // Medical Necessity chips (blue) — clinical justification phrases
+      ins.run('ALL', 'medical_necessity', 'rehab_potential', 'patient has deficits impacting daily life');
+      ins.run('ALL', 'medical_necessity', 'rehab_potential', 'therapy requires the skills of a licensed therapist');
+      ins.run('ALL', 'medical_necessity', 'rehab_potential', 'patient/caregiver unable to carry out program independently');
+      ins.run('ALL', 'medical_necessity', 'rehab_potential', 'patient has potential to improve in a reasonable timeframe');
+      ins.run('ALL', 'medical_necessity', 'rehab_potential', 'maximum improvement has not yet been attained');
+      ins.run('ALL', 'medical_necessity', 'rehab_potential', 'services necessary to establish a safe maintenance program');
+      ins.run('ALL', 'medical_necessity', 'rehab_potential', 'services necessary to prevent or slow functional deterioration');
+      ins.run('ALL', 'medical_necessity', 'rehab_potential', 'skilled assessment required to modify treatment approach');
+    });
+    tx();
+  }
+
+  // Migration for existing DBs: move 4 chips from medical_necessity → rehab_potential
+  // and add the new medical necessity chips
+  const migrationSentinel = db.prepare(
+    "SELECT id FROM note_bank WHERE section = 'rehab_potential' AND phrase = 'patient has deficits impacting daily life'"
+  ).get();
+
+  if (!migrationSentinel) {
+    const tx = db.transaction(() => {
+      // Recategorize the 4 chips that were wrongly under medical_necessity
+      db.prepare(
+        "UPDATE note_bank SET category = 'rehab_potential' WHERE section = 'rehab_potential' AND category = 'medical_necessity' AND phrase IN ('medical complexity limits progress', 'limited support system', 'cognitive deficits may slow progress', 'multiple comorbidities present')"
+      ).run();
+
+      // Remove old medical necessity chips if they were already inserted
+      db.prepare(
+        "DELETE FROM note_bank WHERE section = 'rehab_potential' AND category = 'medical_necessity' AND phrase IN ('functional limitations impacting daily activities', 'risk of decline without skilled intervention', 'complexity of condition requiring clinical expertise', 'patient unable to perform program independently', 'deficits requiring ongoing skilled assessment', 'safety concerns limiting independent function')"
+      ).run();
+
+      // Add clinical medical necessity chips
+      const ins = db.prepare(
+        'INSERT INTO note_bank (discipline, category, section, phrase, is_default, is_favorite) VALUES (?, ?, ?, ?, 1, 1)'
+      );
+      ins.run('ALL', 'medical_necessity', 'rehab_potential', 'patient has deficits impacting daily life');
+      ins.run('ALL', 'medical_necessity', 'rehab_potential', 'therapy requires the skills of a licensed therapist');
+      ins.run('ALL', 'medical_necessity', 'rehab_potential', 'patient/caregiver unable to carry out program independently');
+      ins.run('ALL', 'medical_necessity', 'rehab_potential', 'patient has potential to improve in a reasonable timeframe');
+      ins.run('ALL', 'medical_necessity', 'rehab_potential', 'maximum improvement has not yet been attained');
+      ins.run('ALL', 'medical_necessity', 'rehab_potential', 'services necessary to establish a safe maintenance program');
+      ins.run('ALL', 'medical_necessity', 'rehab_potential', 'services necessary to prevent or slow functional deterioration');
+      ins.run('ALL', 'medical_necessity', 'rehab_potential', 'skilled assessment required to modify treatment approach');
+    });
+    tx();
+  }
+}

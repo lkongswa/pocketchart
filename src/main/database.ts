@@ -9,7 +9,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { app } from 'electron';
 import Store from 'electron-store';
-import { seedDefaultData, seedDefaultQuickChips, seedPayers, seedFeeSchedule, seedMFTData, seedCategoryAlignedPhrases, autoFixFeeSchedule, backfillMissingCPTCodes, seedPediatricContent } from './seed';
+import { seedDefaultData, seedDefaultQuickChips, seedPayers, seedFeeSchedule, seedMFTData, seedCategoryAlignedPhrases, autoFixFeeSchedule, backfillMissingCPTCodes, seedPediatricContent, seedRehabChips } from './seed';
 
 let db: InstanceType<typeof Database>;
 
@@ -126,6 +126,7 @@ export function initDatabase(masterKeyHex?: string): void {
   seedMFTData(db);
   seedCategoryAlignedPhrases(db);
   seedPediatricContent(db);
+  seedRehabChips(db);
   // V2/V3 billing seed data (run after migrations create tables)
   seedPayers(db);
   seedFeeSchedule(db);

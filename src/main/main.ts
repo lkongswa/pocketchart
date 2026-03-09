@@ -1778,18 +1778,10 @@ function registerIpcHandlers() {
       db.prepare('UPDATE evaluations SET content_hash = ? WHERE id = ?').run(hash, id);
       auditLog({ actionType: 'eval_signed', entityType: 'evaluation', entityId: id, clientId, contentHash: hash });
 
-      // Increment compliance visit counter — eval/re-eval IS a billable visit
-      try {
-        const compliance = db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(clientId) as any;
-        if (compliance?.tracking_enabled) {
-          db.prepare(`
-            UPDATE compliance_tracking
-            SET visits_since_last_progress = visits_since_last_progress + 1,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE client_id = ?
-          `).run(clientId);
-        }
-      } catch { /* compliance tracking may not exist yet */ }
+      // NOTE: Compliance visit counter is NOT incremented here.
+      // If the eval has an attached session note, notes:create handles the +1.
+      // If not, the frontend explicitly calls compliance:incrementVisit.
+      // This prevents double-counting when an eval auto-creates a signed SOAP note.
     } else {
       auditLog({ actionType: 'eval_draft_saved', entityType: 'evaluation', entityId: id, clientId });
     }
@@ -6706,6 +6698,17 @@ function registerIpcHandlers() {
           updated_at = CURRENT_TIMESTAMP
       WHERE client_id = ?
     `).run(clientId);
+    return db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(clientId);
+  });
+
+  safeHandle('compliance:setVisitCount', (_event, clientId: number, count: number) => {
+    requireTier('basic');
+    db.prepare(`
+      UPDATE compliance_tracking
+      SET visits_since_last_progress = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE client_id = ?
+    `).run(Math.max(0, Math.floor(count)), clientId);
     return db.prepare('SELECT * FROM compliance_tracking WHERE client_id = ?').get(clientId);
   });
 

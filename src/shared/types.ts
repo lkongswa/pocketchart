@@ -429,7 +429,7 @@ export interface NoteBankEntry {
   id: number;
   discipline: Discipline | 'ALL';
   category: string;
-  section: SOAPSection;
+  section: SOAPSection | 'rehab_potential';
   phrase: string;
   is_default: boolean;
   is_favorite: boolean;
@@ -2001,6 +2001,7 @@ export interface PocketChartAPI {
     getByClient: (clientId: number) => Promise<ComplianceTracking | null>;
     updateSettings: (clientId: number, data: Partial<ComplianceTracking>) => Promise<ComplianceTracking>;
     incrementVisit: (clientId: number) => Promise<ComplianceTracking>;
+    setVisitCount: (clientId: number, count: number) => Promise<ComplianceTracking>;
     resetProgressCounter: (clientId: number) => Promise<ComplianceTracking>;
     resetRecertCounter: (clientId: number) => Promise<ComplianceTracking>;
     updateSignatureStatus: (clientId: number, status: RecertSignatureStatus) => Promise<ComplianceTracking>;
