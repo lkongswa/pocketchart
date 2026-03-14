@@ -77,7 +77,7 @@ let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
 
 const isDev = process.env.NODE_ENV === 'development';
-const FORCE_PRO = true; // Toggle to false when done workshopping Pro features
+const FORCE_PRO = false;
 
 // ── Auto-Updater Configuration ──
 autoUpdater.autoDownload = false;       // Don't download until user says yes

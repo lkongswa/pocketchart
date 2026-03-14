@@ -2495,7 +2495,7 @@ function createTables(): void {
 
 // ── Backup, Restore & Integrity Functions ──
 
-const LATEST_SCHEMA_VERSION = 52;
+const LATEST_SCHEMA_VERSION = 54;
 
 /**
  * Run PRAGMA quick_check — a fast consistency check on every launch.
