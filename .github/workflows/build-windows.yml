@@ -35,7 +35,30 @@ jobs:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win --publish always
+        run: npx electron-builder --win --publish never
+
+      - name: Create GitHub Release and upload assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $exe = Get-ChildItem -Path release -Filter "*.exe" | Select-Object -First 1
+          $yml = Get-ChildItem -Path release -Filter "latest.yml" | Select-Object -First 1
+
+          # Create the release
+          gh release create $tag --title $tag --generate-notes --latest
+
+          # Upload installer
+          if ($exe) {
+            gh release upload $tag $exe.FullName --clobber
+          }
+
+          # Upload latest.yml (required for electron-updater)
+          if ($yml) {
+            gh release upload $tag $yml.FullName --clobber
+          }
+        shell: pwsh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
