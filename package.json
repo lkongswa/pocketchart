@@ -73,8 +73,7 @@
       {
         "provider": "github",
         "owner": "lkongswa",
-        "repo": "pocketchart",
-        "private": true
+        "repo": "pocketchart"
       }
     ]
   },
