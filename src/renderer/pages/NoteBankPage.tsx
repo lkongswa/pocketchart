@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import CategoryCombobox from '../components/CategoryCombobox';
 import {
   FileText,
   Search,
@@ -9,6 +10,7 @@ import {
   ChevronDown,
   Pencil,
 } from 'lucide-react';
+import { useTier } from '../hooks/useTier';
 import type { NoteBankEntry, Discipline, SOAPSection } from '../../shared/types';
 
 /**
@@ -55,6 +57,7 @@ interface NoteBankPageProps {
 }
 
 export default function NoteBankPage({ embedded }: NoteBankPageProps = {}) {
+  const { isPro } = useTier();
   const [entries, setEntries] = useState<NoteBankEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -64,7 +67,7 @@ export default function NoteBankPage({ embedded }: NoteBankPageProps = {}) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState({ discipline: 'PT' as Discipline | 'ALL', category: '', section: 'S' as SOAPSection, phrase: '' });
+  const [editForm, setEditForm] = useState({ discipline: 'PT' as Discipline | 'ALL', category: '', section: 'S' as SOAPSection | 'rehab_potential', phrase: '' });
 
   // New phrase form state
   const [newPhrase, setNewPhrase] = useState({
@@ -250,14 +253,12 @@ export default function NoteBankPage({ embedded }: NoteBankPageProps = {}) {
             </div>
             <div>
               <label className="label">Category</label>
-              <input
-                type="text"
-                className="input"
-                placeholder="e.g. Pain, ROM, Functional"
+              <CategoryCombobox
                 value={newPhrase.category}
-                onChange={(e) =>
-                  setNewPhrase((prev) => ({ ...prev, category: e.target.value }))
-                }
+                onChange={(val) => setNewPhrase((prev) => ({ ...prev, category: val }))}
+                discipline={newPhrase.discipline}
+                source="note_bank"
+                placeholder="e.g. Pain, ROM, Functional"
               />
             </div>
           </div>
@@ -393,13 +394,13 @@ export default function NoteBankPage({ embedded }: NoteBankPageProps = {}) {
                             <option value="OT">OT</option>
                             <option value="ST">ST</option>
                           </select>
-                          <select className="select text-sm" value={editForm.section} onChange={(e) => setEditForm((p) => ({ ...p, section: e.target.value as SOAPSection }))}>
+                          <select className="select text-sm" value={editForm.section} onChange={(e) => setEditForm((p) => ({ ...p, section: e.target.value as SOAPSection | 'rehab_potential' }))}>
                             <option value="S">Subjective</option>
                             <option value="O">Objective</option>
                             <option value="A">Assessment</option>
                             <option value="P">Plan</option>
                           </select>
-                          <input type="text" className="input text-sm" placeholder="Category" value={editForm.category} onChange={(e) => setEditForm((p) => ({ ...p, category: e.target.value }))} />
+                          <CategoryCombobox value={editForm.category} onChange={(val) => setEditForm((p) => ({ ...p, category: val }))} discipline={editForm.discipline} source="note_bank" placeholder="Category" className="text-sm" />
                         </div>
                         <textarea className="textarea text-sm" rows={2} value={editForm.phrase} onChange={(e) => setEditForm((p) => ({ ...p, phrase: e.target.value }))} />
                         <div className="flex items-center gap-2">
@@ -409,20 +410,22 @@ export default function NoteBankPage({ embedded }: NoteBankPageProps = {}) {
                       </div>
                     ) : (
                       <>
-                        {/* Favorite Star */}
-                        <button
-                          onClick={() => handleToggleFavorite(entry.id)}
-                          className="mt-0.5 flex-shrink-0 transition-colors"
-                          title={entry.is_favorite ? 'Remove from favorites' : 'Add to favorites'}
-                        >
-                          <Star
-                            className={`w-4 h-4 ${
-                              entry.is_favorite
-                                ? 'fill-amber-400 text-amber-400'
-                                : 'text-gray-300 hover:text-amber-300'
-                            }`}
-                          />
-                        </button>
+                        {/* Favorite Star — Pro only */}
+                        {isPro && (
+                          <button
+                            onClick={() => handleToggleFavorite(entry.id)}
+                            className="mt-0.5 flex-shrink-0 transition-colors"
+                            title={entry.is_favorite ? 'Remove from favorites' : 'Add to favorites'}
+                          >
+                            <Star
+                              className={`w-4 h-4 ${
+                                entry.is_favorite
+                                  ? 'fill-amber-400 text-amber-400'
+                                  : 'text-gray-300 hover:text-amber-300'
+                              }`}
+                            />
+                          </button>
+                        )}
 
                         {/* Phrase Content */}
                         <div className="flex-1 min-w-0">

@@ -15,9 +15,13 @@ Thumbs.db
 *.swp
 *.swo
 
+# Claude Code
+.claude/
+
 # Environment
 .env
 .env.local
+.env.signing
 
 # Logs
 *.log

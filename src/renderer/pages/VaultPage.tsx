@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Shield, Upload, Eye, Trash2, AlertTriangle, FileText,
-  Calendar, Download, Search, Filter,
+  Calendar, Download, Search, Filter, CheckSquare, Square,
 } from 'lucide-react';
 import type { VaultDocument, VaultDocumentType } from '@shared/types';
 import ProFeatureGate from '../components/ProFeatureGate';
+import { useSectionColor } from '../hooks/useSectionColor';
 
 const DOCUMENT_TYPE_LABELS: Record<VaultDocumentType, string> = {
   state_license: 'State License',
@@ -52,12 +53,14 @@ function expirationBadge(expirationDate: string | null): React.ReactNode {
 }
 
 export default function VaultPage() {
+  const sectionColor = useSectionColor();
   const [documents, setDocuments] = useState<VaultDocument[]>([]);
   const [expiring, setExpiring] = useState<VaultDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState<VaultDocumentType | ''>('');
   const [showUpload, setShowUpload] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
   // Upload form state
   const [uploadType, setUploadType] = useState<VaultDocumentType>('state_license');
@@ -125,12 +128,31 @@ export default function VaultPage() {
   };
 
   const handleExportPacket = async () => {
-    const selectedIds = documents.map((d) => d.id);
-    if (selectedIds.length === 0) return;
+    const idsToExport = selectedIds.size > 0
+      ? Array.from(selectedIds)
+      : documents.map((d) => d.id);
+    if (idsToExport.length === 0) return;
     try {
-      await window.api.vault.exportCredentialingPacket(selectedIds);
+      await window.api.vault.exportCredentialingPacket(idsToExport);
     } catch (err) {
       console.error('Failed to export credentialing packet:', err);
+    }
+  };
+
+  const toggleSelectDoc = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filtered.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filtered.map((d) => d.id)));
     }
   };
 
@@ -150,8 +172,8 @@ export default function VaultPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="page-title flex items-center gap-2">
-            <Shield className="w-6 h-6 text-[var(--color-primary)]" />
-            Professional Vault
+            <Shield className="w-6 h-6" style={{ color: sectionColor.color }} />
+            My Vault
           </h1>
           <p className="text-sm text-[var(--color-text-secondary)]">
             Store and track your professional documents, licenses, and certifications.
@@ -160,7 +182,7 @@ export default function VaultPage() {
         <div className="flex gap-2">
           {documents.length > 0 && (
             <button className="btn-secondary btn-sm gap-1.5" onClick={handleExportPacket}>
-              <Download size={14} /> Export Packet
+              <Download size={14} /> Export{selectedIds.size > 0 ? ` (${selectedIds.size})` : ' All'}
             </button>
           )}
           <button className="btn-primary btn-sm gap-1.5" onClick={() => setShowUpload(true)}>
@@ -294,10 +316,41 @@ export default function VaultPage() {
         </div>
       ) : (
         <div className="space-y-2">
+          {/* Select All */}
+          <div className="flex items-center gap-2 px-1 mb-1">
+            <button
+              className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors"
+              onClick={toggleSelectAll}
+            >
+              {selectedIds.size === filtered.length && filtered.length > 0 ? (
+                <CheckSquare size={16} className="text-[var(--color-primary)]" />
+              ) : (
+                <Square size={16} />
+              )}
+              {selectedIds.size > 0 ? `${selectedIds.size} selected` : 'Select all'}
+            </button>
+            {selectedIds.size > 0 && (
+              <button
+                className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] underline"
+                onClick={() => setSelectedIds(new Set())}
+              >
+                Clear
+              </button>
+            )}
+          </div>
           {filtered.map((doc) => (
-            <div key={doc.id} className="card p-4 flex items-center justify-between">
+            <div key={doc.id} className={`card p-4 flex items-center justify-between ${selectedIds.has(doc.id) ? 'border-[var(--color-primary)]/40 bg-[var(--color-primary)]/5' : ''}`}>
               <div className="flex items-center gap-3 min-w-0">
-                <FileText size={20} className="text-[var(--color-text-secondary)] flex-shrink-0" />
+                <button
+                  className="flex-shrink-0"
+                  onClick={() => toggleSelectDoc(doc.id)}
+                >
+                  {selectedIds.has(doc.id) ? (
+                    <CheckSquare size={18} className="text-[var(--color-primary)]" />
+                  ) : (
+                    <Square size={18} className="text-[var(--color-text-secondary)]" />
+                  )}
+                </button>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-medium text-[var(--color-text)] truncate">

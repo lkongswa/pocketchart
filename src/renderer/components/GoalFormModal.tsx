@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { X, BookOpen, Check } from 'lucide-react';
-import type { Goal, GoalType, GoalStatus, Discipline, GoalsBankEntry } from '../../shared/types';
+import { X } from 'lucide-react';
+import type { Goal, GoalType, GoalStatus, Discipline } from '../../shared/types';
 
 interface GoalFormModalProps {
   isOpen: boolean;
@@ -21,40 +21,21 @@ interface FormData {
 
 const CATEGORY_OPTIONS: Record<Discipline, string[]> = {
   PT: [
-    'Mobility',
-    'Strength',
-    'Balance',
-    'ROM',
-    'Pain Management',
-    'Gait',
-    'Functional Activity',
-    'Endurance',
-    'Transfers',
-    'Posture',
+    'Mobility', 'Strength', 'Balance', 'ROM', 'Pain Management',
+    'Gait', 'Functional Activity', 'Endurance', 'Transfers', 'Posture',
   ],
   OT: [
-    'ADLs',
-    'Fine Motor',
-    'Visual Motor',
-    'Sensory Processing',
-    'Handwriting',
-    'Self-Care',
-    'Feeding',
-    'Upper Extremity',
-    'Cognitive',
-    'Play Skills',
+    'ADLs', 'Fine Motor', 'Visual Motor', 'Sensory Processing',
+    'Handwriting', 'Self-Care', 'Feeding', 'Upper Extremity', 'Cognitive', 'Play Skills',
   ],
   ST: [
-    'Articulation',
-    'Language Comprehension',
-    'Language Expression',
-    'Fluency',
-    'Voice',
-    'Pragmatics',
-    'Phonological Awareness',
-    'Feeding/Swallowing',
-    'AAC',
-    'Cognitive-Communication',
+    'Articulation', 'Language Comprehension', 'Language Expression',
+    'Fluency', 'Voice', 'Pragmatics', 'Phonological Awareness',
+    'Feeding/Swallowing', 'AAC', 'Cognitive-Communication',
+  ],
+  MFT: [
+    'Depression', 'Anxiety', 'Trauma', 'Relationship',
+    'Family Systems', 'Coping Skills', 'Self-Esteem', 'Grief', 'Behavioral',
   ],
 };
 
@@ -77,10 +58,6 @@ const GoalFormModal: React.FC<GoalFormModalProps> = ({
   const [form, setForm] = useState<FormData>(emptyForm);
   const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>({});
   const [saving, setSaving] = useState(false);
-  const [showBank, setShowBank] = useState(false);
-  const [bankGoals, setBankGoals] = useState<GoalsBankEntry[]>([]);
-  const [bankLoading, setBankLoading] = useState(false);
-  const [bankCategory, setBankCategory] = useState<string>('');
 
   const categories = CATEGORY_OPTIONS[discipline] || [];
 
@@ -97,43 +74,7 @@ const GoalFormModal: React.FC<GoalFormModalProps> = ({
       setForm({ ...emptyForm, category: categories[0] || '' });
     }
     setErrors({});
-    setShowBank(false);
   }, [goal, isOpen]);
-
-  const loadBankGoals = async (cat?: string) => {
-    setBankLoading(true);
-    try {
-      const filters: { discipline?: string; category?: string } = { discipline };
-      if (cat) filters.category = cat;
-      const entries = await window.api.goalsBank.list(filters);
-      setBankGoals(entries);
-    } catch (err) {
-      console.error('Failed to load goals bank:', err);
-    } finally {
-      setBankLoading(false);
-    }
-  };
-
-  const handleToggleBank = () => {
-    if (!showBank) {
-      loadBankGoals(bankCategory || undefined);
-    }
-    setShowBank(!showBank);
-  };
-
-  const handleBankCategoryChange = (cat: string) => {
-    setBankCategory(cat);
-    loadBankGoals(cat || undefined);
-  };
-
-  const handleSelectBankGoal = (entry: GoalsBankEntry) => {
-    setForm((prev) => ({
-      ...prev,
-      goal_text: entry.goal_template,
-      category: entry.category || prev.category,
-    }));
-    setShowBank(false);
-  };
 
   const validate = (): boolean => {
     const newErrors: Partial<Record<keyof FormData, string>> = {};
@@ -231,17 +172,7 @@ const GoalFormModal: React.FC<GoalFormModalProps> = ({
 
           {/* Goal Text */}
           <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="label mb-0" htmlFor="goal_text">Goal Text *</label>
-              <button
-                type="button"
-                className="btn-ghost btn-sm gap-1.5"
-                onClick={handleToggleBank}
-              >
-                <BookOpen size={14} />
-                {showBank ? 'Hide Goals Bank' : 'Browse Goals Bank'}
-              </button>
-            </div>
+            <label className="label" htmlFor="goal_text">Goal Text *</label>
             <textarea
               id="goal_text"
               name="goal_text"
@@ -249,67 +180,12 @@ const GoalFormModal: React.FC<GoalFormModalProps> = ({
               rows={4}
               value={form.goal_text}
               onChange={handleChange}
-              placeholder="Enter goal text or select from the goals bank..."
+              placeholder="Enter goal text..."
             />
             {errors.goal_text && (
               <p className="text-xs text-red-500 mt-1">{errors.goal_text}</p>
             )}
           </div>
-
-          {/* Goals Bank Browser */}
-          {showBank && (
-            <div className="card p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-sm font-semibold text-[var(--color-text)]">
-                  Goals Bank - {discipline}
-                </h4>
-                <select
-                  className="select text-xs py-1 w-auto"
-                  value={bankCategory}
-                  onChange={(e) => handleBankCategoryChange(e.target.value)}
-                >
-                  <option value="">All Categories</option>
-                  {categories.map((cat) => (
-                    <option key={cat} value={cat}>{cat}</option>
-                  ))}
-                </select>
-              </div>
-
-              {bankLoading ? (
-                <div className="text-sm text-[var(--color-text-secondary)] text-center py-4">
-                  Loading goals bank...
-                </div>
-              ) : bankGoals.length === 0 ? (
-                <div className="text-sm text-[var(--color-text-secondary)] text-center py-4">
-                  No goals found in the bank for this discipline.
-                </div>
-              ) : (
-                <div className="max-h-48 overflow-y-auto space-y-1">
-                  {bankGoals.map((entry) => (
-                    <button
-                      key={entry.id}
-                      type="button"
-                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-gray-50 text-sm text-[var(--color-text)] border border-transparent hover:border-[var(--color-border)] transition-colors flex items-start gap-2 group"
-                      onClick={() => handleSelectBankGoal(entry)}
-                    >
-                      <Check
-                        size={14}
-                        className="mt-0.5 shrink-0 text-[var(--color-primary)] opacity-0 group-hover:opacity-100 transition-opacity"
-                      />
-                      <div>
-                        <p>{entry.goal_template}</p>
-                        {entry.category && (
-                          <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                            {entry.category}
-                          </p>
-                        )}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
 
           {/* Target Date & Status */}
           <div className="grid grid-cols-2 gap-4">

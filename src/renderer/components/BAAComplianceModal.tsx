@@ -78,44 +78,45 @@ export default function BAAComplianceModal({
             // Provider offers BAA (Google Drive, Dropbox, OneDrive)
             <>
               <p className="text-sm text-[var(--color-text)] mb-4">
-                PocketChart detected that this folder is synced to{' '}
-                <strong>{providerDisplayName}</strong>.
+                You have selected a folder synced by{' '}
+                <strong>{providerDisplayName}</strong>. If you store PocketChart data here,
+                your clinical records will be transmitted to {providerDisplayName}'s servers.
               </p>
 
               <p className="text-sm text-[var(--color-text)] mb-4">
-                Because PocketChart stores Protected Health Information (PHI), using cloud
-                storage means <strong>{providerDisplayName}</strong> becomes a HIPAA Business
-                Associate. You are responsible for:
+                Before proceeding, you must:
               </p>
 
               <ul className="text-sm text-[var(--color-text)] mb-4 space-y-2 ml-4">
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-emerald-500 mt-0.5 flex-shrink-0" />
                   <span>
-                    Using a <strong>business-tier</strong> account (free/personal accounts
-                    typically do not offer BAAs)
+                    Use a <strong>business-tier</strong> {providerDisplayName} account
+                    (free accounts cannot be HIPAA-compliant)
                   </span>
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-emerald-500 mt-0.5 flex-shrink-0" />
                   <span>
-                    Signing a <strong>Business Associate Agreement (BAA)</strong> with{' '}
-                    {providerDisplayName}
+                    Sign a <strong>Business Associate Agreement (BAA)</strong> with{' '}
+                    {providerDisplayName} via their admin console
                   </span>
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle className="w-4 h-4 text-emerald-500 mt-0.5 flex-shrink-0" />
                   <span>
-                    Enabling <strong>two-factor authentication</strong> on your cloud account
-                  </span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <CheckCircle className="w-4 h-4 text-emerald-500 mt-0.5 flex-shrink-0" />
-                  <span>
-                    Using a <strong>strong, unique password</strong> for your cloud account
+                    Enable <strong>two-factor authentication</strong> on your{' '}
+                    {providerDisplayName} account
                   </span>
                 </li>
               </ul>
+
+              <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 mb-4">
+                <p className="text-xs text-amber-700">
+                  PocketChart cannot verify whether these steps have been completed. You are
+                  solely responsible for your HIPAA compliance.
+                </p>
+              </div>
 
               {baaUrl && (
                 <button
@@ -123,16 +124,9 @@ export default function BAAComplianceModal({
                   className="flex items-center gap-2 text-sm font-medium text-[var(--color-primary)] hover:underline mb-4"
                 >
                   <ExternalLink className="w-4 h-4" />
-                  Learn how to obtain a BAA from {providerDisplayName}
+                  {providerDisplayName} BAA Documentation
                 </button>
               )}
-
-              <div className="p-3 bg-blue-50 rounded-lg border border-blue-200 mb-4">
-                <p className="text-xs text-blue-700">
-                  <strong>Tip:</strong> Once you have your signed BAA, store it in
-                  PocketChart's Professional Vault for safekeeping and expiration tracking.
-                </p>
-              </div>
 
               {/* Acknowledgment Checkbox */}
               <label className="flex items-start gap-3 p-3 rounded-lg border border-[var(--color-border)] hover:bg-gray-50 cursor-pointer">
@@ -143,8 +137,8 @@ export default function BAAComplianceModal({
                   className="mt-0.5 w-4 h-4 rounded border-gray-300 text-[var(--color-primary)] accent-[var(--color-primary)]"
                 />
                 <span className="text-sm text-[var(--color-text)]">
-                  I understand that obtaining a BAA with {providerDisplayName} is my
-                  responsibility
+                  I understand that HIPAA compliance with {providerDisplayName} is my
+                  sole responsibility
                 </span>
               </label>
             </>
@@ -154,58 +148,49 @@ export default function BAAComplianceModal({
               <div className="flex items-start gap-3 p-4 bg-red-50 rounded-lg border border-red-200 mb-4">
                 <AlertTriangle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
                 <div>
-                  <p className="text-sm font-medium text-red-800 mb-1">
-                    BAA Not Available
+                  <p className="text-sm font-medium text-red-800 mb-2">
+                    iCloud Cannot Be Used for PHI
                   </p>
                   <p className="text-sm text-red-700">
-                    Apple does <strong>not</strong> currently offer Business Associate
-                    Agreements for iCloud. This means storing Protected Health Information
-                    (PHI) in iCloud <strong>does not meet HIPAA requirements</strong>.
+                    You have selected a folder synced by Apple iCloud. Apple does{' '}
+                    <strong>not</strong> offer Business Associate Agreements (BAAs) for
+                    iCloud, which means iCloud <strong>cannot</strong> be used to store
+                    Protected Health Information (PHI) under HIPAA.
                   </p>
                 </div>
               </div>
 
-              <p className="text-sm text-[var(--color-text)] mb-4">
-                PocketChart detected that this folder is synced to{' '}
-                <strong>Apple iCloud</strong>.
-              </p>
-
               <p className="text-sm text-[var(--color-text)]">
-                We recommend choosing a different storage location, or using a cloud
-                provider that supports BAAs:
+                Please choose a different storage location to continue.
               </p>
-
-              <ul className="text-sm text-[var(--color-text)] mt-2 mb-4 ml-4 space-y-1">
-                <li>- Google Workspace (Google Drive)</li>
-                <li>- Dropbox Business</li>
-                <li>- Microsoft 365 Business (OneDrive)</li>
-              </ul>
             </>
           )}
         </div>
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-3 px-6 py-4 bg-gray-50 border-t border-[var(--color-border)]">
-          <button
-            onClick={handleChooseDifferent}
-            className="btn-secondary"
-          >
-            Choose Different Folder
-          </button>
           {baaAvailable ? (
-            <button
-              onClick={handleAccept}
-              className="btn-primary"
-              disabled={!acknowledged}
-            >
-              Continue
-            </button>
+            <>
+              <button
+                onClick={handleChooseDifferent}
+                className="btn-secondary"
+              >
+                Choose Different Location
+              </button>
+              <button
+                onClick={handleAccept}
+                className="btn-primary"
+                disabled={!acknowledged}
+              >
+                Continue Anyway
+              </button>
+            </>
           ) : (
             <button
-              onClick={handleAccept}
-              className="btn-ghost text-[var(--color-text-secondary)]"
+              onClick={handleChooseDifferent}
+              className="btn-primary"
             >
-              Continue Anyway
+              Choose Different Location
             </button>
           )}
         </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, BookmarkPlus, Check } from 'lucide-react';
 import type { Discipline, SOAPSection, NoteBankEntry } from '../../shared/types';
 
 interface SmartTextareaProps {
@@ -10,6 +10,7 @@ interface SmartTextareaProps {
   className?: string;
   discipline: Discipline;
   section: SOAPSection;
+  disabled?: boolean;
 }
 
 interface Suggestion {
@@ -20,7 +21,7 @@ interface Suggestion {
 }
 
 const SmartTextarea = forwardRef<HTMLTextAreaElement, SmartTextareaProps>(
-  ({ value, onChange, placeholder, rows = 4, className = 'textarea', discipline, section }, ref) => {
+  ({ value, onChange, placeholder, rows = 4, className = 'textarea', discipline, section, disabled }, ref) => {
     const internalRef = useRef<HTMLTextAreaElement>(null);
     useImperativeHandle(ref, () => internalRef.current!);
 
@@ -31,6 +32,77 @@ const SmartTextarea = forwardRef<HTMLTextAreaElement, SmartTextareaProps>(
     const [phrasesLoaded, setPhrasesLoaded] = useState(false);
     const suggestionsRef = useRef<HTMLDivElement>(null);
     const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
+
+    // "Save to Note Bank" selection tooltip state
+    const [selectionTooltip, setSelectionTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
+    const [savedToBank, setSavedToBank] = useState(false);
+    const selectionTimeoutRef = useRef<ReturnType<typeof setTimeout>>(null);
+
+    const handleMouseUp = useCallback(() => {
+      const textarea = internalRef.current;
+      if (!textarea || disabled) return;
+
+      // Small delay to let selection finalize
+      if (selectionTimeoutRef.current) clearTimeout(selectionTimeoutRef.current);
+      selectionTimeoutRef.current = setTimeout(() => {
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        if (start === end) {
+          setSelectionTooltip(null);
+          return;
+        }
+
+        const selectedText = value.slice(start, end).trim();
+        if (selectedText.length < 5) {
+          setSelectionTooltip(null);
+          return;
+        }
+
+        // Position tooltip near the textarea — use a rough estimate above the textarea
+        const rect = textarea.getBoundingClientRect();
+        // Calculate approximate position based on cursor
+        const lines = value.slice(0, end).split('\n');
+        const lineHeight = 20; // approximate
+        const yOffset = Math.min(lines.length * lineHeight, rect.height - 10);
+
+        setSelectionTooltip({
+          x: rect.width / 2,
+          y: Math.max(0, yOffset - 30),
+          text: selectedText,
+        });
+        setSavedToBank(false);
+      }, 100);
+    }, [value, disabled]);
+
+    const handleSaveToNoteBank = useCallback(async () => {
+      if (!selectionTooltip) return;
+      try {
+        await window.api.noteBank.create({
+          discipline,
+          category: 'Custom',
+          section,
+          phrase: selectionTooltip.text,
+          is_default: false,
+          is_favorite: false,
+        });
+        setSavedToBank(true);
+        // Refresh phrases list so the new phrase shows up in suggestions
+        const phrases = await window.api.noteBank.list({ discipline, section });
+        setAllPhrases(phrases);
+        // Auto-hide after 1.5s
+        setTimeout(() => {
+          setSelectionTooltip(null);
+          setSavedToBank(false);
+        }, 1500);
+      } catch (err) {
+        console.error('Failed to save to note bank:', err);
+      }
+    }, [selectionTooltip, discipline, section]);
+
+    // Clear tooltip when selection changes via keyboard or value changes
+    useEffect(() => {
+      setSelectionTooltip(null);
+    }, [value]);
 
     // Load all phrases for this discipline/section once
     useEffect(() => {
@@ -136,17 +208,20 @@ const SmartTextarea = forwardRef<HTMLTextAreaElement, SmartTextareaProps>(
     }, [allPhrases, phrasesLoaded]);
 
     // Debounced suggestion computation on text change
+    // NOTE: only depend on `value` — computeSuggestions is stable via ref closure
+    const computeSuggestionsRef = useRef(computeSuggestions);
+    computeSuggestionsRef.current = computeSuggestions;
     useEffect(() => {
       if (debounceRef.current) {
         clearTimeout(debounceRef.current);
       }
       debounceRef.current = setTimeout(() => {
-        computeSuggestions(value);
+        computeSuggestionsRef.current(value);
       }, 200);
       return () => {
         if (debounceRef.current) clearTimeout(debounceRef.current);
       };
-    }, [value, computeSuggestions]);
+    }, [value]);
 
     const acceptSuggestion = useCallback((phrase: string) => {
       const textarea = internalRef.current;
@@ -233,9 +308,14 @@ const SmartTextarea = forwardRef<HTMLTextAreaElement, SmartTextareaProps>(
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={handleKeyDown}
+          onMouseUp={handleMouseUp}
+          disabled={disabled}
           onBlur={() => {
-            // Delay hiding to allow click on suggestion
-            setTimeout(() => setShowSuggestions(false), 150);
+            // Delay hiding to allow click on suggestion or save-to-bank
+            setTimeout(() => {
+              setShowSuggestions(false);
+              setSelectionTooltip(null);
+            }, 200);
           }}
           onFocus={() => {
             if (value.trim().length >= 2) {
@@ -243,6 +323,32 @@ const SmartTextarea = forwardRef<HTMLTextAreaElement, SmartTextareaProps>(
             }
           }}
         />
+
+        {/* Save to Note Bank tooltip — appears when text is selected */}
+        {selectionTooltip && (
+          <div
+            className="absolute z-50 flex items-center"
+            style={{ top: selectionTooltip.y, left: selectionTooltip.x, transform: 'translate(-50%, -100%)' }}
+          >
+            <button
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg shadow-lg border text-xs font-medium transition-all ${
+                savedToBank
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                  : 'bg-white border-[var(--color-border)] text-[var(--color-text)] hover:bg-gray-50 hover:border-blue-300'
+              }`}
+              onMouseDown={(e) => {
+                e.preventDefault(); // Prevent blur
+                if (!savedToBank) handleSaveToNoteBank();
+              }}
+            >
+              {savedToBank ? (
+                <><Check size={12} /> Saved to Note Bank</>
+              ) : (
+                <><BookmarkPlus size={12} /> Save to Note Bank</>
+              )}
+            </button>
+          </div>
+        )}
 
         {/* Suggestion dropdown */}
         {showSuggestions && suggestions.length > 0 && (

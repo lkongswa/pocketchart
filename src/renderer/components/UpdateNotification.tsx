@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Download, RefreshCw, CheckCircle, X } from 'lucide-react';
+import { Download, RefreshCw, CheckCircle, X, ShieldCheck, ShieldAlert } from 'lucide-react';
 
-type UpdateState = 'idle' | 'available' | 'downloading' | 'ready';
+type UpdateState = 'idle' | 'available' | 'backing-up' | 'downloading' | 'ready' | 'backup-failed';
 
 export default function UpdateNotification() {
   const [state, setState] = useState<UpdateState>('idle');
@@ -11,35 +11,49 @@ export default function UpdateNotification() {
 
   useEffect(() => {
     // Listen for update events from the main process
-    window.api.update.onAvailable((info) => {
-      setVersion(info.version);
-      setState('available');
-      setDismissed(false);
-    });
+    const unsubs = [
+      window.api.update.onAvailable((info: any) => {
+        setVersion(info.version);
+        setState('available');
+        setDismissed(false);
+      }),
+      window.api.update.onProgress((prog: any) => {
+        setState('downloading');
+        setProgress(prog.percent);
+      }),
+      window.api.update.onDownloaded((info: any) => {
+        setVersion(info.version);
+        setState('ready');
+      }),
+      window.api.update.onNotAvailable(() => {
+        setState('idle');
+      }),
+    ];
 
-    window.api.update.onProgress((prog) => {
-      setState('downloading');
-      setProgress(prog.percent);
-    });
-
-    window.api.update.onDownloaded((info) => {
-      setVersion(info.version);
-      setState('ready');
-    });
-
-    window.api.update.onNotAvailable(() => {
-      setState('idle');
-    });
+    return () => { unsubs.forEach(fn => fn?.()); };
   }, []);
 
   const handleDownload = async () => {
-    setState('downloading');
+    setState('backing-up');
     setProgress(0);
     try {
+      // Backend will backup first, then download. If backup fails, it throws.
       await window.api.update.download();
     } catch (err) {
-      console.error('Download failed:', err);
-      setState('available'); // Allow retry
+      console.error('Update blocked:', err);
+      setState('backup-failed');
+    }
+  };
+
+  const handleManualBackup = async () => {
+    try {
+      const result = await window.api.backup.exportManual();
+      if (result) {
+        // Manual backup succeeded — retry the download
+        handleDownload();
+      }
+    } catch (err) {
+      console.error('Manual backup failed:', err);
     }
   };
 
@@ -58,6 +72,12 @@ export default function UpdateNotification() {
           <div className="flex-shrink-0 mt-0.5">
             {state === 'available' && (
               <Download className="w-5 h-5 text-[var(--color-primary)]" />
+            )}
+            {state === 'backing-up' && (
+              <ShieldCheck className="w-5 h-5 text-amber-500 animate-pulse" />
+            )}
+            {state === 'backup-failed' && (
+              <ShieldAlert className="w-5 h-5 text-red-500" />
             )}
             {state === 'downloading' && (
               <RefreshCw className="w-5 h-5 text-[var(--color-primary)] animate-spin" />
@@ -87,10 +107,51 @@ export default function UpdateNotification() {
               </>
             )}
 
+            {state === 'backing-up' && (
+              <>
+                <p className="text-sm font-medium text-[var(--color-text)]">
+                  Backing up your data...
+                </p>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                  A backup is required before updating.
+                </p>
+              </>
+            )}
+
+            {state === 'backup-failed' && (
+              <>
+                <p className="text-sm font-medium text-red-600">
+                  Backup Failed
+                </p>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                  A backup is required before updating. The automatic backup failed.
+                </p>
+                <div className="flex gap-2 mt-2">
+                  <button
+                    onClick={handleDownload}
+                    className="btn-primary text-xs py-1.5 px-3"
+                  >
+                    <RefreshCw size={12} className="mr-1" />
+                    Retry
+                  </button>
+                  <button
+                    onClick={handleManualBackup}
+                    className="btn-secondary text-xs py-1.5 px-3"
+                  >
+                    <ShieldCheck size={12} className="mr-1" />
+                    Backup Manually
+                  </button>
+                </div>
+              </>
+            )}
+
             {state === 'downloading' && (
               <>
                 <p className="text-sm font-medium text-[var(--color-text)]">
                   Downloading v{version}...
+                </p>
+                <p className="text-[11px] text-emerald-600 flex items-center gap-1 mt-0.5">
+                  <ShieldCheck className="w-3 h-3" /> Data backed up
                 </p>
                 <div className="mt-2 w-full bg-gray-200 rounded-full h-1.5">
                   <div
@@ -131,8 +192,8 @@ export default function UpdateNotification() {
             )}
           </div>
 
-          {/* Close button (only for available state) */}
-          {state === 'available' && (
+          {/* Close button (only for available and backup-failed states) */}
+          {(state === 'available' || state === 'backup-failed') && (
             <button
               onClick={() => setDismissed(true)}
               className="text-[var(--color-text-secondary)] hover:text-[var(--color-text)] flex-shrink-0"

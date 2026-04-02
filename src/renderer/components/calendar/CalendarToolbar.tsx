@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, ChevronRight, Search, Plus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Search, Plus, DollarSign } from 'lucide-react';
 
 interface CalendarToolbarProps {
   currentView: 'day' | 'week' | 'month';
@@ -10,6 +10,8 @@ interface CalendarToolbarProps {
   searchQuery: string;
   onSearchChange: (query: string) => void;
   onAddAppointment: () => void;
+  showBilling?: boolean;
+  onToggleBilling?: (show: boolean) => void;
 }
 
 const VIEW_OPTIONS: Array<{ value: 'day' | 'week' | 'month'; label: string }> = [
@@ -27,6 +29,8 @@ export default function CalendarToolbar({
   searchQuery,
   onSearchChange,
   onAddAppointment,
+  showBilling,
+  onToggleBilling,
 }: CalendarToolbarProps) {
   return (
     <div className="flex items-center justify-between mb-4">
@@ -85,6 +89,21 @@ export default function CalendarToolbar({
             );
           })}
         </div>
+
+        {/* Billing toggle */}
+        {onToggleBilling && (
+          <button
+            className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              showBilling
+                ? 'bg-emerald-100 text-emerald-700 border border-emerald-300'
+                : 'text-[var(--color-text-secondary)] hover:bg-gray-100 border border-transparent'
+            }`}
+            onClick={() => onToggleBilling(!showBilling)}
+            title={showBilling ? 'Hide payment badges' : 'Show payment badges'}
+          >
+            <DollarSign size={14} />
+          </button>
+        )}
 
         {/* Search Input */}
         <div className="relative">

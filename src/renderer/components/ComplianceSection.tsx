@@ -1,9 +1,12 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Shield, AlertTriangle, CheckCircle, RotateCcw, Settings } from 'lucide-react';
-import type { ComplianceTracking, CompliancePreset } from '@shared/types';
+import type { ComplianceTracking, CompliancePreset, RecertSignatureStatus } from '@shared/types';
+import RecertStepper from './RecertStepper';
 
 interface ComplianceSectionProps {
   clientId: number;
+  /** Show only a specific card: 'progress', 'recert', or undefined for both + settings bar */
+  card?: 'progress' | 'recert';
 }
 
 const PRESET_LABELS: Record<CompliancePreset, string> = {
@@ -12,10 +15,11 @@ const PRESET_LABELS: Record<CompliancePreset, string> = {
   none: 'Disabled',
 };
 
-export default function ComplianceSection({ clientId }: ComplianceSectionProps) {
+export default function ComplianceSection({ clientId, card }: ComplianceSectionProps) {
   const [compliance, setCompliance] = useState<ComplianceTracking | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
+  const [hasEval, setHasEval] = useState(false);
 
   // Edit form state
   const [preset, setPreset] = useState<CompliancePreset>('none');
@@ -27,8 +31,12 @@ export default function ComplianceSection({ clientId }: ComplianceSectionProps) 
   const loadCompliance = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await window.api.compliance.getByClient(clientId);
+      const [data, evals] = await Promise.all([
+        window.api.compliance.getByClient(clientId),
+        window.api.evaluations.listByClient(clientId),
+      ]);
       setCompliance(data);
+      setHasEval(Array.isArray(evals) && evals.length > 0);
       if (data) {
         setPreset(data.compliance_preset);
         setProgressVisits(data.progress_visit_threshold);
@@ -89,6 +97,33 @@ export default function ComplianceSection({ clientId }: ComplianceSectionProps) 
     }
   };
 
+  // Inline visit count editing
+  const [editingVisitCount, setEditingVisitCount] = useState(false);
+  const [visitCountInput, setVisitCountInput] = useState('');
+  const visitInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editingVisitCount) visitInputRef.current?.focus();
+  }, [editingVisitCount]);
+
+  const startEditVisitCount = () => {
+    setVisitCountInput(String(compliance?.visits_since_last_progress ?? 0));
+    setEditingVisitCount(true);
+  };
+
+  const commitVisitCount = async () => {
+    setEditingVisitCount(false);
+    const num = parseInt(visitCountInput, 10);
+    if (isNaN(num) || num < 0) return;
+    if (num === compliance?.visits_since_last_progress) return;
+    try {
+      await window.api.compliance.setVisitCount(clientId, num);
+      loadCompliance();
+    } catch (err) {
+      console.error('Failed to set visit count:', err);
+    }
+  };
+
   const handleResetRecertCounter = async () => {
     if (!window.confirm('Reset recertification date to today? This is typically done after receiving a new physician order.')) return;
     try {
@@ -96,6 +131,24 @@ export default function ComplianceSection({ clientId }: ComplianceSectionProps) 
       loadCompliance();
     } catch (err) {
       console.error('Failed to reset recert:', err);
+    }
+  };
+
+  const handleUpdateSignatureStatus = async (newStatus: RecertSignatureStatus) => {
+    try {
+      await window.api.compliance.updateSignatureStatus(clientId, newStatus);
+      loadCompliance();
+    } catch (err) {
+      console.error('Failed to update signature status:', err);
+    }
+  };
+
+  const handleClearEvalGate = async () => {
+    try {
+      await window.api.compliance.clearEvalGate(clientId, true);
+      loadCompliance();
+    } catch (err) {
+      console.error('Failed to clear eval gate:', err);
     }
   };
 
@@ -186,6 +239,8 @@ export default function ComplianceSection({ clientId }: ComplianceSectionProps) 
 
   // No compliance data or not enabled
   if (!compliance || !compliance.tracking_enabled) {
+    // When rendering a single card in split mode, show nothing if disabled
+    if (card) return null;
     return (
       <div className="card p-6 text-center">
         <Shield size={32} className="mx-auto text-[var(--color-text-secondary)] mb-3 opacity-40" />
@@ -206,6 +261,66 @@ export default function ComplianceSection({ clientId }: ComplianceSectionProps) 
   const progressOverdue = progressDue && progressDue < now;
   const recertOverdue = recertDue && recertDue < now;
 
+  // ── Single-card mode: render just one card inline ──
+  if (card === 'progress') {
+    return (
+      <div className={`card p-3 border-l-4 ${progressOverdue ? 'border-l-red-400 bg-red-50/50' : 'border-l-green-400 bg-green-50/50'}`}>
+        <div className="flex items-center justify-between mb-1">
+          <h4 className="text-xs font-semibold text-[var(--color-text)] flex items-center gap-1.5">
+            {progressOverdue ? <AlertTriangle size={12} className="text-red-500" /> : <CheckCircle size={12} className="text-green-500" />}
+            Progress Report
+          </h4>
+          <button className="btn-ghost p-1" onClick={handleResetProgressCounter} title="Reset counter">
+            <RotateCcw size={11} />
+          </button>
+        </div>
+        <div className="space-y-0.5 text-xs">
+          <p className="text-[var(--color-text)]">
+            Visits since last:{' '}
+            {editingVisitCount ? (
+              <input
+                ref={visitInputRef}
+                type="number"
+                min={0}
+                className="inline-block w-10 px-1 py-0 text-xs font-bold border border-[var(--color-border)] rounded text-center"
+                value={visitCountInput}
+                onChange={(e) => setVisitCountInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') commitVisitCount(); if (e.key === 'Escape') setEditingVisitCount(false); }}
+                onBlur={commitVisitCount}
+              />
+            ) : (
+              <strong
+                className="cursor-pointer hover:underline hover:text-blue-600"
+                onClick={startEditVisitCount}
+                title="Click to adjust visit count"
+              >{compliance.visits_since_last_progress}</strong>
+            )} / {compliance.progress_visit_threshold}
+          </p>
+          {progressDue && (
+            <p className={progressOverdue ? 'text-red-600 font-medium' : 'text-[var(--color-text-secondary)]'}>
+              {progressOverdue ? 'OVERDUE' : 'Due'}: {progressDue.toLocaleDateString()}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (card === 'recert') {
+    return (
+      <RecertStepper
+        compliance={compliance}
+        hasEval={hasEval}
+        compact
+        onAdvanceStatus={handleUpdateSignatureStatus}
+        onClearEvalGate={handleClearEvalGate}
+        onResetRecert={handleResetRecertCounter}
+        onEditSettings={() => setEditing(true)}
+      />
+    );
+  }
+
+  // ── Default: both cards in a grid with settings bar ──
   return (
     <div className="space-y-4">
       {/* Status Cards */}
@@ -223,7 +338,25 @@ export default function ComplianceSection({ clientId }: ComplianceSectionProps) 
           </div>
           <div className="space-y-1 text-xs">
             <p className="text-[var(--color-text)]">
-              Visits since last: <strong>{compliance.visits_since_last_progress}</strong> / {compliance.progress_visit_threshold}
+              Visits since last:{' '}
+              {editingVisitCount ? (
+                <input
+                  ref={visitInputRef}
+                  type="number"
+                  min={0}
+                  className="inline-block w-12 px-1 py-0 text-xs font-bold border border-[var(--color-border)] rounded text-center"
+                  value={visitCountInput}
+                  onChange={(e) => setVisitCountInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') commitVisitCount(); if (e.key === 'Escape') setEditingVisitCount(false); }}
+                  onBlur={commitVisitCount}
+                />
+              ) : (
+                <strong
+                  className="cursor-pointer hover:underline hover:text-blue-600"
+                  onClick={startEditVisitCount}
+                  title="Click to adjust visit count"
+                >{compliance.visits_since_last_progress}</strong>
+              )} / {compliance.progress_visit_threshold}
             </p>
             {compliance.last_progress_date && (
               <p className="text-[var(--color-text-secondary)]">
@@ -239,34 +372,14 @@ export default function ComplianceSection({ clientId }: ComplianceSectionProps) 
         </div>
 
         {/* Recertification Status */}
-        <div className={`card p-4 border-l-4 ${recertOverdue ? 'border-l-red-400 bg-red-50/50' : 'border-l-green-400 bg-green-50/50'}`}>
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-1.5">
-              {recertOverdue ? <AlertTriangle size={14} className="text-red-500" /> : <CheckCircle size={14} className="text-green-500" />}
-              Recertification
-            </h4>
-            <button className="btn-ghost btn-sm" onClick={handleResetRecertCounter} title="Reset date">
-              <RotateCcw size={12} />
-            </button>
-          </div>
-          <div className="space-y-1 text-xs">
-            {compliance.last_recert_date && (
-              <p className="text-[var(--color-text-secondary)]">
-                Last recert: {new Date(compliance.last_recert_date).toLocaleDateString()}
-              </p>
-            )}
-            {recertDue && (
-              <p className={recertOverdue ? 'text-red-600 font-medium' : 'text-[var(--color-text-secondary)]'}>
-                {recertOverdue ? 'OVERDUE' : 'Due'}: {recertDue.toLocaleDateString()}
-              </p>
-            )}
-            <p className="text-[var(--color-text)]">
-              MD Signature: {compliance.recert_md_signature_received
-                ? <span className="text-green-600 font-medium">Received</span>
-                : <span className="text-amber-600 font-medium">Pending</span>}
-            </p>
-          </div>
-        </div>
+        <RecertStepper
+          compliance={compliance}
+          hasEval={hasEval}
+          onAdvanceStatus={handleUpdateSignatureStatus}
+          onClearEvalGate={handleClearEvalGate}
+          onResetRecert={handleResetRecertCounter}
+          onEditSettings={() => setEditing(true)}
+        />
       </div>
 
       {/* Info bar */}

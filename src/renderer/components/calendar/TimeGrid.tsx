@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { format, isSameDay } from 'date-fns';
-import type { Appointment } from '../../../shared/types';
+import type { Appointment, CalendarBlock } from '../../../shared/types';
 import AppointmentBlock from './AppointmentBlock';
 import type { PaymentIndicator } from './AppointmentBlock';
 
@@ -15,9 +15,17 @@ interface TimeGridProps {
   endHour: number;
   columns: TimeGridColumn[];
   appointments: Appointment[];
+  calendarBlocks?: CalendarBlock[];
   onSlotClick: (date: string, time: string) => void;
   onAppointmentClick: (appt: Appointment) => void;
+  onNoteClick?: (appt: Appointment) => void;
   onAppointmentDrop: (apptId: number, newDate: string, newTime: string) => void;
+  onBlockDrop?: (blockId: number, newDate: string, newTime: string) => void;
+  onTodoDrop?: (todoId: number, date: string, time: string) => void;
+  onAppointmentContextMenu?: (appt: Appointment, x: number, y: number) => void;
+  onBlockContextMenu?: (block: CalendarBlock, x: number, y: number) => void;
+  onBlockToggleDone?: (block: CalendarBlock) => void;
+  onBlockRemove?: (block: CalendarBlock) => void;
   paymentStatusMap?: Record<number, PaymentIndicator>;
 }
 
@@ -119,14 +127,23 @@ export default function TimeGrid({
   endHour,
   columns,
   appointments,
+  calendarBlocks = [],
   onSlotClick,
   onAppointmentClick,
+  onNoteClick,
   onAppointmentDrop,
+  onBlockDrop,
+  onTodoDrop,
+  onAppointmentContextMenu,
+  onBlockContextMenu,
+  onBlockToggleDone,
+  onBlockRemove,
   paymentStatusMap = {},
 }: TimeGridProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [dragOverSlot, setDragOverSlot] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [draggingBlockId, setDraggingBlockId] = useState<number | null>(null);
 
   // Auto-scroll to ~8 AM on mount
   useEffect(() => {
@@ -179,12 +196,25 @@ export default function TimeGrid({
     (dateStr: string, timeStr: string) => (e: React.DragEvent<HTMLDivElement>) => {
       e.preventDefault();
       setDragOverSlot(null);
+      setDraggingBlockId(null);
+      // Check for todo drop first
+      const todoId = e.dataTransfer.getData('application/todo-id');
+      if (todoId && onTodoDrop) {
+        onTodoDrop(parseInt(todoId, 10), dateStr, timeStr);
+        return;
+      }
+      // Check for calendar block drag
+      const blockId = e.dataTransfer.getData('application/block-id');
+      if (blockId && onBlockDrop) {
+        onBlockDrop(parseInt(blockId, 10), dateStr, timeStr);
+        return;
+      }
       const apptId = parseInt(e.dataTransfer.getData('text/plain'), 10);
       if (!isNaN(apptId)) {
         onAppointmentDrop(apptId, dateStr, timeStr);
       }
     },
-    [onAppointmentDrop]
+    [onAppointmentDrop, onBlockDrop, onTodoDrop]
   );
 
   const handleSlotClick = useCallback(
@@ -198,6 +228,13 @@ export default function TimeGrid({
   const getColumnAppointments = (dateStr: string): Appointment[] => {
     return appointments
       .filter((a) => a.scheduled_date === dateStr)
+      .sort((a, b) => a.scheduled_time.localeCompare(b.scheduled_time));
+  };
+
+  // Get calendar blocks for a specific column date
+  const getColumnBlocks = (dateStr: string): CalendarBlock[] => {
+    return calendarBlocks
+      .filter((b) => b.scheduled_date === dateStr)
       .sort((a, b) => a.scheduled_time.localeCompare(b.scheduled_time));
   };
 
@@ -305,26 +342,126 @@ export default function TimeGrid({
                 return (
                   <div
                     key={appt.id}
-                    className="absolute"
+                    className="absolute pointer-events-none"
                     style={{
                       top: 0,
                       left: `${leftPercent}%`,
                       width: `${widthPercent}%`,
                       height: totalHeight,
-                      pointerEvents: 'none',
                     }}
                   >
-                    <div
-                      className="relative w-full h-full"
-                      style={{ pointerEvents: 'auto' }}
-                    >
-                      <AppointmentBlock
-                        appointment={appt}
-                        slotHeight={SLOT_HEIGHT}
-                        startHour={startHour}
-                        onClick={onAppointmentClick}
-                        paymentStatus={paymentStatusMap[appt.id] || 'none'}
-                      />
+                    <AppointmentBlock
+                      appointment={appt}
+                      slotHeight={SLOT_HEIGHT}
+                      startHour={startHour}
+                      onClick={onAppointmentClick}
+                      onNoteClick={onNoteClick}
+                      onContextMenu={onAppointmentContextMenu}
+                      onTodoDrop={onTodoDrop}
+                      paymentStatus={paymentStatusMap[appt.id] || 'none'}
+                    />
+                  </div>
+                );
+              })}
+
+              {/* Calendar blocks (admin time blocks — rendered in slate/gray) */}
+              {getColumnBlocks(col.dateStr).map((block) => {
+                const [hStr, mStr] = block.scheduled_time.split(':');
+                const blockHour = parseInt(hStr, 10);
+                const blockMin = parseInt(mStr, 10);
+                const topPx = ((blockHour - startHour) * 2 + blockMin / 30) * SLOT_HEIGHT;
+                const heightPx = Math.max((block.duration_minutes / 30) * SLOT_HEIGHT, 24);
+                const h12 = blockHour === 0 ? 12 : blockHour > 12 ? blockHour - 12 : blockHour;
+                const suffix = blockHour >= 12 ? 'PM' : 'AM';
+                const timeLabel = `${h12}:${(mStr || '00').padStart(2, '0')} ${suffix}`;
+                const isDone = block.completed === 1;
+
+                return (
+                  <div
+                    key={`block-${block.id}`}
+                    className={`group/block absolute left-1 right-1 z-10 rounded px-2 py-1 overflow-visible cursor-grab ${
+                      isDone
+                        ? 'bg-slate-50 border-l-2 border-l-emerald-400 text-slate-400'
+                        : 'bg-slate-100 border-l-2 border-l-slate-400 text-slate-600 hover:bg-slate-200/70'
+                    }`}
+                    style={{
+                      top: topPx,
+                      height: heightPx,
+                      // Disable pointer events on ALL blocks while dragging a block,
+                      // so the drop falls through to the underlying slot div
+                      pointerEvents: draggingBlockId !== null ? 'none' : undefined,
+                    }}
+                    title={`Admin: ${block.title}${isDone ? ' (Done)' : ''}`}
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData('application/block-id', block.id.toString());
+                      e.dataTransfer.effectAllowed = 'move';
+                      // Use setTimeout so the drag ghost is captured before pointer-events: none kicks in
+                      setTimeout(() => setDraggingBlockId(block.id), 0);
+                    }}
+                    onDragEnd={() => setDraggingBlockId(null)}
+                    onDragOver={(e) => {
+                      if (e.dataTransfer.types.includes('application/todo-id') || e.dataTransfer.types.includes('application/block-id')) {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                      }
+                    }}
+                    onDrop={(e) => {
+                      const todoId = e.dataTransfer.getData('application/todo-id');
+                      if (todoId && onTodoDrop) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onTodoDrop(parseInt(todoId, 10), col.dateStr, block.scheduled_time);
+                        return;
+                      }
+                      const blockDragId = e.dataTransfer.getData('application/block-id');
+                      if (blockDragId && onBlockDrop) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onBlockDrop(parseInt(blockDragId, 10), col.dateStr, block.scheduled_time);
+                      }
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (onBlockContextMenu) onBlockContextMenu(block, e.clientX, e.clientY);
+                    }}
+                  >
+                    <div className={`text-[10px] font-medium truncate pr-10 ${isDone ? 'line-through opacity-60' : ''}`}>{timeLabel}</div>
+                    {heightPx >= 36 && (
+                      <div className={`text-[11px] truncate pr-10 ${isDone ? 'line-through opacity-60' : ''}`}>{block.title}</div>
+                    )}
+                    {/* Hover action buttons */}
+                    <div className="absolute top-0.5 right-0.5 flex items-center gap-0.5 opacity-0 group-hover/block:opacity-100 transition-opacity">
+                      <button
+                        className={`w-5 h-5 rounded flex items-center justify-center transition-colors ${
+                          isDone
+                            ? 'bg-amber-100 text-amber-600 hover:bg-amber-200'
+                            : 'bg-emerald-100 text-emerald-600 hover:bg-emerald-200'
+                        }`}
+                        title={isDone ? 'Mark undone' : 'Mark done'}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (onBlockToggleDone) onBlockToggleDone(block);
+                        }}
+                      >
+                        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="1.5,5.5 4,8 8.5,2" />
+                        </svg>
+                      </button>
+                      <button
+                        className="w-5 h-5 rounded bg-red-100 text-red-500 hover:bg-red-200 flex items-center justify-center transition-colors"
+                        title={block.source_todo_id ? 'Remove & restore task' : 'Delete block'}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (onBlockRemove) onBlockRemove(block);
+                        }}
+                      >
+                        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                          <line x1="2" y1="2" x2="8" y2="8" />
+                          <line x1="8" y1="2" x2="2" y2="8" />
+                        </svg>
+                      </button>
                     </div>
                   </div>
                 );

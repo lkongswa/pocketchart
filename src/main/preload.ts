@@ -6,6 +6,44 @@ const api = {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
   },
 
+  // Encryption (available before DB is open)
+  encryption: {
+    getStatus: () => ipcRenderer.invoke('encryption:getStatus') as Promise<{ needsSetup: boolean; needsPassphrase: boolean; needsMigration: boolean; decryptionNeeded?: boolean }>,
+    setup: (passphrase: string) => ipcRenderer.invoke('encryption:setup', passphrase) as Promise<{ success: boolean; recoveryKey?: string }>,
+    setupPlaintext: () => ipcRenderer.invoke('encryption:setupPlaintext') as Promise<{ success: boolean }>,
+    unlock: (passphrase: string) => ipcRenderer.invoke('encryption:unlock', passphrase) as Promise<{ success: boolean; error?: string }>,
+    unlockWithRecovery: (recoveryKey: string) => ipcRenderer.invoke('encryption:unlockWithRecovery', recoveryKey) as Promise<{ success: boolean; error?: string }>,
+    changePassphrase: (current: string, newPass: string) => ipcRenderer.invoke('encryption:changePassphrase', current, newPass) as Promise<{ success: boolean; error?: string }>,
+    regenerateRecoveryKey: (passphrase: string) => ipcRenderer.invoke('encryption:regenerateRecoveryKey', passphrase) as Promise<{ success: boolean; recoveryKey?: string; error?: string }>,
+    verifyPassphrase: (passphrase: string) => ipcRenderer.invoke('encryption:verifyPassphrase', passphrase) as Promise<boolean>,
+    migrateAndSetup: (passphrase: string) => ipcRenderer.invoke('encryption:migrateAndSetup', passphrase) as Promise<{ success: boolean; recoveryKey?: string; error?: string }>,
+    onDbReady: (callback: () => void) => {
+      ipcRenderer.on('db:ready', callback);
+      return () => ipcRenderer.removeListener('db:ready', callback);
+    },
+  },
+
+  // Restore (available before DB is open — used by RestoreScreen)
+  restore: {
+    pickFile: () => ipcRenderer.invoke('restore:pickFile') as Promise<string | null>,
+    validateAndSummarize: (filePath: string, passphrase: string) =>
+      ipcRenderer.invoke('restore:validateAndSummarize', filePath, passphrase) as Promise<{ summary?: any; error?: string }>,
+    execute: (filePath: string, passphrase: string) =>
+      ipcRenderer.invoke('restore:execute', filePath, passphrase) as Promise<{ success: boolean; recoveryKey?: string; error?: string }>,
+    executeFromSettings: (filePath: string, passphrase: string) =>
+      ipcRenderer.invoke('restore:executeFromSettings', filePath, passphrase) as Promise<{ success: boolean; error?: string }>,
+    getBackupClients: (filePath: string, passphrase: string) =>
+      ipcRenderer.invoke('restore:getBackupClients', filePath, passphrase) as Promise<{ clients?: any[]; error?: string }>,
+    importClients: (filePath: string, passphrase: string, clientIds: number[]) =>
+      ipcRenderer.invoke('restore:importClients', filePath, passphrase, clientIds) as Promise<any>,
+    getCurrentSummary: () =>
+      ipcRenderer.invoke('restore:getCurrentSummary') as Promise<any>,
+    getPendingRecoveryKey: () =>
+      ipcRenderer.invoke('restore:getPendingRecoveryKey') as Promise<string | null>,
+    clearPendingRecoveryKey: () =>
+      ipcRenderer.invoke('restore:clearPendingRecoveryKey') as Promise<void>,
+  },
+
   // Practice
   practice: {
     get: () => ipcRenderer.invoke('practice:get'),
@@ -19,6 +57,8 @@ const api = {
     create: (data: any) => ipcRenderer.invoke('clients:create', data),
     update: (id: number, data: any) => ipcRenderer.invoke('clients:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('clients:delete', id),
+    canRemove: (id: number) => ipcRenderer.invoke('clients:canRemove', id),
+    remove: (id: number) => ipcRenderer.invoke('clients:remove', id),
   },
 
   // Goals
@@ -27,15 +67,39 @@ const api = {
     create: (data: any) => ipcRenderer.invoke('goals:create', data),
     update: (id: number, data: any) => ipcRenderer.invoke('goals:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('goals:delete', id),
+    tagSource: (goalId: number, docId: number, docType: string) => ipcRenderer.invoke('goals:tagSource', goalId, docId, docType),
+    getProgressHistory: (goalId: number) => ipcRenderer.invoke('goals:getProgressHistory', goalId),
+    getProgressHistoryBatch: (goalIds: number[]) => ipcRenderer.invoke('goals:getProgressHistoryBatch', goalIds),
+    addProgressEntry: (data: any) => ipcRenderer.invoke('goals:addProgressEntry', data),
+  },
+
+  // Staged Goals
+  stagedGoals: {
+    listByClient: (clientId: number) => ipcRenderer.invoke('stagedGoals:listByClient', clientId),
+    listAllByClient: (clientId: number) => ipcRenderer.invoke('stagedGoals:listAllByClient', clientId),
+    create: (data: any) => ipcRenderer.invoke('stagedGoals:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('stagedGoals:update', id, data),
+    promote: (id: number, noteId: number) => ipcRenderer.invoke('stagedGoals:promote', id, noteId),
+    dismiss: (id: number, reason: string) => ipcRenderer.invoke('stagedGoals:dismiss', id, reason),
+  },
+
+  // Progress Report Goals
+  progressReportGoals: {
+    listByNote: (noteId: number) => ipcRenderer.invoke('progressReportGoals:listByNote', noteId),
+    upsert: (noteId: number, goals: any[]) => ipcRenderer.invoke('progressReportGoals:upsert', noteId, goals),
+    getLastForGoal: (goalId: number) => ipcRenderer.invoke('progressReportGoals:getLastForGoal', goalId),
   },
 
   // Notes
   notes: {
+    list: (filters?: any) => ipcRenderer.invoke('notes:list', filters),
     listByClient: (clientId: number) => ipcRenderer.invoke('notes:listByClient', clientId),
     get: (id: number) => ipcRenderer.invoke('notes:get', id),
     create: (data: any) => ipcRenderer.invoke('notes:create', data),
     update: (id: number, data: any) => ipcRenderer.invoke('notes:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('notes:delete', id),
+    getEpisodeSummary: (clientId: number) => ipcRenderer.invoke('notes:getEpisodeSummary', clientId),
+    getUnbilledForClient: (clientId: number) => ipcRenderer.invoke('notes:getUnbilledForClient', clientId),
   },
 
   // Evaluations
@@ -45,14 +109,21 @@ const api = {
     create: (data: any) => ipcRenderer.invoke('evaluations:create', data),
     update: (id: number, data: any) => ipcRenderer.invoke('evaluations:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('evaluations:delete', id),
+    createReassessment: (clientId: number) => ipcRenderer.invoke('evaluations:createReassessment', clientId),
+    countIncomplete: () => ipcRenderer.invoke('evaluations:countIncomplete'),
+    listIncomplete: () => ipcRenderer.invoke('evaluations:listIncomplete'),
+    listAll: () => ipcRenderer.invoke('evaluations:listAll'),
   },
 
   // Appointments
   appointments: {
     list: (filters?: any) => ipcRenderer.invoke('appointments:list', filters),
     create: (data: any) => ipcRenderer.invoke('appointments:create', data),
+    createBatch: (items: any[]) => ipcRenderer.invoke('appointments:createBatch', items),
     update: (id: number, data: any) => ipcRenderer.invoke('appointments:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('appointments:delete', id),
+    linkEval: (appointmentId: number, evaluationId: number) => ipcRenderer.invoke('appointments:linkEval', appointmentId, evaluationId),
+    linkNote: (appointmentId: number, noteId: number) => ipcRenderer.invoke('appointments:linkNote', appointmentId, noteId),
   },
 
   // Note Bank
@@ -62,14 +133,26 @@ const api = {
     update: (id: number, data: any) => ipcRenderer.invoke('noteBank:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('noteBank:delete', id),
     toggleFavorite: (id: number) => ipcRenderer.invoke('noteBank:toggleFavorite', id),
+    getCategories: (discipline: string) => ipcRenderer.invoke('noteBank:getCategories', discipline),
   },
 
-  // Goals Bank
-  goalsBank: {
-    list: (filters?: any) => ipcRenderer.invoke('goalsBank:list', filters),
-    create: (data: any) => ipcRenderer.invoke('goalsBank:create', data),
-    update: (id: number, data: any) => ipcRenderer.invoke('goalsBank:update', id, data),
-    delete: (id: number) => ipcRenderer.invoke('goalsBank:delete', id),
+  // Pattern Overrides
+  patternOverrides: {
+    list: () => ipcRenderer.invoke('patternOverrides:list'),
+    upsert: (patternId: string, componentKey: string, customOptions: string[], removedOptions: string[]) =>
+      ipcRenderer.invoke('patternOverrides:upsert', patternId, componentKey, customOptions, removedOptions),
+    delete: (patternId: string, componentKey: string) =>
+      ipcRenderer.invoke('patternOverrides:delete', patternId, componentKey),
+    deleteAll: (patternId: string) =>
+      ipcRenderer.invoke('patternOverrides:deleteAll', patternId),
+  },
+
+  // Custom Patterns
+  customPatterns: {
+    list: () => ipcRenderer.invoke('customPatterns:list'),
+    create: (data: any) => ipcRenderer.invoke('customPatterns:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('customPatterns:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('customPatterns:delete', id),
   },
 
   // Settings
@@ -85,6 +168,19 @@ const api = {
     generateBulk: (data: any) => ipcRenderer.invoke('superbill:generateBulk', data),
   },
 
+  // CMS-1500 Claim Form
+  cms1500: {
+    generate: (data: { clientId: number; noteIds: number[]; printMode?: 'full' | 'data-only' }) => ipcRenderer.invoke('cms1500:generate', data),
+    save: (data: { base64Pdf: string; filename: string }) => ipcRenderer.invoke('cms1500:save', data),
+    openPreview: (data: { base64Pdf: string; filename: string }) => ipcRenderer.invoke('cms1500:openPreview', data),
+    getUnbilledClients: () => ipcRenderer.invoke('cms1500:getUnbilledClients'),
+    generateBulk: (data: any) => ipcRenderer.invoke('cms1500:generateBulk', data),
+    markBilled: (noteIds: number[]) => ipcRenderer.invoke('cms1500:markBilled', noteIds),
+    clearBilled: (noteIds: number[]) => ipcRenderer.invoke('cms1500:clearBilled', noteIds),
+    saveBulk: (data: { pdfs: Array<{ base64Pdf: string; filename: string }> }) => ipcRenderer.invoke('cms1500:saveBulk', data),
+    generateAlignmentTest: () => ipcRenderer.invoke('cms1500:generateAlignmentTest'),
+  },
+
   // Backup & Export
   backup: {
     exportManual: () => ipcRenderer.invoke('backup:exportManual'),
@@ -93,6 +189,9 @@ const api = {
     savePdf: (data: { base64Pdf: string; defaultFilename: string }) => ipcRenderer.invoke('backup:savePdf', data),
     exportCsv: () => ipcRenderer.invoke('backup:exportCsv'),
     exportAllChartsPdf: () => ipcRenderer.invoke('backup:exportAllChartsPdf'),
+    pickBackupFolder: () => ipcRenderer.invoke('backup:pickBackupFolder'),
+    clearBackupFolder: () => ipcRenderer.invoke('backup:clearBackupFolder'),
+    quickBackup: () => ipcRenderer.invoke('backup:quickBackup'),
   },
 
   // Storage Location
@@ -126,17 +225,54 @@ const api = {
 
   // Client Documents
   documents: {
-    upload: (data: { clientId: number; category?: string }) => ipcRenderer.invoke('documents:upload', data),
+    upload: (data: {
+      clientId: number;
+      category?: string;
+      certification_period_start?: string;
+      certification_period_end?: string;
+      received_date?: string;
+      sent_date?: string;
+      physician_name?: string;
+    }) => ipcRenderer.invoke('documents:upload', data),
+    uploadFromPath: (data: {
+      clientId: number;
+      filePath: string;
+      category?: string;
+    }) => ipcRenderer.invoke('documents:uploadFromPath', data),
+    updateMeta: (data: {
+      documentId: number;
+      certification_period_start?: string;
+      certification_period_end?: string;
+      received_date?: string;
+      sent_date?: string;
+      physician_name?: string;
+      category?: string;
+    }) => ipcRenderer.invoke('documents:updateMeta', data),
     list: (data: { clientId: number }) => ipcRenderer.invoke('documents:list', data),
     open: (data: { documentId: number }) => ipcRenderer.invoke('documents:open', data),
     delete: (data: { documentId: number }) => ipcRenderer.invoke('documents:delete', data),
     getPath: (data: { documentId: number }) => ipcRenderer.invoke('documents:getPath', data),
+  },
+  // Feedback
+  feedback: {
+    submit: (data: any) => ipcRenderer.invoke('feedback:submit', data),
+  },
+  // Review Prompts
+  reviewPrompts: {
+    checkEligible: () => ipcRenderer.invoke('review-prompts:check-eligible') as Promise<{ eligible: boolean; milestone: string | null }>,
+    record: (data: { rating: number | null; action: string }) => ipcRenderer.invoke('review-prompts:record', data) as Promise<{ id: number }>,
   },
   // License
   license: {
     getStatus: () => ipcRenderer.invoke('license:getStatus'),
     activate: (licenseKey: string) => ipcRenderer.invoke('license:activate', licenseKey),
     deactivate: () => ipcRenderer.invoke('license:deactivate'),
+    getActivationInfo: () => ipcRenderer.invoke('license:getActivationInfo'),
+    onTierChanged: (callback: (tier: string) => void) => {
+      const handler = (_event: unknown, tier: string) => callback(tier);
+      ipcRenderer.on('license:tierChanged', handler);
+      return () => { ipcRenderer.removeListener('license:tierChanged', handler); };
+    },
   },
 
   // Secure Storage (OS-level encryption for API keys, etc.)
@@ -149,6 +285,15 @@ const api = {
     exists: (key: string) => ipcRenderer.invoke('secureStorage:exists', key),
   },
 
+  // System events (power, sleep, etc.)
+  system: {
+    onLock: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('system:lock', handler);
+      return () => { ipcRenderer.removeListener('system:lock', handler); };
+    },
+  },
+
   // V2 Billing - Fee Schedule
   feeSchedule: {
     list: () => ipcRenderer.invoke('feeSchedule:list'),
@@ -156,6 +301,7 @@ const api = {
     create: (data: any) => ipcRenderer.invoke('feeSchedule:create', data),
     update: (id: number, data: any) => ipcRenderer.invoke('feeSchedule:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('feeSchedule:delete', id),
+    reset: (discipline: string) => ipcRenderer.invoke('feeSchedule:reset', discipline),
   },
 
   // V2 Billing - Invoices
@@ -165,16 +311,40 @@ const api = {
     create: (data: any, items: any[]) => ipcRenderer.invoke('invoices:create', data, items),
     update: (id: number, data: any) => ipcRenderer.invoke('invoices:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('invoices:delete', id),
-    generateFromNotes: (clientId: number, noteIds: number[]) => ipcRenderer.invoke('invoices:generateFromNotes', clientId, noteIds),
+    generateFromNotes: (clientId: number, noteIds: number[], entityId?: number) => ipcRenderer.invoke('invoices:generateFromNotes', clientId, noteIds, entityId),
     generatePdf: (invoiceId: number) => ipcRenderer.invoke('invoices:generatePdf', invoiceId),
     savePdf: (data: { base64Pdf: string; filename: string }) => ipcRenderer.invoke('invoices:savePdf', data),
+    noteStatuses: () => ipcRenderer.invoke('invoices:noteStatuses'),
+    createFeeInvoice: (data: { client_id?: number; entity_id?: number; description: string; amount: number; service_date: string }) => ipcRenderer.invoke('invoices:createFeeInvoice', data),
+  },
+
+  // Revenue Pipeline
+  billing: {
+    getPipelineData: (options?: { paidDays?: number }) =>
+      ipcRenderer.invoke('billing:getPipelineData', options),
+    quickInvoice: (data: { clientId: number; noteIds: number[]; entityId?: number }) =>
+      ipcRenderer.invoke('billing:quickInvoice', data),
+    quickInvoiceFromAppointment: (data: { appointmentId: number; clientId: number; entityId?: number; cptCode?: string }) =>
+      ipcRenderer.invoke('billing:quickInvoiceFromAppointment', data),
   },
 
   // V2 Billing - Payments
   payments: {
     list: (filters?: any) => ipcRenderer.invoke('payments:list', filters),
     create: (data: any) => ipcRenderer.invoke('payments:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('payments:update', id, data),
+    refund: (id: number) => ipcRenderer.invoke('payments:refund', id),
     delete: (id: number) => ipcRenderer.invoke('payments:delete', id),
+  },
+
+  // CSV Payment Import
+  csvImport: {
+    pickFile: () => ipcRenderer.invoke('csvImport:pickFile') as Promise<string | null>,
+    parseFile: (filePath: string) => ipcRenderer.invoke('csvImport:parseFile', filePath),
+    autoDetectColumns: (headers: string[]) => ipcRenderer.invoke('csvImport:autoDetectColumns', headers),
+    matchClients: (data: any) => ipcRenderer.invoke('csvImport:matchClients', data),
+    prepareRows: (data: any) => ipcRenderer.invoke('csvImport:prepareRows', data),
+    execute: (data: any) => ipcRenderer.invoke('csvImport:execute', data),
   },
 
   // V3 Insurance Billing - Authorizations
@@ -192,6 +362,8 @@ const api = {
     create: (data: any, lines: any[]) => ipcRenderer.invoke('claims:create', data, lines),
     update: (id: number, data: any) => ipcRenderer.invoke('claims:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('claims:delete', id),
+    createFromNotes: (clientId: number, noteIds: number[]) => ipcRenderer.invoke('claims:createFromNotes', clientId, noteIds),
+    generate837P: (claimId: number) => ipcRenderer.invoke('claims:generate837P', claimId),
   },
 
   // V3 Insurance Billing - Payers
@@ -202,10 +374,45 @@ const api = {
     delete: (id: number) => ipcRenderer.invoke('payers:delete', id),
   },
 
+  // V3 Insurance - Clearinghouse (provider-agnostic)
+  clearinghouse: {
+    // Provider management
+    setProvider: (type: string, credentials: Record<string, string>) => ipcRenderer.invoke('clearinghouse:setProvider', type, credentials),
+    getProviderStatus: () => ipcRenderer.invoke('clearinghouse:getProviderStatus'),
+    testProvider: () => ipcRenderer.invoke('clearinghouse:testProvider'),
+    removeProvider: () => ipcRenderer.invoke('clearinghouse:removeProvider'),
+    // Operations
+    getPayerList: () => ipcRenderer.invoke('clearinghouse:getPayerList'),
+    checkEnrollment: (payerId: string) => ipcRenderer.invoke('clearinghouse:checkEnrollment', payerId),
+    submitClaim: (claimId: number) => ipcRenderer.invoke('clearinghouse:submitClaim', claimId),
+    checkClaimStatus: (claimId: number) => ipcRenderer.invoke('clearinghouse:checkClaimStatus', claimId),
+    checkEligibility: (clientId: number) => ipcRenderer.invoke('clearinghouse:checkEligibility', clientId),
+    getRemittance: (startDate: string, endDate: string) => ipcRenderer.invoke('clearinghouse:getRemittance', startDate, endDate),
+  },
+
+  // V3 Insurance - Eligibility Checks
+  eligibilityChecks: {
+    listByClient: (clientId: number) => ipcRenderer.invoke('eligibilityChecks:listByClient', clientId),
+    getLatest: (clientId: number) => ipcRenderer.invoke('eligibilityChecks:getLatest', clientId),
+  },
+
+  // V3 Insurance - Denial Codes
+  denialCodes: {
+    lookup: (code: string) => ipcRenderer.invoke('denialCodes:lookup', code),
+    listCommon: () => ipcRenderer.invoke('denialCodes:listCommon'),
+  },
+
+  // Onboarding
+  onboarding: {
+    getStatus: () => ipcRenderer.invoke('onboarding:getStatus'),
+  },
+
   // Audit Log
   auditLog: {
     list: (filters?: any) => ipcRenderer.invoke('auditLog:list', filters),
     create: (data: any) => ipcRenderer.invoke('auditLog:create', data),
+    logWarningDismissal: (data: { actionType: string; detail: Record<string, any> }) =>
+      ipcRenderer.invoke('auditLog:logWarningDismissal', data),
   },
 
   // Auto-Update
@@ -214,16 +421,34 @@ const api = {
     download: () => ipcRenderer.invoke('update:download'),
     install: () => ipcRenderer.invoke('update:install'),
     onAvailable: (callback: (info: any) => void) => {
-      ipcRenderer.on('update:available', (_event, info) => callback(info));
+      const handler = (_event: any, info: any) => callback(info);
+      ipcRenderer.on('update:available', handler);
+      return () => { ipcRenderer.removeListener('update:available', handler); };
     },
     onNotAvailable: (callback: () => void) => {
-      ipcRenderer.on('update:not-available', () => callback());
+      const handler = () => callback();
+      ipcRenderer.on('update:not-available', handler);
+      return () => { ipcRenderer.removeListener('update:not-available', handler); };
     },
     onProgress: (callback: (progress: any) => void) => {
-      ipcRenderer.on('update:download-progress', (_event, progress) => callback(progress));
+      const handler = (_event: any, progress: any) => callback(progress);
+      ipcRenderer.on('update:download-progress', handler);
+      return () => { ipcRenderer.removeListener('update:download-progress', handler); };
     },
     onDownloaded: (callback: (info: any) => void) => {
-      ipcRenderer.on('update:downloaded', (_event, info) => callback(info));
+      const handler = (_event: any, info: any) => callback(info);
+      ipcRenderer.on('update:downloaded', handler);
+      return () => { ipcRenderer.removeListener('update:downloaded', handler); };
+    },
+    onBackupComplete: (callback: (info: any) => void) => {
+      const handler = (_event: any, info: any) => callback(info);
+      ipcRenderer.on('update:backup-complete', handler);
+      return () => { ipcRenderer.removeListener('update:backup-complete', handler); };
+    },
+    onBackupFailed: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('update:backup-failed', handler);
+      return () => { ipcRenderer.removeListener('update:backup-failed', handler); };
     },
   },
 
@@ -243,6 +468,9 @@ const api = {
     /** Check if an invoice's payment link has been paid (polling-based) */
     checkPaymentStatus: (invoiceId: number) =>
       ipcRenderer.invoke('stripe:checkPaymentStatus', invoiceId),
+    /** Check all outstanding payment links at once (background polling) */
+    checkAllPendingPayments: () =>
+      ipcRenderer.invoke('stripe:checkAllPendingPayments'),
   },
 
   // ── Contracted Entities (Pro) ──
@@ -282,8 +510,11 @@ const api = {
     getByClient: (clientId: number) => ipcRenderer.invoke('compliance:getByClient', clientId),
     updateSettings: (clientId: number, data: any) => ipcRenderer.invoke('compliance:updateSettings', clientId, data),
     incrementVisit: (clientId: number) => ipcRenderer.invoke('compliance:incrementVisit', clientId),
+    setVisitCount: (clientId: number, count: number) => ipcRenderer.invoke('compliance:setVisitCount', clientId, count),
     resetProgressCounter: (clientId: number) => ipcRenderer.invoke('compliance:resetProgressCounter', clientId),
     resetRecertCounter: (clientId: number) => ipcRenderer.invoke('compliance:resetRecertCounter', clientId),
+    updateSignatureStatus: (clientId: number, status: string) => ipcRenderer.invoke('compliance:updateSignatureStatus', clientId, status),
+    clearEvalGate: (clientId: number, cleared: boolean) => ipcRenderer.invoke('compliance:clearEvalGate', clientId, cleared),
     getAlerts: () => ipcRenderer.invoke('compliance:getAlerts'),
     getDueItems: (clientId: number) => ipcRenderer.invoke('compliance:getDueItems', clientId),
   },
@@ -305,9 +536,71 @@ const api = {
     delete: (id: number) => ipcRenderer.invoke('communicationLog:delete', id),
   },
 
-  // ── Dashboard (Pro) ──
+  // ── Physician Directory ──
+  physicians: {
+    list: (filters?: { search?: string; favoritesOnly?: boolean }) => ipcRenderer.invoke('physicians:list', filters),
+    get: (id: number) => ipcRenderer.invoke('physicians:get', id),
+    create: (data: any) => ipcRenderer.invoke('physicians:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('physicians:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('physicians:delete', id),
+    search: (query: string) => ipcRenderer.invoke('physicians:search', query),
+  },
+
+  // ── Intake Forms ──
+  intakeForms: {
+    listTemplates: () => ipcRenderer.invoke('intakeForms:listTemplates'),
+    getTemplate: (id: number) => ipcRenderer.invoke('intakeForms:getTemplate', id),
+    updateTemplate: (id: number, data: any) => ipcRenderer.invoke('intakeForms:updateTemplate', id, data),
+    resetTemplate: (slug: string) => ipcRenderer.invoke('intakeForms:resetTemplate', slug),
+    generatePdf: (data: { templateIds: number[]; clientId?: number; fillable?: boolean }) => ipcRenderer.invoke('intakeForms:generatePdf', data),
+    savePdf: (data: { base64Pdf: string; filename: string }) => ipcRenderer.invoke('intakeForms:savePdf', data),
+    reorderTemplates: (ids: number[]) => ipcRenderer.invoke('intakeForms:reorderTemplates', ids),
+  },
+
+  // ── Fax ──
+  fax: {
+    send: (data: { documentId?: number; docType?: 'eval' | 'note' | 'document'; documents?: Array<{ id: number; type: 'eval' | 'note' | 'document' }>; physicianId?: number; faxNumber: string; clientId?: number; requestSignature?: boolean }) => ipcRenderer.invoke('fax:send', data),
+    getStatus: (faxLogId: number) => ipcRenderer.invoke('fax:getStatus', faxLogId),
+    listInbox: () => ipcRenderer.invoke('fax:listInbox'),
+    listOutbox: () => ipcRenderer.invoke('fax:listOutbox'),
+    retrieveFax: (providerFaxId: string) => ipcRenderer.invoke('fax:retrieveFax', providerFaxId),
+    matchToClient: (faxLogId: number, clientId: number) => ipcRenderer.invoke('fax:matchToClient', faxLogId, clientId),
+    getOutboundByClient: (clientId: number) => ipcRenderer.invoke('faxLog:getOutboundByClient', clientId),
+    saveToChart: (data: { faxLogId: number; clientId: number; category: string; linkToOutboundFaxId?: number }) => ipcRenderer.invoke('fax:saveToChart', data),
+    pollStatuses: () => ipcRenderer.invoke('fax:pollStatuses'),
+    pollInbox: () => ipcRenderer.invoke('fax:pollInbox'),
+    // Provider management
+    setProvider: (type: string, credentials: Record<string, string>) => ipcRenderer.invoke('fax:setProvider', type, credentials),
+    getProviderStatus: () => ipcRenderer.invoke('fax:getProviderStatus'),
+    testProvider: () => ipcRenderer.invoke('fax:testProvider'),
+    removeProvider: () => ipcRenderer.invoke('fax:removeProvider'),
+  },
+
+  // ── Waitlist (Pro) ──
+  waitlist: {
+    list: (filters?: { status?: string; discipline?: string }) => ipcRenderer.invoke('waitlist:list', filters),
+    create: (data: any) => ipcRenderer.invoke('waitlist:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('waitlist:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('waitlist:delete', id),
+    search: (query: string) => ipcRenderer.invoke('waitlist:search', query),
+    convertToClient: (id: number) => ipcRenderer.invoke('waitlist:convertToClient', id),
+    linkClient: (waitlistId: number, clientId: number) => ipcRenderer.invoke('waitlist:linkClient', waitlistId, clientId),
+    count: () => ipcRenderer.invoke('waitlist:count'),
+  },
+
+  // ── Dashboard ──
   dashboard: {
+    getBasicAlerts: () => ipcRenderer.invoke('dashboard:getBasicAlerts'),
     getOverview: () => ipcRenderer.invoke('dashboard:getOverview'),
+    getAnalytics: (filters?: { startDate?: string; endDate?: string; monthsBack?: number }) => ipcRenderer.invoke('dashboard:getAnalytics', filters),
+    getOutstandingBalance: () => ipcRenderer.invoke('dashboard:getOutstandingBalance'),
+  },
+
+  // ── Data Integrity ──
+  integrity: {
+    runCheck: () => ipcRenderer.invoke('integrity:runCheck'),
+    verifyAuditChain: () => ipcRenderer.invoke('integrity:verifyAuditChain'),
+    startupCheck: () => ipcRenderer.invoke('integrity:startupCheck'),
   },
 
   // ── Reports (Pro) ──
@@ -320,6 +613,71 @@ const api = {
   directAccess: {
     requiresReferral: (state: string, discipline: string) => ipcRenderer.invoke('directAccess:requiresReferral', state, discipline),
     getRules: () => ipcRenderer.invoke('directAccess:getRules'),
+  },
+
+  // Client Discounts & Packages
+  clientDiscounts: {
+    listByClient: (clientId: number) => ipcRenderer.invoke('clientDiscounts:listByClient', clientId),
+    getActive: (clientId: number) => ipcRenderer.invoke('clientDiscounts:getActive', clientId),
+    create: (data: any) => ipcRenderer.invoke('clientDiscounts:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('clientDiscounts:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('clientDiscounts:delete', id),
+    incrementUsage: (id: number, count?: number) => ipcRenderer.invoke('clientDiscounts:incrementUsage', id, count),
+    decrementUsage: (id: number, count?: number) => ipcRenderer.invoke('clientDiscounts:decrementUsage', id, count),
+  },
+  discountTemplates: {
+    list: () => ipcRenderer.invoke('discountTemplates:list'),
+    create: (data: any) => ipcRenderer.invoke('discountTemplates:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('discountTemplates:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('discountTemplates:delete', id),
+  },
+
+  // ── Dashboard Scratchpad ──
+  scratchpad: {
+    get: () => ipcRenderer.invoke('scratchpad:get'),
+    save: (content: string) => ipcRenderer.invoke('scratchpad:save', content),
+  },
+
+  // ── Dashboard Todos ──
+  dashboardTodos: {
+    list: () => ipcRenderer.invoke('dashboardTodos:list'),
+    create: (text: string) => ipcRenderer.invoke('dashboardTodos:create', text),
+    update: (id: number, data: any) => ipcRenderer.invoke('dashboardTodos:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('dashboardTodos:delete', id),
+    search: (query: string) => ipcRenderer.invoke('dashboardTodos:search', query),
+    reorder: (items: Array<{ id: number; position: number }>) => ipcRenderer.invoke('dashboardTodos:reorder', items),
+    listIncomplete: () => ipcRenderer.invoke('dashboardTodos:listIncomplete'),
+  },
+
+  // ── Calendar Blocks (admin time blocks) ──
+  calendarBlocks: {
+    list: (filters?: { startDate?: string; endDate?: string }) => ipcRenderer.invoke('calendarBlocks:list', filters),
+    create: (data: any) => ipcRenderer.invoke('calendarBlocks:create', data),
+    delete: (id: number) => ipcRenderer.invoke('calendarBlocks:delete', id),
+    update: (id: number, data: any) => ipcRenderer.invoke('calendarBlocks:update', id, data),
+    deleteAndRestore: (id: number) => ipcRenderer.invoke('calendarBlocks:deleteAndRestore', id),
+  },
+
+  // ── Quick Links ──
+  quickLinks: {
+    list: () => ipcRenderer.invoke('quickLinks:list'),
+    create: (data: any) => ipcRenderer.invoke('quickLinks:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('quickLinks:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('quickLinks:delete', id),
+  },
+
+  // Good Faith Estimates (No Surprises Act)
+  gfe: {
+    generate: (data: any) => ipcRenderer.invoke('gfe:generate', data),
+    save: (data: any) => ipcRenderer.invoke('gfe:save', data),
+    list: (clientId: number) => ipcRenderer.invoke('gfe:list', clientId),
+    get: (id: number) => ipcRenderer.invoke('gfe:get', id),
+  },
+
+  // Dev tools (temporary)
+  dev: {
+    seedDemoData: () => ipcRenderer.invoke('dev:seedDemoData'),
+    setTier: (tier: string) => ipcRenderer.invoke('dev:setTier', tier),
   },
 };
 

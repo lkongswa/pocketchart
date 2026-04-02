@@ -8,22 +8,25 @@ import {
   UserPlus,
   CalendarDays,
   Clock,
-  Activity,
   ShieldAlert,
   X,
+  ClipboardList,
+  DollarSign,
+  CheckCircle,
 } from 'lucide-react';
 import type { Client, Note, Appointment } from '../../shared/types';
+import BasicAlertsPanel from '../components/BasicAlertsPanel';
+import DashboardWorkspace from '../components/DashboardWorkspace';
+import ReviewPromptCard from '../components/ReviewPromptCard';
+import OnboardingChecklist from '../components/OnboardingChecklist';
 
 interface DashboardStats {
-  activeClients: number;
+  incompleteEvals: number;
   notesThisWeek: number;
   upcomingAppointments: number;
   unsignedNotes: number;
-}
-
-interface RecentNote {
-  note: Note;
-  clientName: string;
+  outstandingBalance: number;
+  unpaidInvoiceCount: number;
 }
 
 const BACKUP_REMINDER_DAYS = 7;
@@ -31,20 +34,44 @@ const BACKUP_REMINDER_DAYS = 7;
 const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
   const [stats, setStats] = useState<DashboardStats>({
-    activeClients: 0,
+    incompleteEvals: 0,
     notesThisWeek: 0,
     upcomingAppointments: 0,
     unsignedNotes: 0,
+    outstandingBalance: 0,
+    unpaidInvoiceCount: 0,
   });
-  const [recentNotes, setRecentNotes] = useState<RecentNote[]>([]);
   const [upcomingAppointments, setUpcomingAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [showBackupReminder, setShowBackupReminder] = useState(false);
   const [daysSinceBackup, setDaysSinceBackup] = useState<number | null>(null);
+  const [backupFolder, setBackupFolder] = useState<string | null>(null);
+  const [quickBackupLoading, setQuickBackupLoading] = useState(false);
+  const [quickBackupSuccess, setQuickBackupSuccess] = useState(false);
+  const [integrityIssues, setIntegrityIssues] = useState<{ tamperedNotes: number[]; tamperedEvals: number[] } | null>(null);
+  const [reviewEligible, setReviewEligible] = useState(false);
+  const [reviewMilestone, setReviewMilestone] = useState<string | null>(null);
 
   useEffect(() => {
     loadDashboardData();
     checkBackupReminder();
+    runIntegrityCheck();
+  }, []);
+
+  // Review prompt: wait 30 seconds before checking eligibility (don't ambush on launch)
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      try {
+        const result = await window.api.reviewPrompts.checkEligible();
+        if (result.eligible) {
+          setReviewEligible(true);
+          setReviewMilestone(result.milestone);
+        }
+      } catch {
+        // Silently fail — never break dashboard over a review prompt
+      }
+    }, 30000);
+    return () => clearTimeout(timer);
   }, []);
 
   const checkBackupReminder = async () => {
@@ -75,8 +102,43 @@ const DashboardPage: React.FC = () => {
           setShowBackupReminder(true);
         }
       }
+      // Also load backup folder for one-click backup
+      const folder = await window.api.settings.get('backup_folder');
+      setBackupFolder(folder || null);
     } catch (err) {
       // Silently fail — don't break the dashboard over a reminder
+    }
+  };
+
+  const handleQuickBackupFromDashboard = async () => {
+    try {
+      setQuickBackupLoading(true);
+      if (backupFolder) {
+        await window.api.backup.quickBackup();
+      } else {
+        await window.api.backup.exportManual();
+      }
+      setShowBackupReminder(false);
+      setQuickBackupSuccess(true);
+      setTimeout(() => setQuickBackupSuccess(false), 5000);
+    } catch (err: any) {
+      console.error('Quick backup failed:', err);
+      if (err?.message?.includes('BACKUP_FOLDER_NOT_FOUND') || err?.message?.includes('BACKUP_FOLDER_NOT_WRITABLE')) {
+        navigate('/settings');
+      }
+    } finally {
+      setQuickBackupLoading(false);
+    }
+  };
+
+  const runIntegrityCheck = async () => {
+    try {
+      const results = await (window as any).api.integrity.runCheck();
+      if (results.tamperedNotes.length > 0 || results.tamperedEvals.length > 0) {
+        setIntegrityIssues({ tamperedNotes: results.tamperedNotes, tamperedEvals: results.tamperedEvals });
+      }
+    } catch (err) {
+      // Silently fail — don't break the dashboard over an integrity check
     }
   };
 
@@ -93,8 +155,8 @@ const DashboardPage: React.FC = () => {
     try {
       setLoading(true);
 
-      // Get all active clients
-      const clients: Client[] = await window.api.clients.list({ status: 'active' });
+      // Get incomplete evals count and all clients
+      const incompleteEvals: number = await window.api.evaluations.countIncomplete().catch(() => 0);
       const allClients: Client[] = await window.api.clients.list();
 
       // Calculate date boundaries
@@ -114,29 +176,19 @@ const DashboardPage: React.FC = () => {
       weekEnd.setDate(weekStart.getDate() + 6);
       const weekEndStr = weekEnd.toISOString().split('T')[0];
 
-      // Load notes for all clients to count this week's notes and get recent ones
-      const allNotes: RecentNote[] = [];
+      // Load notes for all clients to count this week's notes
       let notesThisWeek = 0;
+      let unsignedNotes = 0;
 
       for (const client of allClients) {
         const clientNotes: Note[] = await window.api.notes.listByClient(client.id);
         for (const note of clientNotes) {
-          allNotes.push({
-            note,
-            clientName: `${client.first_name} ${client.last_name}`,
-          });
           if (note.date_of_service >= weekStartStr && note.date_of_service <= weekEndStr) {
             notesThisWeek++;
           }
+          if (!note.signed_at) unsignedNotes++;
         }
       }
-
-      // Sort all notes by date descending and take the 5 most recent
-      allNotes.sort((a, b) =>
-        b.note.date_of_service.localeCompare(a.note.date_of_service) ||
-        b.note.created_at.localeCompare(a.note.created_at)
-      );
-      setRecentNotes(allNotes.slice(0, 5));
 
       // Load upcoming appointments (today and forward)
       const appointments: Appointment[] = await window.api.appointments.list({
@@ -144,17 +196,19 @@ const DashboardPage: React.FC = () => {
       });
       const upcoming = appointments
         .filter((appt) => appt.status === 'scheduled')
-        .slice(0, 5);
+        .slice(0, 10);
       setUpcomingAppointments(upcoming);
 
-      // Count unsigned notes
-      const unsignedNotes = allNotes.filter((item) => !item.note.signed_at).length;
+      // Outstanding balance
+      const balanceData = await window.api.dashboard.getOutstandingBalance().catch(() => ({ outstanding: 0, unpaidCount: 0 }));
 
       setStats({
-        activeClients: clients.length,
+        incompleteEvals,
         notesThisWeek,
         upcomingAppointments: appointments.filter((a) => a.status === 'scheduled').length,
         unsignedNotes,
+        outstandingBalance: balanceData.outstanding,
+        unpaidInvoiceCount: balanceData.unpaidCount,
       });
     } catch (error) {
       console.error('Failed to load dashboard data:', error);
@@ -184,31 +238,43 @@ const DashboardPage: React.FC = () => {
 
   const statCards = [
     {
-      label: 'Total Active Clients',
-      count: stats.activeClients,
-      icon: <Users size={24} className="text-[var(--color-primary)]" />,
-      bgClass: 'bg-teal-50',
-      onClick: () => navigate('/clients'),
-    },
-    {
-      label: 'Notes This Week',
-      count: stats.notesThisWeek,
-      icon: <FileText size={24} className="text-blue-600" />,
-      bgClass: 'bg-blue-50',
-      onClick: () => navigate('/notes'),
-    },
-    {
       label: 'Upcoming Appointments',
       count: stats.upcomingAppointments,
-      icon: <Calendar size={24} className="text-purple-600" />,
-      bgClass: 'bg-purple-50',
+      icon: <Calendar size={24} className="text-teal-500" />,
+      bgClass: 'bg-teal-50',
       onClick: () => navigate('/calendar'),
+    },
+    {
+      label: 'Incomplete Evals',
+      count: stats.incompleteEvals,
+      icon: <ClipboardList size={24} className="text-amber-500" />,
+      bgClass: 'bg-amber-50',
+      onClick: () => navigate('/evals'),
     },
     {
       label: 'Unsigned Notes',
       count: stats.unsignedNotes,
-      icon: <PenLine size={24} className="text-amber-600" />,
-      bgClass: 'bg-amber-50',
+      icon: <PenLine size={24} className="text-teal-500" />,
+      bgClass: 'bg-teal-50',
+      onClick: () => navigate('/notes'),
+    },
+    {
+      label: 'Outstanding Balance',
+      count: stats.outstandingBalance,
+      subtitle: stats.unpaidInvoiceCount > 0
+        ? `${stats.unpaidInvoiceCount} unpaid invoice${stats.unpaidInvoiceCount !== 1 ? 's' : ''}`
+        : undefined,
+      isCurrency: true,
+      icon: <DollarSign size={24} className="text-blue-500" />,
+      bgClass: 'bg-blue-50',
+      hoverBorder: 'hover:border-blue-300',
+      onClick: () => navigate('/billing?filter=unpaid'),
+    },
+    {
+      label: 'Notes This Week',
+      count: stats.notesThisWeek,
+      icon: <FileText size={24} className="text-teal-500" />,
+      bgClass: 'bg-teal-50',
       onClick: () => navigate('/notes'),
     },
   ];
@@ -239,6 +305,10 @@ const DashboardPage: React.FC = () => {
             <UserPlus size={16} className="mr-2" />
             New Client
           </button>
+          <button className="btn-secondary" onClick={() => navigate('/clients')}>
+            <PenLine size={16} className="mr-2" />
+            Start Note
+          </button>
           <button className="btn-secondary" onClick={() => navigate('/calendar')}>
             <CalendarDays size={16} className="mr-2" />
             View Calendar
@@ -246,30 +316,52 @@ const DashboardPage: React.FC = () => {
         </div>
       </div>
 
+      {/* Integrity Warning Banner */}
+      {integrityIssues && (
+        <div className="mb-6 flex items-start gap-3 p-4 rounded-lg border border-red-300 bg-red-50 text-sm">
+          <ShieldAlert size={20} className="text-red-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="font-medium text-red-800">
+              {integrityIssues.tamperedNotes.length + integrityIssues.tamperedEvals.length} signed document(s) have been modified outside of PocketChart.
+            </p>
+            <p className="text-red-700 mt-1">
+              This may indicate database tampering. Signed documents should only be changed through PocketChart's amendment process. Contact support if you did not make these changes.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Backup Reminder Banner */}
       {showBackupReminder && (
-        <div className="mb-6 flex items-start gap-3 p-4 rounded-lg border border-amber-300 bg-amber-50 text-sm">
-          <ShieldAlert size={20} className="text-amber-600 flex-shrink-0 mt-0.5" />
+        <div className="mb-6 flex items-start gap-3 p-4 rounded-lg border border-orange-300 bg-orange-50 text-sm">
+          <ShieldAlert size={20} className="text-orange-600 flex-shrink-0 mt-0.5" />
           <div className="flex-1">
-            <p className="font-medium text-amber-800">
+            <p className="font-medium text-orange-800">
               {daysSinceBackup === null
                 ? "You haven't created a backup yet."
                 : `It's been ${daysSinceBackup} days since your last backup.`}
             </p>
-            <p className="text-amber-700 mt-1">
-              Protect your clinical records — go to{' '}
+            <div className="flex items-center gap-3 mt-2">
               <button
-                className="underline font-medium hover:text-amber-900"
-                onClick={() => navigate('/settings')}
+                className="px-3 py-1.5 text-xs font-medium text-white bg-orange-600 hover:bg-orange-700 rounded-md transition-colors disabled:opacity-50"
+                onClick={handleQuickBackupFromDashboard}
+                disabled={quickBackupLoading}
               >
-                Settings &gt; Backup & Export
-              </button>{' '}
-              to export a backup.
-            </p>
+                {quickBackupLoading ? 'Backing up\u2026' : 'Back Up Now'}
+              </button>
+              {!backupFolder && (
+                <button
+                  className="text-xs text-orange-700 underline hover:text-orange-900"
+                  onClick={() => navigate('/settings')}
+                >
+                  Set up backup folder
+                </button>
+              )}
+            </div>
           </div>
           <button
             onClick={dismissBackupReminder}
-            className="text-amber-500 hover:text-amber-700 flex-shrink-0"
+            className="text-orange-500 hover:text-orange-700 flex-shrink-0"
             title="Dismiss for today"
           >
             <X size={16} />
@@ -277,112 +369,100 @@ const DashboardPage: React.FC = () => {
         </div>
       )}
 
-      {/* Stat Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      {/* Quick backup success */}
+      {quickBackupSuccess && (
+        <div className="mb-6 flex items-center gap-3 p-4 rounded-lg border border-emerald-300 bg-emerald-50 text-sm">
+          <CheckCircle size={20} className="text-emerald-600 flex-shrink-0" />
+          <p className="text-emerald-800 font-medium">Backup completed successfully.</p>
+        </div>
+      )}
+
+      {/* Alerts Panel */}
+      <BasicAlertsPanel />
+
+      {/* Onboarding Checklist */}
+      <OnboardingChecklist />
+
+      {/* Review Prompt Card */}
+      {reviewEligible && reviewMilestone && (
+        <ReviewPromptCard
+          milestone={reviewMilestone}
+          onComplete={() => setReviewEligible(false)}
+        />
+      )}
+
+      {/* Compact Stat Bar — single row of clickable pills */}
+      <div className="flex flex-wrap gap-2 mb-6">
         {statCards.map((card) => (
-          <div
+          <button
             key={card.label}
-            className="card p-5 cursor-pointer hover:shadow-md hover:border-[var(--color-primary)]/30 transition-all group"
+            className={`flex items-center gap-2 px-4 py-2 rounded-full border border-[var(--color-border)] bg-white hover:shadow-md hover:border-teal-300 transition-all text-sm cursor-pointer`}
             onClick={card.onClick}
           >
-            <div className="flex items-center gap-4">
-              <div
-                className={`flex items-center justify-center w-12 h-12 rounded-lg ${card.bgClass} group-hover:scale-105 transition-transform`}
-              >
-                {card.icon}
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-[var(--color-text)]">{card.count}</p>
-                <p className="text-sm text-[var(--color-text-secondary)]">{card.label}</p>
-              </div>
-            </div>
-          </div>
+            <span className="text-base font-bold text-[var(--color-text)]">
+              {card.isCurrency
+                ? `$${card.count.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+                : card.count}
+            </span>
+            <span className="text-[var(--color-text-secondary)]">{card.label}</span>
+          </button>
         ))}
       </div>
 
-      {/* Two Column Layout: Recent Activity + Upcoming Appointments */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Recent Activity */}
-        <div className="card">
-          <div className="flex items-center gap-2 px-5 py-4 border-b border-[var(--color-border)]">
-            <Activity size={18} className="text-[var(--color-primary)]" />
-            <h2 className="section-title mb-0">Recent Activity</h2>
-          </div>
-          <div className="divide-y divide-[var(--color-border)]">
-            {recentNotes.length === 0 ? (
-              <div className="px-5 py-8 text-center text-[var(--color-text-secondary)] text-sm">
-                No recent notes found.
-              </div>
-            ) : (
-              recentNotes.map((item) => (
-                <div
-                  key={item.note.id}
-                  className="px-5 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
-                  onClick={() =>
-                    navigate(
-                      `/clients/${item.note.client_id}/note/${item.note.id}`
-                    )
-                  }
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-[var(--color-text)]">
-                        {item.clientName}
-                      </p>
-                      <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                        {item.note.subjective
-                          ? item.note.subjective.length > 80
-                            ? item.note.subjective.substring(0, 80) + '...'
-                            : item.note.subjective
-                          : 'No subjective note'}
-                      </p>
-                    </div>
-                    <div className="text-xs text-[var(--color-text-secondary)] whitespace-nowrap ml-4">
-                      {formatDate(item.note.date_of_service)}
+      {/* Upcoming Appointments — primary content block, full width */}
+      <div className="card">
+        <div className="flex items-center gap-2 px-5 py-4 border-b border-[var(--color-border)]">
+          <Clock size={18} className="text-teal-500" />
+          <h2 className="section-title mb-0">Upcoming Appointments</h2>
+        </div>
+        <div className="divide-y divide-[var(--color-border)]">
+          {upcomingAppointments.length === 0 ? (
+            <div className="px-5 py-8 text-center text-[var(--color-text-secondary)] text-sm">
+              No upcoming appointments.
+            </div>
+          ) : (
+            upcomingAppointments.map((appt) => (
+              <div
+                key={appt.id}
+                className="group px-5 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
+                onClick={() => navigate('/calendar', { state: { date: appt.scheduled_date, view: 'week' } })}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-[var(--color-text)]">
+                      {appt.first_name} {appt.last_name}
+                    </p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      {appt.client_discipline && (
+                        <span
+                          className={`badge-${appt.client_discipline.toLowerCase()}`}
+                        >
+                          {appt.client_discipline}
+                        </span>
+                      )}
+                      <span className="text-xs text-[var(--color-text-secondary)]">
+                        {appt.duration_minutes} min
+                      </span>
                     </div>
                   </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* Upcoming Appointments */}
-        <div className="card">
-          <div className="flex items-center gap-2 px-5 py-4 border-b border-[var(--color-border)]">
-            <Clock size={18} className="text-purple-600" />
-            <h2 className="section-title mb-0">Upcoming Appointments</h2>
-          </div>
-          <div className="divide-y divide-[var(--color-border)]">
-            {upcomingAppointments.length === 0 ? (
-              <div className="px-5 py-8 text-center text-[var(--color-text-secondary)] text-sm">
-                No upcoming appointments.
-              </div>
-            ) : (
-              upcomingAppointments.map((appt) => (
-                <div
-                  key={appt.id}
-                  className="px-5 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
-                  onClick={() => navigate(`/clients/${appt.client_id}`)}
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-[var(--color-text)]">
-                        {appt.first_name} {appt.last_name}
-                      </p>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        {appt.client_discipline && (
-                          <span
-                            className={`badge-${appt.client_discipline.toLowerCase()}`}
-                          >
-                            {appt.client_discipline}
-                          </span>
-                        )}
-                        <span className="text-xs text-[var(--color-text-secondary)]">
-                          {appt.duration_minutes} min
-                        </span>
-                      </div>
-                    </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      className="btn-ghost p-1.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                      title="Write Note"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/clients/${appt.client_id}/note/new`, {
+                          state: {
+                            appointmentId: appt.id,
+                            appointmentDate: appt.scheduled_date,
+                            appointmentTime: appt.scheduled_time,
+                            appointmentDuration: appt.duration_minutes,
+                          },
+                        });
+                      }}
+                    >
+                      <PenLine size={14} className="text-teal-600" />
+                    </button>
                     <div className="text-right">
                       <p className="text-sm font-medium text-[var(--color-text)]">
                         {formatDate(appt.scheduled_date)}
@@ -393,11 +473,14 @@ const DashboardPage: React.FC = () => {
                     </div>
                   </div>
                 </div>
-              ))
-            )}
-          </div>
+              </div>
+            ))
+          )}
         </div>
       </div>
+
+      {/* Workspace: Scratchpad + Tasks */}
+      <DashboardWorkspace />
     </div>
   );
 };

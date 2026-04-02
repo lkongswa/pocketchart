@@ -4,17 +4,20 @@ import type { AppTier, LicenseStatus } from '@shared/types';
 const PRO_FEATURES = new Set([
   'contractor_module',
   'professional_vault',
-  'compliance_engine',
   'stripe_billing',
   'mileage_tracking',
   'communication_log',
   'caseload_dashboard',
   'batch_invoicing',
   'tax_summary',
+  'quick_chips',
+  'waitlist',
+  'fax',
+  'insurance_billing',
 ]);
 
 export function useTier() {
-  const [tier, setTier] = useState<AppTier>('free');
+  const [tier, setTier] = useState<AppTier>('unlicensed');
   const [licenseStatus, setLicenseStatus] = useState<LicenseStatus | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -41,7 +44,14 @@ export function useTier() {
     return () => window.removeEventListener('pocketchart:tier-changed', handler);
   }, [refresh]);
 
+  // Listen for startup/background validation tier changes from main process
+  useEffect(() => {
+    const cleanup = window.api.license.onTierChanged(() => refresh());
+    return cleanup;
+  }, [refresh]);
+
   const hasFeature = useCallback((feature: string): boolean => {
+    if (tier === 'unlicensed') return false;
     if (PRO_FEATURES.has(feature)) return tier === 'pro';
     // Basic features are available to basic and pro
     return tier === 'basic' || tier === 'pro';
@@ -49,6 +59,12 @@ export function useTier() {
 
   const isBasicOrHigher = tier === 'basic' || tier === 'pro';
   const isPro = tier === 'pro';
+  const isUnlicensed = tier === 'unlicensed';
+
+  // Trial state — derived from licenseStatus
+  const trialActive = licenseStatus?.trialActive ?? false;
+  const trialExpired = licenseStatus?.trialExpired ?? false;
+  const trialDaysRemaining = licenseStatus?.trialDaysRemaining ?? 0;
 
   return {
     tier,
@@ -57,6 +73,10 @@ export function useTier() {
     hasFeature,
     isBasicOrHigher,
     isPro,
+    isUnlicensed,
+    trialActive,
+    trialExpired,
+    trialDaysRemaining,
     refresh,
   };
 }

@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Plus, Settings, Star, X } from 'lucide-react';
+import { useTier } from '../hooks/useTier';
 import type { Discipline, SOAPSection, NoteBankEntry } from '../../shared/types';
 
 interface QuickChipsProps {
@@ -8,23 +9,41 @@ interface QuickChipsProps {
   onInsert: (phrase: string) => void;
   maxChips?: number;
   onOpenFullBank?: () => void;
+  priorityCategories?: string[];
 }
+
+const EMPTY_CATEGORIES: string[] = [];
 
 /**
  * QuickChips - Displays favorite/frequent phrases as clickable chips
  * for one-click insertion into SOAP note sections.
+ * Pro-only feature: Basic users see nothing (component returns null).
  */
+
 export default function QuickChips({
   discipline,
   section,
   onInsert,
   maxChips = 8,
   onOpenFullBank,
+  priorityCategories = EMPTY_CATEGORIES,
 }: QuickChipsProps) {
+  const { isPro } = useTier();
   const [chips, setChips] = useState<NoteBankEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [showManage, setShowManage] = useState(false);
   const [allPhrases, setAllPhrases] = useState<NoteBankEntry[]>([]);
+  const [showAddInput, setShowAddInput] = useState(false);
+  const [newPhraseText, setNewPhraseText] = useState('');
+  const [adding, setAdding] = useState(false);
+  const addInputRef = useRef<HTMLInputElement>(null);
+
+  // Stabilize priorityCategories — only change identity when contents change
+  const stableCategories = useMemo(
+    () => priorityCategories,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [priorityCategories.join(',')]
+  );
 
   const loadChips = useCallback(async () => {
     try {
@@ -52,16 +71,22 @@ export default function QuickChips({
       setAllPhrases(unique);
 
       // Filter to favorites only for chips display
-      // Sort: favorites first, then by usage (could track in future)
+      // Sort: favorites matching priority categories first, then remaining alphabetically
       const favorites = unique.filter(p => p.is_favorite);
-      const sorted = favorites.sort((a, b) => a.phrase.localeCompare(b.phrase));
+      const sorted = favorites.sort((a, b) => {
+        const aMatch = stableCategories.some(cat => a.category?.toLowerCase() === cat.toLowerCase());
+        const bMatch = stableCategories.some(cat => b.category?.toLowerCase() === cat.toLowerCase());
+        if (aMatch && !bMatch) return -1;
+        if (!aMatch && bMatch) return 1;
+        return a.phrase.localeCompare(b.phrase);
+      });
       setChips(sorted.slice(0, maxChips));
     } catch (err) {
       console.error('Failed to load quick chips:', err);
     } finally {
       setLoading(false);
     }
-  }, [discipline, section, maxChips]);
+  }, [discipline, section, maxChips, stableCategories]);
 
   useEffect(() => {
     loadChips();
@@ -83,11 +108,42 @@ export default function QuickChips({
     onInsert(phrase);
   };
 
+  const handleAddNewPhrase = async () => {
+    const text = newPhraseText.trim();
+    if (!text || adding) return;
+    try {
+      setAdding(true);
+      const created = await window.api.noteBank.create({
+        discipline,
+        section,
+        category: 'custom',
+        phrase: text,
+        is_default: false,
+        is_favorite: true, // auto-favorite so it shows as a chip
+      });
+      setNewPhraseText('');
+      setShowAddInput(false);
+      // Refresh chips
+      loadChips();
+      // Also insert into the note immediately
+      onInsert(text);
+    } catch (err) {
+      console.error('Failed to add phrase:', err);
+    } finally {
+      setAdding(false);
+    }
+  };
+
   // Truncate phrase for chip display
   const truncatePhrase = (phrase: string, maxLen: number = 50): string => {
     if (phrase.length <= maxLen) return phrase;
     return phrase.slice(0, maxLen).trim() + '...';
   };
+
+  // Non-Pro: render nothing — Quick Chips is a Pro-only feature
+  if (!isPro) {
+    return null;
+  }
 
   if (loading) {
     return (
@@ -135,6 +191,51 @@ export default function QuickChips({
           <Settings className="w-3 h-3" />
         </button>
 
+        {/* Quick Add Inline */}
+        {showAddInput ? (
+          <div className="inline-flex items-center gap-1">
+            <input
+              ref={addInputRef}
+              type="text"
+              className="px-2 py-0.5 text-xs rounded-full border border-[var(--color-primary)]/30 bg-white focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)] w-48"
+              placeholder="Type phrase & press Enter"
+              value={newPhraseText}
+              onChange={(e) => setNewPhraseText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleAddNewPhrase();
+                } else if (e.key === 'Escape') {
+                  setShowAddInput(false);
+                  setNewPhraseText('');
+                }
+              }}
+              disabled={adding}
+            />
+            <button
+              type="button"
+              className="p-0.5 rounded hover:bg-gray-200"
+              onClick={() => { setShowAddInput(false); setNewPhraseText(''); }}
+            >
+              <X className="w-3 h-3 text-[var(--color-text-secondary)]" />
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium
+              text-[var(--color-text-secondary)] hover:text-[var(--color-text)]
+              hover:bg-gray-100 transition-colors"
+            onClick={() => {
+              setShowAddInput(true);
+              setTimeout(() => addInputRef.current?.focus(), 50);
+            }}
+            title="Add a new quick phrase"
+          >
+            <Plus className="w-3 h-3" />
+          </button>
+        )}
+
         {/* Open Full Bank */}
         {onOpenFullBank && (
           <button
@@ -145,7 +246,6 @@ export default function QuickChips({
             onClick={onOpenFullBank}
             title="Browse all phrases"
           >
-            <Plus className="w-3 h-3" />
             More
           </button>
         )}

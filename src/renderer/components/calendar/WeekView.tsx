@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { format, addDays, isSameDay } from 'date-fns';
-import type { Appointment } from '../../../shared/types';
+import type { Appointment, CalendarBlock } from '../../../shared/types';
 import TimeGrid from './TimeGrid';
 import type { TimeGridColumn } from './TimeGrid';
 import type { PaymentIndicator } from './AppointmentBlock';
@@ -8,18 +8,34 @@ import type { PaymentIndicator } from './AppointmentBlock';
 interface WeekViewProps {
   weekStart: Date;
   appointments: Appointment[];
+  calendarBlocks?: CalendarBlock[];
   onSlotClick: (date: string, time: string) => void;
   onAppointmentClick: (appt: Appointment) => void;
+  onNoteClick?: (appt: Appointment) => void;
   onAppointmentDrop: (apptId: number, newDate: string, newTime: string) => void;
+  onBlockDrop?: (blockId: number, newDate: string, newTime: string) => void;
+  onTodoDrop?: (todoId: number, date: string, time: string) => void;
+  onAppointmentContextMenu?: (appt: Appointment, x: number, y: number) => void;
+  onBlockContextMenu?: (block: CalendarBlock, x: number, y: number) => void;
+  onBlockToggleDone?: (block: CalendarBlock) => void;
+  onBlockRemove?: (block: CalendarBlock) => void;
   paymentStatusMap?: Record<number, PaymentIndicator>;
 }
 
 export default function WeekView({
   weekStart,
   appointments,
+  calendarBlocks = [],
   onSlotClick,
   onAppointmentClick,
+  onNoteClick,
   onAppointmentDrop,
+  onBlockDrop,
+  onTodoDrop,
+  onAppointmentContextMenu,
+  onBlockContextMenu,
+  onBlockToggleDone,
+  onBlockRemove,
   paymentStatusMap = {},
 }: WeekViewProps) {
   const today = new Date();
@@ -75,9 +91,17 @@ export default function WeekView({
         endHour={19}
         columns={columns}
         appointments={appointments}
+        calendarBlocks={calendarBlocks}
         onSlotClick={onSlotClick}
         onAppointmentClick={onAppointmentClick}
+        onNoteClick={onNoteClick}
         onAppointmentDrop={onAppointmentDrop}
+        onBlockDrop={onBlockDrop}
+        onTodoDrop={onTodoDrop}
+        onAppointmentContextMenu={onAppointmentContextMenu}
+        onBlockContextMenu={onBlockContextMenu}
+        onBlockToggleDone={onBlockToggleDone}
+        onBlockRemove={onBlockRemove}
         paymentStatusMap={paymentStatusMap}
       />
     </div>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Building2, Search, Eye, Phone, Mail } from 'lucide-react';
+import { Plus, Building2, Search, Phone, Mail, Pencil } from 'lucide-react';
 import type { ContractedEntity } from '@shared/types';
 import EntityFormModal from '../components/EntityFormModal';
 import ProFeatureGate from '../components/ProFeatureGate';
@@ -124,6 +124,7 @@ const ContractedEntitiesPage: React.FC = () => {
                       handleEdit(entity);
                     }}
                   >
+                    <Pencil size={14} className="mr-1" />
                     Edit
                   </button>
                 </div>
