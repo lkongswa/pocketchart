@@ -2644,7 +2644,7 @@ function registerIpcHandlers() {
   });
 
   // ── Feedback (Airtable) ──
-  const AIRTABLE_FEEDBACK_PAT = 'patdhgeybhMRMb4aG.b4fa8c6301aa78bd09ebc65ae5c248bc0eb285a7ec4077263f34f7abf5e95c16';
+  const AIRTABLE_FEEDBACK_PAT = process.env.AIRTABLE_FEEDBACK_PAT || '';
   const AIRTABLE_FEEDBACK_BASE = 'appcWqWC6UTtB0T1O';
   const AIRTABLE_FEEDBACK_TABLE = 'tblgF2plUJQvqDD6j';
 

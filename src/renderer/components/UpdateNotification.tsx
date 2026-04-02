@@ -66,7 +66,8 @@ export default function UpdateNotification() {
 
   return (
     <div className="fixed bottom-6 right-6 z-50 max-w-sm animate-in slide-in-from-bottom-4">
-      <div className="card p-4 shadow-lg border border-[var(--color-primary)]/20 bg-[var(--color-bg)]">
+      <div className="card p-4 shadow-lg border-2 border-amber-400 bg-[var(--color-bg)] animate-[gold-pulse_2s_ease-in-out_infinite]"
+        style={{ boxShadow: '0 0 15px rgba(251, 191, 36, 0.4), 0 4px 12px rgba(0, 0, 0, 0.1)' }}>
         <div className="flex items-start gap-3">
           {/* Icon */}
           <div className="flex-shrink-0 mt-0.5">

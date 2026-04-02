@@ -27,6 +27,8 @@ jobs:
         run: npm ci
 
       - name: Build app
+        env:
+          AIRTABLE_FEEDBACK_PAT: ${{ secrets.AIRTABLE_FEEDBACK_PAT }}
         run: npm run build
 
       - name: Build Windows installer (signed)

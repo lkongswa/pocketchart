@@ -1,5 +1,16 @@
 @import "tailwindcss";
 
+@keyframes gold-pulse {
+  0%, 100% {
+    border-color: #f59e0b;
+    box-shadow: 0 0 8px rgba(251, 191, 36, 0.3), 0 4px 12px rgba(0, 0, 0, 0.1);
+  }
+  50% {
+    border-color: #fbbf24;
+    box-shadow: 0 0 20px rgba(251, 191, 36, 0.6), 0 4px 12px rgba(0, 0, 0, 0.1);
+  }
+}
+
 @layer base {
   :root {
     --color-primary: #0d9488;
