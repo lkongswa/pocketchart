@@ -194,7 +194,7 @@ export interface Note {
   duration_weeks: number | null;
   frequency_notes: string;
   // Note type for compliance engine
-  note_type: 'soap' | 'progress_report' | 'recertification' | 'discharge';
+  note_type: 'soap' | 'progress_report' | 'recertification' | 'discharge' | 'non_billing';
   created_at: string;
   updated_at: string;
   deleted_at: string | null;

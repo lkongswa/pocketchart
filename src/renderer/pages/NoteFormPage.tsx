@@ -138,6 +138,7 @@ export default function NoteFormPage() {
   const [rateOverride, setRateOverride] = useState<number | null>(null);
   const [rateOverrideReason, setRateOverrideReason] = useState('');
   const [noteType, setNoteType] = useState('');
+  const [nonBilling, setNonBilling] = useState(false);
 
   // UI state
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -243,6 +244,10 @@ export default function NoteFormPage() {
           setCptModifiers(Array.isArray(parsedModifiers) ? parsedModifiers : []);
         } catch {
           setCptModifiers([]);
+        }
+        // Non-billing flag
+        if (note.note_type === 'non_billing') {
+          setNonBilling(true);
         }
         // Entity fields
         if (note.entity_id) {
@@ -363,19 +368,19 @@ export default function NoteFormPage() {
     if (!clientId) return;
     try {
       setSaving(true);
-      const filteredCptLines = cptLines.filter(l => l.code.trim());
+      const filteredCptLines = nonBilling ? [] : cptLines.filter(l => l.code.trim());
       const noteData: Partial<Note> = {
         client_id: parseInt(clientId, 10),
         date_of_service: dateOfService,
         time_in: timeIn,
         time_out: timeOut,
-        units: filteredCptLines.reduce((sum, l) => sum + (l.units || 0), 0),
+        units: nonBilling ? 0 : filteredCptLines.reduce((sum, l) => sum + (l.units || 0), 0),
         cpt_code: filteredCptLines[0]?.code || '',
         cpt_codes: JSON.stringify(filteredCptLines),
         // V2/V3 Billing fields
-        cpt_modifiers: JSON.stringify(cptModifiers),
-        place_of_service: placeOfService,
-        charge_amount: chargeAmount,
+        cpt_modifiers: nonBilling ? '[]' : JSON.stringify(cptModifiers),
+        place_of_service: nonBilling ? '11' as PlaceOfService : placeOfService,
+        charge_amount: nonBilling ? 0 : chargeAmount,
         subjective,
         objective,
         assessment,
@@ -388,7 +393,7 @@ export default function NoteFormPage() {
         entity_id: isContractedVisit ? entityId ?? undefined : undefined,
         rate_override: isContractedVisit ? rateOverride ?? undefined : undefined,
         rate_override_reason: isContractedVisit ? rateOverrideReason : '',
-        note_type: isContractedVisit ? noteType as Note['note_type'] : undefined,
+        note_type: nonBilling ? 'non_billing' : (isContractedVisit ? noteType as Note['note_type'] : undefined),
       };
 
       let resultNoteId: number | null = null;
@@ -588,8 +593,20 @@ export default function NoteFormPage() {
             </div>
           </div>
 
+          {/* Non-Billing Toggle */}
+          <label className="flex items-center gap-2 cursor-pointer mt-4">
+            <input
+              type="checkbox"
+              checked={nonBilling}
+              onChange={(e) => setNonBilling(e.target.checked)}
+              className="w-4 h-4 rounded border-gray-300 accent-[var(--color-primary)]"
+            />
+            <span className="text-sm font-medium text-[var(--color-text)]">Non-billing visit</span>
+            <span className="text-xs text-[var(--color-text-tertiary)]">(e.g., discharge, coordination)</span>
+          </label>
+
           {/* CPT Code Lines */}
-          <div>
+          {!nonBilling && <div>
             <div className="flex items-center justify-between mb-2">
               <label className="label mb-0">CPT Codes & Units</label>
               <button
@@ -633,10 +650,10 @@ export default function NoteFormPage() {
                 </div>
               ))}
             </div>
-          </div>
+          </div>}
 
           {/* Billing Fields */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 pt-4 border-t border-[var(--color-border)]">
+          {!nonBilling && <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 pt-4 border-t border-[var(--color-border)]">
             <div>
               <label className="label">Place of Service</label>
               <select
@@ -702,7 +719,7 @@ export default function NoteFormPage() {
               </div>
               <p className="text-xs text-[var(--color-text-tertiary)] mt-1">For billing purposes</p>
             </div>
-          </div>
+          </div>}
 
           {/* Contracted Entity */}
           {entities.length > 0 && (
@@ -1001,25 +1018,29 @@ export default function NoteFormPage() {
                   <CheckCircle className="w-4 h-4" />
                   Note signed and saved
                 </p>
-                <p className="text-xs text-emerald-700 mt-1">
-                  Would you like to create an invoice for this session?
-                </p>
+                {!nonBilling && (
+                  <p className="text-xs text-emerald-700 mt-1">
+                    Would you like to create an invoice for this session?
+                  </p>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <button
                   className="btn-ghost btn-sm"
                   onClick={() => navigate(`/clients/${clientId}`)}
                 >
-                  Skip
+                  {nonBilling ? 'Done' : 'Skip'}
                 </button>
-                <button
-                  className="btn-primary btn-sm flex items-center gap-1.5"
-                  onClick={handleCreateInvoice}
-                  disabled={creatingInvoice}
-                >
-                  <Receipt className="w-4 h-4" />
-                  {creatingInvoice ? 'Creating...' : 'Create Invoice'}
-                </button>
+                {!nonBilling && (
+                  <button
+                    className="btn-primary btn-sm flex items-center gap-1.5"
+                    onClick={handleCreateInvoice}
+                    disabled={creatingInvoice}
+                  >
+                    <Receipt className="w-4 h-4" />
+                    {creatingInvoice ? 'Creating...' : 'Create Invoice'}
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -1205,7 +1226,7 @@ export default function NoteFormPage() {
             </div>
 
             {/* Quick Invoice Action */}
-            {existingSignedAt && clientId && (
+            {existingSignedAt && clientId && !nonBilling && (
               <div className="mt-5 pt-4 border-t border-[var(--color-border)]">
                 <button
                   className="w-full btn-primary btn-sm flex items-center justify-center gap-1.5"
