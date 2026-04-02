@@ -1,4 +1,5 @@
 const path = require('path');
+const webpack = require('webpack');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 
@@ -7,7 +8,7 @@ const isDev = process.env.NODE_ENV !== 'production';
 module.exports = {
   mode: isDev ? 'development' : 'production',
   entry: './src/renderer/index.tsx',
-  target: 'electron-renderer',
+  target: 'web',
   output: {
     path: path.resolve(__dirname, 'dist/renderer'),
     filename: 'bundle.js',
@@ -38,6 +39,9 @@ module.exports = {
     ],
   },
   plugins: [
+    new webpack.DefinePlugin({
+      global: 'globalThis',
+    }),
     new HtmlWebpackPlugin({
       template: './src/renderer/index.html',
     }),
