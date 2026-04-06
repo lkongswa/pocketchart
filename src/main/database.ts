@@ -58,6 +58,8 @@ const VALID_TABLES = new Set([
   'waitlist',
   // V3 Insurance: eligibility & denial codes
   'eligibility_checks', 'denial_codes',
+  // GFE & goal history
+  'good_faith_estimates', 'goal_progress_history',
   // Review prompt tracking
   'review_prompts',
 ]);
@@ -2238,6 +2240,33 @@ function runMigrations(): void {
         }
       },
     },
+    {
+      version: 55,
+      description: 'Add practice_id and created_by_user_id to all core tables for future multi-tenancy',
+      up: () => {
+        const coreTables = [
+          'clients', 'notes', 'evaluations', 'goals', 'goals_bank', 'note_bank',
+          'appointments', 'staged_goals', 'progress_report_goals', 'goal_progress_history',
+          'note_amendments', 'custom_patterns',
+          'fee_schedule', 'invoices', 'invoice_items', 'payments',
+          'claims', 'claim_lines', 'authorizations', 'client_discounts', 'discount_templates',
+          'good_faith_estimates', 'eligibility_checks',
+          'client_documents', 'compliance_tracking', 'mileage_log', 'communication_log', 'fax_log',
+          'contracted_entities', 'entity_fee_schedules', 'entity_documents',
+          'vault_documents', 'physicians', 'waitlist',
+        ];
+        for (const table of coreTables) {
+          if (VALID_TABLES.has(table)) {
+            if (!columnExists(table, 'practice_id')) {
+              db.exec(`ALTER TABLE ${table} ADD COLUMN practice_id INTEGER DEFAULT NULL`);
+            }
+            if (!columnExists(table, 'created_by_user_id')) {
+              db.exec(`ALTER TABLE ${table} ADD COLUMN created_by_user_id INTEGER DEFAULT NULL`);
+            }
+          }
+        }
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
@@ -2495,7 +2524,7 @@ function createTables(): void {
 
 // ── Backup, Restore & Integrity Functions ──
 
-const LATEST_SCHEMA_VERSION = 54;
+const LATEST_SCHEMA_VERSION = 55;
 
 /**
  * Run PRAGMA quick_check — a fast consistency check on every launch.
