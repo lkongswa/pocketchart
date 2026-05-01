@@ -79,6 +79,12 @@ let splashWindow: BrowserWindow | null = null;
 const isDev = process.env.NODE_ENV === 'development';
 const FORCE_PRO = false;
 
+// Isolate dev userData so npm run dev never reads the installed app's encrypted DB.
+// Production install: %APPDATA%/PocketChart  ·  Dev: %APPDATA%/PocketChart-Dev
+if (isDev) {
+  app.setPath('userData', path.join(app.getPath('appData'), 'PocketChart-Dev'));
+}
+
 // ── Auto-Updater Configuration ──
 autoUpdater.autoDownload = false;       // Don't download until user says yes
 autoUpdater.autoInstallOnAppQuit = true; // Install on next restart after download
@@ -240,6 +246,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     icon: iconPath,
+    title: isDev ? 'PocketChart [DEV] — test data only' : 'PocketChart',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
