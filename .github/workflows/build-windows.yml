@@ -26,6 +26,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Rebuild trusted native deps
+        # `.npmrc` sets ignore-scripts=true to block arbitrary postinstall
+        # code from compromised packages. The five packages below
+        # legitimately need install scripts (native compile or binary
+        # download) and are rebuilt explicitly. See SECURITY.md.
+        run: npm run deps:setup
+
       - name: Build app
         env:
           AIRTABLE_FEEDBACK_PAT: ${{ secrets.AIRTABLE_FEEDBACK_PAT }}
