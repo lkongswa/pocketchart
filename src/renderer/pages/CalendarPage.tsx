@@ -106,6 +106,9 @@ export default function CalendarPage() {
   // Block context menu state
   const [blockContextMenu, setBlockContextMenu] = useState<BlockContextMenu | null>(null);
 
+  // Empty-slot context menu state (right-click on a time slot)
+  const [slotContextMenu, setSlotContextMenu] = useState<{ x: number; y: number; date: string; time: string } | null>(null);
+
   // Compute date range based on current view
   const getDateRange = useCallback((): { startDate: string; endDate: string } => {
     switch (currentView) {
@@ -444,12 +447,22 @@ export default function CalendarPage() {
   // Context menu for appointments
   const handleAppointmentContextMenu = useCallback((appt: Appointment, x: number, y: number) => {
     setContextMenu({ x, y, appointment: appt });
+    setBlockContextMenu(null);
+    setSlotContextMenu(null);
   }, []);
 
   // Block context menu handler
   const handleBlockContextMenu = useCallback((block: CalendarBlock, x: number, y: number) => {
     setBlockContextMenu({ x, y, block });
-    setContextMenu(null); // Close appointment menu if open
+    setContextMenu(null);
+    setSlotContextMenu(null);
+  }, []);
+
+  // Empty-slot right-click handler — opens a small menu with "New appointment" + "Paste" (when clipboard has data)
+  const handleSlotContextMenu = useCallback((date: string, time: string, x: number, y: number) => {
+    setSlotContextMenu({ x, y, date, time });
+    setContextMenu(null);
+    setBlockContextMenu(null);
   }, []);
 
   // Block actions
@@ -582,24 +595,22 @@ export default function CalendarPage() {
     await loadAppointments();
   };
 
-  // Paste appointment on slot click (override normal slot click when clipboard has data)
-  const handleSlotClickWithPaste = (date: string, time: string) => {
-    if (clipboardAppt) {
-      // Paste the copied appointment at this slot
-      const pasteData: Partial<Appointment> = {
-        client_id: clipboardAppt.client_id,
-        entity_id: clipboardAppt.entity_id,
-        entity_rate: clipboardAppt.entity_rate,
-        duration_minutes: clipboardAppt.duration_minutes,
-        scheduled_date: date,
-        scheduled_time: time,
-        status: 'scheduled',
-      };
-      window.api.appointments.create(pasteData).then(() => loadAppointments());
-      return;
-    }
-    // Normal slot click behavior
-    handleSlotClick(date, time);
+  // Paste the copied appointment at the given slot. Triggered from the slot context menu (not from a stray left-click).
+  const handlePasteAppointment = async (date: string, time: string) => {
+    if (!clipboardAppt) return;
+    setSlotContextMenu(null);
+    const pasteData: Partial<Appointment> = {
+      client_id: clipboardAppt.client_id,
+      entity_id: clipboardAppt.entity_id,
+      entity_rate: clipboardAppt.entity_rate,
+      duration_minutes: clipboardAppt.duration_minutes,
+      scheduled_date: date,
+      scheduled_time: time,
+      status: 'scheduled',
+    };
+    await window.api.appointments.create(pasteData);
+    await loadAppointments();
+    setClipboardAppt(null);
   };
 
   // Day click in month view
@@ -630,7 +641,7 @@ export default function CalendarPage() {
         <div className="flex items-center gap-2 mt-2 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700">
           <Clipboard size={12} />
           <span className="font-medium">Copied:</span> {clipboardAppt.clientName} ({clipboardAppt.duration_minutes}min)
-          <span className="text-blue-500">— Click any time slot to paste</span>
+          <span className="text-blue-500">— Right-click a time slot and choose Paste</span>
           <button
             className="ml-auto p-0.5 rounded hover:bg-blue-100 transition-colors"
             onClick={() => setClipboardAppt(null)}
@@ -653,7 +664,7 @@ export default function CalendarPage() {
               date={currentDate}
               appointments={filteredAppointments}
               calendarBlocks={calendarBlocks}
-              onSlotClick={handleSlotClickWithPaste}
+              onSlotClick={handleSlotClick}
               onAppointmentClick={handleAppointmentClick}
               onNoteClick={handleNoteClick}
               onAppointmentDrop={handleAppointmentDrop}
@@ -661,6 +672,7 @@ export default function CalendarPage() {
               onTodoDrop={handleTodoDrop}
               onAppointmentContextMenu={handleAppointmentContextMenu}
               onBlockContextMenu={handleBlockContextMenu}
+              onSlotContextMenu={handleSlotContextMenu}
               onBlockToggleDone={handleToggleBlockDone}
               onBlockRemove={handleBlockRemoveInline}
               paymentStatusMap={showBilling ? paymentStatusMap : {}}
@@ -670,7 +682,7 @@ export default function CalendarPage() {
               weekStart={weekStart}
               appointments={filteredAppointments}
               calendarBlocks={calendarBlocks}
-              onSlotClick={handleSlotClickWithPaste}
+              onSlotClick={handleSlotClick}
               onAppointmentClick={handleAppointmentClick}
               onNoteClick={handleNoteClick}
               onAppointmentDrop={handleAppointmentDrop}
@@ -678,6 +690,7 @@ export default function CalendarPage() {
               onTodoDrop={handleTodoDrop}
               onAppointmentContextMenu={handleAppointmentContextMenu}
               onBlockContextMenu={handleBlockContextMenu}
+              onSlotContextMenu={handleSlotContextMenu}
               onBlockToggleDone={handleToggleBlockDone}
               onBlockRemove={handleBlockRemoveInline}
               paymentStatusMap={showBilling ? paymentStatusMap : {}}
@@ -1053,6 +1066,35 @@ export default function CalendarPage() {
             y={blockContextMenu.y}
             items={items}
             onClose={() => setBlockContextMenu(null)}
+          />
+        );
+      })()}
+
+      {/* Slot Context Menu (right-click on an empty time slot) */}
+      {slotContextMenu && (() => {
+        const { date, time } = slotContextMenu;
+        const items: ContextMenuItem[] = [
+          {
+            label: 'New appointment here',
+            icon: <Plus size={14} />,
+            onClick: () => { setSlotContextMenu(null); handleSlotClick(date, time); },
+          },
+        ];
+        if (clipboardAppt) {
+          items.push({
+            label: `Paste "${clipboardAppt.clientName}" here`,
+            icon: <Clipboard size={14} />,
+            className: 'hover:bg-blue-50 text-blue-700',
+            dividerBefore: true,
+            onClick: () => handlePasteAppointment(date, time),
+          });
+        }
+        return (
+          <ContextMenu
+            x={slotContextMenu.x}
+            y={slotContextMenu.y}
+            items={items}
+            onClose={() => setSlotContextMenu(null)}
           />
         );
       })()}

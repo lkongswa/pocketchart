@@ -24,6 +24,7 @@ interface TimeGridProps {
   onTodoDrop?: (todoId: number, date: string, time: string) => void;
   onAppointmentContextMenu?: (appt: Appointment, x: number, y: number) => void;
   onBlockContextMenu?: (block: CalendarBlock, x: number, y: number) => void;
+  onSlotContextMenu?: (date: string, time: string, x: number, y: number) => void;
   onBlockToggleDone?: (block: CalendarBlock) => void;
   onBlockRemove?: (block: CalendarBlock) => void;
   paymentStatusMap?: Record<number, PaymentIndicator>;
@@ -136,6 +137,7 @@ export default function TimeGrid({
   onTodoDrop,
   onAppointmentContextMenu,
   onBlockContextMenu,
+  onSlotContextMenu,
   onBlockToggleDone,
   onBlockRemove,
   paymentStatusMap = {},
@@ -222,6 +224,15 @@ export default function TimeGrid({
       onSlotClick(dateStr, timeStr);
     },
     [onSlotClick]
+  );
+
+  const handleSlotContextMenu = useCallback(
+    (dateStr: string, timeStr: string) => (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!onSlotContextMenu) return;
+      e.preventDefault();
+      onSlotContextMenu(dateStr, timeStr, e.clientX, e.clientY);
+    },
+    [onSlotContextMenu]
   );
 
   // Get appointments for a specific column date
@@ -326,6 +337,7 @@ export default function TimeGrid({
                     onDragLeave={handleDragLeave(slotKey)}
                     onDrop={handleDrop(col.dateStr, timeStr)}
                     onClick={handleSlotClick(col.dateStr, timeStr)}
+                    onContextMenu={handleSlotContextMenu(col.dateStr, timeStr)}
                   />
                 );
               })}
