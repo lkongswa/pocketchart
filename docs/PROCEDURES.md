@@ -32,7 +32,7 @@ This document covers the day-to-day development, build, release, and maintenance
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| Node.js | 18+ (LTS recommended) | Runtime |
+| Node.js | 22+ (LTS) | Runtime — `@electron/rebuild` requires >=22.12.0 |
 | npm | 9+ | Package manager |
 | Git | 2.x | Version control |
 | Windows 10/11 | x64 | Target platform |
@@ -45,13 +45,19 @@ This document covers the day-to-day development, build, release, and maintenance
 git clone https://github.com/lkongswa/pocketchart.git
 cd pocketchart
 
-# 2. Install dependencies
-npm install
+# 2. Install dependencies (uses lockfile exactly; honors .npmrc ignore-scripts)
+npm ci
 
-# 3. Rebuild native modules for Electron
-npm run rebuild
+# 3. Rebuild native modules and download Electron binary
+#    (.npmrc disables install scripts globally; deps:setup whitelists
+#     the trusted few — see SECURITY.md for the rationale.)
+npm run deps:setup
 
-# 4. Start development servers
+# 4. (One-time per machine) install pre-commit hooks for gitleaks
+pip install pre-commit
+pre-commit install
+
+# 5. Start development servers
 npm run dev
 ```
 
