@@ -2488,6 +2488,16 @@ export default function SettingsPage() {
                 </p>
               )}
 
+              {/* Upgrade CTA — only shown for Basic licensees */}
+              {tier === 'basic' && (
+                <button
+                  className="btn-primary btn-sm gap-1.5 w-full mt-2"
+                  onClick={() => window.api.shell.openExternal('https://pocketchart.lemonsqueezy.com/checkout/buy/2bf13837-fcfc-4ae4-b4cd-56cf4802f739')}
+                >
+                  Upgrade to Pro
+                </button>
+              )}
+
               {/* Deactivate this device */}
               {!confirmDeactivate ? (
                 <button
@@ -2567,7 +2577,7 @@ export default function SettingsPage() {
 
               <button
                 className="btn-secondary btn-sm gap-1.5 w-full"
-                onClick={() => window.api.shell.openExternal('https://pocketchart.app')}
+                onClick={() => window.api.shell.openExternal('https://pocketchart.lemonsqueezy.com/checkout/buy/2bf13837-fcfc-4ae4-b4cd-56cf4802f739')}
               >
                 Buy PocketChart
               </button>
@@ -2612,7 +2622,7 @@ export default function SettingsPage() {
 
               <button
                 className="btn-secondary btn-sm gap-1.5 w-full"
-                onClick={() => window.api.shell.openExternal('https://pocketchart.app')}
+                onClick={() => window.api.shell.openExternal('https://pocketchart.lemonsqueezy.com/checkout/buy/2bf13837-fcfc-4ae4-b4cd-56cf4802f739')}
               >
                 Buy PocketChart
               </button>

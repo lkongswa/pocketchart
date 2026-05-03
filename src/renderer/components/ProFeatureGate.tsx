@@ -42,11 +42,18 @@ export default function ProFeatureGate({ feature, children, lockedMessage }: Pro
           <button
             className="btn-primary btn-sm"
             onClick={() => {
-              // Navigate to settings/license page
-              window.location.hash = '#/settings';
+              window.api.shell.openExternal('https://pocketchart.lemonsqueezy.com/checkout/buy/2bf13837-fcfc-4ae4-b4cd-56cf4802f739');
             }}
           >
             Upgrade to Pro
+          </button>
+          <button
+            className="block mx-auto mt-3 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:underline"
+            onClick={() => {
+              window.location.hash = '#/settings';
+            }}
+          >
+            Already have a license key?
           </button>
         </div>
       </div>
