@@ -52,3 +52,9 @@ regexes = [
   '''YOUR_[A-Z_]+_HERE''',
   '''sk_test_[a-zA-Z0-9]+''',  # Stripe test keys are publishable; not real secrets
 ]
+# Historical commits with known + rotated leaks. Skipping these prevents
+# post-merge full-history scans from re-flagging credentials we've
+# already revoked. See SECURITY.md "Baseline" for the audit trail.
+commits = [
+  "bf50eaa557bda536372e1fa73f573c4acf33f798",  # 2026-02-12: Airtable feedback PAT (rotated 2026-05-01)
+]
