@@ -2245,7 +2245,8 @@ function runMigrations(): void {
       description: 'Add practice_id and created_by_user_id to all core tables for future multi-tenancy',
       up: () => {
         const coreTables = [
-          'clients', 'notes', 'evaluations', 'goals', 'goals_bank', 'note_bank',
+          // NOTE: goals_bank was dropped in v33 — do not include it here, the ALTER will fail on fresh installs.
+          'clients', 'notes', 'evaluations', 'goals', 'note_bank',
           'appointments', 'staged_goals', 'progress_report_goals', 'goal_progress_history',
           'note_amendments', 'custom_patterns',
           'fee_schedule', 'invoices', 'invoice_items', 'payments',
