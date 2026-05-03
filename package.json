@@ -87,7 +87,7 @@
     "date-fns": "^4.1.0",
     "electron-store": "^11.0.2",
     "electron-updater": "6.7.3",
-    "jspdf": "4.0.0",
+    "jspdf": "4.2.1",
     "lucide-react": "^0.563.0",
     "papaparse": "5.5.3",
     "pdf-lib": "1.17.1",
