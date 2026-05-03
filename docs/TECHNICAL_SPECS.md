@@ -22,14 +22,14 @@ PocketChart is a local-first desktop application for clinical documentation desi
 
 | Layer | Technology | Version |
 |-------|-----------|---------|
-| **Desktop Framework** | Electron | 40.1.0 |
+| **Desktop Framework** | Electron | 40.9.3 |
 | **UI Framework** | React | 19.2.4 |
 | **Language** | TypeScript | 5.9.3 |
 | **CSS Framework** | Tailwind CSS | 4.1.18 |
 | **Database** | SQLite (better-sqlite3) | 12.6.2 |
 | **Bundler** | Webpack | 5.104.1 |
 | **Router** | React Router | 7.13.0 |
-| **PDF Generation** | jsPDF | 4.0.0 |
+| **PDF Generation** | jsPDF | 4.2.1 |
 | **Icons** | Lucide React | 0.563.0 |
 | **Date Utilities** | date-fns | 4.1.0 |
 | **Archive Creation** | Archiver | 7.0.1 |
