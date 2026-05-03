@@ -210,8 +210,10 @@ A few hardening pieces can't be configured from a commit and need a human
 to click through:
 
 - [ ] **Branch protection on `main`**: require the `Security` workflow
-   (npm audit + gitleaks) and `build-windows` to pass before merge.
-   Settings → Branches → add rule for `main`.
+   (npm audit + gitleaks) to pass before merge. Settings → Branches →
+   add rule for `main`. **Do not** require `build-windows` — that
+   workflow only runs on `v*` tag pushes / `workflow_dispatch`, never
+   on pull requests, so requiring it would block every PR forever.
 - [ ] **Dependabot security updates**: separate from version updates.
    Fires immediately on CVE disclosure. Settings → Code security and
    analysis → enable "Dependabot security updates."
