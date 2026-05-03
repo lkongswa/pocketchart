@@ -60,7 +60,7 @@ export default function TrialExpiredModal({ onClose }: TrialExpiredModalProps) {
           <button
             className="btn-secondary w-full gap-2"
             onClick={() => {
-              window.api.shell.openExternal('https://pocketchart.app');
+              window.api.shell.openExternal('https://pocketchart.lemonsqueezy.com/checkout/buy/2bf13837-fcfc-4ae4-b4cd-56cf4802f739');
             }}
           >
             <ExternalLink className="w-4 h-4" />
