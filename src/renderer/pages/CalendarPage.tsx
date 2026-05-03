@@ -23,6 +23,7 @@ import CalendarToolbar from '../components/calendar/CalendarToolbar';
 import DayView from '../components/calendar/DayView';
 import WeekView from '../components/calendar/WeekView';
 import MonthView from '../components/calendar/MonthView';
+import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
 
 type CalendarView = 'day' | 'week' | 'month';
 
@@ -74,7 +75,6 @@ export default function CalendarPage() {
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
-  const contextMenuRef = useRef<HTMLDivElement>(null);
 
   // Todo sidebar state — persisted
   const [todoSidebarOpen, setTodoSidebarOpen] = useLocalPreference('calendar-sidebar-open', false);
@@ -483,18 +483,6 @@ export default function CalendarPage() {
       await loadCalendarBlocks();
     }
   };
-
-  // Close context menu on click outside
-  useEffect(() => {
-    const handleClick = () => {
-      setContextMenu(null);
-      setBlockContextMenu(null);
-    };
-    if (contextMenu || blockContextMenu) {
-      document.addEventListener('click', handleClick);
-      return () => document.removeEventListener('click', handleClick);
-    }
-  }, [contextMenu, blockContextMenu]);
 
   // Copy appointment to clipboard
   const handleCopyAppointment = (appt: Appointment) => {
@@ -976,102 +964,98 @@ export default function CalendarPage() {
         })()}
       </div>
 
-      {/* Context Menu */}
-      {contextMenu && (
-        <div
-          ref={contextMenuRef}
-          className="fixed z-50 bg-white rounded-lg shadow-xl border border-[var(--color-border)] py-1 min-w-[160px]"
-          style={{ top: contextMenu.y, left: contextMenu.x }}
-        >
-          <button
-            className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 transition-colors"
-            onClick={() => handleCopyAppointment(contextMenu.appointment)}
-          >
-            <Copy size={14} /> Copy Appointment
-          </button>
-          <button
-            className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 transition-colors"
-            onClick={() => handleEditAppointment(contextMenu.appointment)}
-          >
-            <Edit3 size={14} /> Edit
-          </button>
-          <button
-            className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 text-blue-700 flex items-center gap-2 transition-colors"
-            onClick={() => {
-              const appt = contextMenu.appointment;
-              setContextMenu(null);
-              handleNoteClick(appt);
-            }}
-          >
-            <FileText size={14} /> Write Note
-          </button>
-          <div className="border-t border-[var(--color-border)] my-1" />
-          {contextMenu.appointment.status === 'scheduled' && (
-            <>
-              <button
-                className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-50 text-emerald-700 flex items-center gap-2 transition-colors"
-                onClick={async () => {
-                  const appt = contextMenu.appointment;
-                  setContextMenu(null);
-                  await window.api.appointments.update(appt.id, { ...appt, status: 'completed' });
-                  await loadAppointments();
-                }}
-              >
-                <CheckCircle2 size={14} /> Mark Attended
-              </button>
-              <button
-                className="w-full text-left px-3 py-2 text-sm hover:bg-amber-50 text-amber-700 flex items-center gap-2 transition-colors"
-                onClick={() => handleCancelAppointment(contextMenu.appointment)}
-              >
-                <Ban size={14} /> Late Cancel
-              </button>
-              <button
-                className="w-full text-left px-3 py-2 text-sm hover:bg-orange-50 text-orange-700 flex items-center gap-2 transition-colors"
-                onClick={() => handleNoShow(contextMenu.appointment)}
-              >
-                <AlertTriangle size={14} /> No-Show
-              </button>
-            </>
-          )}
-          <button
-            className="w-full text-left px-3 py-2 text-sm hover:bg-red-50 text-red-600 flex items-center gap-2 transition-colors"
-            onClick={() => handleDeleteAppointment(contextMenu.appointment)}
-          >
-            <Trash2 size={14} /> Delete
-          </button>
-        </div>
-      )}
+      {/* Appointment Context Menu */}
+      {contextMenu && (() => {
+        const appt = contextMenu.appointment;
+        const items: ContextMenuItem[] = [
+          { label: 'Copy Appointment', icon: <Copy size={14} />, onClick: () => handleCopyAppointment(appt) },
+          { label: 'Edit', icon: <Edit3 size={14} />, onClick: () => handleEditAppointment(appt) },
+          {
+            label: 'Write Note',
+            icon: <FileText size={14} />,
+            className: 'hover:bg-blue-50 text-blue-700',
+            onClick: () => { setContextMenu(null); handleNoteClick(appt); },
+          },
+        ];
+        if (appt.status === 'scheduled') {
+          items.push(
+            {
+              label: 'Mark Attended',
+              icon: <CheckCircle2 size={14} />,
+              className: 'hover:bg-emerald-50 text-emerald-700',
+              dividerBefore: true,
+              onClick: async () => {
+                setContextMenu(null);
+                await window.api.appointments.update(appt.id, { ...appt, status: 'completed' });
+                await loadAppointments();
+              },
+            },
+            {
+              label: 'Late Cancel',
+              icon: <Ban size={14} />,
+              className: 'hover:bg-amber-50 text-amber-700',
+              onClick: () => handleCancelAppointment(appt),
+            },
+            {
+              label: 'No-Show',
+              icon: <AlertTriangle size={14} />,
+              className: 'hover:bg-orange-50 text-orange-700',
+              onClick: () => handleNoShow(appt),
+            },
+          );
+        }
+        items.push({
+          label: 'Delete',
+          icon: <Trash2 size={14} />,
+          className: 'hover:bg-red-50 text-red-600',
+          dividerBefore: appt.status !== 'scheduled',
+          onClick: () => handleDeleteAppointment(appt),
+        });
+        return (
+          <ContextMenu
+            x={contextMenu.x}
+            y={contextMenu.y}
+            items={items}
+            onClose={() => setContextMenu(null)}
+          />
+        );
+      })()}
 
       {/* Block Context Menu */}
-      {blockContextMenu && (
-        <div
-          className="fixed z-50 bg-white rounded-lg shadow-xl border border-[var(--color-border)] py-1 min-w-[180px]"
-          style={{ top: blockContextMenu.y, left: blockContextMenu.x }}
-        >
-          <button
-            className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 transition-colors"
-            onClick={() => handleToggleBlockDone(blockContextMenu.block)}
-          >
-            <CheckCircle2 size={14} className={blockContextMenu.block.completed ? 'text-amber-500' : 'text-emerald-500'} />
-            {blockContextMenu.block.completed ? 'Mark Undone' : 'Mark Done'}
-          </button>
-          <div className="border-t border-[var(--color-border)] my-1" />
-          {blockContextMenu.block.source_todo_id && (
-            <button
-              className="w-full text-left px-3 py-2 text-sm hover:bg-amber-50 text-amber-700 flex items-center gap-2 transition-colors"
-              onClick={() => handleDeleteAndRestoreBlock(blockContextMenu.block)}
-            >
-              <Undo2 size={14} /> Remove & Restore Task
-            </button>
-          )}
-          <button
-            className="w-full text-left px-3 py-2 text-sm hover:bg-red-50 text-red-600 flex items-center gap-2 transition-colors"
-            onClick={() => handleDeleteBlock(blockContextMenu.block)}
-          >
-            <Trash2 size={14} /> Delete Block
-          </button>
-        </div>
-      )}
+      {blockContextMenu && (() => {
+        const block = blockContextMenu.block;
+        const items: ContextMenuItem[] = [
+          {
+            label: block.completed ? 'Mark Undone' : 'Mark Done',
+            icon: <CheckCircle2 size={14} className={block.completed ? 'text-amber-500' : 'text-emerald-500'} />,
+            onClick: () => handleToggleBlockDone(block),
+          },
+        ];
+        if (block.source_todo_id) {
+          items.push({
+            label: 'Remove & Restore Task',
+            icon: <Undo2 size={14} />,
+            className: 'hover:bg-amber-50 text-amber-700',
+            dividerBefore: true,
+            onClick: () => handleDeleteAndRestoreBlock(block),
+          });
+        }
+        items.push({
+          label: 'Delete Block',
+          icon: <Trash2 size={14} />,
+          className: 'hover:bg-red-50 text-red-600',
+          dividerBefore: !block.source_todo_id,
+          onClick: () => handleDeleteBlock(block),
+        });
+        return (
+          <ContextMenu
+            x={blockContextMenu.x}
+            y={blockContextMenu.y}
+            items={items}
+            onClose={() => setBlockContextMenu(null)}
+          />
+        );
+      })()}
 
       <AppointmentModal
         isOpen={modalOpen}
