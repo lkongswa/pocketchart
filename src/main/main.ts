@@ -1,3 +1,4 @@
+import './bootstrap'; // MUST be first — sets userData path before any DB / electron-store import
 import { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, powerMonitor } from 'electron';
 import path from 'path';
 import crypto from 'crypto';
@@ -78,6 +79,8 @@ let splashWindow: BrowserWindow | null = null;
 
 const isDev = process.env.NODE_ENV === 'development';
 const FORCE_PRO = false;
+
+// (userData isolation moved to ./bootstrap so it runs before DB import — see bootstrap.ts)
 
 // ── Auto-Updater Configuration ──
 autoUpdater.autoDownload = false;       // Don't download until user says yes
@@ -240,6 +243,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     icon: iconPath,
+    title: isDev ? 'PocketChart [DEV] — test data only' : 'PocketChart',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
