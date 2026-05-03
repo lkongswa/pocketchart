@@ -1,0 +1,54 @@
+title = "PocketChart gitleaks config"
+
+# Extend the built-in gitleaks rule set rather than replace it.
+# Default rules cover Stripe, AWS, GitHub, Slack, generic high-entropy
+# strings, and (as of gitleaks 8.x) Airtable PATs. Custom rules below
+# add PocketChart-specific patterns and tighten coverage on patterns
+# we've actually been bitten by.
+[extend]
+useDefault = true
+
+# ─── Custom rules ───────────────────────────────────────────────────
+
+[[rules]]
+id = "anthropic-api-key"
+description = "Anthropic API key"
+regex = '''sk-ant-[a-zA-Z0-9_-]{20,}'''
+keywords = ["sk-ant-"]
+
+[[rules]]
+id = "airtable-pat-explicit"
+description = "Airtable Personal Access Token (explicit pattern, in addition to default)"
+regex = '''pat[a-zA-Z0-9]{14}\.[a-f0-9]{64}'''
+keywords = ["pat"]
+
+[[rules]]
+id = "db-connection-string-with-creds"
+description = "Database connection string with embedded credentials"
+regex = '''(postgres|postgresql|mysql|mongodb)(\+srv)?://[^\s:@/]+:[^\s:@/]+@[^\s/]+'''
+keywords = ["postgres://", "postgresql://", "mysql://", "mongodb://", "mongodb+srv://"]
+
+[[rules]]
+id = "make-webhook"
+description = "Make.com (Integromat) webhook URL with hook token"
+regex = '''https://hook\.(eu[0-9]+|us[0-9]+)\.make\.com/[a-zA-Z0-9]{32,}'''
+keywords = ["hook.make.com"]
+
+# ─── Allowlist ──────────────────────────────────────────────────────
+
+[allowlist]
+description = "Paths and patterns that produce known false positives"
+paths = [
+  '''node_modules/''',
+  '''dist/''',
+  '''build/''',
+  '''release/''',
+  # docs may contain example/placeholder tokens like sk-ant-EXAMPLE...
+  '''docs/.*\.md''',
+]
+# Common placeholder values used in .env.example or test fixtures
+regexes = [
+  '''REPLACE_ME''',
+  '''YOUR_[A-Z_]+_HERE''',
+  '''sk_test_[a-zA-Z0-9]+''',  # Stripe test keys are publishable; not real secrets
+]
