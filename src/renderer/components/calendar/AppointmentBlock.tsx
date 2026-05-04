@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { FileText } from 'lucide-react';
 import type { Appointment, AppointmentStatus, VisitType, SessionType } from '../../../shared/types';
 import { VISIT_TYPE_LABELS, SESSION_TYPE_LABELS } from '../../../shared/types';
@@ -13,9 +13,14 @@ interface AppointmentBlockProps {
   onNoteClick?: (appt: Appointment) => void;
   onContextMenu?: (appt: Appointment, x: number, y: number) => void;
   onTodoDrop?: (todoId: number, date: string, time: string) => void;
+  /** Called when the user finishes drag-resizing. Snapped to 15-min increments, min 15 min, no upper bound. */
+  onResize?: (apptId: number, durationMinutes: number) => void;
   compact?: boolean;
   paymentStatus?: PaymentIndicator;
 }
+
+const RESIZE_SNAP_MIN = 15; // minutes
+const MIN_DURATION = 15;
 
 const STATUS_CLASSES: Record<AppointmentStatus, string> = {
   scheduled: 'border-l-4 border-l-blue-500 bg-blue-50',
@@ -70,6 +75,7 @@ export default function AppointmentBlock({
   onNoteClick,
   onContextMenu,
   onTodoDrop,
+  onResize,
   compact = false,
   paymentStatus = 'none',
 }: AppointmentBlockProps) {
@@ -77,16 +83,26 @@ export default function AppointmentBlock({
   const hour = parseInt(hStr, 10);
   const minutes = parseInt(mStr, 10);
 
+  // Live preview duration during drag-resize; null when not resizing.
+  const [previewDuration, setPreviewDuration] = useState<number | null>(null);
+  const resizeStateRef = useRef<{ startY: number; startDuration: number } | null>(null);
+
+  const effectiveDuration = previewDuration ?? appointment.duration_minutes;
   const topPx = ((hour - startHour) * 2 + minutes / 30) * slotHeight;
-  const heightPx = Math.max((appointment.duration_minutes / 30) * slotHeight, 24);
+  const heightPx = Math.max((effectiveDuration / 30) * slotHeight, 24);
 
   const isContractorAppt = Boolean(appointment.entity_id);
-  const baseName = isContractorAppt && appointment.entity_name
-    ? appointment.entity_name
+  // For contractor appts, the patient is the primary subject — show their name first; entity is the secondary tag.
+  // For regular client appts, show the client's name as before.
+  const clientName = isContractorAppt
+    ? (appointment.patient_name && appointment.patient_name.trim()
+        ? appointment.patient_name
+        : (appointment.entity_name || 'Unknown patient'))
     : `${appointment.first_name || 'Unknown'} ${appointment.last_name ? appointment.last_name.charAt(0) + '.' : ''}`;
-  const clientName = isContractorAppt && appointment.patient_name
-    ? `${baseName} — ${appointment.patient_name}`
-    : baseName;
+  // Secondary line under the primary name — only relevant for contractor appts that actually have both patient and entity.
+  const secondaryLabel = isContractorAppt && appointment.patient_name && appointment.patient_name.trim() && appointment.entity_name
+    ? appointment.entity_name
+    : null;
 
   // Pick color set based on session type
   const sessionType = (appointment.session_type || 'visit') as SessionType;
@@ -140,6 +156,51 @@ export default function AppointmentBlock({
     }
   };
 
+  // ── Drag-to-resize from the bottom edge ──
+  // Compute new duration from a Y-pixel delta off the original height. Snap to 15-min increments, clamp to MIN_DURATION (no upper bound).
+  const computeResizedDuration = useCallback((deltaPx: number): number => {
+    if (!resizeStateRef.current) return appointment.duration_minutes;
+    const startDuration = resizeStateRef.current.startDuration;
+    // pixelsPerMinute = slotHeight / 30; minutesAdded = deltaPx / pixelsPerMinute = deltaPx * 30 / slotHeight
+    const minutesAdded = (deltaPx * 30) / slotHeight;
+    const raw = startDuration + minutesAdded;
+    const snapped = Math.round(raw / RESIZE_SNAP_MIN) * RESIZE_SNAP_MIN;
+    return Math.max(MIN_DURATION, snapped);
+  }, [slotHeight, appointment.duration_minutes]);
+
+  const handleResizeMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizeStateRef.current = { startY: e.clientY, startDuration: appointment.duration_minutes };
+    setPreviewDuration(appointment.duration_minutes);
+  }, [appointment.duration_minutes]);
+
+  // Document-level mousemove/mouseup listeners during an active resize, so the drag works even when the cursor leaves the block.
+  useEffect(() => {
+    if (previewDuration === null) return;
+    const onMove = (e: MouseEvent) => {
+      if (!resizeStateRef.current) return;
+      const delta = e.clientY - resizeStateRef.current.startY;
+      setPreviewDuration(computeResizedDuration(delta));
+    };
+    const onUp = (e: MouseEvent) => {
+      if (!resizeStateRef.current) return;
+      const delta = e.clientY - resizeStateRef.current.startY;
+      const finalDuration = computeResizedDuration(delta);
+      resizeStateRef.current = null;
+      setPreviewDuration(null);
+      if (finalDuration !== appointment.duration_minutes && onResize) {
+        onResize(appointment.id, finalDuration);
+      }
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [previewDuration, computeResizedDuration, appointment.id, appointment.duration_minutes, onResize]);
+
   const dollarBadge = paymentStatus === 'paid'
     ? <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-emerald-500 text-white text-[9px] font-bold flex-shrink-0" title="Paid">$</span>
     : paymentStatus === 'unpaid'
@@ -187,24 +248,26 @@ export default function AppointmentBlock({
   }
 
   // Full mode: absolutely positioned for day/week time grid
+  const isResizing = previewDuration !== null;
   return (
     <div
-      className={`absolute left-0.5 right-0.5 rounded-md px-2 py-1 overflow-hidden cursor-pointer transition-shadow hover:shadow-md z-10 pointer-events-auto ${statusClasses[appointment.status]}`}
+      className={`absolute left-0.5 right-0.5 rounded-md px-2 py-1 overflow-hidden cursor-pointer transition-shadow hover:shadow-md z-10 pointer-events-auto ${statusClasses[appointment.status]} ${isResizing ? 'ring-2 ring-blue-400' : ''}`}
       style={{ top: topPx, height: heightPx }}
-      draggable={true}
+      draggable={!isResizing}
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
       onClick={(e) => {
+        if (isResizing) return;
         e.stopPropagation();
         onClick(appointment);
       }}
       onContextMenu={handleContextMenu}
-      title={`${clientName} - ${formatTime12(appointment.scheduled_time)} (${appointment.duration_minutes}m)`}
+      title={`${clientName} - ${formatTime12(appointment.scheduled_time)} (${effectiveDuration}m)`}
     >
       <div className="flex items-center justify-between gap-1">
         <div className="text-xs text-[var(--color-text-secondary)] leading-tight">
-          {formatTime12(appointment.scheduled_time)}
+          {formatTime12(appointment.scheduled_time)}{isResizing ? ` · ${effectiveDuration}m` : ''}
         </div>
         <div className="flex items-center gap-0.5">
           {sessionBadge}
@@ -221,6 +284,11 @@ export default function AppointmentBlock({
       >
         {clientName}
       </div>
+      {secondaryLabel && heightPx >= 40 && (
+        <div className="text-[10px] text-[var(--color-text-secondary)] truncate leading-tight">
+          {secondaryLabel}
+        </div>
+      )}
       {heightPx >= 48 && appointment.client_discipline && (
         <div className="mt-0.5">
           <span
@@ -249,6 +317,15 @@ export default function AppointmentBlock({
         >
           <FileText size={14} className="text-current" />
         </button>
+      )}
+      {/* Resize handle — bottom edge, drag downward to lengthen the appt */}
+      {onResize && appointment.status !== 'cancelled' && (
+        <div
+          className="absolute left-0 right-0 bottom-0 h-2 cursor-ns-resize hover:bg-blue-400/30 transition-colors"
+          onMouseDown={handleResizeMouseDown}
+          onClick={(e) => e.stopPropagation()}
+          title="Drag to resize"
+        />
       )}
     </div>
   );
