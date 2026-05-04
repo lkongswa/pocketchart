@@ -113,14 +113,20 @@ const DashboardPage: React.FC = () => {
   const handleQuickBackupFromDashboard = async () => {
     try {
       setQuickBackupLoading(true);
+      let succeeded = true;
       if (backupFolder) {
+        // quickBackup has no cancel path — saves to the designated folder.
         await window.api.backup.quickBackup();
       } else {
-        await window.api.backup.exportManual();
+        // exportManual returns null when the user cancels the save dialog. Don't claim success in that case.
+        const savedPath = await window.api.backup.exportManual();
+        succeeded = Boolean(savedPath);
       }
-      setShowBackupReminder(false);
-      setQuickBackupSuccess(true);
-      setTimeout(() => setQuickBackupSuccess(false), 5000);
+      if (succeeded) {
+        setShowBackupReminder(false);
+        setQuickBackupSuccess(true);
+        setTimeout(() => setQuickBackupSuccess(false), 5000);
+      }
     } catch (err: any) {
       console.error('Quick backup failed:', err);
       if (err?.message?.includes('BACKUP_FOLDER_NOT_FOUND') || err?.message?.includes('BACKUP_FOLDER_NOT_WRITABLE')) {
