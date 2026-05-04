@@ -1906,7 +1906,7 @@ function registerIpcHandlers() {
     const result = db.prepare(`
       INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate, patient_name, visit_type, session_type)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(data.client_id || 0, data.scheduled_date, data.scheduled_time,
+    `).run(data.client_id || null, data.scheduled_date, data.scheduled_time,
       data.duration_minutes || 60, data.status || 'scheduled',
       data.entity_id || null, data.entity_rate || null, data.patient_name || '',
       data.visit_type || 'O', data.session_type || 'visit');
@@ -1923,7 +1923,7 @@ function registerIpcHandlers() {
     const txn = db.transaction(() => {
       for (const data of items) {
         const result = insert.run(
-          data.client_id || 0, data.scheduled_date, data.scheduled_time,
+          data.client_id || null, data.scheduled_date, data.scheduled_time,
           data.duration_minutes || 60, data.status || 'scheduled',
           data.entity_id || null, data.entity_rate || null, data.patient_name || '',
           data.visit_type || 'O', data.session_type || 'visit'
@@ -1942,7 +1942,7 @@ function registerIpcHandlers() {
         duration_minutes=?, status=?, note_id=?, entity_id=?, entity_rate=?, patient_name=?,
         visit_type=?, session_type=?, evaluation_id=?
       WHERE id=? AND deleted_at IS NULL
-    `).run(data.client_id, data.scheduled_date, data.scheduled_time,
+    `).run(data.client_id || null, data.scheduled_date, data.scheduled_time,
       data.duration_minutes, data.status, data.note_id,
       data.entity_id || null, data.entity_rate || null, data.patient_name || '',
       data.visit_type || 'O', data.session_type || 'visit', data.evaluation_id || null, id);
