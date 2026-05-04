@@ -25,6 +25,7 @@ interface TimeGridProps {
   onAppointmentContextMenu?: (appt: Appointment, x: number, y: number) => void;
   onBlockContextMenu?: (block: CalendarBlock, x: number, y: number) => void;
   onSlotContextMenu?: (date: string, time: string, x: number, y: number) => void;
+  onAppointmentResize?: (apptId: number, durationMinutes: number) => void;
   onBlockToggleDone?: (block: CalendarBlock) => void;
   onBlockRemove?: (block: CalendarBlock) => void;
   paymentStatusMap?: Record<number, PaymentIndicator>;
@@ -138,6 +139,7 @@ export default function TimeGrid({
   onAppointmentContextMenu,
   onBlockContextMenu,
   onSlotContextMenu,
+  onAppointmentResize,
   onBlockToggleDone,
   onBlockRemove,
   paymentStatusMap = {},
@@ -370,6 +372,7 @@ export default function TimeGrid({
                       onNoteClick={onNoteClick}
                       onContextMenu={onAppointmentContextMenu}
                       onTodoDrop={onTodoDrop}
+                      onResize={onAppointmentResize}
                       paymentStatus={paymentStatusMap[appt.id] || 'none'}
                     />
                   </div>

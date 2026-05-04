@@ -18,6 +18,7 @@ interface DayViewProps {
   onAppointmentContextMenu?: (appt: Appointment, x: number, y: number) => void;
   onBlockContextMenu?: (block: CalendarBlock, x: number, y: number) => void;
   onSlotContextMenu?: (date: string, time: string, x: number, y: number) => void;
+  onAppointmentResize?: (apptId: number, durationMinutes: number) => void;
   onBlockToggleDone?: (block: CalendarBlock) => void;
   onBlockRemove?: (block: CalendarBlock) => void;
   paymentStatusMap?: Record<number, PaymentIndicator>;
@@ -36,6 +37,7 @@ export default function DayView({
   onAppointmentContextMenu,
   onBlockContextMenu,
   onSlotContextMenu,
+  onAppointmentResize,
   onBlockToggleDone,
   onBlockRemove,
   paymentStatusMap = {},
@@ -86,6 +88,7 @@ export default function DayView({
         onAppointmentContextMenu={onAppointmentContextMenu}
         onBlockContextMenu={onBlockContextMenu}
         onSlotContextMenu={onSlotContextMenu}
+        onAppointmentResize={onAppointmentResize}
         onBlockToggleDone={onBlockToggleDone}
         onBlockRemove={onBlockRemove}
         paymentStatusMap={paymentStatusMap}

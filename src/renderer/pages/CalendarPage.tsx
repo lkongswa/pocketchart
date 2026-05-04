@@ -35,6 +35,9 @@ interface ClipboardAppointment {
   duration_minutes: number;
   status: string;
   clientName: string;
+  patient_name?: string | null;
+  visit_type?: string | null;
+  session_type?: string | null;
 }
 
 // Context menu state
@@ -438,6 +441,14 @@ export default function CalendarPage() {
     await loadAppointments();
   };
 
+  // Drag-resize from the bottom edge of an appointment block.
+  const handleAppointmentResize = async (apptId: number, durationMinutes: number) => {
+    const appt = appointments.find((a) => a.id === apptId);
+    if (!appt) return;
+    await window.api.appointments.update(apptId, { ...appt, duration_minutes: durationMinutes });
+    await loadAppointments();
+  };
+
   // Batch save for recurring appointments
   const handleSaveBatch = async (items: Partial<Appointment>[]) => {
     await window.api.appointments.createBatch(items);
@@ -509,6 +520,9 @@ export default function CalendarPage() {
       duration_minutes: appt.duration_minutes,
       status: 'scheduled',
       clientName,
+      patient_name: (appt as any).patient_name ?? null,
+      visit_type: (appt as any).visit_type ?? null,
+      session_type: (appt as any).session_type ?? null,
     });
     setContextMenu(null);
   };
@@ -607,6 +621,9 @@ export default function CalendarPage() {
       scheduled_date: date,
       scheduled_time: time,
       status: 'scheduled',
+      patient_name: clipboardAppt.patient_name ?? '',
+      visit_type: (clipboardAppt.visit_type ?? 'O') as any,
+      session_type: (clipboardAppt.session_type ?? 'visit') as any,
     };
     await window.api.appointments.create(pasteData);
     await loadAppointments();
@@ -673,6 +690,7 @@ export default function CalendarPage() {
               onAppointmentContextMenu={handleAppointmentContextMenu}
               onBlockContextMenu={handleBlockContextMenu}
               onSlotContextMenu={handleSlotContextMenu}
+              onAppointmentResize={handleAppointmentResize}
               onBlockToggleDone={handleToggleBlockDone}
               onBlockRemove={handleBlockRemoveInline}
               paymentStatusMap={showBilling ? paymentStatusMap : {}}
@@ -691,6 +709,7 @@ export default function CalendarPage() {
               onAppointmentContextMenu={handleAppointmentContextMenu}
               onBlockContextMenu={handleBlockContextMenu}
               onSlotContextMenu={handleSlotContextMenu}
+              onAppointmentResize={handleAppointmentResize}
               onBlockToggleDone={handleToggleBlockDone}
               onBlockRemove={handleBlockRemoveInline}
               paymentStatusMap={showBilling ? paymentStatusMap : {}}
