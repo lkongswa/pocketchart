@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
-import type { ContractedEntity } from '@shared/types';
+import type { ContractedEntity, BillingCycle } from '@shared/types';
 
 interface EntityFormModalProps {
   isOpen: boolean;
@@ -27,6 +27,9 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
   const [zip, setZip] = useState('');
   const [defaultNoteType, setDefaultNoteType] = useState('soap');
   const [notes, setNotes] = useState('');
+  const [requiresNotes, setRequiresNotes] = useState(false);
+  const [billingCycle, setBillingCycle] = useState<BillingCycle>('monthly');
+  const [billingDay, setBillingDay] = useState(1);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -42,6 +45,9 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
       setZip(entity.billing_address_zip || '');
       setDefaultNoteType(entity.default_note_type || 'soap');
       setNotes(entity.notes || '');
+      setRequiresNotes(Boolean(entity.requires_notes));
+      setBillingCycle((entity.billing_cycle as BillingCycle) || 'monthly');
+      setBillingDay(entity.billing_day || 1);
     } else {
       setName('');
       setContactName('');
@@ -53,6 +59,9 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
       setZip('');
       setDefaultNoteType('soap');
       setNotes('');
+      setRequiresNotes(false);
+      setBillingCycle('monthly');
+      setBillingDay(1);
     }
     setError('');
   }, [entity, isOpen]);
@@ -78,6 +87,9 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
         billing_address_zip: zip.trim(),
         default_note_type: defaultNoteType as ContractedEntity['default_note_type'],
         notes: notes.trim(),
+        requires_notes: requiresNotes ? 1 : 0,
+        billing_cycle: billingCycle,
+        billing_day: billingDay,
       };
 
       if (entity) {
@@ -172,6 +184,56 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
               <option value="evaluation">Evaluation</option>
               <option value="progress_report">Progress Report</option>
             </select>
+          </div>
+
+          <div className="border-t border-[var(--color-border)] pt-4">
+            <p className="text-xs font-medium text-[var(--color-text-secondary)] mb-3 uppercase tracking-wide">
+              Billing Settings
+            </p>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium text-[var(--color-text)]">Document in PocketChart</div>
+                  <div className="text-xs text-[var(--color-text-secondary)]">Therapists write SOAP notes in this app for this agency</div>
+                </div>
+                <button
+                  type="button"
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${requiresNotes ? 'bg-purple-500' : 'bg-gray-300'}`}
+                  onClick={() => setRequiresNotes(!requiresNotes)}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${requiresNotes ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Invoice Cycle</label>
+                  <select className="select w-full" value={billingCycle} onChange={(e) => setBillingCycle(e.target.value as BillingCycle)}>
+                    <option value="weekly">Weekly</option>
+                    <option value="biweekly">Bi-weekly</option>
+                    <option value="monthly">Monthly</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </div>
+                {(billingCycle === 'monthly') && (
+                  <div>
+                    <label className="label">Invoice Day of Month</label>
+                    <input className="input w-full" type="number" min={1} max={28} value={billingDay}
+                      onChange={(e) => setBillingDay(parseInt(e.target.value, 10) || 1)} />
+                  </div>
+                )}
+                {(billingCycle === 'weekly' || billingCycle === 'biweekly') && (
+                  <div>
+                    <label className="label">Invoice Day of Week</label>
+                    <select className="select w-full" value={billingDay} onChange={(e) => setBillingDay(parseInt(e.target.value, 10))}>
+                      {['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((d, i) => (
+                        <option key={i} value={i}>{d}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
           <div>

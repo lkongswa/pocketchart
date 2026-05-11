@@ -66,8 +66,9 @@ import InvoiceModal from '../components/InvoiceModal';
 import PaymentModal from '../components/PaymentModal';
 import CSVPaymentImportModal from '../components/CSVPaymentImportModal';
 import RevenuePipeline from '../components/RevenuePipeline';
+import ContractInvoicingTab from '../components/ContractInvoicingTab';
 
-type BillingTab = 'pipeline' | 'invoices' | 'payments' | 'cms1500' | 'insurance' | 'analytics' | 'stripe';
+type BillingTab = 'pipeline' | 'invoices' | 'payments' | 'cms1500' | 'insurance' | 'analytics' | 'stripe' | 'contracting';
 
 const STATUS_COLORS: Record<InvoiceStatus, { bg: string; text: string }> = {
   draft: { bg: 'bg-gray-100', text: 'text-gray-700' },
@@ -782,6 +783,7 @@ export default function BillingPage() {
     { id: 'pipeline', label: 'Pipeline', icon: <Activity className="w-4 h-4" /> },
     { id: 'invoices', label: 'Invoices', icon: <FileText className="w-4 h-4" /> },
     { id: 'payments', label: 'Payments', icon: <DollarSign className="w-4 h-4" /> },
+    { id: 'contracting', label: 'Contract Invoicing', icon: <Building2 className="w-4 h-4" />, pro: true },
     { id: 'cms1500', label: 'Claim Preview', icon: <ClipboardList className="w-4 h-4" /> },
     // ── Back-burnered for next feature push ──
     // { id: 'insurance', label: 'Insurance', icon: <Shield className="w-4 h-4" />, pro: true },
@@ -876,6 +878,15 @@ export default function BillingPage() {
           </button>
         ))}
       </div>
+
+      {/* Contract Invoicing Tab */}
+      {activeTab === 'contracting' && (
+        isPro ? <ContractInvoicingTab /> : (
+          <ProFeatureGate feature="Contract Invoicing">
+            <ContractInvoicingTab />
+          </ProFeatureGate>
+        )
+      )}
 
       {/* Pipeline Tab */}
       {activeTab === 'pipeline' && (

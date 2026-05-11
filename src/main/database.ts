@@ -2268,6 +2268,89 @@ function runMigrations(): void {
         }
       },
     },
+    {
+      version: 56,
+      description: 'Contractor invoicing: billing_cycle, requires_notes on entities; contract_invoice_id on appointments',
+      up: () => {
+        if (!columnExists('contracted_entities', 'requires_notes')) {
+          db.exec(`ALTER TABLE contracted_entities ADD COLUMN requires_notes INTEGER DEFAULT 0`);
+        }
+        if (!columnExists('contracted_entities', 'billing_cycle')) {
+          db.exec(`ALTER TABLE contracted_entities ADD COLUMN billing_cycle TEXT DEFAULT 'monthly'`);
+        }
+        if (!columnExists('contracted_entities', 'billing_day')) {
+          db.exec(`ALTER TABLE contracted_entities ADD COLUMN billing_day INTEGER DEFAULT 1`);
+        }
+        if (!columnExists('appointments', 'contract_invoice_id')) {
+          db.exec(`ALTER TABLE appointments ADD COLUMN contract_invoice_id INTEGER REFERENCES invoices(id)`);
+        }
+      },
+    },
+    {
+      version: 57,
+      description: 'Contractor patients: lightweight patient directory per entity; link appointments and notes',
+      up: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS contractor_patients (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_id INTEGER NOT NULL REFERENCES contracted_entities(id),
+            name TEXT NOT NULL,
+            phone TEXT DEFAULT '',
+            address TEXT DEFAULT '',
+            dob TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            deleted_at DATETIME DEFAULT NULL
+          )
+        `);
+        if (!columnExists('appointments', 'contractor_patient_id')) {
+          db.exec(`ALTER TABLE appointments ADD COLUMN contractor_patient_id INTEGER REFERENCES contractor_patients(id)`);
+        }
+        if (!columnExists('notes', 'contractor_patient_id')) {
+          db.exec(`ALTER TABLE notes ADD COLUMN contractor_patient_id INTEGER REFERENCES contractor_patients(id)`);
+        }
+      },
+    },
+    {
+      version: 58,
+      description: 'Waitlist: link entries to contracted entities (referral source FK)',
+      up: () => {
+        if (!columnExists('waitlist', 'entity_id')) {
+          db.exec(`ALTER TABLE waitlist ADD COLUMN entity_id INTEGER DEFAULT NULL REFERENCES contracted_entities(id)`);
+        }
+      },
+    },
+    {
+      version: 59,
+      description: 'Waitlist: per-entry contact log (left voicemail, no answer, etc.)',
+      up: () => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS waitlist_contact_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            waitlist_id INTEGER NOT NULL REFERENCES waitlist(id),
+            contacted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            note TEXT NOT NULL DEFAULT 'Left voicemail',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            deleted_at DATETIME DEFAULT NULL
+          )
+        `);
+        db.exec(`CREATE INDEX IF NOT EXISTS idx_waitlist_contact_log_waitlist_id ON waitlist_contact_log(waitlist_id)`);
+      },
+    },
+    {
+      version: 60,
+      description: 'Contractor eval template: medical_history + interventions_provided columns on notes',
+      up: () => {
+        const cols = db.prepare("PRAGMA table_info(notes)").all() as any[];
+        const names = new Set(cols.map(c => c.name));
+        if (!names.has('medical_history')) {
+          db.exec("ALTER TABLE notes ADD COLUMN medical_history TEXT DEFAULT ''");
+        }
+        if (!names.has('interventions_provided')) {
+          db.exec("ALTER TABLE notes ADD COLUMN interventions_provided TEXT DEFAULT ''");
+        }
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);

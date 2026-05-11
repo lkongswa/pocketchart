@@ -128,6 +128,8 @@ export default function AppointmentBlock({
 
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>) => {
     e.dataTransfer.setData('text/plain', appointment.id.toString());
+    const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+    e.dataTransfer.setData('application/grab-offset-y', (e.clientY - rect.top).toString());
     e.dataTransfer.effectAllowed = 'move';
   };
 
@@ -300,8 +302,8 @@ export default function AppointmentBlock({
           </span>
         </div>
       )}
-      {/* Note shortcut icon — full mode only */}
-      {onNoteClick && appointment.client_id && appointment.status !== 'cancelled' && heightPx >= 40 && (
+      {/* Note shortcut icon — show for client appts; for contractor appts only when entity requires notes in PocketChart */}
+      {onNoteClick && (appointment.client_id || (appointment.entity_id && appointment.entity_requires_notes)) && appointment.status !== 'cancelled' && heightPx >= 40 && (
         <button
           className={`absolute bottom-1 right-1 w-5 h-5 flex items-center justify-center rounded transition-all ${
             (appointment as any).note_id || (appointment as any).evaluation_id
