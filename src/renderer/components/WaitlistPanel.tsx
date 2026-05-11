@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Star, Search, ChevronLeft, Trash2, ArrowRight, Phone, Mail, Clock } from 'lucide-react';
-import type { WaitlistEntry, WaitlistStatus } from '../../shared/types';
+import { Plus, Star, Search, ChevronLeft, Trash2, ArrowRight, Phone, Mail, Clock, Building2, MessageSquare, PhoneOff } from 'lucide-react';
+import type { WaitlistEntry, WaitlistStatus, ContractedEntity, WaitlistContactLogEntry } from '../../shared/types';
 
 const STATUS_LABELS: Record<WaitlistStatus, string> = {
   waiting: 'Waiting',
@@ -27,14 +27,21 @@ export default function WaitlistPanel({ compact = false }: WaitlistPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
+  // Contracted entities for the entity dropdown
+  const [entities, setEntities] = useState<ContractedEntity[]>([]);
+
   // Quick capture form
   const [captureName, setCaptureName] = useState('');
   const [capturePhone, setCapturePhone] = useState('');
+  const [captureEntityId, setCaptureEntityId] = useState<number | ''>('');
   const [captureNotes, setCaptureNotes] = useState('');
 
   // Detail edit form
   const [editForm, setEditForm] = useState<Partial<WaitlistEntry>>({});
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // Per-entry contact log (call/voicemail history)
+  const [contactLog, setContactLog] = useState<WaitlistContactLogEntry[]>([]);
 
   const nameRef = useRef<HTMLInputElement>(null);
 
@@ -57,6 +64,71 @@ export default function WaitlistPanel({ compact = false }: WaitlistPanelProps) {
     loadEntries();
   }, [loadEntries]);
 
+  useEffect(() => {
+    (async () => {
+      try {
+        const list = await window.api.contractedEntities.list();
+        setEntities(list || []);
+      } catch (err) {
+        // Pro-only IPC may reject on free tier — silently fall back to empty.
+        setEntities([]);
+      }
+    })();
+  }, []);
+
+  const entityName = (id: number | null | undefined): string | null => {
+    if (id == null) return null;
+    return entities.find((e) => e.id === id)?.name ?? null;
+  };
+
+  const loadContactLog = useCallback(async (waitlistId: number) => {
+    try {
+      const log = await window.api.waitlist.contactLog.list(waitlistId);
+      setContactLog(log || []);
+    } catch {
+      setContactLog([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedId != null) loadContactLog(selectedId);
+    else setContactLog([]);
+  }, [selectedId, loadContactLog]);
+
+  const handleLogContact = async (note: string) => {
+    if (selectedId == null) return;
+    await window.api.waitlist.contactLog.create({ waitlist_id: selectedId, note });
+    await loadContactLog(selectedId);
+    await loadEntries();
+  };
+
+  const handleLogPatchLocal = (id: number, patch: Partial<WaitlistContactLogEntry>) => {
+    setContactLog((cur) => cur.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+  };
+
+  const handleLogSave = async (id: number, patch: { contacted_at?: string; note?: string }) => {
+    await window.api.waitlist.contactLog.update(id, patch);
+    if (selectedId != null) await loadContactLog(selectedId);
+  };
+
+  const handleLogDelete = async (id: number) => {
+    await window.api.waitlist.contactLog.delete(id);
+    if (selectedId != null) await loadContactLog(selectedId);
+  };
+
+  const toLocalInput = (iso: string): string => {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  const fromLocalInput = (s: string): string => {
+    if (!s) return new Date().toISOString();
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+  };
+
   const handleQuickSave = async () => {
     const name = captureName.trim();
     if (!name) return;
@@ -69,11 +141,13 @@ export default function WaitlistPanel({ compact = false }: WaitlistPanelProps) {
       first_name,
       last_name,
       phone: capturePhone.trim(),
+      entity_id: captureEntityId === '' ? null : captureEntityId,
       notes: captureNotes.trim(),
     });
 
     setCaptureName('');
     setCapturePhone('');
+    setCaptureEntityId('');
     setCaptureNotes('');
     await loadEntries();
     nameRef.current?.focus();
@@ -88,6 +162,7 @@ export default function WaitlistPanel({ compact = false }: WaitlistPanelProps) {
       email: entry.email,
       discipline: entry.discipline,
       referral_source: entry.referral_source,
+      entity_id: entry.entity_id,
       notes: entry.notes,
       status: entry.status,
       priority: entry.priority,
@@ -130,9 +205,30 @@ export default function WaitlistPanel({ compact = false }: WaitlistPanelProps) {
     const entry = entries.find((e) => e.id === selectedId);
     if (!entry) return;
 
+    // Contracted-entity referrals do NOT create a full chart. They create a
+    // lightweight contractor_patient under the assigned entity instead.
+    if (entry.entity_id != null) {
+      const fullName = `${entry.first_name} ${entry.last_name}`.trim() || entry.first_name || 'Unnamed';
+      try {
+        await window.api.contractorPatients.create({
+          entity_id: entry.entity_id,
+          name: fullName,
+          phone: entry.phone || '',
+          notes: entry.notes || '',
+        });
+      } catch (err) {
+        console.error('Failed to create contractor patient:', err);
+        return;
+      }
+      await window.api.waitlist.convertToClient(selectedId);
+      setSelectedId(null);
+      await loadEntries();
+      return;
+    }
+
+    // Direct-pay / private-pay referral: full client chart flow.
     await window.api.waitlist.convertToClient(selectedId);
 
-    // Store conversion data in sessionStorage for ClientFormModal to pick up
     sessionStorage.setItem(
       'waitlist_prefill',
       JSON.stringify({
@@ -143,6 +239,7 @@ export default function WaitlistPanel({ compact = false }: WaitlistPanelProps) {
         email: entry.email,
         discipline: entry.discipline,
         referral_source: entry.referral_source,
+        entity_id: entry.entity_id,
         notes: entry.notes,
       })
     );
@@ -256,6 +353,28 @@ export default function WaitlistPanel({ compact = false }: WaitlistPanelProps) {
             />
           </div>
 
+          {/* Contracted entity */}
+          {entities.length > 0 && (
+            <div>
+              <label className="text-[10px] text-[var(--color-text-secondary)] uppercase tracking-wide">Contracted Entity</label>
+              <select
+                className="w-full text-xs border border-[var(--color-border)] rounded px-2 py-1.5 focus:outline-none focus:border-teal-400 bg-white"
+                value={editForm.entity_id ?? ''}
+                onChange={(e) =>
+                  setEditForm({
+                    ...editForm,
+                    entity_id: e.target.value === '' ? null : Number(e.target.value),
+                  })
+                }
+              >
+                <option value="">— None —</option>
+                {entities.map((ent) => (
+                  <option key={ent.id} value={ent.id}>{ent.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Priority toggle */}
           <button
             className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded transition-colors ${
@@ -287,6 +406,72 @@ export default function WaitlistPanel({ compact = false }: WaitlistPanelProps) {
             </div>
           )}
 
+          {/* Contact Log */}
+          <div className="border-t border-[var(--color-border)] pt-2">
+            <label className="text-[10px] text-[var(--color-text-secondary)] uppercase tracking-wide block mb-1">Contact Log</label>
+            <div className="flex gap-1 mb-1.5">
+              <button
+                className="flex-1 text-[10px] text-blue-600 hover:bg-blue-50 border border-blue-200 rounded px-1 py-1 flex items-center justify-center gap-1 font-medium"
+                onClick={() => handleLogContact('Left voicemail')}
+                title="Log a voicemail attempt now (editable after)"
+              >
+                <Phone size={10} /> Voicemail
+              </button>
+              <button
+                className="flex-1 text-[10px] text-blue-600 hover:bg-blue-50 border border-blue-200 rounded px-1 py-1 flex items-center justify-center gap-1 font-medium"
+                onClick={() => handleLogContact('Texted')}
+                title="Log an outgoing text now"
+              >
+                <MessageSquare size={10} /> Texted
+              </button>
+              <button
+                className="flex-1 text-[10px] text-blue-600 hover:bg-blue-50 border border-blue-200 rounded px-1 py-1 flex items-center justify-center gap-1 font-medium"
+                onClick={() => handleLogContact('No answer')}
+                title="Log a no-answer attempt now"
+              >
+                <PhoneOff size={10} /> No answer
+              </button>
+            </div>
+            {contactLog.length === 0 ? (
+              <div className="text-[10px] text-[var(--color-text-secondary)] italic px-1 py-1">
+                No call attempts logged yet.
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {contactLog.map((log) => (
+                  <div
+                    key={log.id}
+                    className="border border-[var(--color-border)] rounded px-1.5 py-1 space-y-0.5"
+                  >
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="datetime-local"
+                        className="flex-1 text-[10px] text-[var(--color-text-secondary)] border-0 px-0 py-0 focus:outline-none focus:bg-blue-50 bg-transparent"
+                        value={toLocalInput(log.contacted_at)}
+                        onChange={(e) => handleLogPatchLocal(log.id, { contacted_at: fromLocalInput(e.target.value) })}
+                        onBlur={(e) => handleLogSave(log.id, { contacted_at: fromLocalInput(e.target.value) })}
+                      />
+                      <button
+                        className="text-[var(--color-text-secondary)] hover:text-red-500 flex-shrink-0 p-0.5"
+                        onClick={() => handleLogDelete(log.id)}
+                        title="Delete entry"
+                      >
+                        <Trash2 size={10} />
+                      </button>
+                    </div>
+                    <input
+                      className="w-full text-[11px] text-[var(--color-text)] border-0 px-0 py-0 focus:outline-none focus:bg-blue-50 bg-transparent"
+                      value={log.note}
+                      onChange={(e) => handleLogPatchLocal(log.id, { note: e.target.value })}
+                      onBlur={(e) => handleLogSave(log.id, { note: e.target.value })}
+                      placeholder="Left voicemail"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Mark as contacted */}
           <button
             className="w-full text-xs text-blue-600 hover:bg-blue-50 rounded py-1.5 transition-colors flex items-center justify-center gap-1"
@@ -303,12 +488,19 @@ export default function WaitlistPanel({ compact = false }: WaitlistPanelProps) {
             Save Changes
           </button>
 
-          {/* Convert to client */}
+          {/* Convert: routes to contractor_patient if entity is assigned, else full client chart */}
           <button
             className="w-full text-xs bg-teal-50 text-teal-700 border border-teal-200 rounded py-1.5 hover:bg-teal-100 transition-colors font-medium flex items-center justify-center gap-1"
             onClick={handleConvert}
+            title={
+              editForm.entity_id
+                ? `Adds to ${entityName(editForm.entity_id) ?? 'the assigned entity'}'s patient list — no separate chart`
+                : 'Creates a full client chart'
+            }
           >
-            Add as Client <ArrowRight size={12} />
+            {editForm.entity_id
+              ? `Add to ${entityName(editForm.entity_id) ?? 'Entity'}`
+              : 'Add as Client'} <ArrowRight size={12} />
           </button>
 
           {/* Delete */}
@@ -367,6 +559,19 @@ export default function WaitlistPanel({ compact = false }: WaitlistPanelProps) {
             onKeyDown={(e) => e.key === 'Enter' && handleQuickSave()}
           />
         </div>
+        {entities.length > 0 && (
+          <select
+            className="w-full text-xs border border-[var(--color-border)] rounded px-2 py-1.5 focus:outline-none focus:border-teal-400 bg-white"
+            value={captureEntityId}
+            onChange={(e) => setCaptureEntityId(e.target.value === '' ? '' : Number(e.target.value))}
+            title="Contracted entity (optional)"
+          >
+            <option value="">No contracted entity</option>
+            {entities.map((ent) => (
+              <option key={ent.id} value={ent.id}>{ent.name}</option>
+            ))}
+          </select>
+        )}
         <div className="flex gap-1">
           <textarea
             className="flex-1 text-xs border border-[var(--color-border)] rounded px-2 py-1.5 focus:outline-none focus:border-teal-400 resize-none"
@@ -438,10 +643,16 @@ export default function WaitlistPanel({ compact = false }: WaitlistPanelProps) {
                   {entry.notes}
                 </div>
               )}
-              <div className="ml-5 mt-0.5">
+              <div className="ml-5 mt-0.5 flex items-center gap-1 flex-wrap">
                 <span className={`inline-block text-[9px] px-1.5 py-0.5 rounded-full font-medium ${STATUS_COLORS[entry.status]}`}>
                   {STATUS_LABELS[entry.status]}
                 </span>
+                {entityName(entry.entity_id) && (
+                  <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded-full font-medium bg-indigo-50 text-indigo-700">
+                    <Building2 size={9} />
+                    {entityName(entry.entity_id)}
+                  </span>
+                )}
               </div>
             </button>
           ))
