@@ -13,6 +13,7 @@ import {
   ClipboardList,
   DollarSign,
   CheckCircle,
+  Save,
 } from 'lucide-react';
 import type { Client, Note, Appointment } from '../../shared/types';
 import BasicAlertsPanel from '../components/BasicAlertsPanel';
@@ -319,6 +320,15 @@ const DashboardPage: React.FC = () => {
             <CalendarDays size={16} className="mr-2" />
             View Calendar
           </button>
+          <button
+            className="btn-secondary"
+            onClick={handleQuickBackupFromDashboard}
+            disabled={quickBackupLoading}
+            title={backupFolder ? `Quick backup to ${backupFolder}` : 'Choose a location to back up your data'}
+          >
+            <Save size={16} className="mr-2" />
+            {quickBackupLoading ? 'Backing up…' : 'Backup'}
+          </button>
         </div>
       </div>
 
@@ -427,7 +437,14 @@ const DashboardPage: React.FC = () => {
               No upcoming appointments.
             </div>
           ) : (
-            upcomingAppointments.map((appt) => (
+            upcomingAppointments.map((appt) => {
+              const isContractor = appt.entity_id != null;
+              const patientName = isContractor
+                ? (appt.contractor_patient_name?.trim() || appt.patient_name?.trim() || 'Unnamed patient')
+                : `${appt.first_name || ''} ${appt.last_name || ''}`.trim() || 'Unnamed';
+              const entityRequiresNotes = appt.entity_requires_notes !== 0;
+              const showNoteButton = isContractor ? entityRequiresNotes : true;
+              return (
               <div
                 key={appt.id}
                 className="group px-5 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
@@ -436,15 +453,21 @@ const DashboardPage: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-[var(--color-text)]">
-                      {appt.first_name} {appt.last_name}
+                      {patientName}
                     </p>
                     <div className="flex items-center gap-2 mt-0.5">
-                      {appt.client_discipline && (
-                        <span
-                          className={`badge-${appt.client_discipline.toLowerCase()}`}
-                        >
-                          {appt.client_discipline}
-                        </span>
+                      {isContractor ? (
+                        appt.entity_name && (
+                          <span className="text-xs text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded">
+                            {appt.entity_name}
+                          </span>
+                        )
+                      ) : (
+                        appt.client_discipline && (
+                          <span className={`badge-${appt.client_discipline.toLowerCase()}`}>
+                            {appt.client_discipline}
+                          </span>
+                        )
                       )}
                       <span className="text-xs text-[var(--color-text-secondary)]">
                         {appt.duration_minutes} min
@@ -452,11 +475,20 @@ const DashboardPage: React.FC = () => {
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
+                    {showNoteButton && (
                     <button
                       className="btn-ghost p-1.5 opacity-0 group-hover:opacity-100 transition-opacity"
                       title="Write Note"
                       onClick={(e) => {
                         e.stopPropagation();
+                        if (isContractor) {
+                          if (appt.note_id) {
+                            navigate(`/contractor-note/${appt.note_id}?appointmentId=${appt.id}`);
+                          } else {
+                            navigate(`/contractor-note/new?appointmentId=${appt.id}`);
+                          }
+                          return;
+                        }
                         navigate(`/clients/${appt.client_id}/note/new`, {
                           state: {
                             appointmentId: appt.id,
@@ -469,6 +501,7 @@ const DashboardPage: React.FC = () => {
                     >
                       <PenLine size={14} className="text-teal-600" />
                     </button>
+                    )}
                     <div className="text-right">
                       <p className="text-sm font-medium text-[var(--color-text)]">
                         {formatDate(appt.scheduled_date)}
@@ -480,7 +513,8 @@ const DashboardPage: React.FC = () => {
                   </div>
                 </div>
               </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>

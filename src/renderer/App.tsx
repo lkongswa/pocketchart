@@ -38,6 +38,7 @@ import HelpPage from './pages/HelpPage';
 import BillingPage from './pages/BillingPage';
 import ContractedEntitiesPage from './pages/ContractedEntitiesPage';
 import EntityDetailPage from './pages/EntityDetailPage';
+import ContractorNotePage from './pages/ContractorNotePage';
 import VaultPage from './pages/VaultPage';
 import MileagePage from './pages/MileagePage';
 import YearEndSummaryPage from './pages/YearEndSummaryPage';
@@ -415,6 +416,8 @@ const router = createHashRouter([
       { path: '/billing', element: <BillingPage /> },
       { path: '/entities', element: <ContractedEntitiesPage /> },
       { path: '/entities/:id', element: <EntityDetailPage /> },
+      { path: '/contractor-note/new', element: <ContractorNotePage /> },
+      { path: '/contractor-note/:noteId', element: <ContractorNotePage /> },
       { path: '/vault', element: <VaultPage /> },
       { path: '/fax', element: <FaxPage /> },
       { path: '/intake-forms', element: <IntakeFormsPage /> },

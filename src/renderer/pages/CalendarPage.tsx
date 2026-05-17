@@ -58,7 +58,11 @@ export default function CalendarPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { guardAction, showExpiredModal, dismissExpiredModal } = useTrialGuard();
-  const routeState = (location.state as { date?: string; view?: CalendarView }) || {};
+  const routeState = (location.state as {
+    date?: string;
+    view?: CalendarView;
+    prefillAppt?: { entity_id: number; contractor_patient_id: number; contractor_patient_name: string };
+  }) || {};
   const [currentView, setCurrentView] = useState<CalendarView>(routeState.view || 'week');
   const [currentDate, setCurrentDate] = useState(() => {
     if (routeState.date) return new Date(routeState.date + 'T00:00:00');
@@ -70,6 +74,9 @@ export default function CalendarPage() {
   const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | undefined>(undefined);
   const [selectedTime, setSelectedTime] = useState<string | undefined>(undefined);
+  const [prefillEntityPatient, setPrefillEntityPatient] = useState<
+    { entity_id: number; contractor_patient_id: number; contractor_patient_name: string } | null
+  >(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [paymentStatusMap, setPaymentStatusMap] = useState<Record<number, PaymentIndicator>>({});
 
@@ -197,6 +204,21 @@ export default function CalendarPage() {
     loadCalendarBlocks();
   }, [loadAppointments, loadCalendarBlocks]);
 
+  // If we navigated here with a prefill payload (e.g., from EntityDetailPage's
+  // "Schedule" button on an unscheduled contractor patient), auto-open the
+  // AppointmentModal with the entity + patient pre-selected.
+  useEffect(() => {
+    if (routeState.prefillAppt) {
+      setPrefillEntityPatient(routeState.prefillAppt);
+      setSelectedDate(undefined);
+      setSelectedTime(undefined);
+      setEditingAppointment(null);
+      setModalOpen(true);
+      // Clear the route state so a back-nav doesn't re-trigger the modal.
+      window.history.replaceState({}, '');
+    }
+  }, [routeState.prefillAppt]);
+
   // Navigation
   const handleNavigate = (direction: 'prev' | 'next' | 'today') => {
     if (direction === 'today') {
@@ -251,6 +273,16 @@ export default function CalendarPage() {
 
   // Note icon click — route by session type (preserves all original navigation logic)
   const handleNoteClick = (appt: Appointment) => {
+    // Contractor appointments → ContractorNotePage
+    if (appt.entity_id) {
+      if (appt.note_id) {
+        navigate(`/contractor-note/${appt.note_id}?appointmentId=${appt.id}`);
+      } else {
+        navigate(`/contractor-note/new?appointmentId=${appt.id}`);
+      }
+      return;
+    }
+
     const sessionType = appt.session_type || 'visit';
 
     // If eval is already linked, go directly to it
@@ -430,11 +462,9 @@ export default function CalendarPage() {
     if (!appt) return;
 
     const updateData: Partial<Appointment> = {
-      client_id: appt.client_id,
+      ...appt,
       scheduled_date: newDate,
       scheduled_time: newTime || appt.scheduled_time,
-      duration_minutes: appt.duration_minutes,
-      status: appt.status,
     };
 
     await window.api.appointments.update(apptId, updateData);
@@ -1123,12 +1153,14 @@ export default function CalendarPage() {
         onClose={() => {
           setModalOpen(false);
           setEditingAppointment(null);
+          setPrefillEntityPatient(null);
         }}
         onSave={handleSaveAppointment}
         onSaveBatch={handleSaveBatch}
         appointment={editingAppointment}
         defaultDate={selectedDate}
         defaultTime={selectedTime}
+        prefillEntityPatient={prefillEntityPatient}
       />
 
       {/* Trial Expired Modal */}

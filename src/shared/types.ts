@@ -384,10 +384,13 @@ export interface Note {
   duration_weeks: number | null;
   frequency_notes: string;
   // Note type for compliance engine
-  note_type: 'soap' | 'progress_report' | 'recertification' | 'discharge' | 'non_billing';
+  note_type: 'soap' | 'progress_report' | 'recertification' | 'discharge' | 'non_billing' | 'evaluation';
   patient_name: string;
   progress_report_data: string;          // JSON ProgressReportData
   discharge_data: string;                // JSON DischargeData
+  // Contractor eval template fields (v60)
+  medical_history?: string;
+  interventions_provided?: string;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -416,6 +419,7 @@ export interface Appointment {
   visit_type: VisitType;
   session_type: SessionType;
   evaluation_id: number | null;
+  contract_invoice_id: number | null;
   created_at: string;
   deleted_at: string | null;
   // Joined fields
@@ -423,6 +427,9 @@ export interface Appointment {
   last_name?: string;
   client_discipline?: Discipline;
   entity_name?: string;
+  entity_requires_notes?: number;
+  contractor_patient_id?: number | null;
+  contractor_patient_name?: string;
 }
 
 export interface NoteBankEntry {
@@ -589,6 +596,20 @@ export interface LicenseActivateResult {
 
 // ── Contractor Module Types ──
 
+export interface ContractorPatient {
+  id: number;
+  entity_id: number;
+  name: string;
+  phone: string;
+  address: string;
+  dob: string;
+  notes: string;
+  created_at: string;
+  deleted_at: string | null;
+}
+
+export type BillingCycle = 'weekly' | 'biweekly' | 'monthly' | 'custom';
+
 export interface ContractedEntity {
   id: number;
   name: string;
@@ -601,6 +622,9 @@ export interface ContractedEntity {
   billing_address_zip: string;
   default_note_type: 'soap' | 'evaluation' | 'progress_report';
   notes: string;
+  requires_notes: number;   // 1 = therapists document in PocketChart; 0 = external
+  billing_cycle: BillingCycle;
+  billing_day: number;      // day-of-month (1–28) for monthly; day-of-week (0–6) for weekly
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -1058,6 +1082,7 @@ export interface WaitlistEntry {
   email: string;
   discipline: string;
   referral_source: string;
+  entity_id: number | null;
   notes: string;
   status: WaitlistStatus;
   priority: number;
@@ -1065,6 +1090,15 @@ export interface WaitlistEntry {
   converted_client_id: number | null;
   created_at: string;
   updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface WaitlistContactLogEntry {
+  id: number;
+  waitlist_id: number;
+  contacted_at: string;
+  note: string;
+  created_at: string;
   deleted_at: string | null;
 }
 
@@ -1177,6 +1211,7 @@ export interface InvoiceItem {
   id: number;
   invoice_id: number;
   note_id: number | null;
+  appointment_id?: number | null;
   description: string;
   cpt_code: string;
   service_date: string;
@@ -1778,6 +1813,7 @@ export interface PocketChartAPI {
     get: (id: number) => Promise<Invoice & { items: InvoiceItem[] }>;
     create: (data: Partial<Invoice>, items: Partial<InvoiceItem>[]) => Promise<Invoice>;
     update: (id: number, data: Partial<Invoice>) => Promise<Invoice>;
+    replaceItems: (invoiceId: number, items: Partial<InvoiceItem>[]) => Promise<Invoice>;
     delete: (id: number) => Promise<boolean>;
     generateFromNotes: (clientId: number, noteIds: number[], entityId?: number) => Promise<Invoice>;
     generatePdf: (invoiceId: number) => Promise<{ base64Pdf: string; filename: string }>;
@@ -1978,11 +2014,29 @@ export interface PocketChartAPI {
     createFeeScheduleEntry: (data: Partial<EntityFeeSchedule>) => Promise<EntityFeeSchedule>;
     updateFeeScheduleEntry: (id: number, data: Partial<EntityFeeSchedule>) => Promise<EntityFeeSchedule>;
     deleteFeeScheduleEntry: (id: number) => Promise<boolean>;
+    listAppointments: (entityId: number, filters?: { startDate?: string; endDate?: string; invoiced?: boolean }) => Promise<Appointment[]>;
+    createInvoiceFromAppointments: (entityId: number, appointmentIds: number[], invoiceDate: string, dueDate?: string) => Promise<Invoice>;
+  };
+  // ── Contractor Patients (Pro) ──
+  contractorPatients: {
+    list: (entityId: number) => Promise<ContractorPatient[]>;
+    get: (id: number) => Promise<ContractorPatient>;
+    create: (data: Partial<ContractorPatient>) => Promise<ContractorPatient>;
+    update: (id: number, data: Partial<ContractorPatient>) => Promise<ContractorPatient>;
+    delete: (id: number) => Promise<boolean>;
+  };
+  // ── Contractor Notes (Pro) ──
+  contractorNotes: {
+    list: (contractorPatientId: number) => Promise<any[]>;
+    get: (id: number) => Promise<any>;
+    create: (data: any) => Promise<any>;
+    update: (id: number, data: any) => Promise<any>;
   };
   // ── Entity Documents (Pro) ──
   entityDocuments: {
     list: (entityId: number) => Promise<EntityDocument[]>;
     upload: (data: { entityId: number; category?: EntityDocumentCategory }) => Promise<EntityDocument | null>;
+    uploadFromPath: (data: { entityId: number; filePath: string; category?: EntityDocumentCategory }) => Promise<EntityDocument>;
     open: (documentId: number) => Promise<string>;
     delete: (documentId: number) => Promise<boolean>;
   };
@@ -2193,6 +2247,12 @@ export interface PocketChartAPI {
     convertToClient: (id: number) => Promise<WaitlistEntry>;
     linkClient: (waitlistId: number, clientId: number) => Promise<WaitlistEntry>;
     count: () => Promise<number>;
+    contactLog: {
+      list: (waitlistId: number) => Promise<WaitlistContactLogEntry[]>;
+      create: (data: { waitlist_id: number; contacted_at?: string; note?: string }) => Promise<WaitlistContactLogEntry>;
+      update: (id: number, data: { contacted_at?: string; note?: string }) => Promise<WaitlistContactLogEntry>;
+      delete: (id: number) => Promise<boolean>;
+    };
   };
   // ── Good Faith Estimates (No Surprises Act) ──
   gfe: {

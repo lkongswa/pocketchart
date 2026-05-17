@@ -1874,10 +1874,12 @@ function registerIpcHandlers() {
   const apptSelectQuery = `
     SELECT a.*,
       c.first_name, c.last_name, c.discipline as client_discipline,
-      e.name as entity_name
+      e.name as entity_name, e.requires_notes as entity_requires_notes,
+      cp.name as contractor_patient_name
     FROM appointments a
     LEFT JOIN clients c ON a.client_id = c.id AND c.deleted_at IS NULL
     LEFT JOIN contracted_entities e ON a.entity_id = e.id
+    LEFT JOIN contractor_patients cp ON a.contractor_patient_id = cp.id AND cp.deleted_at IS NULL
     WHERE a.deleted_at IS NULL
   `;
 
@@ -1904,20 +1906,21 @@ function registerIpcHandlers() {
 
   safeHandle('appointments:create', (_event, data) => {
     const result = db.prepare(`
-      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate, patient_name, visit_type, session_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate, patient_name, visit_type, session_type, contractor_patient_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(data.client_id || null, data.scheduled_date, data.scheduled_time,
       data.duration_minutes || 60, data.status || 'scheduled',
       data.entity_id || null, data.entity_rate || null, data.patient_name || '',
-      data.visit_type || 'O', data.session_type || 'visit');
+      data.visit_type || 'O', data.session_type || 'visit',
+      data.contractor_patient_id || null);
     return db.prepare(apptSelectQuery + ' AND a.id = ?').get(result.lastInsertRowid);
   });
 
   // Batch create for recurring appointments
   safeHandle('appointments:createBatch', (_event, items: any[]) => {
     const insert = db.prepare(`
-      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate, patient_name, visit_type, session_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate, patient_name, visit_type, session_type, contractor_patient_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const created: any[] = [];
     const txn = db.transaction(() => {
@@ -1926,7 +1929,8 @@ function registerIpcHandlers() {
           data.client_id || null, data.scheduled_date, data.scheduled_time,
           data.duration_minutes || 60, data.status || 'scheduled',
           data.entity_id || null, data.entity_rate || null, data.patient_name || '',
-          data.visit_type || 'O', data.session_type || 'visit'
+          data.visit_type || 'O', data.session_type || 'visit',
+          data.contractor_patient_id || null
         );
         const row = db.prepare(apptSelectQuery + ' AND a.id = ?').get(result.lastInsertRowid);
         if (row) created.push(row);
@@ -4589,8 +4593,78 @@ function registerIpcHandlers() {
     return db.prepare('SELECT * FROM invoices WHERE id = ?').get(id);
   });
 
+  // Replace the line items on an invoice. Used by the entity-invoice edit flow:
+  // user can uncheck/remove items (clears the linked appointment's contract_invoice_id),
+  // edit service_date/amount, then save. Recomputes subtotal + total.
+  safeHandle('invoices:replaceItems', (_event, invoiceId: number, items: Array<{ id?: number; appointment_id?: number | null; description?: string; service_date?: string; units?: number; unit_price?: number; amount?: number }>) => {
+    const invoice = db.prepare('SELECT * FROM invoices WHERE id = ? AND deleted_at IS NULL').get(invoiceId) as any;
+    if (!invoice) throw new Error('Invoice not found');
+
+    const tx = db.transaction(() => {
+      // Existing appointment links before replacement
+      const existingApptIds = new Set(
+        (db.prepare('SELECT appointment_id FROM invoice_items WHERE invoice_id = ? AND appointment_id IS NOT NULL').all(invoiceId) as any[])
+          .map((r) => r.appointment_id as number)
+      );
+      const keptApptIds = new Set(
+        items.map((it) => it.appointment_id).filter((x): x is number => typeof x === 'number')
+      );
+
+      // Wipe and reinsert (simpler and avoids id-shifting bugs)
+      db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
+      const insert = db.prepare(`
+        INSERT INTO invoice_items (invoice_id, appointment_id, description, service_date, units, unit_price, amount)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      let subtotal = 0;
+      for (const it of items) {
+        const units = it.units ?? 1;
+        const unitPrice = it.unit_price ?? it.amount ?? 0;
+        const amount = it.amount ?? units * unitPrice;
+        subtotal += amount;
+        insert.run(
+          invoiceId,
+          it.appointment_id ?? null,
+          it.description ?? '',
+          it.service_date ?? null,
+          units,
+          unitPrice,
+          amount
+        );
+      }
+
+      // For appts that were on the invoice but got removed, clear their link
+      for (const apptId of existingApptIds) {
+        if (!keptApptIds.has(apptId)) {
+          db.prepare('UPDATE appointments SET contract_invoice_id = NULL WHERE id = ?').run(apptId);
+        }
+      }
+      // For kept appts, make sure link is set (in case it had been cleared somehow)
+      for (const apptId of keptApptIds) {
+        db.prepare('UPDATE appointments SET contract_invoice_id = ? WHERE id = ?').run(invoiceId, apptId);
+      }
+
+      // Recompute totals: keep existing discount_amount; total = subtotal - discount
+      const discount = invoice.discount_amount || 0;
+      db.prepare(`
+        UPDATE invoices SET subtotal = ?, total_amount = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+      `).run(subtotal, Math.max(0, subtotal - discount), invoiceId);
+    });
+    tx();
+
+    return db.prepare('SELECT * FROM invoices WHERE id = ?').get(invoiceId);
+  });
+
   safeHandle('invoices:delete', (_event, id: number) => {
     const invoice = db.prepare('SELECT client_id, invoice_number FROM invoices WHERE id = ?').get(id) as any;
+    // Clear contract_invoice_id on appointments directly linked by the FK
+    db.prepare('UPDATE appointments SET contract_invoice_id = NULL WHERE contract_invoice_id = ?').run(id);
+    // Also clear via invoice_items.appointment_id for any remaining links
+    const linkedApptIds = (db.prepare('SELECT appointment_id FROM invoice_items WHERE invoice_id = ? AND appointment_id IS NOT NULL').all(id) as any[]).map((r: any) => r.appointment_id);
+    if (linkedApptIds.length > 0) {
+      const clearAppt = db.prepare('UPDATE appointments SET contract_invoice_id = NULL WHERE id = ?');
+      for (const apptId of linkedApptIds) { clearAppt.run(apptId); }
+    }
     db.prepare('UPDATE invoices SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
     auditLog({ actionType: 'invoice_deleted', entityType: 'invoice', entityId: id, clientId: invoice?.client_id, detail: { invoice_number: invoice?.invoice_number } });
     return true;
@@ -4601,11 +4675,23 @@ function registerIpcHandlers() {
     const invoice = db.prepare('SELECT * FROM invoices WHERE id = ? AND deleted_at IS NULL').get(invoiceId) as any;
     if (!invoice) throw new Error('Invoice not found');
 
-    const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(invoiceId) as any[];
-    const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(invoice.client_id) as any;
+    // Enrich items with appointment data (patient name, session type)
+    const items = db.prepare(`
+      SELECT ii.*,
+        COALESCE(cp.name, a.patient_name, '') as patient_name,
+        a.session_type
+      FROM invoice_items ii
+      LEFT JOIN appointments a ON ii.appointment_id = a.id
+      LEFT JOIN contractor_patients cp ON a.contractor_patient_id = cp.id
+      WHERE ii.invoice_id = ?
+      ORDER BY ii.service_date ASC, ii.id ASC
+    `).all(invoiceId) as any[];
+
+    const client = invoice.client_id ? db.prepare('SELECT * FROM clients WHERE id = ?').get(invoice.client_id) as any : null;
+    const entity = invoice.entity_id ? db.prepare('SELECT * FROM contracted_entities WHERE id = ?').get(invoice.entity_id) as any : null;
     const practice = db.prepare('SELECT * FROM practice WHERE id = 1').get() as any;
 
-    const { base64Pdf, filename } = buildInvoicePdf(invoice, items, client, practice);
+    const { base64Pdf, filename } = buildInvoicePdf(invoice, items, client, practice, entity);
     return { base64Pdf, filename };
   });
 
@@ -6396,13 +6482,14 @@ function registerIpcHandlers() {
     const result = db.prepare(`
       INSERT INTO contracted_entities (name, contact_name, contact_email, contact_phone,
         billing_address_street, billing_address_city, billing_address_state, billing_address_zip,
-        default_note_type, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        default_note_type, notes, requires_notes, billing_cycle, billing_day)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.name, data.contact_name || '', data.contact_email || '', data.contact_phone || '',
       data.billing_address_street || '', data.billing_address_city || '',
       data.billing_address_state || '', data.billing_address_zip || '',
-      data.default_note_type || 'soap', data.notes || ''
+      data.default_note_type || 'soap', data.notes || '',
+      data.requires_notes ? 1 : 0, data.billing_cycle || 'monthly', data.billing_day || 1
     );
     return db.prepare('SELECT * FROM contracted_entities WHERE id = ?').get(result.lastInsertRowid);
   });
@@ -6413,11 +6500,11 @@ function registerIpcHandlers() {
     const values: any[] = [];
     const allowed = ['name', 'contact_name', 'contact_email', 'contact_phone',
       'billing_address_street', 'billing_address_city', 'billing_address_state', 'billing_address_zip',
-      'default_note_type', 'notes'];
+      'default_note_type', 'notes', 'requires_notes', 'billing_cycle', 'billing_day'];
     for (const key of allowed) {
       if (data[key] !== undefined) {
         fields.push(`${key} = ?`);
-        values.push(data[key]);
+        values.push(key === 'requires_notes' ? (data[key] ? 1 : 0) : data[key]);
       }
     }
     if (fields.length === 0) throw new Error('No fields to update');
@@ -6474,6 +6561,179 @@ function registerIpcHandlers() {
     return true;
   });
 
+  // List appointments for a contracted entity (for invoicing view)
+  safeHandle('contractedEntities:listAppointments', (_event, entityId: number, filters?: { startDate?: string; endDate?: string; invoiced?: boolean }) => {
+    requireTier('pro');
+    let query = `
+      SELECT a.*,
+        c.first_name, c.last_name, c.discipline as client_discipline,
+        e.name as entity_name, e.requires_notes as entity_requires_notes
+      FROM appointments a
+      LEFT JOIN clients c ON a.client_id = c.id AND c.deleted_at IS NULL
+      LEFT JOIN contracted_entities e ON a.entity_id = e.id
+      WHERE a.deleted_at IS NULL AND a.entity_id = ?
+    `;
+    const params: any[] = [entityId];
+    if (filters?.startDate) { query += ' AND a.scheduled_date >= ?'; params.push(filters.startDate); }
+    if (filters?.endDate)   { query += ' AND a.scheduled_date <= ?'; params.push(filters.endDate); }
+    if (filters?.invoiced === false) { query += ' AND a.contract_invoice_id IS NULL'; }
+    if (filters?.invoiced === true)  { query += ' AND a.contract_invoice_id IS NOT NULL'; }
+    query += ' ORDER BY a.scheduled_date DESC, a.scheduled_time';
+    return db.prepare(query).all(...params);
+  });
+
+  // Generate an invoice from a set of contractor appointments
+  safeHandle('contractedEntities:createInvoiceFromAppointments', (_event, entityId: number, appointmentIds: number[], invoiceDate: string, dueDate?: string) => {
+    requireTier('pro');
+    if (!appointmentIds.length) throw new Error('No appointments selected');
+
+    const appts = appointmentIds.map((id) =>
+      db.prepare('SELECT * FROM appointments WHERE id = ? AND entity_id = ? AND deleted_at IS NULL').get(id, entityId) as any
+    ).filter(Boolean);
+
+    if (!appts.length) throw new Error('No valid appointments found');
+
+    const total = appts.reduce((sum: number, a: any) => sum + (a.entity_rate || 0), 0);
+
+    // Generate invoice number (reuse existing helper if available, else simple timestamp)
+    const existing = db.prepare("SELECT invoice_number FROM invoices ORDER BY id DESC LIMIT 1").get() as any;
+    let nextNum = 1;
+    if (existing?.invoice_number) {
+      const m = existing.invoice_number.match(/(\d+)$/);
+      if (m) nextNum = parseInt(m[1], 10) + 1;
+    }
+    const invoiceNumber = `PC-${new Date().getFullYear()}-${String(nextNum).padStart(4, '0')}`;
+
+    const result = db.prepare(`
+      INSERT INTO invoices (entity_id, invoice_number, invoice_date, due_date, subtotal, discount_amount, total_amount, status, notes)
+      VALUES (?, ?, ?, ?, ?, 0, ?, 'draft', '')
+    `).run(entityId, invoiceNumber, invoiceDate, dueDate || null, total, total);
+    const invoiceId = result.lastInsertRowid;
+
+    const insertItem = db.prepare(`
+      INSERT INTO invoice_items (invoice_id, appointment_id, description, service_date, units, unit_price, amount)
+      VALUES (?, ?, ?, ?, 1, ?, ?)
+    `);
+
+    for (const appt of appts) {
+      const patientLabel = appt.patient_name?.trim() || '';
+      const rate = appt.entity_rate || 0;
+      insertItem.run(invoiceId, appt.id, patientLabel, appt.scheduled_date, rate, rate);
+    }
+
+    // Mark appointments as invoiced
+    const updateAppt = db.prepare('UPDATE appointments SET contract_invoice_id = ? WHERE id = ?');
+    for (const appt of appts) { updateAppt.run(invoiceId, appt.id); }
+
+    return db.prepare('SELECT * FROM invoices WHERE id = ?').get(invoiceId);
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // ── Contractor Patients (Pro Only) ──
+  // ══════════════════════════════════════════════════════════════════════
+
+  safeHandle('contractorPatients:list', (_event, entityId: number) => {
+    requireTier('pro');
+    return db.prepare('SELECT * FROM contractor_patients WHERE entity_id = ? AND deleted_at IS NULL ORDER BY name ASC').all(entityId);
+  });
+
+  safeHandle('contractorPatients:get', (_event, id: number) => {
+    requireTier('pro');
+    return db.prepare('SELECT * FROM contractor_patients WHERE id = ? AND deleted_at IS NULL').get(id);
+  });
+
+  safeHandle('contractorPatients:create', (_event, data: any) => {
+    requireTier('pro');
+    const result = db.prepare(`
+      INSERT INTO contractor_patients (entity_id, name, phone, address, dob, notes)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(data.entity_id, data.name || '', data.phone || '', data.address || '', data.dob || '', data.notes || '');
+    return db.prepare('SELECT * FROM contractor_patients WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('contractorPatients:update', (_event, id: number, data: any) => {
+    requireTier('pro');
+    const allowed = ['name', 'phone', 'address', 'dob', 'notes'];
+    const fields = Object.keys(data).filter(k => allowed.includes(k));
+    if (!fields.length) throw new Error('No valid fields to update');
+    const set = fields.map(f => `${f} = ?`).join(', ');
+    db.prepare(`UPDATE contractor_patients SET ${set} WHERE id = ?`).run(...fields.map(f => data[f]), id);
+    return db.prepare('SELECT * FROM contractor_patients WHERE id = ?').get(id);
+  });
+
+  safeHandle('contractorPatients:delete', (_event, id: number) => {
+    requireTier('pro');
+    db.prepare('UPDATE contractor_patients SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
+    return true;
+  });
+
+  // ── Contractor Notes — thin wrappers over the notes table ──
+
+  safeHandle('contractorNotes:list', (_event, contractorPatientId: number) => {
+    requireTier('pro');
+    return db.prepare(`
+      SELECT n.*, cp.name as contractor_patient_name, e.name as entity_name
+      FROM notes n
+      LEFT JOIN contractor_patients cp ON n.contractor_patient_id = cp.id
+      LEFT JOIN contracted_entities e ON n.entity_id = e.id
+      WHERE n.contractor_patient_id = ? AND n.deleted_at IS NULL
+      ORDER BY n.date_of_service DESC
+    `).all(contractorPatientId);
+  });
+
+  safeHandle('contractorNotes:get', (_event, id: number) => {
+    requireTier('pro');
+    return db.prepare(`
+      SELECT n.*, cp.name as contractor_patient_name, e.name as entity_name
+      FROM notes n
+      LEFT JOIN contractor_patients cp ON n.contractor_patient_id = cp.id
+      LEFT JOIN contracted_entities e ON n.entity_id = e.id
+      WHERE n.id = ? AND n.deleted_at IS NULL
+    `).get(id);
+  });
+
+  safeHandle('contractorNotes:create', (_event, data: any) => {
+    requireTier('pro');
+    const noteType = data.note_type === 'evaluation' ? 'evaluation' : 'soap';
+    const result = db.prepare(`
+      INSERT INTO notes (contractor_patient_id, entity_id, patient_name, date_of_service, time_in, time_out,
+        subjective, objective, assessment, plan, medical_history, interventions_provided,
+        note_type, signed_at, signature_typed)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      data.contractor_patient_id || null,
+      data.entity_id || null,
+      data.patient_name || '',
+      data.date_of_service,
+      data.time_in || null,
+      data.time_out || null,
+      data.subjective || '',
+      data.objective || '',
+      data.assessment || '',
+      data.plan || '',
+      data.medical_history || '',
+      data.interventions_provided || '',
+      noteType,
+      data.signed_at || null,
+      data.signature_typed || ''
+    );
+    // Link note back to appointment if provided
+    if (data.appointment_id) {
+      db.prepare('UPDATE appointments SET note_id = ? WHERE id = ?').run(result.lastInsertRowid, data.appointment_id);
+    }
+    return db.prepare('SELECT * FROM notes WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('contractorNotes:update', (_event, id: number, data: any) => {
+    requireTier('pro');
+    const allowed = ['subjective', 'objective', 'assessment', 'plan', 'time_in', 'time_out', 'signed_at', 'signature_typed', 'patient_name', 'medical_history', 'interventions_provided', 'note_type'];
+    const fields = Object.keys(data).filter(k => allowed.includes(k));
+    if (!fields.length) throw new Error('No valid fields to update');
+    const set = fields.map(f => `${f} = ?`).join(', ') + ', updated_at = CURRENT_TIMESTAMP';
+    db.prepare(`UPDATE notes SET ${set} WHERE id = ?`).run(...fields.map(f => data[f]), id);
+    return db.prepare('SELECT * FROM notes WHERE id = ?').get(id);
+  });
+
   // ══════════════════════════════════════════════════════════════════════
   // ── Entity Documents (Pro Only) ──
   // ══════════════════════════════════════════════════════════════════════
@@ -6495,6 +6755,25 @@ function registerIpcHandlers() {
     if (canceled || !filePaths?.length) return null;
 
     const sourcePath = filePaths[0];
+    const originalName = path.basename(sourcePath);
+    const ext = path.extname(originalName);
+    const filename = `entity_${data.entityId}_${uuidv4()}${ext}`;
+    const docsDir = path.join(getDataPath(), 'entity_documents');
+    fs.mkdirSync(docsDir, { recursive: true });
+    const destPath = path.join(docsDir, filename);
+    fs.copyFileSync(sourcePath, destPath);
+
+    const result = db.prepare(`
+      INSERT INTO entity_documents (entity_id, filename, original_name, file_path, category, notes)
+      VALUES (?, ?, ?, ?, ?, '')
+    `).run(data.entityId, filename, originalName, destPath, data.category || 'other');
+    return db.prepare('SELECT * FROM entity_documents WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('entityDocuments:uploadFromPath', (_event, data: { entityId: number; filePath: string; category?: string }) => {
+    requireTier('pro');
+    if (!data.filePath || !fs.existsSync(data.filePath)) throw new Error('File not found');
+    const sourcePath = data.filePath;
     const originalName = path.basename(sourcePath);
     const ext = path.extname(originalName);
     const filename = `entity_${data.entityId}_${uuidv4()}${ext}`;
@@ -8479,13 +8758,14 @@ function registerIpcHandlers() {
     email?: string;
     discipline?: string;
     referral_source?: string;
+    entity_id?: number | null;
     notes?: string;
     priority?: number;
   }) => {
     requireTier('pro');
     const result = db.prepare(`
-      INSERT INTO waitlist (first_name, last_name, phone, email, discipline, referral_source, notes, priority)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO waitlist (first_name, last_name, phone, email, discipline, referral_source, entity_id, notes, priority)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.first_name,
       data.last_name || '',
@@ -8493,6 +8773,7 @@ function registerIpcHandlers() {
       data.email || '',
       data.discipline || '',
       data.referral_source || '',
+      data.entity_id ?? null,
       data.notes || '',
       data.priority || 0
     );
@@ -8506,6 +8787,7 @@ function registerIpcHandlers() {
     email?: string;
     discipline?: string;
     referral_source?: string;
+    entity_id?: number | null;
     notes?: string;
     status?: string;
     priority?: number;
@@ -8556,6 +8838,53 @@ function registerIpcHandlers() {
       WHERE id = ? AND deleted_at IS NULL
     `).run(clientId, waitlistId);
     return db.prepare('SELECT * FROM waitlist WHERE id = ?').get(waitlistId);
+  });
+
+  // ── Waitlist contact log (per-entry call/voicemail history) ──
+
+  safeHandle('waitlist:contactLog:list', (_event, waitlistId: number) => {
+    requireTier('pro');
+    return db.prepare(`
+      SELECT * FROM waitlist_contact_log
+      WHERE waitlist_id = ? AND deleted_at IS NULL
+      ORDER BY contacted_at DESC
+    `).all(waitlistId);
+  });
+
+  safeHandle('waitlist:contactLog:create', (_event, data: { waitlist_id: number; contacted_at?: string; note?: string }) => {
+    requireTier('pro');
+    const note = data.note?.trim() || 'Left voicemail';
+    const contactedAt = data.contacted_at || new Date().toISOString();
+    const result = db.prepare(`
+      INSERT INTO waitlist_contact_log (waitlist_id, contacted_at, note) VALUES (?, ?, ?)
+    `).run(data.waitlist_id, contactedAt, note);
+    // Mirror on parent for legacy reminders + status nudge if still in waiting state
+    db.prepare(`
+      UPDATE waitlist
+      SET last_contacted = ?,
+          status = CASE WHEN status = 'waiting' THEN 'contacted' ELSE status END,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND deleted_at IS NULL
+    `).run(contactedAt, data.waitlist_id);
+    return db.prepare('SELECT * FROM waitlist_contact_log WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('waitlist:contactLog:update', (_event, id: number, data: { contacted_at?: string; note?: string }) => {
+    requireTier('pro');
+    const sets: string[] = [];
+    const values: any[] = [];
+    if (data.contacted_at !== undefined) { sets.push('contacted_at = ?'); values.push(data.contacted_at); }
+    if (data.note !== undefined) { sets.push('note = ?'); values.push(data.note); }
+    if (sets.length === 0) return db.prepare('SELECT * FROM waitlist_contact_log WHERE id = ?').get(id);
+    values.push(id);
+    db.prepare(`UPDATE waitlist_contact_log SET ${sets.join(', ')} WHERE id = ? AND deleted_at IS NULL`).run(...values);
+    return db.prepare('SELECT * FROM waitlist_contact_log WHERE id = ?').get(id);
+  });
+
+  safeHandle('waitlist:contactLog:delete', (_event, id: number) => {
+    requireTier('pro');
+    db.prepare('UPDATE waitlist_contact_log SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
+    return true;
   });
 
   safeHandle('waitlist:count', () => {
@@ -8890,7 +9219,7 @@ function buildGfePdf(
   return { base64Pdf, filename };
 }
 
-function buildInvoicePdf(invoice: any, items: any[], client: any, practice: any): { base64Pdf: string; filename: string } {
+function buildInvoicePdf(invoice: any, items: any[], client: any, practice: any, entity?: any): { base64Pdf: string; filename: string } {
   const doc = new jsPDF({ unit: 'pt', format: 'letter' });
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -8973,50 +9302,91 @@ function buildInvoicePdf(invoice: any, items: any[], client: any, practice: any)
   y += 20;
 
   // ── Bill To Section ──
+  const isEntityInvoice = Boolean(entity);
+  const billTo = isEntityInvoice ? entity : client;
+
   doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
   doc.text('Bill To:', marginLeft, y);
   y += 16;
 
   doc.setFont('helvetica', 'normal');
-  doc.text(`${client?.first_name || ''} ${client?.last_name || ''}`, marginLeft, y);
-  y += 14;
+  if (isEntityInvoice) {
+    if (billTo?.name) { doc.text(billTo.name, marginLeft, y); y += 14; }
+    if (billTo?.contact_name) { doc.text(billTo.contact_name, marginLeft, y); y += 14; }
+    const addr = [billTo?.billing_address_street].filter(Boolean).join('');
+    if (addr) { doc.text(addr, marginLeft, y); y += 14; }
+    const cityStateZip = [billTo?.billing_address_city, billTo?.billing_address_state, billTo?.billing_address_zip].filter(Boolean).join(', ');
+    if (cityStateZip) { doc.text(cityStateZip, marginLeft, y); y += 14; }
+    if (billTo?.contact_email) { doc.text(billTo.contact_email, marginLeft, y); y += 14; }
+  } else {
+    const clientName = `${client?.first_name || ''} ${client?.last_name || ''}`.trim();
+    if (clientName) { doc.text(clientName, marginLeft, y); y += 14; }
+    if (client?.address) { doc.text(client.address, marginLeft, y); y += 14; }
+    const cityStateZip = [client?.city, client?.state, client?.zip].filter(Boolean).join(', ');
+    if (cityStateZip) { doc.text(cityStateZip, marginLeft, y); y += 14; }
+    if (client?.email) { doc.text(client.email, marginLeft, y); y += 14; }
+  }
 
-  if (client?.address) {
-    doc.text(client.address, marginLeft, y);
-    y += 14;
-  }
-  const clientCityStateZip = [client?.city, client?.state, client?.zip].filter(Boolean).join(', ');
-  if (clientCityStateZip) {
-    doc.text(clientCityStateZip, marginLeft, y);
-    y += 14;
-  }
-  if (client?.email) {
-    doc.text(client.email, marginLeft, y);
-    y += 14;
+  // ── Service Period (entity invoices) ──
+  if (isEntityInvoice && items.length > 0) {
+    const dates = items.map((i: any) => i.service_date).filter(Boolean).sort();
+    if (dates.length > 0) {
+      const periodText = dates[0] === dates[dates.length - 1]
+        ? `Service Date: ${dates[0]}`
+        : `Service Period: ${dates[0]} – ${dates[dates.length - 1]}`;
+      doc.setFontSize(8.5);
+      doc.setTextColor(PDF_COLORS.label[0], PDF_COLORS.label[1], PDF_COLORS.label[2]);
+      doc.text(periodText, marginLeft, y);
+      doc.setTextColor(PDF_COLORS.body[0], PDF_COLORS.body[1], PDF_COLORS.body[2]);
+      y += 12;
+    }
   }
 
-  y += 20;
+  y += 16;
 
   // ── Line Items Table ──
-  const colX = {
-    description: marginLeft,
-    cpt: marginLeft + 250,
-    units: marginLeft + 340,
-    rate: marginLeft + 400,
-    amount: pageWidth - marginRight - 70,
-  };
+  // Entity invoices: Patient | Service | Date | Rate | Amount (no CPT/units)
+  // Client invoices: Description | CPT | Units | Rate | Amount
+  const isEntity = isEntityInvoice;
+
+  let colX: Record<string, number>;
+  if (isEntity) {
+    colX = {
+      patient:  marginLeft,
+      service:  marginLeft + 210,
+      date:     marginLeft + 290,
+      rate:     marginLeft + 400,
+      amount:   pageWidth - marginRight - 60,
+    };
+  } else {
+    colX = {
+      description: marginLeft,
+      cpt:         marginLeft + 250,
+      units:       marginLeft + 340,
+      rate:        marginLeft + 400,
+      amount:      pageWidth - marginRight - 60,
+    };
+  }
 
   // Table header
   doc.setFillColor(245, 245, 245);
   doc.rect(marginLeft, y - 12, maxWidth, 20, 'F');
   doc.setFontSize(9);
   doc.setFont('helvetica', 'bold');
-  doc.text('Description', colX.description, y);
-  doc.text('CPT', colX.cpt, y);
-  doc.text('Units', colX.units, y);
-  doc.text('Rate', colX.rate, y);
-  doc.text('Amount', colX.amount, y);
+  if (isEntity) {
+    doc.text('Patient', colX.patient, y);
+    doc.text('Service', colX.service, y);
+    doc.text('Date', colX.date, y);
+    doc.text('Rate', colX.rate, y);
+    doc.text('Amount', colX.amount, y);
+  } else {
+    doc.text('Description', colX.description, y);
+    doc.text('CPT', colX.cpt, y);
+    doc.text('Units', colX.units, y);
+    doc.text('Rate', colX.rate, y);
+    doc.text('Amount', colX.amount, y);
+  }
   y += 20;
 
   // Table rows
@@ -9027,15 +9397,27 @@ function buildInvoicePdf(invoice: any, items: any[], client: any, practice: any)
       y = 50;
     }
 
-    // Description (wrap if needed)
-    const descLines = doc.splitTextToSize(item.description || 'Service', 230);
-    doc.text(descLines, colX.description, y);
-    doc.text(item.cpt_code || '-', colX.cpt, y);
-    doc.text(String(item.units || 1), colX.units, y);
-    doc.text(formatCurrency(item.unit_price || 0), colX.rate, y);
-    doc.text(formatCurrency(item.amount || 0), colX.amount, y);
-
-    y += Math.max(descLines.length * 14, 18);
+    if (isEntity) {
+      const patientName = (item.patient_name || item.description || '—').trim();
+      const serviceLabel = item.session_type === 'eval' ? 'Evaluation' : 'Treatment';
+      const serviceDate = item.service_date
+        ? new Date(item.service_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+        : '—';
+      doc.text(doc.splitTextToSize(patientName, 195)[0], colX.patient, y);
+      doc.text(serviceLabel, colX.service, y);
+      doc.text(serviceDate, colX.date, y);
+      doc.text(formatCurrency(item.unit_price || 0), colX.rate, y);
+      doc.text(formatCurrency(item.amount || 0), colX.amount, y);
+      y += 18;
+    } else {
+      const descLines = doc.splitTextToSize(item.description || 'Service', 230);
+      doc.text(descLines, colX.description, y);
+      doc.text(item.cpt_code || '-', colX.cpt, y);
+      doc.text(String(item.units || 1), colX.units, y);
+      doc.text(formatCurrency(item.unit_price || 0), colX.rate, y);
+      doc.text(formatCurrency(item.amount || 0), colX.amount, y);
+      y += Math.max(descLines.length * 14, 18);
+    }
   }
 
   y += 10;

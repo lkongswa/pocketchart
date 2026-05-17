@@ -215,10 +215,22 @@ export default function TimeGrid({
       }
       const apptId = parseInt(e.dataTransfer.getData('text/plain'), 10);
       if (!isNaN(apptId)) {
-        onAppointmentDrop(apptId, dateStr, timeStr);
+        // Compute precise drop time: account for where the user grabbed the block,
+        // then snap to 15-min increments instead of locking to 30-min slot boundaries.
+        const grabOffsetY = parseFloat(e.dataTransfer.getData('application/grab-offset-y') || '0');
+        const slotRect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+        const dropYInSlot = e.clientY - slotRect.top;
+        const apptTopInSlot = dropYInSlot - grabOffsetY;
+        const [slotH, slotM] = timeStr.split(':').map(Number);
+        const slotBaseMinutes = slotH * 60 + slotM;
+        const offsetMinutes = (apptTopInSlot / SLOT_HEIGHT) * 30;
+        const snapped = Math.round((slotBaseMinutes + offsetMinutes) / 15) * 15;
+        const clamped = Math.max(startHour * 60, Math.min((endHour - 1) * 60 + 45, snapped));
+        const preciseTimeStr = toTimeString(Math.floor(clamped / 60), clamped % 60);
+        onAppointmentDrop(apptId, dateStr, preciseTimeStr);
       }
     },
-    [onAppointmentDrop, onBlockDrop, onTodoDrop]
+    [onAppointmentDrop, onBlockDrop, onTodoDrop, startHour, endHour]
   );
 
   const handleSlotClick = useCallback(

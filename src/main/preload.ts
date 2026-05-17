@@ -310,6 +310,7 @@ const api = {
     get: (id: number) => ipcRenderer.invoke('invoices:get', id),
     create: (data: any, items: any[]) => ipcRenderer.invoke('invoices:create', data, items),
     update: (id: number, data: any) => ipcRenderer.invoke('invoices:update', id, data),
+    replaceItems: (invoiceId: number, items: any[]) => ipcRenderer.invoke('invoices:replaceItems', invoiceId, items),
     delete: (id: number) => ipcRenderer.invoke('invoices:delete', id),
     generateFromNotes: (clientId: number, noteIds: number[], entityId?: number) => ipcRenderer.invoke('invoices:generateFromNotes', clientId, noteIds, entityId),
     generatePdf: (invoiceId: number) => ipcRenderer.invoke('invoices:generatePdf', invoiceId),
@@ -484,12 +485,33 @@ const api = {
     createFeeScheduleEntry: (data: any) => ipcRenderer.invoke('contractedEntities:createFeeScheduleEntry', data),
     updateFeeScheduleEntry: (id: number, data: any) => ipcRenderer.invoke('contractedEntities:updateFeeScheduleEntry', id, data),
     deleteFeeScheduleEntry: (id: number) => ipcRenderer.invoke('contractedEntities:deleteFeeScheduleEntry', id),
+    listAppointments: (entityId: number, filters?: any) => ipcRenderer.invoke('contractedEntities:listAppointments', entityId, filters),
+    createInvoiceFromAppointments: (entityId: number, appointmentIds: number[], invoiceDate: string, dueDate?: string) =>
+      ipcRenderer.invoke('contractedEntities:createInvoiceFromAppointments', entityId, appointmentIds, invoiceDate, dueDate),
+  },
+
+  // ── Contractor Patients (Pro) ──
+  contractorPatients: {
+    list: (entityId: number) => ipcRenderer.invoke('contractorPatients:list', entityId),
+    get: (id: number) => ipcRenderer.invoke('contractorPatients:get', id),
+    create: (data: any) => ipcRenderer.invoke('contractorPatients:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('contractorPatients:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('contractorPatients:delete', id),
+  },
+
+  // ── Contractor Notes (Pro) ──
+  contractorNotes: {
+    list: (contractorPatientId: number) => ipcRenderer.invoke('contractorNotes:list', contractorPatientId),
+    get: (id: number) => ipcRenderer.invoke('contractorNotes:get', id),
+    create: (data: any) => ipcRenderer.invoke('contractorNotes:create', data),
+    update: (id: number, data: any) => ipcRenderer.invoke('contractorNotes:update', id, data),
   },
 
   // ── Entity Documents (Pro) ──
   entityDocuments: {
     list: (entityId: number) => ipcRenderer.invoke('entityDocuments:list', entityId),
     upload: (data: { entityId: number; category?: string }) => ipcRenderer.invoke('entityDocuments:upload', data),
+    uploadFromPath: (data: { entityId: number; filePath: string; category?: string }) => ipcRenderer.invoke('entityDocuments:uploadFromPath', data),
     open: (documentId: number) => ipcRenderer.invoke('entityDocuments:open', documentId),
     delete: (documentId: number) => ipcRenderer.invoke('entityDocuments:delete', documentId),
   },
@@ -586,6 +608,14 @@ const api = {
     convertToClient: (id: number) => ipcRenderer.invoke('waitlist:convertToClient', id),
     linkClient: (waitlistId: number, clientId: number) => ipcRenderer.invoke('waitlist:linkClient', waitlistId, clientId),
     count: () => ipcRenderer.invoke('waitlist:count'),
+    contactLog: {
+      list: (waitlistId: number) => ipcRenderer.invoke('waitlist:contactLog:list', waitlistId),
+      create: (data: { waitlist_id: number; contacted_at?: string; note?: string }) =>
+        ipcRenderer.invoke('waitlist:contactLog:create', data),
+      update: (id: number, data: { contacted_at?: string; note?: string }) =>
+        ipcRenderer.invoke('waitlist:contactLog:update', id, data),
+      delete: (id: number) => ipcRenderer.invoke('waitlist:contactLog:delete', id),
+    },
   },
 
   // ── Dashboard ──
