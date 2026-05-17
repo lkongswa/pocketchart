@@ -106,6 +106,7 @@ interface FormData {
   state: string;
   zip: string;
   gender: Gender;
+  mrn: string;
   discipline: Discipline;
   primary_dx_code: string;
   primary_dx_description: string;
@@ -153,6 +154,7 @@ const emptyForm: FormData = {
   state: '',
   zip: '',
   gender: '',
+  mrn: '',
   discipline: 'PT',
   primary_dx_code: '',
   primary_dx_description: '',
@@ -239,6 +241,7 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
         state: client.state || '',
         zip: client.zip || '',
         gender: client.gender || '',
+        mrn: client.mrn || '',
         discipline: client.discipline,
         primary_dx_code: client.primary_dx_code,
         primary_dx_description: client.primary_dx_description,
@@ -589,6 +592,17 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
                   value={form.email}
                   onChange={handleChange}
                   placeholder="email@example.com"
+                />
+              </div>
+              <div className="col-span-2">
+                <label className="label" htmlFor="mrn">MRN <span className="text-xs text-[var(--color-text-secondary)] font-normal">(optional, for agency invoices)</span></label>
+                <input
+                  id="mrn"
+                  name="mrn"
+                  className="input"
+                  value={form.mrn}
+                  onChange={handleChange}
+                  placeholder="Medical record number"
                 />
               </div>
             </div>

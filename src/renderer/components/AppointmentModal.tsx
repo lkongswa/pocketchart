@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { X, Calendar, Clock, User, Building2, Repeat } from 'lucide-react';
 import { addDays, addWeeks, addMonths, format } from 'date-fns';
 import type { Appointment, AppointmentStatus, Client, ContractedEntity, ContractorPatient, EntityFeeSchedule, VisitType, SessionType } from '../../shared/types';
-import { VISIT_TYPE_LABELS, SESSION_TYPE_LABELS } from '../../shared/types';
+import { VISIT_TYPE_LABELS, SESSION_TYPE_LABELS, APPOINTMENT_SERVICE_MODALITIES } from '../../shared/types';
 
 // Unified search result item
 type SearchItem =
@@ -82,6 +82,10 @@ export default function AppointmentModal({
   const [patientQuery, setPatientQuery] = useState('');
   const [showPatientDropdown, setShowPatientDropdown] = useState(false);
   const [creatingPatient, setCreatingPatient] = useState(false);
+  const [patientMrn, setPatientMrn] = useState('');
+  // Service modality: 'preset' picks from the fixed list; '__custom__' enables a free-text input.
+  const [modalityChoice, setModalityChoice] = useState<string>('');  // '' = unset, '__custom__' = other
+  const [modalityCustom, setModalityCustom] = useState<string>('');
 
   useEffect(() => {
     if (!isOpen) return;
@@ -119,6 +123,16 @@ export default function AppointmentModal({
         }
         setEntityRate(appointment.entity_rate ?? null);
         setPatientQuery(appointment.contractor_patient_name || appointment.patient_name || '');
+        // patientMrn gets re-seeded by the contract-edit useEffect once contractor patients load.
+        setPatientMrn('');
+        const savedModality = (appointment as any).service_modality || '';
+        if (savedModality && !(APPOINTMENT_SERVICE_MODALITIES as readonly string[]).includes(savedModality)) {
+          setModalityChoice('__custom__');
+          setModalityCustom(savedModality);
+        } else {
+          setModalityChoice(savedModality);
+          setModalityCustom('');
+        }
       } else {
         let duration = 45;
         try {
@@ -143,7 +157,10 @@ export default function AppointmentModal({
           setEntityRate(null);
           setSelectedPatient(null);
           setPatientQuery('');
+          setPatientMrn('');
           setContractorPatients([]);
+          setModalityChoice('');
+          setModalityCustom('');
         }
         setRepeatFrequency('none');
         setRepeatEndDate('');
@@ -180,8 +197,10 @@ export default function AppointmentModal({
       if (p) {
         setSelectedPatient(p);
         setPatientQuery(p.name);
+        setPatientMrn(p.mrn || '');
       } else {
         setPatientQuery(prefillEntityPatient.contractor_patient_name);
+        setPatientMrn('');
       }
     }).catch(() => {});
   }, [isOpen, appointment, prefillEntityPatient, entities]);
@@ -201,7 +220,7 @@ export default function AppointmentModal({
           setContractorPatients(patients);
           if (appointment.contractor_patient_id) {
             const p = patients.find((p: ContractorPatient) => p.id === appointment.contractor_patient_id);
-            if (p) { setSelectedPatient(p); setPatientQuery(p.name); }
+            if (p) { setSelectedPatient(p); setPatientQuery(p.name); setPatientMrn(p.mrn || ''); }
           }
         }).catch(() => {});
       }
@@ -240,6 +259,9 @@ export default function AppointmentModal({
       setContractorPatients([]);
       setSelectedPatient(null);
       setPatientQuery('');
+      setPatientMrn('');
+      setModalityChoice('');
+      setModalityCustom('');
     } else {
       setFormData(prev => ({ ...prev, client_id: 0 }));
       try {
@@ -316,6 +338,7 @@ export default function AppointmentModal({
       // and stops apparent "new patient every time" behavior on the entity's
       // Unscheduled Patients list.
       let resolvedPatient: ContractorPatient | null = selectedPatient;
+      const typedMrn = patientMrn.trim();
       if (selectedItem.type === 'contract' && !resolvedPatient && patientQuery.trim()) {
         const typed = patientQuery.trim();
         const existing = contractorPatients.find(
@@ -328,12 +351,26 @@ export default function AppointmentModal({
             resolvedPatient = await window.api.contractorPatients.create({
               entity_id: selectedItem.id,
               name: typed,
+              mrn: typedMrn,
             });
           } catch (err) {
             console.error('Failed to auto-create contractor patient:', err);
           }
         }
       }
+      // If the user edited the MRN on an existing contractor patient, sync it back.
+      if (selectedItem.type === 'contract' && resolvedPatient && typedMrn !== (resolvedPatient.mrn || '').trim()) {
+        try {
+          const updated = await window.api.contractorPatients.update(resolvedPatient.id, { mrn: typedMrn });
+          resolvedPatient = updated;
+        } catch (err) {
+          console.error('Failed to update contractor patient MRN:', err);
+        }
+      }
+
+      const resolvedModality = selectedItem.type === 'contract'
+        ? (modalityChoice === '__custom__' ? modalityCustom.trim() : modalityChoice)
+        : '';
 
       const baseData: Partial<Appointment> = {
         ...formData,
@@ -342,6 +379,7 @@ export default function AppointmentModal({
         entity_rate: selectedItem.type === 'contract' ? entityRate ?? undefined : undefined,
         patient_name: selectedItem.type === 'contract' ? (resolvedPatient?.name || patientQuery) : '',
         contractor_patient_id: selectedItem.type === 'contract' ? (resolvedPatient?.id ?? null) : null,
+        service_modality: resolvedModality,
       };
 
       if (repeatFrequency !== 'none' && effectiveEndDate && !appointment && onSaveBatch) {
@@ -506,7 +544,10 @@ export default function AppointmentModal({
                 onChange={(e) => {
                   setPatientQuery(e.target.value);
                   setShowPatientDropdown(true);
-                  if (selectedPatient && e.target.value !== selectedPatient.name) setSelectedPatient(null);
+                  if (selectedPatient && e.target.value !== selectedPatient.name) {
+                    setSelectedPatient(null);
+                    setPatientMrn('');
+                  }
                 }}
                 onFocus={() => setShowPatientDropdown(true)}
                 onBlur={() => setTimeout(() => setShowPatientDropdown(false), 150)}
@@ -514,6 +555,51 @@ export default function AppointmentModal({
               {selectedPatient && (
                 <p className="text-[11px] text-emerald-600 mt-0.5 font-medium">Existing patient — history will be linked</p>
               )}
+              <div className="mt-2">
+                <label className="label">
+                  MRN <span className="text-[11px] text-[var(--color-text-secondary)] font-normal">(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  className="input"
+                  placeholder="Medical record number"
+                  value={patientMrn}
+                  onChange={(e) => setPatientMrn(e.target.value)}
+                />
+                {selectedPatient && patientMrn.trim() !== (selectedPatient.mrn || '').trim() && (
+                  <p className="text-[11px] text-blue-600 mt-0.5">Will update the patient record on save.</p>
+                )}
+              </div>
+              <div className="mt-2">
+                <label className="label">
+                  Service Modality <span className="text-[11px] text-[var(--color-text-secondary)] font-normal">(optional — shows on invoice)</span>
+                </label>
+                <select
+                  className="select"
+                  value={modalityChoice}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setModalityChoice(v);
+                    if (v !== '__custom__') setModalityCustom('');
+                  }}
+                >
+                  <option value="">—</option>
+                  {APPOINTMENT_SERVICE_MODALITIES.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                  <option value="__custom__">Other…</option>
+                </select>
+                {modalityChoice === '__custom__' && (
+                  <input
+                    type="text"
+                    className="input mt-2"
+                    placeholder='e.g. "Fluency", "AAC", "Voice prosthesis"'
+                    value={modalityCustom}
+                    onChange={(e) => setModalityCustom(e.target.value)}
+                    autoFocus
+                  />
+                )}
+              </div>
               {showPatientDropdown && patientQuery.trim() && (
                 <div className="absolute z-20 w-full mt-1 bg-white border border-[var(--color-border)] rounded-lg shadow-lg max-h-48 overflow-y-auto">
                   {/* Matching existing patients */}
@@ -522,9 +608,10 @@ export default function AppointmentModal({
                     .map(p => (
                       <button key={p.id} type="button"
                         className="w-full text-left px-4 py-2 text-sm hover:bg-blue-50 transition-colors"
-                        onMouseDown={() => { setSelectedPatient(p); setPatientQuery(p.name); setShowPatientDropdown(false); }}
+                        onMouseDown={() => { setSelectedPatient(p); setPatientQuery(p.name); setPatientMrn(p.mrn || ''); setShowPatientDropdown(false); }}
                       >
                         <span className="font-medium">{p.name}</span>
+                        {p.mrn && <span className="ml-2 text-xs font-mono text-[var(--color-text-secondary)]">MRN: {p.mrn}</span>}
                         {p.phone && <span className="ml-2 text-xs text-[var(--color-text-secondary)]">{p.phone}</span>}
                       </button>
                     ))}
@@ -538,7 +625,7 @@ export default function AppointmentModal({
                         setCreatingPatient(true);
                         try {
                           const newP: ContractorPatient = await window.api.contractorPatients.create({
-                            entity_id: selectedItem.id, name: patientQuery.trim(),
+                            entity_id: selectedItem.id, name: patientQuery.trim(), mrn: patientMrn.trim(),
                           });
                           setContractorPatients(prev => [...prev, newP]);
                           setSelectedPatient(newP);

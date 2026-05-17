@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
-import type { ContractedEntity, BillingCycle } from '@shared/types';
+import type { ContractedEntity, BillingCycle, InvoiceColumnKey } from '@shared/types';
+import {
+  INVOICE_COLUMNS,
+  ENTITY_INVOICE_DEFAULT_COLUMNS,
+  parseInvoiceColumns,
+} from '@shared/types';
 
 interface EntityFormModalProps {
   isOpen: boolean;
@@ -30,6 +35,7 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
   const [requiresNotes, setRequiresNotes] = useState(false);
   const [billingCycle, setBillingCycle] = useState<BillingCycle>('monthly');
   const [billingDay, setBillingDay] = useState(1);
+  const [invoiceCols, setInvoiceCols] = useState<InvoiceColumnKey[]>(ENTITY_INVOICE_DEFAULT_COLUMNS);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -48,6 +54,7 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
       setRequiresNotes(Boolean(entity.requires_notes));
       setBillingCycle((entity.billing_cycle as BillingCycle) || 'monthly');
       setBillingDay(entity.billing_day || 1);
+      setInvoiceCols(parseInvoiceColumns(entity.invoice_columns, ENTITY_INVOICE_DEFAULT_COLUMNS));
     } else {
       setName('');
       setContactName('');
@@ -62,9 +69,16 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
       setRequiresNotes(false);
       setBillingCycle('monthly');
       setBillingDay(1);
+      setInvoiceCols(ENTITY_INVOICE_DEFAULT_COLUMNS);
     }
     setError('');
   }, [entity, isOpen]);
+
+  const toggleCol = (key: InvoiceColumnKey) => {
+    setInvoiceCols((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+    );
+  };
 
   if (!isOpen) return null;
 
@@ -90,6 +104,7 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
         requires_notes: requiresNotes ? 1 : 0,
         billing_cycle: billingCycle,
         billing_day: billingDay,
+        invoice_columns: JSON.stringify(invoiceCols),
       };
 
       if (entity) {
@@ -233,6 +248,46 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+
+          <div className="border-t border-[var(--color-border)] pt-4">
+            <p className="text-xs font-medium text-[var(--color-text-secondary)] mb-1 uppercase tracking-wide">
+              Invoice Template
+            </p>
+            <p className="text-xs text-[var(--color-text-secondary)] mb-3">
+              Pick which columns show on this contract's invoices (editor + PDF). Amount is always shown.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {(Object.keys(INVOICE_COLUMNS) as InvoiceColumnKey[]).map((key) => {
+                const col = INVOICE_COLUMNS[key];
+                const checked = invoiceCols.includes(key);
+                return (
+                  <label
+                    key={key}
+                    className={`flex items-start gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${
+                      checked
+                        ? 'bg-purple-50 border-purple-200'
+                        : 'bg-[var(--color-surface)] border-[var(--color-border)] hover:bg-gray-50'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleCol(key)}
+                      className="mt-0.5"
+                    />
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-[var(--color-text)]">{col.label}</div>
+                      {col.helpText && (
+                        <div className="text-[11px] text-[var(--color-text-secondary)] leading-tight">
+                          {col.helpText}
+                        </div>
+                      )}
+                    </div>
+                  </label>
+                );
+              })}
             </div>
           </div>
 
