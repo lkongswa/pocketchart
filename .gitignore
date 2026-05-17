@@ -9,6 +9,19 @@ release/
 .DS_Store
 Thumbs.db
 
+# SQLite databases (PHI — actual DB lives in %APPDATA%, never in repo)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+
+# PocketChart backup files
+*.pcbackup
+backup-*.zip
+
 # IDE
 .vscode/
 .idea/
