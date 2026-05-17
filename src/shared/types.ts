@@ -259,6 +259,7 @@ export interface Client {
   state: string;                             // V2/V3: EDI-ready
   zip: string;                               // V2/V3: EDI-ready
   gender: Gender;                            // V2/V3: EDI-ready
+  mrn: string;                               // Medical record number (external)
   primary_dx_code: string;
   primary_dx_description: string;
   secondary_dx: string; // JSON array
@@ -418,6 +419,7 @@ export interface Appointment {
   patient_name: string;
   visit_type: VisitType;
   session_type: SessionType;
+  service_modality: string;                  // e.g. "Speech/Language", "Swallow" — appears on contract invoices
   evaluation_id: number | null;
   contract_invoice_id: number | null;
   created_at: string;
@@ -594,6 +596,15 @@ export interface LicenseActivateResult {
   error?: string;
 }
 
+// Modalities offered for contract appointments. Stored as the display string itself
+// so custom values from the "Other" picker round-trip cleanly. Empty string means unset.
+export const APPOINTMENT_SERVICE_MODALITIES = [
+  'Speech/Language',
+  'Swallow',
+  'Cognitive-Communication',
+  'Voice',
+] as const;
+
 // ── Contractor Module Types ──
 
 export interface ContractorPatient {
@@ -603,6 +614,7 @@ export interface ContractorPatient {
   phone: string;
   address: string;
   dob: string;
+  mrn: string;        // Medical record number (external)
   notes: string;
   created_at: string;
   deleted_at: string | null;
@@ -625,9 +637,80 @@ export interface ContractedEntity {
   requires_notes: number;   // 1 = therapists document in PocketChart; 0 = external
   billing_cycle: BillingCycle;
   billing_day: number;      // day-of-month (1–28) for monthly; day-of-week (0–6) for weekly
+  invoice_columns: string | null;  // JSON array of InvoiceColumnKey; null = use defaults
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+}
+
+// ── Per-contract invoice template ──
+// Each contracted entity can pick which columns appear on its invoice line items
+// (both in the editor and on the rendered PDF). Stored as JSON array on
+// contracted_entities.invoice_columns. When null, ENTITY_INVOICE_DEFAULT_COLUMNS apply.
+
+export type InvoiceColumnKey =
+  | 'patient_name'
+  | 'mrn'
+  | 'cpt_code'
+  | 'dx_code'
+  | 'service_date'
+  | 'service_time'
+  | 'service_type'
+  | 'description'
+  | 'units'
+  | 'rate';
+// Note: 'amount' is always shown — every invoice has line totals.
+
+export interface InvoiceColumnDef {
+  key: InvoiceColumnKey;
+  label: string;       // header label on the PDF + editor
+  shortLabel?: string; // for tight editor headers
+  editable: boolean;   // false = derived from appointment/client/note
+  helpText?: string;   // shown in the checkbox row
+}
+
+export const INVOICE_COLUMNS: Record<InvoiceColumnKey, InvoiceColumnDef> = {
+  patient_name:  { key: 'patient_name',  label: 'Patient',     editable: false, helpText: 'Auto-filled from appointment' },
+  mrn:           { key: 'mrn',           label: 'MRN',         editable: false, helpText: 'From patient record' },
+  cpt_code:      { key: 'cpt_code',      label: 'CPT',         editable: true },
+  dx_code:       { key: 'dx_code',       label: 'DX',          editable: true,  helpText: 'Auto-filled from note or client; editable' },
+  service_date:  { key: 'service_date',  label: 'Date',        editable: false, helpText: 'Date of service' },
+  service_time:  { key: 'service_time',  label: 'Time',        editable: false, helpText: 'Time of service from appointment' },
+  service_type:  { key: 'service_type',  label: 'Service',     editable: false, helpText: 'Treatment / Evaluation from appointment' },
+  description:   { key: 'description',   label: 'Description', editable: true },
+  units:         { key: 'units',         label: 'Units',       shortLabel: 'Un.', editable: true },
+  rate:          { key: 'rate',          label: 'Rate',        editable: true },
+};
+
+// Replicates the historical entity-invoice layout: Patient | Service | Date | Rate | Amount.
+export const ENTITY_INVOICE_DEFAULT_COLUMNS: InvoiceColumnKey[] = [
+  'patient_name',
+  'service_type',
+  'service_date',
+  'rate',
+];
+
+// Replicates the historical client-invoice layout: Description | CPT | Units | Rate | Amount.
+export const CLIENT_INVOICE_DEFAULT_COLUMNS: InvoiceColumnKey[] = [
+  'description',
+  'cpt_code',
+  'units',
+  'rate',
+];
+
+export function parseInvoiceColumns(
+  raw: string | null | undefined,
+  fallback: InvoiceColumnKey[],
+): InvoiceColumnKey[] {
+  if (!raw) return fallback;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return fallback;
+    const valid = parsed.filter((k): k is InvoiceColumnKey => typeof k === 'string' && k in INVOICE_COLUMNS);
+    return valid.length ? valid : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 export type EntityFeeUnit = 'per_visit' | 'per_hour' | 'per_unit';
@@ -1214,6 +1297,7 @@ export interface InvoiceItem {
   appointment_id?: number | null;
   description: string;
   cpt_code: string;
+  dx_code: string;
   service_date: string;
   units: number;
   unit_price: number;

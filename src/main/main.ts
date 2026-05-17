@@ -25,7 +25,8 @@ import type { AppTier, NoteFormat, DischargeData, DischargeGoalStatus } from '..
 import { generateIntakePdf } from './intakeFormGenerator';
 import { DEFAULT_INTAKE_TEMPLATES } from '../shared/intakeTemplates';
 import { FaxRouter, matchFaxToClient, normalizeFaxNumber, type FaxProviderType } from './fax';
-import { NOTE_FORMAT_SECTIONS, DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS } from '../shared/types';
+import { NOTE_FORMAT_SECTIONS, DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS, INVOICE_COLUMNS, ENTITY_INVOICE_DEFAULT_COLUMNS, CLIENT_INVOICE_DEFAULT_COLUMNS, parseInvoiceColumns } from '../shared/types';
+import type { InvoiceColumnKey } from '../shared/types';
 import { ClearinghouseRouter, type ClearinghouseProviderType } from './clearinghouse';
 import { generate837P, assemble837PInput } from './edi837Generator';
 
@@ -910,7 +911,7 @@ function registerIpcHandlers() {
 
   safeHandle('clients:create', (_event, data) => {
     const result = db.prepare(`
-      INSERT INTO clients (first_name, last_name, dob, phone, email, address, city, state, zip, gender,
+      INSERT INTO clients (first_name, last_name, dob, phone, email, address, city, state, zip, gender, mrn,
         primary_dx_code, primary_dx_description, secondary_dx, default_cpt_code,
         insurance_payer, insurance_member_id, insurance_group, insurance_payer_id,
         subscriber_relationship, subscriber_first_name, subscriber_last_name, subscriber_dob,
@@ -920,10 +921,10 @@ function registerIpcHandlers() {
         other_accident, claim_accept_assignment, patient_signature_source, insured_signature_source,
         prior_auth_number, additional_claim_info, service_facility_name, service_facility_npi,
         status, discipline)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.first_name, data.last_name, data.dob, data.phone, data.email, data.address,
-      data.city || '', data.state || '', data.zip || '', data.gender || '',
+      data.city || '', data.state || '', data.zip || '', data.gender || '', data.mrn || '',
       data.primary_dx_code, data.primary_dx_description, data.secondary_dx || '[]',
       data.default_cpt_code, data.insurance_payer, data.insurance_member_id,
       data.insurance_group, data.insurance_payer_id || '',
@@ -965,7 +966,7 @@ function registerIpcHandlers() {
 
     db.prepare(`
       UPDATE clients SET first_name=?, last_name=?, dob=?, phone=?, email=?, address=?,
-        city=?, state=?, zip=?, gender=?,
+        city=?, state=?, zip=?, gender=?, mrn=?,
         primary_dx_code=?, primary_dx_description=?, secondary_dx=?, default_cpt_code=?,
         insurance_payer=?, insurance_member_id=?, insurance_group=?, insurance_payer_id=?,
         subscriber_relationship=?, subscriber_first_name=?, subscriber_last_name=?, subscriber_dob=?,
@@ -979,7 +980,7 @@ function registerIpcHandlers() {
       WHERE id=? AND deleted_at IS NULL
     `).run(
       data.first_name, data.last_name, data.dob, data.phone, data.email, data.address,
-      data.city || '', data.state || '', data.zip || '', data.gender || '',
+      data.city || '', data.state || '', data.zip || '', data.gender || '', data.mrn || '',
       data.primary_dx_code, data.primary_dx_description, data.secondary_dx || '[]',
       data.default_cpt_code, data.insurance_payer, data.insurance_member_id,
       data.insurance_group, data.insurance_payer_id || '',
@@ -1909,21 +1910,21 @@ function registerIpcHandlers() {
 
   safeHandle('appointments:create', (_event, data) => {
     const result = db.prepare(`
-      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate, patient_name, visit_type, session_type, contractor_patient_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate, patient_name, visit_type, session_type, contractor_patient_id, service_modality)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(data.client_id || null, data.scheduled_date, data.scheduled_time,
       data.duration_minutes || 60, data.status || 'scheduled',
       data.entity_id || null, data.entity_rate || null, data.patient_name || '',
       data.visit_type || 'O', data.session_type || 'visit',
-      data.contractor_patient_id || null);
+      data.contractor_patient_id || null, data.service_modality || '');
     return db.prepare(apptSelectQuery + ' AND a.id = ?').get(result.lastInsertRowid);
   });
 
   // Batch create for recurring appointments
   safeHandle('appointments:createBatch', (_event, items: any[]) => {
     const insert = db.prepare(`
-      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate, patient_name, visit_type, session_type, contractor_patient_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO appointments (client_id, scheduled_date, scheduled_time, duration_minutes, status, entity_id, entity_rate, patient_name, visit_type, session_type, contractor_patient_id, service_modality)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const created: any[] = [];
     const txn = db.transaction(() => {
@@ -1933,7 +1934,7 @@ function registerIpcHandlers() {
           data.duration_minutes || 60, data.status || 'scheduled',
           data.entity_id || null, data.entity_rate || null, data.patient_name || '',
           data.visit_type || 'O', data.session_type || 'visit',
-          data.contractor_patient_id || null
+          data.contractor_patient_id || null, data.service_modality || ''
         );
         const row = db.prepare(apptSelectQuery + ' AND a.id = ?').get(result.lastInsertRowid);
         if (row) created.push(row);
@@ -1947,12 +1948,13 @@ function registerIpcHandlers() {
     db.prepare(`
       UPDATE appointments SET client_id=?, scheduled_date=?, scheduled_time=?,
         duration_minutes=?, status=?, note_id=?, entity_id=?, entity_rate=?, patient_name=?,
-        visit_type=?, session_type=?, evaluation_id=?
+        visit_type=?, session_type=?, evaluation_id=?, service_modality=?
       WHERE id=? AND deleted_at IS NULL
     `).run(data.client_id || null, data.scheduled_date, data.scheduled_time,
       data.duration_minutes, data.status, data.note_id,
       data.entity_id || null, data.entity_rate || null, data.patient_name || '',
-      data.visit_type || 'O', data.session_type || 'visit', data.evaluation_id || null, id);
+      data.visit_type || 'O', data.session_type || 'visit', data.evaluation_id || null,
+      data.service_modality || '', id);
     return db.prepare(apptSelectQuery + ' AND a.id = ?').get(id);
   });
 
@@ -4545,8 +4547,8 @@ function registerIpcHandlers() {
 
     // Insert line items
     const insertItem = db.prepare(`
-      INSERT INTO invoice_items (invoice_id, note_id, description, cpt_code, service_date, units, unit_price, amount)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO invoice_items (invoice_id, note_id, description, cpt_code, dx_code, service_date, units, unit_price, amount)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const item of items || []) {
       insertItem.run(
@@ -4554,6 +4556,7 @@ function registerIpcHandlers() {
         item.note_id || null,
         item.description || '',
         item.cpt_code || '',
+        (item as any).dx_code || '',
         item.service_date || '',
         item.units || 1,
         item.unit_price || 0,
@@ -4599,7 +4602,7 @@ function registerIpcHandlers() {
   // Replace the line items on an invoice. Used by the entity-invoice edit flow:
   // user can uncheck/remove items (clears the linked appointment's contract_invoice_id),
   // edit service_date/amount, then save. Recomputes subtotal + total.
-  safeHandle('invoices:replaceItems', (_event, invoiceId: number, items: Array<{ id?: number; appointment_id?: number | null; description?: string; service_date?: string; units?: number; unit_price?: number; amount?: number }>) => {
+  safeHandle('invoices:replaceItems', (_event, invoiceId: number, items: Array<{ id?: number; appointment_id?: number | null; description?: string; cpt_code?: string; dx_code?: string; service_date?: string; units?: number; unit_price?: number; amount?: number }>) => {
     const invoice = db.prepare('SELECT * FROM invoices WHERE id = ? AND deleted_at IS NULL').get(invoiceId) as any;
     if (!invoice) throw new Error('Invoice not found');
 
@@ -4616,8 +4619,8 @@ function registerIpcHandlers() {
       // Wipe and reinsert (simpler and avoids id-shifting bugs)
       db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
       const insert = db.prepare(`
-        INSERT INTO invoice_items (invoice_id, appointment_id, description, service_date, units, unit_price, amount)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO invoice_items (invoice_id, appointment_id, description, cpt_code, dx_code, service_date, units, unit_price, amount)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       let subtotal = 0;
       for (const it of items) {
@@ -4629,6 +4632,8 @@ function registerIpcHandlers() {
           invoiceId,
           it.appointment_id ?? null,
           it.description ?? '',
+          it.cpt_code ?? '',
+          it.dx_code ?? '',
           it.service_date ?? null,
           units,
           unitPrice,
@@ -4678,14 +4683,20 @@ function registerIpcHandlers() {
     const invoice = db.prepare('SELECT * FROM invoices WHERE id = ? AND deleted_at IS NULL').get(invoiceId) as any;
     if (!invoice) throw new Error('Invoice not found');
 
-    // Enrich items with appointment data (patient name, session type)
+    // Enrich items with appointment / patient data (name, session type, MRN, DX, time).
+    // dx_code: stored on the item wins; otherwise fall back to client.primary_dx_code.
     const items = db.prepare(`
       SELECT ii.*,
-        COALESCE(cp.name, a.patient_name, '') as patient_name,
-        a.session_type
+        COALESCE(NULLIF(cp.name, ''), NULLIF(c.first_name || ' ' || c.last_name, ' '), NULLIF(a.patient_name, ''), '') as patient_name,
+        COALESCE(NULLIF(cp.mrn, ''), NULLIF(c.mrn, ''), '') as mrn,
+        COALESCE(NULLIF(ii.dx_code, ''), NULLIF(c.primary_dx_code, ''), '') as dx_code_resolved,
+        a.session_type,
+        a.scheduled_time as service_time,
+        a.service_modality
       FROM invoice_items ii
       LEFT JOIN appointments a ON ii.appointment_id = a.id
       LEFT JOIN contractor_patients cp ON a.contractor_patient_id = cp.id
+      LEFT JOIN clients c ON c.id = a.client_id
       WHERE ii.invoice_id = ?
       ORDER BY ii.service_date ASC, ii.id ASC
     `).all(invoiceId) as any[];
@@ -6485,14 +6496,15 @@ function registerIpcHandlers() {
     const result = db.prepare(`
       INSERT INTO contracted_entities (name, contact_name, contact_email, contact_phone,
         billing_address_street, billing_address_city, billing_address_state, billing_address_zip,
-        default_note_type, notes, requires_notes, billing_cycle, billing_day)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        default_note_type, notes, requires_notes, billing_cycle, billing_day, invoice_columns)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.name, data.contact_name || '', data.contact_email || '', data.contact_phone || '',
       data.billing_address_street || '', data.billing_address_city || '',
       data.billing_address_state || '', data.billing_address_zip || '',
       data.default_note_type || 'soap', data.notes || '',
-      data.requires_notes ? 1 : 0, data.billing_cycle || 'monthly', data.billing_day || 1
+      data.requires_notes ? 1 : 0, data.billing_cycle || 'monthly', data.billing_day || 1,
+      data.invoice_columns ?? null
     );
     return db.prepare('SELECT * FROM contracted_entities WHERE id = ?').get(result.lastInsertRowid);
   });
@@ -6503,7 +6515,7 @@ function registerIpcHandlers() {
     const values: any[] = [];
     const allowed = ['name', 'contact_name', 'contact_email', 'contact_phone',
       'billing_address_street', 'billing_address_city', 'billing_address_state', 'billing_address_zip',
-      'default_note_type', 'notes', 'requires_notes', 'billing_cycle', 'billing_day'];
+      'default_note_type', 'notes', 'requires_notes', 'billing_cycle', 'billing_day', 'invoice_columns'];
     for (const key of allowed) {
       if (data[key] !== undefined) {
         fields.push(`${key} = ?`);
@@ -6648,15 +6660,15 @@ function registerIpcHandlers() {
   safeHandle('contractorPatients:create', (_event, data: any) => {
     requireTier('pro');
     const result = db.prepare(`
-      INSERT INTO contractor_patients (entity_id, name, phone, address, dob, notes)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(data.entity_id, data.name || '', data.phone || '', data.address || '', data.dob || '', data.notes || '');
+      INSERT INTO contractor_patients (entity_id, name, phone, address, dob, mrn, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(data.entity_id, data.name || '', data.phone || '', data.address || '', data.dob || '', data.mrn || '', data.notes || '');
     return db.prepare('SELECT * FROM contractor_patients WHERE id = ?').get(result.lastInsertRowid);
   });
 
   safeHandle('contractorPatients:update', (_event, id: number, data: any) => {
     requireTier('pro');
-    const allowed = ['name', 'phone', 'address', 'dob', 'notes'];
+    const allowed = ['name', 'phone', 'address', 'dob', 'mrn', 'notes'];
     const fields = Object.keys(data).filter(k => allowed.includes(k));
     if (!fields.length) throw new Error('No valid fields to update');
     const set = fields.map(f => `${f} = ?`).join(', ');
@@ -9349,47 +9361,80 @@ function buildInvoicePdf(invoice: any, items: any[], client: any, practice: any,
   y += 16;
 
   // ── Line Items Table ──
-  // Entity invoices: Patient | Service | Date | Rate | Amount (no CPT/units)
-  // Client invoices: Description | CPT | Units | Rate | Amount
-  const isEntity = isEntityInvoice;
+  // Columns are driven by entity.invoice_columns (per-contract template) for entity invoices,
+  // and a fixed default for client invoices. 'amount' is always rendered as the rightmost column.
+  const columnKeys: InvoiceColumnKey[] = isEntityInvoice
+    ? parseInvoiceColumns(entity?.invoice_columns, ENTITY_INVOICE_DEFAULT_COLUMNS)
+    : CLIENT_INVOICE_DEFAULT_COLUMNS;
 
-  let colX: Record<string, number>;
-  if (isEntity) {
-    colX = {
-      patient:  marginLeft,
-      service:  marginLeft + 210,
-      date:     marginLeft + 290,
-      rate:     marginLeft + 400,
-      amount:   pageWidth - marginRight - 60,
-    };
-  } else {
-    colX = {
-      description: marginLeft,
-      cpt:         marginLeft + 250,
-      units:       marginLeft + 340,
-      rate:        marginLeft + 400,
-      amount:      pageWidth - marginRight - 60,
-    };
+  // Relative width weights per column type
+  const COLUMN_WEIGHTS: Record<InvoiceColumnKey, number> = {
+    patient_name: 2.8,
+    mrn:          1.4,
+    cpt_code:     1.0,
+    dx_code:      1.2,
+    service_date: 1.6,
+    service_time: 1.0,
+    service_type: 1.5,
+    description:  3.0,
+    units:        0.7,
+    rate:         1.2,
+  };
+
+  const amountColWidth = 70;
+  const tableAvail = maxWidth - amountColWidth;
+  const totalWeight = columnKeys.reduce((sum, k) => sum + (COLUMN_WEIGHTS[k] || 1), 0);
+  const colWidths: number[] = columnKeys.map((k) => Math.floor(tableAvail * (COLUMN_WEIGHTS[k] || 1) / totalWeight));
+  const colX: number[] = [];
+  let xCursor = marginLeft;
+  for (const w of colWidths) {
+    colX.push(xCursor);
+    xCursor += w;
   }
+  const amountX = pageWidth - marginRight;  // right-aligned
+
+  // Per-column value extractor
+  const formatServiceDate = (raw: string) => raw
+    ? new Date(raw + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : '—';
+  const formatServiceTime = (raw: string) => {
+    if (!raw) return '—';
+    // "HH:MM" → "h:mm AM/PM"
+    const [hStr, mStr] = raw.split(':');
+    const h = parseInt(hStr, 10);
+    if (isNaN(h)) return raw;
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    return `${h12}:${mStr || '00'} ${ampm}`;
+  };
+  const getColValue = (key: InvoiceColumnKey, item: any): string => {
+    switch (key) {
+      case 'patient_name': return (item.patient_name || item.description || '—').trim();
+      case 'mrn':          return item.mrn || '—';
+      case 'cpt_code':     return item.cpt_code || '—';
+      case 'dx_code':      return item.dx_code_resolved || item.dx_code || '—';
+      case 'service_date': return formatServiceDate(item.service_date);
+      case 'service_time': return formatServiceTime(item.service_time);
+      case 'service_type': {
+        const base = item.session_type === 'eval' ? 'Evaluation' : 'Treatment';
+        const modality = (item.service_modality || '').trim();
+        return modality ? `${modality} ${base}` : base;
+      }
+      case 'description':  return item.description || 'Service';
+      case 'units':        return String(item.units || 1);
+      case 'rate':         return formatCurrency(item.unit_price || 0);
+    }
+  };
 
   // Table header
   doc.setFillColor(245, 245, 245);
   doc.rect(marginLeft, y - 12, maxWidth, 20, 'F');
   doc.setFontSize(9);
   doc.setFont('helvetica', 'bold');
-  if (isEntity) {
-    doc.text('Patient', colX.patient, y);
-    doc.text('Service', colX.service, y);
-    doc.text('Date', colX.date, y);
-    doc.text('Rate', colX.rate, y);
-    doc.text('Amount', colX.amount, y);
-  } else {
-    doc.text('Description', colX.description, y);
-    doc.text('CPT', colX.cpt, y);
-    doc.text('Units', colX.units, y);
-    doc.text('Rate', colX.rate, y);
-    doc.text('Amount', colX.amount, y);
-  }
+  columnKeys.forEach((key, i) => {
+    doc.text(INVOICE_COLUMNS[key].label, colX[i], y);
+  });
+  doc.text('Amount', amountX, y, { align: 'right' });
   y += 20;
 
   // Table rows
@@ -9400,27 +9445,18 @@ function buildInvoicePdf(invoice: any, items: any[], client: any, practice: any,
       y = 50;
     }
 
-    if (isEntity) {
-      const patientName = (item.patient_name || item.description || '—').trim();
-      const serviceLabel = item.session_type === 'eval' ? 'Evaluation' : 'Treatment';
-      const serviceDate = item.service_date
-        ? new Date(item.service_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-        : '—';
-      doc.text(doc.splitTextToSize(patientName, 195)[0], colX.patient, y);
-      doc.text(serviceLabel, colX.service, y);
-      doc.text(serviceDate, colX.date, y);
-      doc.text(formatCurrency(item.unit_price || 0), colX.rate, y);
-      doc.text(formatCurrency(item.amount || 0), colX.amount, y);
-      y += 18;
-    } else {
-      const descLines = doc.splitTextToSize(item.description || 'Service', 230);
-      doc.text(descLines, colX.description, y);
-      doc.text(item.cpt_code || '-', colX.cpt, y);
-      doc.text(String(item.units || 1), colX.units, y);
-      doc.text(formatCurrency(item.unit_price || 0), colX.rate, y);
-      doc.text(formatCurrency(item.amount || 0), colX.amount, y);
-      y += Math.max(descLines.length * 14, 18);
-    }
+    let rowHeight = 18;
+    columnKeys.forEach((key, i) => {
+      const text = getColValue(key, item);
+      const wrapWidth = Math.max(colWidths[i] - 6, 30);
+      const lines = doc.splitTextToSize(text, wrapWidth);
+      // Truncate to first 2 lines to avoid runaway rows
+      const display = Array.isArray(lines) ? lines.slice(0, 2) : [String(lines)];
+      doc.text(display, colX[i], y);
+      rowHeight = Math.max(rowHeight, display.length * 14);
+    });
+    doc.text(formatCurrency(item.amount || 0), amountX, y, { align: 'right' });
+    y += rowHeight;
   }
 
   y += 10;
@@ -9433,19 +9469,19 @@ function buildInvoicePdf(invoice: any, items: any[], client: any, practice: any,
 
   doc.setFont('helvetica', 'normal');
   doc.text('Subtotal:', totalsX, y);
-  doc.text(formatCurrency(invoice.subtotal || 0), colX.amount, y);
+  doc.text(formatCurrency(invoice.subtotal || 0), amountX, y, { align: 'right' });
   y += 16;
 
   if (invoice.discount_amount > 0) {
     doc.text('Discount:', totalsX, y);
-    doc.text(`-${formatCurrency(invoice.discount_amount)}`, colX.amount, y);
+    doc.text(`-${formatCurrency(invoice.discount_amount)}`, amountX, y, { align: 'right' });
     y += 16;
   }
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(12);
   doc.text('Total:', totalsX, y);
-  doc.text(formatCurrency(invoice.total_amount || 0), colX.amount, y);
+  doc.text(formatCurrency(invoice.total_amount || 0), amountX, y, { align: 'right' });
   y += 30;
 
   // ── Status Badge ──

@@ -1,6 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { X, Plus, Trash2, Calculator, Building2, User, CheckSquare, Square } from 'lucide-react';
-import type { Client, ClientDiscount, ContractedEntity, Invoice, InvoiceItem, FeeScheduleEntry, Note } from '../../shared/types';
+import type { Client, ClientDiscount, ContractedEntity, Invoice, InvoiceItem, FeeScheduleEntry, Note, InvoiceColumnKey } from '../../shared/types';
+import {
+  INVOICE_COLUMNS,
+  ENTITY_INVOICE_DEFAULT_COLUMNS,
+  CLIENT_INVOICE_DEFAULT_COLUMNS,
+  parseInvoiceColumns,
+} from '../../shared/types';
 import ClientDiscountBadge from './ClientDiscountBadge';
 
 interface InvoiceModalProps {
@@ -142,6 +148,20 @@ export default function InvoiceModal({
 
   const selectedBillToId = billToType === 'client' ? clientId : entityId;
 
+  // Resolve which line-item columns are active for this invoice.
+  // Entity invoices honor the per-contract template; client invoices use the fixed default.
+  const activeEntity: ContractedEntity | undefined = useMemo(() => {
+    if (billToType !== 'entity' || !entityId) return undefined;
+    return entities.find((e) => e.id === entityId);
+  }, [billToType, entityId, entities]);
+
+  const activeColumns: InvoiceColumnKey[] = useMemo(() => {
+    if (billToType === 'entity') {
+      return parseInvoiceColumns(activeEntity?.invoice_columns ?? null, ENTITY_INVOICE_DEFAULT_COLUMNS);
+    }
+    return CLIENT_INVOICE_DEFAULT_COLUMNS;
+  }, [billToType, activeEntity]);
+
   const calculateSubtotal = () => {
     return items.reduce((sum, item) => sum + (item.amount || 0), 0);
   };
@@ -249,7 +269,21 @@ export default function InvoiceModal({
       };
 
       if (invoice) {
-        const updated = await window.api.invoices.update(invoice.id, data);
+        await window.api.invoices.update(invoice.id, data);
+        await window.api.invoices.replaceItems(
+          invoice.id,
+          items.map((it) => ({
+            appointment_id: (it as any).appointment_id ?? null,
+            description: it.description ?? '',
+            cpt_code: it.cpt_code ?? '',
+            dx_code: it.dx_code ?? '',
+            service_date: it.service_date,
+            units: it.units,
+            unit_price: it.unit_price,
+            amount: it.amount,
+          }))
+        );
+        const updated = await window.api.invoices.get(invoice.id);
         onSave(updated);
       } else {
         const created = await window.api.invoices.create(data, items as InvoiceItem[]);
@@ -448,7 +482,15 @@ export default function InvoiceModal({
           {/* Line Items */}
           <div>
             <div className="flex items-center justify-between mb-3">
-              <label className="label mb-0">Line Items</label>
+              <div>
+                <label className="label mb-0">Line Items</label>
+                {billToType === 'entity' && activeEntity && (
+                  <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                    Columns: {activeColumns.map((k) => INVOICE_COLUMNS[k].label).join(' · ')} · Amount
+                    {' '}<span className="text-[var(--color-text-tertiary)]">(edit in contract settings)</span>
+                  </p>
+                )}
+              </div>
               <button
                 onClick={addItem}
                 className="text-sm text-[var(--color-primary)] hover:underline flex items-center gap-1"
@@ -461,72 +503,122 @@ export default function InvoiceModal({
               {items.map((item, index) => (
                 <div
                   key={index}
-                  className="grid grid-cols-12 gap-2 items-start p-3 bg-gray-50 rounded-lg"
+                  className="flex flex-wrap gap-2 items-end p-3 bg-gray-50 rounded-lg"
                 >
-                  {/* CPT Code */}
-                  <div className="col-span-2">
-                    <label className="text-xs text-[var(--color-text-secondary)]">CPT</label>
-                    <select
-                      className="select text-sm"
-                      value={item.cpt_code || ''}
-                      onChange={(e) => handleCptSelect(index, e.target.value)}
-                    >
-                      <option value="">-</option>
-                      {feeSchedule.map((fee) => (
-                        <option key={fee.id} value={fee.cpt_code}>
-                          {fee.cpt_code}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  {activeColumns.map((key) => {
+                    const col = INVOICE_COLUMNS[key];
+                    const baseLabel = (
+                      <label className="text-xs text-[var(--color-text-secondary)] block">{col.label}</label>
+                    );
+                    if (key === 'cpt_code') {
+                      return (
+                        <div key={key} className="flex-1 min-w-[90px]">
+                          {baseLabel}
+                          <select
+                            className="select text-sm"
+                            value={item.cpt_code || ''}
+                            onChange={(e) => handleCptSelect(index, e.target.value)}
+                          >
+                            <option value="">-</option>
+                            {feeSchedule.map((fee) => (
+                              <option key={fee.id} value={fee.cpt_code}>{fee.cpt_code}</option>
+                            ))}
+                          </select>
+                        </div>
+                      );
+                    }
+                    if (key === 'description') {
+                      return (
+                        <div key={key} className="flex-[2] min-w-[160px]">
+                          {baseLabel}
+                          <input
+                            type="text"
+                            className="input text-sm"
+                            value={item.description || ''}
+                            onChange={(e) => handleItemChange(index, 'description', e.target.value)}
+                            placeholder="Service description"
+                          />
+                        </div>
+                      );
+                    }
+                    if (key === 'dx_code') {
+                      return (
+                        <div key={key} className="flex-1 min-w-[90px]">
+                          {baseLabel}
+                          <input
+                            type="text"
+                            className="input text-sm"
+                            value={item.dx_code || ''}
+                            onChange={(e) => handleItemChange(index, 'dx_code', e.target.value)}
+                            placeholder="ICD-10"
+                          />
+                        </div>
+                      );
+                    }
+                    if (key === 'units') {
+                      return (
+                        <div key={key} className="w-16">
+                          {baseLabel}
+                          <input
+                            type="number"
+                            min="1"
+                            className="input text-sm text-center"
+                            value={item.units || 1}
+                            onChange={(e) => handleItemChange(index, 'units', Number(e.target.value))}
+                          />
+                        </div>
+                      );
+                    }
+                    if (key === 'rate') {
+                      return (
+                        <div key={key} className="w-24">
+                          {baseLabel}
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            className="input text-sm text-right"
+                            value={item.unit_price || 0}
+                            onChange={(e) => handleItemChange(index, 'unit_price', Number(e.target.value))}
+                          />
+                        </div>
+                      );
+                    }
+                    if (key === 'service_date') {
+                      return (
+                        <div key={key} className="w-40">
+                          {baseLabel}
+                          <input
+                            type="date"
+                            className="input text-sm"
+                            value={item.service_date || ''}
+                            onChange={(e) => handleItemChange(index, 'service_date', e.target.value)}
+                          />
+                        </div>
+                      );
+                    }
+                    // Derived columns (patient_name, mrn, service_time, service_type):
+                    // Always read-only here — they're filled from the linked appointment/patient.
+                    return (
+                      <div key={key} className="flex-1 min-w-[100px]">
+                        {baseLabel}
+                        <div className="input text-sm bg-gray-100 text-[var(--color-text-secondary)] italic">
+                          {col.helpText || 'from appointment'}
+                        </div>
+                      </div>
+                    );
+                  })}
 
-                  {/* Description */}
-                  <div className="col-span-4">
-                    <label className="text-xs text-[var(--color-text-secondary)]">Description</label>
-                    <input
-                      type="text"
-                      className="input text-sm"
-                      value={item.description || ''}
-                      onChange={(e) => handleItemChange(index, 'description', e.target.value)}
-                      placeholder="Service description"
-                    />
-                  </div>
-
-                  {/* Units */}
-                  <div className="col-span-1">
-                    <label className="text-xs text-[var(--color-text-secondary)]">Units</label>
-                    <input
-                      type="number"
-                      min="1"
-                      className="input text-sm text-center"
-                      value={item.units || 1}
-                      onChange={(e) => handleItemChange(index, 'units', Number(e.target.value))}
-                    />
-                  </div>
-
-                  {/* Unit Price */}
-                  <div className="col-span-2">
-                    <label className="text-xs text-[var(--color-text-secondary)]">Unit Price</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      className="input text-sm text-right"
-                      value={item.unit_price || 0}
-                      onChange={(e) => handleItemChange(index, 'unit_price', Number(e.target.value))}
-                    />
-                  </div>
-
-                  {/* Amount */}
-                  <div className="col-span-2">
-                    <label className="text-xs text-[var(--color-text-secondary)]">Amount</label>
+                  {/* Amount (always shown) */}
+                  <div className="w-24">
+                    <label className="text-xs text-[var(--color-text-secondary)] block">Amount</label>
                     <div className="input text-sm text-right bg-gray-100 font-medium">
                       ${(item.amount || 0).toFixed(2)}
                     </div>
                   </div>
 
                   {/* Remove */}
-                  <div className="col-span-1 flex items-end justify-center pb-2">
+                  <div className="flex items-end pb-1">
                     <button
                       onClick={() => removeItem(index)}
                       disabled={items.length === 1}

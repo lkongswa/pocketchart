@@ -41,7 +41,7 @@ const VALID_TABLES = new Set([
   // Audit log
   'audit_log',
   // V2 Pro tables
-  'contracted_entities', 'entity_fee_schedules', 'entity_documents',
+  'contracted_entities', 'entity_fee_schedules', 'entity_documents', 'contractor_patients',
   'vault_documents', 'compliance_tracking', 'mileage_log', 'communication_log',
   // V5 Progress Report tables
   'staged_goals', 'progress_report_goals',
@@ -2348,6 +2348,33 @@ function runMigrations(): void {
         }
         if (!names.has('interventions_provided')) {
           db.exec("ALTER TABLE notes ADD COLUMN interventions_provided TEXT DEFAULT ''");
+        }
+      },
+    },
+    {
+      version: 61,
+      description: 'Per-contract invoice template (invoice_columns), MRN on clients/contractor_patients, dx_code on invoice_items',
+      up: () => {
+        if (!columnExists('contracted_entities', 'invoice_columns')) {
+          db.exec("ALTER TABLE contracted_entities ADD COLUMN invoice_columns TEXT DEFAULT NULL");
+        }
+        if (!columnExists('clients', 'mrn')) {
+          db.exec("ALTER TABLE clients ADD COLUMN mrn TEXT DEFAULT ''");
+        }
+        if (!columnExists('contractor_patients', 'mrn')) {
+          db.exec("ALTER TABLE contractor_patients ADD COLUMN mrn TEXT DEFAULT ''");
+        }
+        if (!columnExists('invoice_items', 'dx_code')) {
+          db.exec("ALTER TABLE invoice_items ADD COLUMN dx_code TEXT DEFAULT ''");
+        }
+      },
+    },
+    {
+      version: 62,
+      description: 'service_modality on appointments (e.g. swallow / speech-language) for granular invoice line labels',
+      up: () => {
+        if (!columnExists('appointments', 'service_modality')) {
+          db.exec("ALTER TABLE appointments ADD COLUMN service_modality TEXT DEFAULT ''");
         }
       },
     },
