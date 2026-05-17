@@ -768,12 +768,15 @@ function registerIpcHandlers() {
         .update(previousHash + entryContent)
         .digest('hex');
 
+      // `action` is a legacy NOT-NULL column from migration v13; mirror actionType
+      // into it so the constraint is satisfied without a table-recreate migration.
       db.prepare(`
-        INSERT INTO audit_log (timestamp, user_id, user_role, session_id, action_type,
+        INSERT INTO audit_log (timestamp, user_id, user_role, session_id, action, action_type,
           entity_type, entity_id, client_id, detail, content_hash, device_identifier, entry_hash)
-        VALUES (datetime('now'), 1, 'owner', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (datetime('now'), 1, 'owner', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         sessionId,
+        params.actionType,
         params.actionType,
         params.entityType,
         params.entityId ?? null,
