@@ -2378,6 +2378,23 @@ function runMigrations(): void {
         }
       },
     },
+    {
+      version: 63,
+      description: 'Reconcile stale contract_invoice_id FKs that still point at soft-deleted invoices (appointments would otherwise appear "Invoiced" forever)',
+      up: () => {
+        // Earlier builds of the delete handler did not always clear this FK,
+        // so historical data can have appointments pointing at invoices that
+        // have since been soft-deleted. Heal them in place. Idempotent.
+        db.exec(`
+          UPDATE appointments
+          SET contract_invoice_id = NULL
+          WHERE contract_invoice_id IS NOT NULL
+            AND contract_invoice_id IN (
+              SELECT id FROM invoices WHERE deleted_at IS NOT NULL
+            )
+        `);
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);

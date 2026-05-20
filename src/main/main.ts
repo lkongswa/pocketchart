@@ -6588,14 +6588,21 @@ function registerIpcHandlers() {
     return true;
   });
 
-  // List appointments for a contracted entity (for invoicing view)
+  // List appointments for a contracted entity (for invoicing view).
+  // NOTE: An appointment is only "invoiced" if its contract_invoice_id points at a
+  // LIVE (non-soft-deleted) invoice. We coalesce stale FKs to NULL in the SELECT so
+  // the UI never has to know the difference, and the filter conditions stay simple.
   safeHandle('contractedEntities:listAppointments', (_event, entityId: number, filters?: { startDate?: string; endDate?: string; invoiced?: boolean }) => {
     requireTier('pro');
     let query = `
       SELECT a.*,
+        CASE WHEN i.id IS NOT NULL AND i.deleted_at IS NULL
+             THEN a.contract_invoice_id
+             ELSE NULL END as contract_invoice_id,
         c.first_name, c.last_name, c.discipline as client_discipline,
         e.name as entity_name, e.requires_notes as entity_requires_notes
       FROM appointments a
+      LEFT JOIN invoices i ON i.id = a.contract_invoice_id
       LEFT JOIN clients c ON a.client_id = c.id AND c.deleted_at IS NULL
       LEFT JOIN contracted_entities e ON a.entity_id = e.id
       WHERE a.deleted_at IS NULL AND a.entity_id = ?
@@ -6603,8 +6610,9 @@ function registerIpcHandlers() {
     const params: any[] = [entityId];
     if (filters?.startDate) { query += ' AND a.scheduled_date >= ?'; params.push(filters.startDate); }
     if (filters?.endDate)   { query += ' AND a.scheduled_date <= ?'; params.push(filters.endDate); }
-    if (filters?.invoiced === false) { query += ' AND a.contract_invoice_id IS NULL'; }
-    if (filters?.invoiced === true)  { query += ' AND a.contract_invoice_id IS NOT NULL'; }
+    // Treat appointments linked to soft-deleted invoices as uninvoiced.
+    if (filters?.invoiced === false) { query += ' AND (a.contract_invoice_id IS NULL OR i.deleted_at IS NOT NULL)'; }
+    if (filters?.invoiced === true)  { query += ' AND a.contract_invoice_id IS NOT NULL AND i.deleted_at IS NULL'; }
     query += ' ORDER BY a.scheduled_date DESC, a.scheduled_time';
     return db.prepare(query).all(...params);
   });
