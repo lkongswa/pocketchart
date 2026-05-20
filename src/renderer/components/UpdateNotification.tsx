@@ -1,21 +1,25 @@
 import React, { useState, useEffect } from 'react';
-import { Download, RefreshCw, CheckCircle, X, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { Download, RefreshCw, CheckCircle, X, ShieldCheck, ShieldAlert, AlertTriangle, ExternalLink } from 'lucide-react';
 
-type UpdateState = 'idle' | 'available' | 'backing-up' | 'downloading' | 'ready' | 'backup-failed';
+type UpdateState = 'idle' | 'available' | 'backing-up' | 'downloading' | 'ready' | 'backup-failed' | 'download-failed';
 
 export default function UpdateNotification() {
   const [state, setState] = useState<UpdateState>('idle');
   const [version, setVersion] = useState('');
   const [progress, setProgress] = useState(0);
   const [dismissed, setDismissed] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
-    // Listen for update events from the main process
+    // Listen for update events from the main process. The two distinct failure
+    // modes (backup vs download) come in on different channels so we can show
+    // the right message and the right recovery action.
     const unsubs = [
       window.api.update.onAvailable((info: any) => {
         setVersion(info.version);
         setState('available');
         setDismissed(false);
+        setErrorMessage('');
       }),
       window.api.update.onProgress((prog: any) => {
         setState('downloading');
@@ -28,7 +32,20 @@ export default function UpdateNotification() {
       window.api.update.onNotAvailable(() => {
         setState('idle');
       }),
-    ];
+      window.api.update.onBackupFailed?.((info?: { message: string }) => {
+        setErrorMessage(info?.message || 'Automatic backup failed.');
+        setState('backup-failed');
+      }),
+      window.api.update.onDownloadFailed?.((info: { message: string }) => {
+        setErrorMessage(info?.message || 'Update download failed.');
+        setState('download-failed');
+      }),
+      window.api.update.onError?.((info: { message: string }) => {
+        // Surface autoUpdater-level errors only if we're not already showing a more specific state.
+        setErrorMessage((prev) => prev || info?.message || 'Updater error');
+        setState((prev) => (prev === 'downloading' || prev === 'backing-up' ? 'download-failed' : prev));
+      }),
+    ].filter(Boolean) as Array<() => void>;
 
     return () => { unsubs.forEach(fn => fn?.()); };
   }, []);
@@ -36,12 +53,18 @@ export default function UpdateNotification() {
   const handleDownload = async () => {
     setState('backing-up');
     setProgress(0);
+    setErrorMessage('');
     try {
-      // Backend will backup first, then download. If backup fails, it throws.
+      // Backend will backup first, then download. If either step fails it throws,
+      // but the *specific* failure state has already been set via the channel
+      // events above — so we don't need to guess here.
       await window.api.update.download();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Update blocked:', err);
-      setState('backup-failed');
+      // Defensive fallback only — main.ts emits backup-failed or download-failed
+      // before throwing, so state should already be correct. Avoid clobbering it.
+      setState((prev) => (prev === 'backup-failed' || prev === 'download-failed' ? prev : 'download-failed'));
+      setErrorMessage((prev) => prev || err?.message || 'Update failed');
     }
   };
 
@@ -55,6 +78,13 @@ export default function UpdateNotification() {
     } catch (err) {
       console.error('Manual backup failed:', err);
     }
+  };
+
+  const handleOpenReleasePage = () => {
+    const url = version
+      ? `https://github.com/lkongswa/pocketchart/releases/tag/v${version}`
+      : 'https://github.com/lkongswa/pocketchart/releases/latest';
+    window.api.shell.openExternal(url);
   };
 
   const handleInstall = () => {
@@ -127,6 +157,11 @@ export default function UpdateNotification() {
                 <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
                   A backup is required before updating. The automatic backup failed.
                 </p>
+                {errorMessage && (
+                  <p className="text-[11px] text-[var(--color-text-secondary)] mt-1 font-mono break-words">
+                    {errorMessage}
+                  </p>
+                )}
                 <div className="flex gap-2 mt-2">
                   <button
                     onClick={handleDownload}
@@ -141,6 +176,40 @@ export default function UpdateNotification() {
                   >
                     <ShieldCheck size={12} className="mr-1" />
                     Backup Manually
+                  </button>
+                </div>
+              </>
+            )}
+
+            {state === 'download-failed' && (
+              <>
+                <p className="text-sm font-medium text-red-600">
+                  Update Download Failed
+                </p>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                  Your data was backed up successfully, but downloading v{version} failed.
+                  This is often transient — CI may still be uploading, or the network blipped.
+                </p>
+                {errorMessage && (
+                  <p className="text-[11px] text-[var(--color-text-secondary)] mt-1 font-mono break-words">
+                    {errorMessage}
+                  </p>
+                )}
+                <div className="flex gap-2 mt-2 flex-wrap">
+                  <button
+                    onClick={handleDownload}
+                    className="btn-primary text-xs py-1.5 px-3"
+                  >
+                    <RefreshCw size={12} className="mr-1" />
+                    Retry
+                  </button>
+                  <button
+                    onClick={handleOpenReleasePage}
+                    className="btn-secondary text-xs py-1.5 px-3"
+                    title="Open the release page on GitHub to install manually"
+                  >
+                    <ExternalLink size={12} className="mr-1" />
+                    Get from GitHub
                   </button>
                 </div>
               </>
@@ -193,8 +262,8 @@ export default function UpdateNotification() {
             )}
           </div>
 
-          {/* Close button (only for available and backup-failed states) */}
-          {(state === 'available' || state === 'backup-failed') && (
+          {/* Close button (only for non-terminal failure / pending states) */}
+          {(state === 'available' || state === 'backup-failed' || state === 'download-failed') && (
             <button
               onClick={() => setDismissed(true)}
               className="text-[var(--color-text-secondary)] hover:text-[var(--color-text)] flex-shrink-0"

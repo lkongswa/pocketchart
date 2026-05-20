@@ -641,7 +641,10 @@ autoUpdater.on('update-downloaded', (info) => {
 });
 
 autoUpdater.on('error', (err) => {
-  console.error('Auto-updater error:', err?.message);
+  const message = err?.message || String(err) || 'Unknown updater error';
+  console.error('Auto-updater error:', message);
+  // Forward to renderer so the UI can show a real diagnosis instead of a generic spinner.
+  mainWindow?.webContents.send('update:error', { message });
 });
 
 app.on('window-all-closed', () => {
@@ -836,12 +839,21 @@ function registerIpcHandlers() {
       console.log('Pre-update backup verified:', backupDest, `(${destStat.size} bytes)`);
     } catch (backupErr: any) {
       console.error('Pre-update backup FAILED — blocking update download:', backupErr);
-      mainWindow?.webContents.send('update:backup-failed');
+      mainWindow?.webContents.send('update:backup-failed', { message: backupErr?.message || 'Backup failed' });
       throw new Error(`Backup required before update. Backup failed: ${backupErr.message}`);
     }
 
-    await autoUpdater.downloadUpdate();
-    return true;
+    // Backup succeeded — now attempt the actual download. Surface download
+    // failures as their own state so we don't blame the backup step.
+    try {
+      await autoUpdater.downloadUpdate();
+      return true;
+    } catch (downloadErr: any) {
+      const message = downloadErr?.message || String(downloadErr) || 'Update download failed';
+      console.error('Update download FAILED (backup succeeded):', message);
+      mainWindow?.webContents.send('update:download-failed', { message });
+      throw new Error(`Download failed: ${message}`);
+    }
   });
 
   safeHandle('update:install', () => {

@@ -2066,7 +2066,9 @@ export interface PocketChartAPI {
     onProgress: (callback: (progress: { percent: number; transferred: number; total: number }) => void) => () => void;
     onDownloaded: (callback: (info: { version: string }) => void) => () => void;
     onBackupComplete?: (callback: (info: { backupPath: string }) => void) => () => void;
-    onBackupFailed?: (callback: () => void) => () => void;
+    onBackupFailed?: (callback: (info?: { message: string }) => void) => () => void;
+    onDownloadFailed?: (callback: (info: { message: string }) => void) => () => void;
+    onError?: (callback: (info: { message: string }) => void) => () => void;
   };
   /** Stripe Payment Integration */
   stripe: {

@@ -446,10 +446,20 @@ const api = {
       ipcRenderer.on('update:backup-complete', handler);
       return () => { ipcRenderer.removeListener('update:backup-complete', handler); };
     },
-    onBackupFailed: (callback: () => void) => {
-      const handler = () => callback();
+    onBackupFailed: (callback: (info?: { message: string }) => void) => {
+      const handler = (_event: any, info: any) => callback(info);
       ipcRenderer.on('update:backup-failed', handler);
       return () => { ipcRenderer.removeListener('update:backup-failed', handler); };
+    },
+    onDownloadFailed: (callback: (info: { message: string }) => void) => {
+      const handler = (_event: any, info: any) => callback(info);
+      ipcRenderer.on('update:download-failed', handler);
+      return () => { ipcRenderer.removeListener('update:download-failed', handler); };
+    },
+    onError: (callback: (info: { message: string }) => void) => {
+      const handler = (_event: any, info: any) => callback(info);
+      ipcRenderer.on('update:error', handler);
+      return () => { ipcRenderer.removeListener('update:error', handler); };
     },
   },
 
