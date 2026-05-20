@@ -59,7 +59,18 @@ const DISCIPLINE_BADGE: Record<string, string> = {
   ST: 'badge-st',
 };
 
+// Compact inline format: "11a", "11:30a", "3p", "3:30p" — designed for tight calendar cells.
 function formatTime12(time24: string): string {
+  const [hStr, mStr] = time24.split(':');
+  const h = parseInt(hStr, 10);
+  const m = parseInt(mStr, 10);
+  const suffix = h >= 12 ? 'p' : 'a';
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return m === 0 ? `${h12}${suffix}` : `${h12}:${mStr}${suffix}`;
+}
+
+// Verbose format for tooltips where space isn't tight.
+function formatTime12Long(time24: string): string {
   const [hStr, mStr] = time24.split(':');
   const h = parseInt(hStr, 10);
   const suffix = h >= 12 ? 'PM' : 'AM';
@@ -236,7 +247,7 @@ export default function AppointmentBlock({
           e.stopPropagation();
           onClick(appointment);
         }}
-        title={`${formatTime12(appointment.scheduled_time)} - ${clientName}`}
+        title={`${formatTime12Long(appointment.scheduled_time)} - ${clientName}`}
       >
         <span className="font-medium whitespace-nowrap">
           {formatTime12(appointment.scheduled_time)}
@@ -253,7 +264,7 @@ export default function AppointmentBlock({
   const isResizing = previewDuration !== null;
   return (
     <div
-      className={`absolute left-0.5 right-0.5 rounded-md px-2 py-1 overflow-hidden cursor-pointer transition-shadow hover:shadow-md z-10 pointer-events-auto ${statusClasses[appointment.status]} ${isResizing ? 'ring-2 ring-blue-400' : ''}`}
+      className={`absolute left-0.5 right-0.5 rounded-md px-1.5 py-1 overflow-hidden cursor-pointer transition-shadow hover:shadow-md z-10 pointer-events-auto ${statusClasses[appointment.status]} ${isResizing ? 'ring-2 ring-blue-400' : ''}`}
       style={{ top: topPx, height: heightPx }}
       draggable={!isResizing}
       onDragStart={handleDragStart}
@@ -265,13 +276,13 @@ export default function AppointmentBlock({
         onClick(appointment);
       }}
       onContextMenu={handleContextMenu}
-      title={`${clientName} - ${formatTime12(appointment.scheduled_time)} (${effectiveDuration}m)`}
+      title={`${clientName} - ${formatTime12Long(appointment.scheduled_time)} (${effectiveDuration}m)`}
     >
       <div className="flex items-center justify-between gap-1">
-        <div className="text-xs text-[var(--color-text-secondary)] leading-tight">
+        <div className="text-xs text-[var(--color-text-secondary)] leading-tight whitespace-nowrap truncate min-w-0">
           {formatTime12(appointment.scheduled_time)}{isResizing ? ` · ${effectiveDuration}m` : ''}
         </div>
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-0.5 flex-shrink-0">
           {sessionBadge}
           {visitBadge}
           {dollarBadge}

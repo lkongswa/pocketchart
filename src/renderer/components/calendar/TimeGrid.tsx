@@ -34,14 +34,13 @@ interface TimeGridProps {
 const SLOT_HEIGHT = 48; // pixels per 30-min slot
 
 /**
- * Format hour/half-hour index into a time label like "7:00 AM"
+ * Format hour/half-hour index into a compact time label.
+ * "7a", "7:30a", "12p", "12:30p" — short enough to keep the 60px gutter readable.
  */
 function formatTimeLabel(hour: number, isHalf: boolean): string {
-  const h = hour;
-  const m = isHalf ? '30' : '00';
-  const suffix = h >= 12 ? 'PM' : 'AM';
-  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
-  return `${h12}:${m} ${suffix}`;
+  const suffix = hour >= 12 ? 'p' : 'a';
+  const h12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+  return isHalf ? `${h12}:30${suffix}` : `${h12}${suffix}`;
 }
 
 /**
@@ -295,7 +294,7 @@ export default function TimeGrid({
             return (
               <div
                 key={`gutter-${idx}`}
-                className="absolute right-0 pr-2 text-xs text-[var(--color-text-secondary)] text-right leading-none"
+                className="absolute right-0 pr-2 text-xs text-[var(--color-text-secondary)] text-right leading-none whitespace-nowrap"
                 style={{
                   top: idx * SLOT_HEIGHT,
                   height: SLOT_HEIGHT,
@@ -399,8 +398,9 @@ export default function TimeGrid({
                 const topPx = ((blockHour - startHour) * 2 + blockMin / 30) * SLOT_HEIGHT;
                 const heightPx = Math.max((block.duration_minutes / 30) * SLOT_HEIGHT, 24);
                 const h12 = blockHour === 0 ? 12 : blockHour > 12 ? blockHour - 12 : blockHour;
-                const suffix = blockHour >= 12 ? 'PM' : 'AM';
-                const timeLabel = `${h12}:${(mStr || '00').padStart(2, '0')} ${suffix}`;
+                const suffix = blockHour >= 12 ? 'p' : 'a';
+                const minutesPart = parseInt(mStr || '0', 10);
+                const timeLabel = minutesPart === 0 ? `${h12}${suffix}` : `${h12}:${mStr.padStart(2, '0')}${suffix}`;
                 const isDone = block.completed === 1;
 
                 return (

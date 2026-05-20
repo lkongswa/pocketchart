@@ -36,7 +36,18 @@ const STATUS_BORDER: Record<AppointmentStatus, string> = {
 const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MAX_VISIBLE_APPOINTMENTS = 3;
 
+// Compact inline format for tight month-cell rows: "11a", "11:30a", "3p", "3:30p".
 function formatTime12(time24: string): string {
+  const [hStr, mStr] = time24.split(':');
+  const h = parseInt(hStr, 10);
+  const m = parseInt(mStr, 10);
+  const suffix = h >= 12 ? 'p' : 'a';
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return m === 0 ? `${h12}${suffix}` : `${h12}:${mStr}${suffix}`;
+}
+
+// Verbose format for tooltips.
+function formatTime12Long(time24: string): string {
   const [hStr, mStr] = time24.split(':');
   const h = parseInt(hStr, 10);
   const suffix = h >= 12 ? 'PM' : 'AM';
@@ -218,7 +229,7 @@ export default function MonthView({
                         e.stopPropagation();
                         onAppointmentClick(appt);
                       }}
-                      title={`${formatTime12(appt.scheduled_time)} - ${clientName}`}
+                      title={`${formatTime12Long(appt.scheduled_time)} - ${clientName}`}
                     >
                       <span className="font-medium whitespace-nowrap">
                         {formatTime12(appt.scheduled_time)}
