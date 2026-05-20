@@ -22,6 +22,8 @@ import {
   MessageSquare,
   CheckCircle,
   Send,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
 import FeedbackModal from './components/FeedbackModal';
 import FaxPage from './pages/FaxPage';
@@ -123,7 +125,12 @@ function darkenHex(hex: string, amount: number): string {
 
 const COLLAPSIBLE_GROUPS = new Set(['Business', 'Professional']);
 
-const Sidebar: React.FC = () => {
+interface SidebarProps {
+  collapsed: boolean;
+  onToggle: () => void;
+}
+
+const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const [appVersion, setAppVersion] = useState('');
@@ -199,31 +206,148 @@ const Sidebar: React.FC = () => {
 
   const isOnSettingsRoute = location.pathname === '/help' || location.pathname === '/settings';
 
-  return (
-    <aside className="fixed top-0 left-0 h-full w-[240px] bg-[var(--color-surface)] border-r border-[var(--color-border)] flex flex-col z-10">
-      {/* Logo / App Name — click to lock */}
-      <button
-        className="flex items-center gap-3 px-5 py-5 border-b border-[var(--color-border)] w-full text-left hover:bg-gray-50/50 transition-colors cursor-pointer"
-        onClick={handleLockClick}
-        onMouseEnter={() => setLogoHover(true)}
-        onMouseLeave={() => setLogoHover(false)}
-        title="Click to lock (Ctrl+L)"
-      >
-        <div className="relative flex items-center justify-center w-9 h-9 rounded-lg bg-[var(--color-primary)] text-white">
-          {logoHover ? <Lock size={18} /> : <ClipboardList size={20} />}
-          {logoHover && (
-            <div className="absolute inset-0 rounded-lg bg-black/20" />
+  // ── Collapsed (icon-rail) layout ──
+  if (collapsed) {
+    return (
+      <aside className="fixed top-0 left-0 h-full w-14 bg-[var(--color-surface)] border-r border-[var(--color-border)] flex flex-col z-10">
+        {/* Logo (icon-only) — click to lock */}
+        <button
+          className="flex items-center justify-center py-4 border-b border-[var(--color-border)] hover:bg-gray-50/50 transition-colors"
+          onClick={handleLockClick}
+          onMouseEnter={() => setLogoHover(true)}
+          onMouseLeave={() => setLogoHover(false)}
+          title="Click to lock (Ctrl+L)"
+        >
+          <div className="relative flex items-center justify-center w-9 h-9 rounded-lg bg-[var(--color-primary)] text-white">
+            {logoHover ? <Lock size={18} /> : <ClipboardList size={20} />}
+            {logoHover && <div className="absolute inset-0 rounded-lg bg-black/20" />}
+          </div>
+        </button>
+
+        {/* Expand button */}
+        <button
+          className="flex items-center justify-center py-1.5 border-b border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-gray-50/50 hover:text-[var(--color-text)] transition-colors"
+          onClick={onToggle}
+          title="Expand sidebar"
+        >
+          <PanelLeftOpen size={16} />
+        </button>
+
+        {/* Nav rail */}
+        <nav className="flex-1 overflow-y-auto py-2 px-1.5 space-y-0.5">
+          {navGroups.map((group, gIdx) => (
+            <React.Fragment key={group.title}>
+              {gIdx > 0 && <div className="border-t border-[var(--color-border)] my-1.5 mx-1" />}
+              {group.items.map((item) => {
+                const active = isActive(item);
+                const color = group.color || '#6b7280';
+                return (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    className={`relative flex items-center justify-center p-2 rounded-md transition-colors ${
+                      active
+                        ? 'text-white'
+                        : 'text-[var(--color-text-secondary)] hover:bg-gray-100 hover:text-[var(--color-text)]'
+                    }`}
+                    style={active ? { backgroundColor: color } : undefined}
+                    title={item.label}
+                  >
+                    {item.icon}
+                  </NavLink>
+                );
+              })}
+            </React.Fragment>
+          ))}
+        </nav>
+
+        {/* Footer: gear (popout menu) + version */}
+        <div className="border-t border-[var(--color-border)] py-2 px-1.5 flex flex-col items-center gap-1">
+          <div className="relative" ref={gearRef}>
+            <button
+              onClick={() => setGearOpen((o) => !o)}
+              className={`p-2 rounded-md transition-colors ${
+                isOnSettingsRoute || gearOpen
+                  ? 'bg-gray-100 text-[var(--color-primary)]'
+                  : 'text-[var(--color-text-secondary)] hover:bg-gray-100 hover:text-[var(--color-text)]'
+              }`}
+              title="Settings & Help"
+            >
+              <Settings size={16} />
+            </button>
+            {gearOpen && (
+              <div className="absolute bottom-0 left-full ml-2 w-44 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-lg overflow-hidden z-50">
+                <button
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-[var(--color-text)] hover:bg-gray-50 transition-colors"
+                  onClick={() => { navigate('/help'); setGearOpen(false); }}
+                >
+                  <HelpCircle size={15} className="text-[var(--color-text-secondary)]" />
+                  Help
+                </button>
+                <button
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-[var(--color-text)] hover:bg-gray-50 transition-colors"
+                  onClick={() => { navigate('/settings'); setGearOpen(false); }}
+                >
+                  <Settings size={15} className="text-[var(--color-text-secondary)]" />
+                  Settings
+                </button>
+                <div className="border-t border-[var(--color-border)]" />
+                <button
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-[var(--color-text)] hover:bg-gray-50 transition-colors"
+                  onClick={() => { setShowFeedback(true); setGearOpen(false); }}
+                >
+                  <MessageSquare size={15} className="text-[var(--color-text-secondary)]" />
+                  Report Issue
+                </button>
+              </div>
+            )}
+          </div>
+          {appVersion && (
+            <p className="text-[9px] text-[var(--color-text-secondary)] leading-none" title={`v${appVersion}`}>
+              v{appVersion}
+            </p>
           )}
         </div>
-        <div>
-          <h1 className="text-base font-bold text-[var(--color-text)] leading-tight">
-            PocketChart
-          </h1>
-          <p className="text-xs text-[var(--color-text-secondary)] leading-tight">
-            {logoHover ? 'Click to lock' : 'Therapy Notes'}
-          </p>
-        </div>
-      </button>
+        {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
+      </aside>
+    );
+  }
+
+  // ── Expanded (full) layout ──
+  return (
+    <aside className="fixed top-0 left-0 h-full w-[240px] bg-[var(--color-surface)] border-r border-[var(--color-border)] flex flex-col z-10">
+      {/* Logo / App Name — click to lock + collapse toggle on the right */}
+      <div className="flex items-stretch border-b border-[var(--color-border)]">
+        <button
+          className="flex items-center gap-3 px-5 py-5 flex-1 text-left hover:bg-gray-50/50 transition-colors cursor-pointer"
+          onClick={handleLockClick}
+          onMouseEnter={() => setLogoHover(true)}
+          onMouseLeave={() => setLogoHover(false)}
+          title="Click to lock (Ctrl+L)"
+        >
+          <div className="relative flex items-center justify-center w-9 h-9 rounded-lg bg-[var(--color-primary)] text-white">
+            {logoHover ? <Lock size={18} /> : <ClipboardList size={20} />}
+            {logoHover && (
+              <div className="absolute inset-0 rounded-lg bg-black/20" />
+            )}
+          </div>
+          <div>
+            <h1 className="text-base font-bold text-[var(--color-text)] leading-tight">
+              PocketChart
+            </h1>
+            <p className="text-xs text-[var(--color-text-secondary)] leading-tight">
+              {logoHover ? 'Click to lock' : 'Therapy Notes'}
+            </p>
+          </div>
+        </button>
+        <button
+          className="px-2 flex items-center justify-center text-[var(--color-text-secondary)] hover:bg-gray-50/50 hover:text-[var(--color-text)] transition-colors"
+          onClick={onToggle}
+          title="Collapse sidebar"
+        >
+          <PanelLeftClose size={16} />
+        </button>
+      </div>
 
       {/* Grouped Navigation */}
       <nav className="flex-1 px-3 py-3 overflow-y-auto space-y-1">
@@ -385,10 +509,15 @@ const TopNavBar: React.FC = () => {
 };
 
 const AppLayout: React.FC = () => {
+  const [collapsed, setCollapsed] = useLocalPreference('sidebar-collapsed', false);
   return (
     <div className="flex min-h-screen">
-      <Sidebar />
-      <main className="ml-[240px] flex-1 overflow-y-auto min-h-screen flex flex-col">
+      <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />
+      <main
+        className={`flex-1 overflow-y-auto min-h-screen flex flex-col transition-[margin] duration-200 ease-in-out ${
+          collapsed ? 'ml-14' : 'ml-[240px]'
+        }`}
+      >
         <TopNavBar />
         <div className="flex-1">
           <Outlet />
