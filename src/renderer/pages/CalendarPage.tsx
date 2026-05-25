@@ -393,9 +393,13 @@ export default function CalendarPage() {
     setQuickCreate(null);
   };
 
-  // Save appointment
+  // Save appointment.
+  // NOTE: we gate on `editingAppointment?.id`, NOT just truthiness — the quick-create
+  // popover's "More options" path hands the modal a partial pre-fill object (no id)
+  // as editingAppointment so the form starts populated. Treating that as "edit existing"
+  // would call appointments.update(undefined, data) which is a real bug.
   const handleSaveAppointment = async (data: Partial<Appointment>) => {
-    if (editingAppointment) {
+    if (editingAppointment?.id) {
       await window.api.appointments.update(editingAppointment.id, data);
     } else {
       await window.api.appointments.create(data);

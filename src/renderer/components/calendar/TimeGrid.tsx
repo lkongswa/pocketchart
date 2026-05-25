@@ -222,11 +222,20 @@ export default function TimeGrid({
         return null;
       });
     };
+    // Esc mid-drag cancels without firing onCreateAtSlot — ghost block disappears, no popover.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setCreating(null);
+      }
+    };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
+    document.addEventListener('keydown', onKey);
     return () => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('keydown', onKey);
     };
   }, [creating, onCreateAtSlot]);
 
