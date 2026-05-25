@@ -2395,6 +2395,76 @@ function runMigrations(): void {
         `);
       },
     },
+    {
+      version: 64,
+      description: 'Backfill contractor_patient_id on orphan contractor appointments (link by patient_name match, auto-create patient when no match)',
+      up: () => {
+        // Many historical contractor appointments carry entity_id + patient_name
+        // (string) but contractor_patient_id IS NULL — they were never linked to
+        // a row in contractor_patients. The Contract Patients view counts visits
+        // by contractor_patient_id, so these appts show up as zero-visits ghosts.
+        //
+        // Two-pass heal:
+        //   Pass 1: case-insensitive name match against contractor_patients
+        //           within the same entity. Sets the FK in place.
+        //   Pass 2: any remaining orphan with a non-empty patient_name → create
+        //           a new contractor_patients row in that entity and link.
+        //
+        // Idempotent. Safe to re-run.
+
+        // Pass 1: link orphans whose patient_name matches an existing patient name.
+        db.exec(`
+          UPDATE appointments
+          SET contractor_patient_id = (
+            SELECT cp.id
+            FROM contractor_patients cp
+            WHERE cp.entity_id = appointments.entity_id
+              AND cp.deleted_at IS NULL
+              AND LOWER(TRIM(cp.name)) = LOWER(TRIM(appointments.patient_name))
+            LIMIT 1
+          )
+          WHERE entity_id IS NOT NULL
+            AND entity_id > 0
+            AND (contractor_patient_id IS NULL OR contractor_patient_id = 0)
+            AND patient_name IS NOT NULL
+            AND TRIM(patient_name) != ''
+            AND deleted_at IS NULL
+        `);
+
+        // Pass 2: auto-create a contractor_patients row for any remaining orphan
+        // and link the appointment to it. Group by entity_id + normalized name
+        // so 'Gail Shneyer' across multiple orphan appts becomes ONE new patient
+        // (the AppointmentModal's auto-create logic would do the same on save).
+        const orphanGroups = db.prepare(`
+          SELECT entity_id, TRIM(patient_name) as patient_name, COUNT(*) as n
+          FROM appointments
+          WHERE entity_id IS NOT NULL
+            AND entity_id > 0
+            AND (contractor_patient_id IS NULL OR contractor_patient_id = 0)
+            AND patient_name IS NOT NULL
+            AND TRIM(patient_name) != ''
+            AND deleted_at IS NULL
+          GROUP BY entity_id, LOWER(TRIM(patient_name))
+        `).all() as Array<{ entity_id: number; patient_name: string; n: number }>;
+
+        const insertPatient = db.prepare(`
+          INSERT INTO contractor_patients (entity_id, name, phone, address, dob, mrn, notes)
+          VALUES (?, ?, '', '', '', '', '')
+        `);
+        const linkAppts = db.prepare(`
+          UPDATE appointments
+          SET contractor_patient_id = ?
+          WHERE entity_id = ?
+            AND (contractor_patient_id IS NULL OR contractor_patient_id = 0)
+            AND LOWER(TRIM(patient_name)) = LOWER(?)
+            AND deleted_at IS NULL
+        `);
+        for (const g of orphanGroups) {
+          const result = insertPatient.run(g.entity_id, g.patient_name);
+          linkAppts.run(result.lastInsertRowid, g.entity_id, g.patient_name);
+        }
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
