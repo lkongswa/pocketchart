@@ -448,7 +448,7 @@ const ClientsPage: React.FC = () => {
                   <th className="table-header">Entity</th>
                   <th className="table-header">Phone</th>
                   <th className="table-header">Last Visit</th>
-                  <th className="table-header">Visits</th>
+                  <th className="table-header" title="Completed visits / upcoming scheduled">Visits</th>
                   <th className="table-header">Actions</th>
                 </tr>
               </thead>
@@ -468,7 +468,14 @@ const ClientsPage: React.FC = () => {
                     </td>
                     <td className="table-cell text-[var(--color-text-secondary)] text-sm">{p.phone || '--'}</td>
                     <td className="table-cell text-[var(--color-text-secondary)] text-sm">{formatVisitDate(p.last_visit_date)}</td>
-                    <td className="table-cell text-[var(--color-text-secondary)] text-sm">{p.visit_count}</td>
+                    <td className="table-cell text-sm">
+                      <span className="text-[var(--color-text)] font-medium" title="Completed visits">{p.visit_count}</span>
+                      {p.upcoming_count > 0 && (
+                        <span className="ml-1.5 text-[10px] text-blue-600 font-medium" title={`${p.upcoming_count} upcoming scheduled`}>
+                          +{p.upcoming_count}
+                        </span>
+                      )}
+                    </td>
                     <td className="table-cell">
                       <div className="flex items-center gap-1">
                         <button

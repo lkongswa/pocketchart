@@ -646,10 +646,12 @@ export interface ContractorPatient {
 export interface ContractorPatientRow extends ContractorPatient {
   /** Joined from contracted_entities.name. */
   entity_name: string | null;
-  /** YYYY-MM-DD of the most recent appointment for this patient (or null if never seen). */
+  /** YYYY-MM-DD of the most recent COMPLETED appointment (null if never seen). */
   last_visit_date: string | null;
-  /** Total non-deleted appointments for this patient. */
+  /** Count of appointments with status='completed'. Excludes scheduled/cancelled/no-show. */
   visit_count: number;
+  /** Count of future appointments still status='scheduled'. */
+  upcoming_count: number;
 }
 
 export type BillingCycle = 'weekly' | 'biweekly' | 'monthly' | 'custom';

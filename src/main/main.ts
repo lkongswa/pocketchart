@@ -6695,8 +6695,10 @@ function registerIpcHandlers() {
   });
 
   // Cross-cutting view: all contractor patients in the system, joined with their entity
-  // name + their most recent appointment date. Used by the Clients page's "Contract
-  // Patients" tab so it can render the whole roster in one query.
+  // name + their most recent COMPLETED visit + completed visit count + upcoming count.
+  // We only count status='completed' as a "visit" (a future scheduled appt isn't a visit,
+  // a cancellation isn't a visit, etc.) so the Visits column reflects real care delivered.
+  // Upcoming counts give the user a quick "how busy is this patient looking" signal.
   safeHandle('contractorPatients:listAll', () => {
     requireTier('pro');
     return db.prepare(`
@@ -6706,13 +6708,25 @@ function registerIpcHandlers() {
         (
           SELECT MAX(a.scheduled_date)
           FROM appointments a
-          WHERE a.contractor_patient_id = cp.id AND a.deleted_at IS NULL
+          WHERE a.contractor_patient_id = cp.id
+            AND a.deleted_at IS NULL
+            AND a.status = 'completed'
         ) as last_visit_date,
         (
           SELECT COUNT(*)
           FROM appointments a
-          WHERE a.contractor_patient_id = cp.id AND a.deleted_at IS NULL
-        ) as visit_count
+          WHERE a.contractor_patient_id = cp.id
+            AND a.deleted_at IS NULL
+            AND a.status = 'completed'
+        ) as visit_count,
+        (
+          SELECT COUNT(*)
+          FROM appointments a
+          WHERE a.contractor_patient_id = cp.id
+            AND a.deleted_at IS NULL
+            AND a.status = 'scheduled'
+            AND a.scheduled_date >= date('now', 'localtime')
+        ) as upcoming_count
       FROM contractor_patients cp
       LEFT JOIN contracted_entities e ON cp.entity_id = e.id
       WHERE cp.deleted_at IS NULL
