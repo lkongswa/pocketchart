@@ -536,77 +536,37 @@ export default function AppointmentModal({
 
           {/* Patient combobox (for contract appointments) */}
           {selectedItem?.type === 'contract' && (
-            <div className="relative">
-              <label className="label">
-                <User className="w-3.5 h-3.5 inline mr-1" />
-                Patient
-              </label>
-              <input
-                type="text"
-                className="input"
-                placeholder="Search or add patient name…"
-                value={patientQuery}
-                onChange={(e) => {
-                  setPatientQuery(e.target.value);
-                  setShowPatientDropdown(true);
-                  if (selectedPatient && e.target.value !== selectedPatient.name) {
-                    setSelectedPatient(null);
-                    setPatientMrn('');
-                  }
-                }}
-                onFocus={() => setShowPatientDropdown(true)}
-                onBlur={() => setTimeout(() => setShowPatientDropdown(false), 150)}
-              />
-              {selectedPatient && (
-                <p className="text-[11px] text-emerald-600 mt-0.5 font-medium">Existing patient — history will be linked</p>
-              )}
-              <div className="mt-2">
+            <div>
+              {/* Inner relative wrapper anchors the combobox dropdown to the Patient
+                  input itself — without this, the dropdown was positioned relative to
+                  the outer Patient/MRN/Modality container and rendered below the
+                  Modality field, which looked like the dropdown belonged there. */}
+              <div className="relative">
                 <label className="label">
-                  MRN <span className="text-[11px] text-[var(--color-text-secondary)] font-normal">(optional)</span>
+                  <User className="w-3.5 h-3.5 inline mr-1" />
+                  Patient
                 </label>
                 <input
                   type="text"
                   className="input"
-                  placeholder="Medical record number"
-                  value={patientMrn}
-                  onChange={(e) => setPatientMrn(e.target.value)}
-                />
-                {selectedPatient && patientMrn.trim() !== (selectedPatient.mrn || '').trim() && (
-                  <p className="text-[11px] text-blue-600 mt-0.5">Will update the patient record on save.</p>
-                )}
-              </div>
-              <div className="mt-2">
-                <label className="label">
-                  Service Modality <span className="text-[11px] text-[var(--color-text-secondary)] font-normal">(optional — shows on invoice)</span>
-                </label>
-                <select
-                  className="select"
-                  value={modalityChoice}
+                  placeholder="Search or add patient name…"
+                  value={patientQuery}
                   onChange={(e) => {
-                    const v = e.target.value;
-                    setModalityChoice(v);
-                    if (v !== '__custom__') setModalityCustom('');
+                    setPatientQuery(e.target.value);
+                    setShowPatientDropdown(true);
+                    if (selectedPatient && e.target.value !== selectedPatient.name) {
+                      setSelectedPatient(null);
+                      setPatientMrn('');
+                    }
                   }}
-                >
-                  <option value="">—</option>
-                  {APPOINTMENT_SERVICE_MODALITIES.map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                  <option value="__custom__">Other…</option>
-                </select>
-                {modalityChoice === '__custom__' && (
-                  <input
-                    type="text"
-                    className="input mt-2"
-                    placeholder='e.g. "Fluency", "AAC", "Voice prosthesis"'
-                    value={modalityCustom}
-                    onChange={(e) => setModalityCustom(e.target.value)}
-                    autoFocus
-                  />
+                  onFocus={() => setShowPatientDropdown(true)}
+                  onBlur={() => setTimeout(() => setShowPatientDropdown(false), 150)}
+                />
+                {selectedPatient && (
+                  <p className="text-[11px] text-emerald-600 mt-0.5 font-medium">Existing patient — history will be linked</p>
                 )}
-              </div>
-              {showPatientDropdown && (contractorPatients.length > 0 || patientQuery.trim()) && (
-                <div className="absolute z-20 w-full mt-1 bg-white border border-[var(--color-border)] rounded-lg shadow-lg max-h-56 overflow-y-auto">
+                {showPatientDropdown && (contractorPatients.length > 0 || patientQuery.trim()) && (
+                  <div className="absolute left-0 right-0 top-full z-20 mt-1 bg-white border border-[var(--color-border)] rounded-lg shadow-lg max-h-56 overflow-y-auto">
                   {/* Matching existing patients. When the input is empty, show ALL patients
                       for this entity (combobox style) so the user can spot the one they want
                       without having to remember the spelling first. Sorted alphabetically. */}
@@ -670,6 +630,56 @@ export default function AppointmentModal({
                   )}
                 </div>
               )}
+              </div>
+
+              {/* MRN — sits OUTSIDE the relative wrapper so the dropdown can overlap it cleanly. */}
+              <div className="mt-2">
+                <label className="label">
+                  MRN <span className="text-[11px] text-[var(--color-text-secondary)] font-normal">(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  className="input"
+                  placeholder="Medical record number"
+                  value={patientMrn}
+                  onChange={(e) => setPatientMrn(e.target.value)}
+                />
+                {selectedPatient && patientMrn.trim() !== (selectedPatient.mrn || '').trim() && (
+                  <p className="text-[11px] text-blue-600 mt-0.5">Will update the patient record on save.</p>
+                )}
+              </div>
+
+              {/* Service Modality — also outside the relative wrapper. */}
+              <div className="mt-2">
+                <label className="label">
+                  Service Modality <span className="text-[11px] text-[var(--color-text-secondary)] font-normal">(optional — shows on invoice)</span>
+                </label>
+                <select
+                  className="select"
+                  value={modalityChoice}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setModalityChoice(v);
+                    if (v !== '__custom__') setModalityCustom('');
+                  }}
+                >
+                  <option value="">—</option>
+                  {APPOINTMENT_SERVICE_MODALITIES.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                  <option value="__custom__">Other…</option>
+                </select>
+                {modalityChoice === '__custom__' && (
+                  <input
+                    type="text"
+                    className="input mt-2"
+                    placeholder='e.g. "Fluency", "AAC", "Voice prosthesis"'
+                    value={modalityCustom}
+                    onChange={(e) => setModalityCustom(e.target.value)}
+                    autoFocus
+                  />
+                )}
+              </div>
             </div>
           )}
 
