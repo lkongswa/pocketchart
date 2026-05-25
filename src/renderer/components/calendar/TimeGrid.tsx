@@ -26,21 +26,31 @@ interface TimeGridProps {
   onBlockContextMenu?: (block: CalendarBlock, x: number, y: number) => void;
   onSlotContextMenu?: (date: string, time: string, x: number, y: number) => void;
   onAppointmentResize?: (apptId: number, durationMinutes: number) => void;
+  onBlockResize?: (blockId: number, durationMinutes: number) => void;
   onBlockToggleDone?: (block: CalendarBlock) => void;
   onBlockRemove?: (block: CalendarBlock) => void;
   paymentStatusMap?: Record<number, PaymentIndicator>;
 }
 
-const SLOT_HEIGHT = 48; // pixels per 30-min slot
+// Calendar grid resolution. SLOT_MINUTES is the source of truth — change it and
+// everything else (click granularity, drop snap, resize snap) follows.
+// 15 min per slot × 24 px = 96 px per hour (same total height as the old 30-min × 48 px layout).
+const SLOT_MINUTES = 15;
+const SLOTS_PER_HOUR = 60 / SLOT_MINUTES; // 4
+const SLOT_HEIGHT = 24; // pixels per SLOT_MINUTES-min slot
+const PX_PER_MINUTE = SLOT_HEIGHT / SLOT_MINUTES; // 1.6
 
 /**
- * Format hour/half-hour index into a compact time label.
- * "7a", "7:30a", "12p", "12:30p" — short enough to keep the 60px gutter readable.
+ * Format an hour:minute pair into a compact gutter label.
+ * Only the top of the hour (":00") and the half-hour (":30") get labels —
+ * showing all four 15-min ticks would crowd the 60px gutter.
  */
-function formatTimeLabel(hour: number, isHalf: boolean): string {
+function formatTimeLabel(hour: number, minute: number): string {
   const suffix = hour >= 12 ? 'p' : 'a';
   const h12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-  return isHalf ? `${h12}:30${suffix}` : `${h12}${suffix}`;
+  if (minute === 0) return `${h12}${suffix}`;
+  if (minute === 30) return `${h12}:30${suffix}`;
+  return ''; // :15 and :45 are tick-only
 }
 
 /**
@@ -139,6 +149,7 @@ export default function TimeGrid({
   onBlockContextMenu,
   onSlotContextMenu,
   onAppointmentResize,
+  onBlockResize,
   onBlockToggleDone,
   onBlockRemove,
   paymentStatusMap = {},
@@ -147,11 +158,50 @@ export default function TimeGrid({
   const [dragOverSlot, setDragOverSlot] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [draggingBlockId, setDraggingBlockId] = useState<number | null>(null);
+  // Drag-to-resize state for calendar blocks. Mirrors AppointmentBlock's pattern:
+  // we keep a live previewDuration during the drag so the block height updates
+  // smoothly, and commit on mouseup via onBlockResize.
+  const [resizingBlock, setResizingBlock] = useState<{
+    id: number;
+    startY: number;
+    startDuration: number;
+    previewDuration: number;
+  } | null>(null);
+
+  // Document-level listeners while a block resize is active.
+  useEffect(() => {
+    if (!resizingBlock) return;
+    const onMove = (e: MouseEvent) => {
+      setResizingBlock((cur) => {
+        if (!cur) return cur;
+        const delta = e.clientY - cur.startY;
+        const minutesAdded = delta / PX_PER_MINUTE;
+        const raw = cur.startDuration + minutesAdded;
+        const snapped = Math.round(raw / SLOT_MINUTES) * SLOT_MINUTES;
+        const next = Math.max(SLOT_MINUTES, snapped);
+        return { ...cur, previewDuration: next };
+      });
+    };
+    const onUp = () => {
+      setResizingBlock((cur) => {
+        if (cur && cur.previewDuration !== cur.startDuration && onBlockResize) {
+          onBlockResize(cur.id, cur.previewDuration);
+        }
+        return null;
+      });
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [resizingBlock, onBlockResize]);
 
   // Auto-scroll to ~8 AM on mount
   useEffect(() => {
     if (scrollRef.current) {
-      const scrollTo8AM = (8 - startHour) * 2 * SLOT_HEIGHT;
+      const scrollTo8AM = (8 - startHour) * SLOTS_PER_HOUR * SLOT_HEIGHT;
       scrollRef.current.scrollTop = scrollTo8AM;
     }
   }, [startHour]);
@@ -162,11 +212,12 @@ export default function TimeGrid({
     return () => clearInterval(interval);
   }, []);
 
-  // Build time slots
-  const slots: Array<{ hour: number; isHalf: boolean }> = [];
+  // Build time slots — SLOTS_PER_HOUR rows per hour at SLOT_MINUTES granularity.
+  const slots: Array<{ hour: number; minute: number }> = [];
   for (let h = startHour; h < endHour; h++) {
-    slots.push({ hour: h, isHalf: false });
-    slots.push({ hour: h, isHalf: true });
+    for (let m = 0; m < 60; m += SLOT_MINUTES) {
+      slots.push({ hour: h, minute: m });
+    }
   }
 
   const totalSlots = slots.length;
@@ -215,16 +266,16 @@ export default function TimeGrid({
       const apptId = parseInt(e.dataTransfer.getData('text/plain'), 10);
       if (!isNaN(apptId)) {
         // Compute precise drop time: account for where the user grabbed the block,
-        // then snap to 15-min increments instead of locking to 30-min slot boundaries.
+        // then snap to SLOT_MINUTES increments.
         const grabOffsetY = parseFloat(e.dataTransfer.getData('application/grab-offset-y') || '0');
         const slotRect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
         const dropYInSlot = e.clientY - slotRect.top;
         const apptTopInSlot = dropYInSlot - grabOffsetY;
         const [slotH, slotM] = timeStr.split(':').map(Number);
         const slotBaseMinutes = slotH * 60 + slotM;
-        const offsetMinutes = (apptTopInSlot / SLOT_HEIGHT) * 30;
-        const snapped = Math.round((slotBaseMinutes + offsetMinutes) / 15) * 15;
-        const clamped = Math.max(startHour * 60, Math.min((endHour - 1) * 60 + 45, snapped));
+        const offsetMinutes = apptTopInSlot / PX_PER_MINUTE;
+        const snapped = Math.round((slotBaseMinutes + offsetMinutes) / SLOT_MINUTES) * SLOT_MINUTES;
+        const clamped = Math.max(startHour * 60, Math.min((endHour - 1) * 60 + (60 - SLOT_MINUTES), snapped));
         const preciseTimeStr = toTimeString(Math.floor(clamped / 60), clamped % 60);
         onAppointmentDrop(apptId, dateStr, preciseTimeStr);
       }
@@ -268,7 +319,7 @@ export default function TimeGrid({
   const nowMinute = now.getMinutes();
   const nowInRange = nowHour >= startHour && nowHour < endHour;
   const nowTop = nowInRange
-    ? ((nowHour - startHour) * 2 + nowMinute / 30) * SLOT_HEIGHT
+    ? ((nowHour - startHour) * 60 + nowMinute) * PX_PER_MINUTE
     : -1;
 
   // Find if today is in any column
@@ -287,10 +338,11 @@ export default function TimeGrid({
           height: totalHeight,
         }}
       >
-        {/* Time Gutter */}
+        {/* Time Gutter — labels only on the :00 and :30 rows; :15/:45 stay blank to keep the gutter clean */}
         <div className="relative" style={{ height: totalHeight }}>
           {slots.map((slot, idx) => {
-            const label = formatTimeLabel(slot.hour, slot.isHalf);
+            const label = formatTimeLabel(slot.hour, slot.minute);
+            if (!label) return null;
             return (
               <div
                 key={`gutter-${idx}`}
@@ -322,23 +374,22 @@ export default function TimeGrid({
               className="relative"
               style={{ height: totalHeight }}
             >
-              {/* Slot backgrounds and click/drop targets */}
+              {/* Slot backgrounds and click/drop targets — 4 per hour at 15-min granularity.
+                  Border style hints at the slot's position in the hour:
+                    :00 solid, :30 dashed, :15/:45 invisible (just click targets). */}
               {slots.map((slot, slotIdx) => {
-                const timeStr = toTimeString(
-                  slot.hour,
-                  slot.isHalf ? 30 : 0
-                );
+                const timeStr = toTimeString(slot.hour, slot.minute);
                 const slotKey = `${col.dateStr}-${timeStr}`;
                 const isDragTarget = dragOverSlot === slotKey;
+                const borderClass =
+                  slot.minute === 0 ? 'border-t border-[var(--color-border)]'
+                  : slot.minute === 30 ? 'border-t border-dashed border-gray-200'
+                  : ''; // :15 and :45 — no gridline, keeps the visual quiet
 
                 return (
                   <div
                     key={slotKey}
-                    className={`absolute left-0 right-0 ${
-                      slot.isHalf
-                        ? 'border-t border-dashed border-gray-200'
-                        : 'border-t border-[var(--color-border)]'
-                    } ${isDragTarget ? 'bg-blue-100/40' : ''}`}
+                    className={`absolute left-0 right-0 ${borderClass} ${isDragTarget ? 'bg-blue-100/40' : ''}`}
                     style={{
                       top: slotIdx * SLOT_HEIGHT,
                       height: SLOT_HEIGHT,
@@ -395,8 +446,10 @@ export default function TimeGrid({
                 const [hStr, mStr] = block.scheduled_time.split(':');
                 const blockHour = parseInt(hStr, 10);
                 const blockMin = parseInt(mStr, 10);
-                const topPx = ((blockHour - startHour) * 2 + blockMin / 30) * SLOT_HEIGHT;
-                const heightPx = Math.max((block.duration_minutes / 30) * SLOT_HEIGHT, 24);
+                const isResizingThis = resizingBlock?.id === block.id;
+                const effectiveDuration = isResizingThis ? resizingBlock!.previewDuration : block.duration_minutes;
+                const topPx = ((blockHour - startHour) * 60 + blockMin) * PX_PER_MINUTE;
+                const heightPx = Math.max(effectiveDuration * PX_PER_MINUTE, 24);
                 const h12 = blockHour === 0 ? 12 : blockHour > 12 ? blockHour - 12 : blockHour;
                 const suffix = blockHour >= 12 ? 'p' : 'a';
                 const minutesPart = parseInt(mStr || '0', 10);
@@ -406,7 +459,7 @@ export default function TimeGrid({
                 return (
                   <div
                     key={`block-${block.id}`}
-                    className={`group/block absolute left-1 right-1 z-10 rounded px-2 py-1 overflow-visible cursor-grab ${
+                    className={`group/block absolute left-1 right-1 z-10 rounded px-2 py-1 overflow-visible ${isResizingThis ? 'cursor-ns-resize ring-2 ring-slate-400' : 'cursor-grab'} ${
                       isDone
                         ? 'bg-slate-50 border-l-2 border-l-emerald-400 text-slate-400'
                         : 'bg-slate-100 border-l-2 border-l-slate-400 text-slate-600 hover:bg-slate-200/70'
@@ -419,7 +472,7 @@ export default function TimeGrid({
                       pointerEvents: draggingBlockId !== null ? 'none' : undefined,
                     }}
                     title={`Admin: ${block.title}${isDone ? ' (Done)' : ''}`}
-                    draggable
+                    draggable={!isResizingThis}
                     onDragStart={(e) => {
                       e.dataTransfer.setData('application/block-id', block.id.toString());
                       e.dataTransfer.effectAllowed = 'move';
@@ -490,6 +543,24 @@ export default function TimeGrid({
                         </svg>
                       </button>
                     </div>
+                    {/* Resize handle — drag the bottom edge to lengthen/shorten the block */}
+                    {onBlockResize && (
+                      <div
+                        className="absolute left-0 right-0 bottom-0 h-2 cursor-ns-resize hover:bg-slate-400/30 transition-colors"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setResizingBlock({
+                            id: block.id,
+                            startY: e.clientY,
+                            startDuration: block.duration_minutes,
+                            previewDuration: block.duration_minutes,
+                          });
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        title="Drag to resize"
+                      />
+                    )}
                   </div>
                 );
               })}

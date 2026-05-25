@@ -99,8 +99,11 @@ export default function AppointmentBlock({
   const resizeStateRef = useRef<{ startY: number; startDuration: number } | null>(null);
 
   const effectiveDuration = previewDuration ?? appointment.duration_minutes;
-  const topPx = ((hour - startHour) * 2 + minutes / 30) * slotHeight;
-  const heightPx = Math.max((effectiveDuration / 30) * slotHeight, 24);
+  // slotHeight is the px-height of a SLOT_MINUTES (=15)-minute slot, so 1 minute = slotHeight / 15 px.
+  // Compute position/height directly in minutes to stay independent of the slot size.
+  const pxPerMinute = slotHeight / 15;
+  const topPx = ((hour - startHour) * 60 + minutes) * pxPerMinute;
+  const heightPx = Math.max(effectiveDuration * pxPerMinute, 24);
 
   const isContractorAppt = Boolean(appointment.entity_id);
   // For contractor appts, the patient is the primary subject — show their name first; entity is the secondary tag.
@@ -174,8 +177,8 @@ export default function AppointmentBlock({
   const computeResizedDuration = useCallback((deltaPx: number): number => {
     if (!resizeStateRef.current) return appointment.duration_minutes;
     const startDuration = resizeStateRef.current.startDuration;
-    // pixelsPerMinute = slotHeight / 30; minutesAdded = deltaPx / pixelsPerMinute = deltaPx * 30 / slotHeight
-    const minutesAdded = (deltaPx * 30) / slotHeight;
+    // 1 minute = slotHeight / 15 px (slotHeight is the height of a 15-min slot).
+    const minutesAdded = (deltaPx * 15) / slotHeight;
     const raw = startDuration + minutesAdded;
     const snapped = Math.round(raw / RESIZE_SNAP_MIN) * RESIZE_SNAP_MIN;
     return Math.max(MIN_DURATION, snapped);

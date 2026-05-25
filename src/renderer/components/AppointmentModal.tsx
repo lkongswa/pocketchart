@@ -23,10 +23,15 @@ interface AppointmentModalProps {
 }
 
 const DURATION_OPTIONS = [
+  { value: 15, label: '15 minutes' },
   { value: 30, label: '30 minutes' },
   { value: 45, label: '45 minutes' },
   { value: 50, label: '50 minutes' },
   { value: 60, label: '60 minutes' },
+  { value: 75, label: '75 minutes' },
+  { value: 90, label: '90 minutes' },
+  { value: 105, label: '1h 45m' },
+  { value: 120, label: '2 hours' },
 ];
 
 const STATUS_OPTIONS: Array<{ value: AppointmentStatus; label: string }> = [
@@ -666,6 +671,7 @@ export default function AppointmentModal({
             </label>
             <input
               type="time"
+              step={900}
               className="input"
               value={formData.scheduled_time}
               onChange={(e) =>

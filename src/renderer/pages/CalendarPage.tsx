@@ -456,6 +456,12 @@ export default function CalendarPage() {
     await loadCalendarBlocks();
   };
 
+  // Drag-resize the bottom edge of a calendar block — same UX as appointments.
+  const handleBlockResize = async (blockId: number, durationMinutes: number) => {
+    await window.api.calendarBlocks.update(blockId, { duration_minutes: durationMinutes });
+    await loadCalendarBlocks();
+  };
+
   // Drag and drop
   const handleAppointmentDrop = async (apptId: number, newDate: string, newTime?: string) => {
     const appt = appointments.find((a) => a.id === apptId);
@@ -721,6 +727,7 @@ export default function CalendarPage() {
               onBlockContextMenu={handleBlockContextMenu}
               onSlotContextMenu={handleSlotContextMenu}
               onAppointmentResize={handleAppointmentResize}
+              onBlockResize={handleBlockResize}
               onBlockToggleDone={handleToggleBlockDone}
               onBlockRemove={handleBlockRemoveInline}
               paymentStatusMap={showBilling ? paymentStatusMap : {}}
@@ -740,6 +747,7 @@ export default function CalendarPage() {
               onBlockContextMenu={handleBlockContextMenu}
               onSlotContextMenu={handleSlotContextMenu}
               onAppointmentResize={handleAppointmentResize}
+              onBlockResize={handleBlockResize}
               onBlockToggleDone={handleToggleBlockDone}
               onBlockRemove={handleBlockRemoveInline}
               paymentStatusMap={showBilling ? paymentStatusMap : {}}
