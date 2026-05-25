@@ -605,24 +605,45 @@ export default function AppointmentModal({
                   />
                 )}
               </div>
-              {showPatientDropdown && patientQuery.trim() && (
-                <div className="absolute z-20 w-full mt-1 bg-white border border-[var(--color-border)] rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                  {/* Matching existing patients */}
-                  {contractorPatients
-                    .filter(p => p.name.toLowerCase().includes(patientQuery.toLowerCase()))
-                    .map(p => (
-                      <button key={p.id} type="button"
+              {showPatientDropdown && (contractorPatients.length > 0 || patientQuery.trim()) && (
+                <div className="absolute z-20 w-full mt-1 bg-white border border-[var(--color-border)] rounded-lg shadow-lg max-h-56 overflow-y-auto">
+                  {/* Matching existing patients. When the input is empty, show ALL patients
+                      for this entity (combobox style) so the user can spot the one they want
+                      without having to remember the spelling first. Sorted alphabetically. */}
+                  {(() => {
+                    const q = patientQuery.toLowerCase().trim();
+                    const matches = contractorPatients
+                      .filter((p) => !q || p.name.toLowerCase().includes(q))
+                      .sort((a, b) => a.name.localeCompare(b.name));
+                    if (matches.length === 0 && !q) {
+                      return (
+                        <div className="px-4 py-2 text-xs text-[var(--color-text-secondary)]">
+                          No saved patients for this contract yet. Start typing a name to add one.
+                        </div>
+                      );
+                    }
+                    return matches.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
                         className="w-full text-left px-4 py-2 text-sm hover:bg-blue-50 transition-colors"
-                        onMouseDown={() => { setSelectedPatient(p); setPatientQuery(p.name); setPatientMrn(p.mrn || ''); setShowPatientDropdown(false); }}
+                        onMouseDown={() => {
+                          setSelectedPatient(p);
+                          setPatientQuery(p.name);
+                          setPatientMrn(p.mrn || '');
+                          setShowPatientDropdown(false);
+                        }}
                       >
                         <span className="font-medium">{p.name}</span>
                         {p.mrn && <span className="ml-2 text-xs font-mono text-[var(--color-text-secondary)]">MRN: {p.mrn}</span>}
                         {p.phone && <span className="ml-2 text-xs text-[var(--color-text-secondary)]">{p.phone}</span>}
                       </button>
-                    ))}
-                  {/* Create new option */}
-                  {patientQuery.trim() && !contractorPatients.find(p => p.name.toLowerCase() === patientQuery.toLowerCase()) && (
-                    <button type="button"
+                    ));
+                  })()}
+                  {/* "+ Add new" only when typed text doesn't match an existing patient. */}
+                  {patientQuery.trim() && !contractorPatients.find((p) => p.name.toLowerCase() === patientQuery.toLowerCase()) && (
+                    <button
+                      type="button"
                       className="w-full text-left px-4 py-2 text-sm text-[var(--color-primary)] hover:bg-blue-50 transition-colors border-t border-[var(--color-border)] font-medium"
                       disabled={creatingPatient}
                       onMouseDown={async () => {
@@ -630,12 +651,18 @@ export default function AppointmentModal({
                         setCreatingPatient(true);
                         try {
                           const newP: ContractorPatient = await window.api.contractorPatients.create({
-                            entity_id: selectedItem.id, name: patientQuery.trim(), mrn: patientMrn.trim(),
+                            entity_id: selectedItem.id,
+                            name: patientQuery.trim(),
+                            mrn: patientMrn.trim(),
                           });
-                          setContractorPatients(prev => [...prev, newP]);
+                          setContractorPatients((prev) => [...prev, newP]);
                           setSelectedPatient(newP);
                           setShowPatientDropdown(false);
-                        } catch { /* ignore */ } finally { setCreatingPatient(false); }
+                        } catch {
+                          /* ignore */
+                        } finally {
+                          setCreatingPatient(false);
+                        }
                       }}
                     >
                       {creatingPatient ? 'Adding…' : `+ Add "${patientQuery.trim()}" as new patient`}
