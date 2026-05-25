@@ -278,11 +278,24 @@ const ContractorNotePage: React.FC = () => {
         ))}
       </div>
 
-      {/* Manual save button */}
+      {/* Manual save button — flips to a confirmed green "Saved ✓" state for ~2s after success,
+          so the user gets feedback right where their eye and cursor already are. */}
       {!signed && (
-        <div className="flex justify-end mt-4">
-          <button className="btn-secondary btn-sm gap-1.5" onClick={() => doSave(note)} disabled={saving}>
-            <Save size={14} /> {saving ? 'Saving…' : 'Save'}
+        <div className="flex justify-end items-center gap-3 mt-4">
+          {saved && (
+            <span className="text-xs text-emerald-600 font-medium flex items-center gap-1 animate-in fade-in duration-150">
+              <CheckCircle size={13} /> Saved
+            </span>
+          )}
+          <button
+            className={`btn-sm gap-1.5 transition-colors ${
+              saved ? 'bg-emerald-500 text-white hover:bg-emerald-600 border border-emerald-500' : 'btn-secondary'
+            }`}
+            onClick={() => doSave(note)}
+            disabled={saving}
+          >
+            {saved ? <CheckCircle size={14} /> : <Save size={14} />}
+            {saving ? 'Saving…' : saved ? 'Saved' : 'Save'}
           </button>
         </div>
       )}
