@@ -400,6 +400,24 @@ export interface Note {
   entity_name?: string;
 }
 
+/**
+ * A note enriched with the joined name of its subject + a source_type discriminator.
+ * Returned by `notes:listAll`. Lets cross-cutting views (NotesOverviewPage, Dashboard
+ * stats) render BOTH client notes and contractor notes through a single shape without
+ * doing per-row lookups for the patient/entity name.
+ */
+export interface UnifiedNote extends Note {
+  /** Discriminator: 'client' for regular notes, 'contractor' for entity/patient notes. */
+  source_type: 'client' | 'contractor';
+  /** For client notes — joined from clients.first_name. */
+  client_first_name?: string | null;
+  /** For client notes — joined from clients.last_name. */
+  client_last_name?: string | null;
+  /** For contractor notes — joined from contractor_patients.name. */
+  contractor_patient_name?: string | null;
+  /** For contractor notes — joined from contracted_entities.name. Inherited from Note. */
+}
+
 export interface Appointment {
   id: number;
   client_id: number;
@@ -1734,6 +1752,8 @@ export interface PocketChartAPI {
   notes: {
     list: (filters?: { clientId?: number; entityId?: number; signed?: boolean }) => Promise<Note[]>;
     listByClient: (clientId: number) => Promise<Note[]>;
+    /** Unified list of ALL notes (client + contractor) with joined subject names and source_type. */
+    listAll: () => Promise<UnifiedNote[]>;
     get: (id: number) => Promise<Note>;
     create: (data: Partial<Note>) => Promise<Note>;
     update: (id: number, data: Partial<Note>) => Promise<Note>;

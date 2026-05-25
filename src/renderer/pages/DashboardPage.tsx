@@ -183,17 +183,32 @@ const DashboardPage: React.FC = () => {
       weekEnd.setDate(weekStart.getDate() + 6);
       const weekEndStr = weekEnd.toISOString().split('T')[0];
 
-      // Load notes for all clients to count this week's notes
+      // Count notes via the unified IPC so contractor notes are included in the stats.
+      // Previously this iterated clients + notes.listByClient, which silently skipped
+      // every contractor note (they have NULL client_id) — meaning the user wrote a
+      // contractor note and the dashboard counters stayed at zero.
       let notesThisWeek = 0;
       let unsignedNotes = 0;
-
-      for (const client of allClients) {
-        const clientNotes: Note[] = await window.api.notes.listByClient(client.id);
-        for (const note of clientNotes) {
-          if (note.date_of_service >= weekStartStr && note.date_of_service <= weekEndStr) {
+      try {
+        const allNotes = await window.api.notes.listAll();
+        for (const n of allNotes) {
+          if (n.date_of_service >= weekStartStr && n.date_of_service <= weekEndStr) {
             notesThisWeek++;
           }
-          if (!note.signed_at) unsignedNotes++;
+          if (!n.signed_at) unsignedNotes++;
+        }
+      } catch (err) {
+        // If the new IPC handler isn't available yet (older asar / partial install),
+        // fall back to the legacy per-client loop so we still get a count.
+        console.error('notes.listAll failed; falling back to per-client iteration:', err);
+        for (const client of allClients) {
+          const clientNotes: Note[] = await window.api.notes.listByClient(client.id);
+          for (const note of clientNotes) {
+            if (note.date_of_service >= weekStartStr && note.date_of_service <= weekEndStr) {
+              notesThisWeek++;
+            }
+            if (!note.signed_at) unsignedNotes++;
+          }
         }
       }
 

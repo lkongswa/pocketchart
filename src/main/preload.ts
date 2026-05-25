@@ -94,6 +94,7 @@ const api = {
   notes: {
     list: (filters?: any) => ipcRenderer.invoke('notes:list', filters),
     listByClient: (clientId: number) => ipcRenderer.invoke('notes:listByClient', clientId),
+    listAll: () => ipcRenderer.invoke('notes:listAll'),
     get: (id: number) => ipcRenderer.invoke('notes:get', id),
     create: (data: any) => ipcRenderer.invoke('notes:create', data),
     update: (id: number, data: any) => ipcRenderer.invoke('notes:update', id, data),

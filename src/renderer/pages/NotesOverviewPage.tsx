@@ -15,18 +15,38 @@ import {
   List,
   LayoutGrid,
 } from 'lucide-react';
-import type { Client, Note, Appointment } from '../../shared/types';
+import type { Client, Note, Appointment, UnifiedNote } from '../../shared/types';
 
-interface NoteWithClient {
-  note: Note;
-  clientName: string;
-  clientId: number;
+/**
+ * A note row prepared for display. Holds the unified note plus the pre-computed
+ * subject name, optional secondary line (entity for contractor notes), and the
+ * click-through nav target so the JSX stays simple. Both client and contractor
+ * notes flow through the same shape.
+ */
+interface NoteRow {
+  note: UnifiedNote;
+  /** "John Smith" for clients, "Margaret A." for contractor patients. */
+  subjectName: string;
+  /** For contractor notes: entity_name. For client notes: undefined. */
+  subtitle?: string;
+  sourceType: 'client' | 'contractor';
+  /** Pre-computed route to navigate to when the row is clicked. */
+  navTarget: string;
+  /** Only set for client notes — used for legacy navigation state. */
+  clientId?: number;
 }
 
-interface MissingNote {
+/** A missing-note row: a past appointment that doesn't yet have a note. */
+interface MissingNoteRow {
   appointment: Appointment;
-  clientName: string;
-  clientId: number;
+  subjectName: string;
+  subtitle?: string;
+  sourceType: 'client' | 'contractor';
+  /** Pre-computed route to navigate to (creates a new note). */
+  navTarget: string;
+  /** Navigation state to pass when creating (appointmentDate/Time/Duration). */
+  navState?: Record<string, unknown>;
+  clientId?: number;
 }
 
 type TabFilter = 'due' | 'all' | 'progress_reports';
@@ -56,8 +76,8 @@ function daysSince(dateStr: string): number {
 export default function NotesOverviewPage() {
   const navigate = useNavigate();
   const sectionColor = useSectionColor();
-  const [allNotes, setAllNotes] = useState<NoteWithClient[]>([]);
-  const [missingNotes, setMissingNotes] = useState<MissingNote[]>([]);
+  const [allNotes, setAllNotes] = useState<NoteRow[]>([]);
+  const [missingNotes, setMissingNotes] = useState<MissingNoteRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<TabFilter>('due');
   const [searchQuery, setSearchQuery] = useState('');
@@ -71,24 +91,33 @@ export default function NotesOverviewPage() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const clients: Client[] = await window.api.clients.list();
-      const notes: NoteWithClient[] = [];
-      const clientMap = new Map<number, Client>();
-      clients.forEach(c => clientMap.set(c.id, c));
 
-      // Load all notes
-      for (const client of clients) {
-        const clientNotes: Note[] = await window.api.notes.listByClient(client.id);
-        for (const note of clientNotes) {
-          notes.push({
-            note,
-            clientName: `${client.first_name} ${client.last_name}`,
-            clientId: client.id,
-          });
+      // Single-shot unified load: ALL notes (client + contractor) come back enriched
+      // with subject names + source_type, so the page no longer iterates per-client.
+      const unified: UnifiedNote[] = await window.api.notes.listAll();
+      const rows: NoteRow[] = unified.map((n) => {
+        if (n.source_type === 'contractor') {
+          const subjectName = (n.contractor_patient_name || n.patient_name || 'Unknown patient').trim();
+          return {
+            note: n,
+            subjectName,
+            subtitle: n.entity_name || undefined,
+            sourceType: 'contractor' as const,
+            navTarget: `/contractor-note/${n.id}`,
+          };
         }
-      }
+        const first = n.client_first_name || '';
+        const last = n.client_last_name || '';
+        return {
+          note: n,
+          subjectName: `${first} ${last}`.trim() || 'Unknown client',
+          sourceType: 'client' as const,
+          navTarget: `/clients/${n.client_id}/note/${n.id}`,
+          clientId: n.client_id,
+        };
+      });
 
-      // Load appointments to find missing notes (completed appts without notes)
+      // Load appointments to find missing notes (completed/past appts without a note)
       try {
         const thirtyDaysAgo = new Date();
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -98,31 +127,60 @@ export default function NotesOverviewPage() {
           endDate: today.toISOString().slice(0, 10),
         });
 
-        // Completed or scheduled (past) appointments without a linked note
-        const noteIds = new Set(notes.map(n => n.note.id));
-        const apptNoteIds = new Set(appts.filter(a => a.note_id).map(a => a.note_id));
-        const missing: MissingNote[] = [];
+        // Build a client map only for client-appt rendering (contractor appts carry their
+        // own names via the appointment join, no extra lookup needed).
+        const clients: Client[] = await window.api.clients.list().catch(() => []);
+        const clientMap = new Map<number, Client>();
+        clients.forEach((c) => clientMap.set(c.id, c));
+
+        const noteIds = new Set(rows.map((r) => r.note.id));
+        const missing: MissingNoteRow[] = [];
 
         for (const appt of appts) {
           if (appt.status === 'cancelled') continue;
-          if (appt.note_id && noteIds.has(appt.note_id)) continue; // Has a note
-          // Past appointment without a note
+          if (appt.note_id && noteIds.has(appt.note_id)) continue;
           const apptDate = new Date(appt.scheduled_date + 'T00:00:00');
-          if (apptDate > today) continue; // Future appointment
-          const client = clientMap.get(appt.client_id);
-          if (!client) continue;
-          missing.push({
-            appointment: appt,
-            clientName: `${client.first_name} ${client.last_name}`,
-            clientId: client.id,
-          });
+          if (apptDate > today) continue;
+
+          const isContractorAppt = Boolean(appt.entity_id);
+          if (isContractorAppt) {
+            // Skip contractor appts whose entity doesn't require notes (PocketChart
+            // already hides the "Write Note" button for those — don't badge them as missing).
+            if ((appt as any).entity_requires_notes === 0) continue;
+            const patientName = ((appt as any).patient_name || (appt as any).contractor_patient_name || 'Unknown patient').trim();
+            const entityName = (appt as any).entity_name || '';
+            missing.push({
+              appointment: appt,
+              subjectName: patientName,
+              subtitle: entityName || undefined,
+              sourceType: 'contractor',
+              navTarget: `/contractor-note/new?appointmentId=${appt.id}`,
+            });
+          } else {
+            const client = clientMap.get(appt.client_id);
+            if (!client) continue;
+            missing.push({
+              appointment: appt,
+              subjectName: `${client.first_name} ${client.last_name}`,
+              sourceType: 'client',
+              navTarget: `/clients/${client.id}/note/new`,
+              navState: {
+                appointmentId: appt.id,
+                appointmentDate: appt.scheduled_date,
+                appointmentTime: appt.scheduled_time,
+                appointmentDuration: appt.duration_minutes,
+              },
+              clientId: client.id,
+            });
+          }
         }
         setMissingNotes(missing);
       } catch {
         setMissingNotes([]);
       }
 
-      // Load invoice statuses for notes
+      // Load invoice statuses for notes (regular client notes only — contractor notes
+      // bill through the contract-invoicing flow which isn't part of this view).
       try {
         const invoiceStatuses = await window.api.invoices.noteStatuses();
         setNoteInvoiceMap(invoiceStatuses);
@@ -130,12 +188,12 @@ export default function NotesOverviewPage() {
         setNoteInvoiceMap({});
       }
 
-      notes.sort((a, b) =>
+      // Already DESC-sorted by the SQL query, but stable-sort as a belt-and-suspenders.
+      rows.sort((a, b) =>
         b.note.date_of_service.localeCompare(a.note.date_of_service) ||
         b.note.created_at.localeCompare(a.note.created_at)
       );
-
-      setAllNotes(notes);
+      setAllNotes(rows);
     } catch (err) {
       console.error('Failed to load notes:', err);
     } finally {
@@ -162,11 +220,12 @@ export default function NotesOverviewPage() {
     }
   };
 
-  const matchesSearch = (item: NoteWithClient) => {
+  const matchesSearch = (item: NoteRow) => {
     if (!searchQuery.trim()) return true;
     const q = searchQuery.toLowerCase();
     return (
-      item.clientName.toLowerCase().includes(q) ||
+      item.subjectName.toLowerCase().includes(q) ||
+      (item.subtitle || '').toLowerCase().includes(q) ||
       (item.note.subjective || '').toLowerCase().includes(q) ||
       (item.note.assessment || '').toLowerCase().includes(q) ||
       item.note.date_of_service.includes(q)
@@ -293,18 +352,18 @@ export default function NotesOverviewPage() {
                   <div
                     key={item.appointment.id}
                     className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-gray-50 transition-colors"
-                    onClick={() => navigate(`/clients/${item.clientId}/note/new`, {
-                      state: {
-                        appointmentDate: item.appointment.scheduled_date,
-                        appointmentTime: item.appointment.scheduled_time,
-                        appointmentDuration: item.appointment.duration_minutes,
-                      }
-                    })}
+                    onClick={() => navigate(item.navTarget, item.navState ? { state: item.navState } : undefined)}
                   >
-                    <div className="w-1 h-5 rounded-full bg-amber-400 shrink-0" />
+                    <div className={`w-1 h-5 rounded-full shrink-0 ${item.sourceType === 'contractor' ? 'bg-purple-400' : 'bg-amber-400'}`} />
                     <div className="min-w-0 flex-1">
-                      <p className="text-xs font-medium text-[var(--color-text)] truncate">{item.clientName}</p>
-                      <p className="text-[10px] text-[var(--color-text-secondary)]">
+                      <p className="text-xs font-medium text-[var(--color-text)] truncate flex items-center gap-1.5">
+                        {item.subjectName}
+                        {item.sourceType === 'contractor' && (
+                          <span className="px-1 py-0.5 rounded text-[9px] font-semibold bg-purple-100 text-purple-700 flex-shrink-0">Contract</span>
+                        )}
+                      </p>
+                      <p className="text-[10px] text-[var(--color-text-secondary)] truncate">
+                        {item.subtitle ? `${item.subtitle} · ` : ''}
                         {formatDate(item.appointment.scheduled_date)}{item.appointment.scheduled_time ? ` at ${formatTime12(item.appointment.scheduled_time)}` : ''}
                       </p>
                     </div>
@@ -342,17 +401,21 @@ export default function NotesOverviewPage() {
                   return (
                     <div
                       key={item.note.id}
-                      className={`flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-gray-50 transition-colors ${isLate ? 'border-l-4 border-l-red-400 bg-red-50/30' : 'border-l-4 border-l-blue-300'}`}
-                      onClick={() => navigate(`/clients/${item.clientId}/note/${item.note.id}`)}
+                      className={`flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-gray-50 transition-colors ${isLate ? 'border-l-4 border-l-red-400 bg-red-50/30' : `border-l-4 ${item.sourceType === 'contractor' ? 'border-l-purple-300' : 'border-l-blue-300'}`}`}
+                      onClick={() => navigate(item.navTarget)}
                     >
                       <div className="min-w-0 flex-1">
                         <p className="text-xs font-medium text-[var(--color-text)] truncate flex items-center gap-1">
-                          {item.clientName}
+                          {item.subjectName}
+                          {item.sourceType === 'contractor' && (
+                            <span className="px-1 py-0.5 rounded text-[9px] font-semibold bg-purple-100 text-purple-700">Contract</span>
+                          )}
                           {item.note.note_type === 'progress_report' && (
                             <span className="px-1 py-0.5 rounded text-[9px] font-semibold bg-teal-100 text-teal-700">PR</span>
                           )}
                         </p>
-                        <p className="text-[10px] text-[var(--color-text-secondary)]">
+                        <p className="text-[10px] text-[var(--color-text-secondary)] truncate">
+                          {item.subtitle ? `${item.subtitle} · ` : ''}
                           {formatDate(item.note.date_of_service)}
                           {item.note.cpt_code && ` · ${item.note.cpt_code}`}
                         </p>
@@ -401,24 +464,32 @@ export default function NotesOverviewPage() {
               const invoiceInfo = noteInvoiceMap[item.note.id];
               const isInvoiced = Boolean(invoiceInfo);
               const isPaid = invoiceInfo?.status === 'paid';
+              const isContractor = item.sourceType === 'contractor';
               return (
                 <div
                   key={item.note.id}
                   className={`grid grid-cols-[1fr_140px_100px_100px_80px_80px_80px] gap-4 px-5 py-3 hover:bg-gray-50 cursor-pointer transition-colors items-center ${isOverdue ? 'bg-red-50/30' : ''}`}
-                  onClick={() =>
-                    navigate(`/clients/${item.clientId}/note/${item.note.id}`)
-                  }
+                  onClick={() => navigate(item.navTarget)}
                 >
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-[var(--color-text)] truncate flex items-center gap-1.5">
-                      {item.clientName}
+                      {item.subjectName}
+                      {isContractor && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-700 flex-shrink-0">Contract</span>
+                      )}
                       {item.note.note_type === 'progress_report' && (
                         <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-teal-100 text-teal-700 flex-shrink-0">PR</span>
                       )}
                       {item.note.note_type === 'discharge' && (
                         <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-100 text-rose-700 flex-shrink-0">DC</span>
                       )}
+                      {item.note.note_type === 'evaluation' && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-100 text-violet-700 flex-shrink-0">Eval</span>
+                      )}
                     </p>
+                    {item.subtitle && (
+                      <p className="text-[10px] text-[var(--color-text-secondary)] truncate mt-0.5">{item.subtitle}</p>
+                    )}
                     {(() => {
                       // Skip empty, default template text, or very short previews
                       const subj = (item.note.subjective || '').trim();

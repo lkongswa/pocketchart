@@ -1383,6 +1383,28 @@ function registerIpcHandlers() {
     ).all(clientId);
   });
 
+  // Unified note listing for cross-cutting views (Notes/PRs overview, Dashboard stats).
+  // Returns BOTH regular client notes AND contractor notes in one query, enriched with
+  // the subject's name and a source_type discriminator so the UI can render + route
+  // each one correctly without N+1 lookups.
+  safeHandle('notes:listAll', () => {
+    return db.prepare(`
+      SELECT
+        n.*,
+        c.first_name as client_first_name,
+        c.last_name as client_last_name,
+        cp.name as contractor_patient_name,
+        e.name as entity_name,
+        CASE WHEN n.contractor_patient_id IS NOT NULL THEN 'contractor' ELSE 'client' END as source_type
+      FROM notes n
+      LEFT JOIN clients c ON n.client_id = c.id
+      LEFT JOIN contractor_patients cp ON n.contractor_patient_id = cp.id
+      LEFT JOIN contracted_entities e ON n.entity_id = e.id
+      WHERE n.deleted_at IS NULL
+      ORDER BY n.date_of_service DESC, n.created_at DESC
+    `).all();
+  });
+
   safeHandle('notes:get', (_event, id: number) => {
     return db.prepare('SELECT * FROM notes WHERE id = ? AND deleted_at IS NULL').get(id);
   });
