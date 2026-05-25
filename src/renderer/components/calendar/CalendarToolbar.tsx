@@ -33,55 +33,59 @@ export default function CalendarToolbar({
   onToggleBilling,
 }: CalendarToolbarProps) {
   return (
-    <div className="flex items-center justify-between mb-4">
-      {/* Left: Navigation */}
-      <div className="flex items-center gap-2">
+    <div className="flex items-center gap-3 mb-4">
+      {/* ── Left cluster: nav + today + date heading ── */}
+      <div className="flex items-center gap-2 min-w-0 flex-1">
+        {/* Prev/next: paired icon buttons in a single rounded container */}
+        <div className="flex items-center border border-[var(--color-border)] rounded-lg overflow-hidden">
+          <button
+            className="p-1.5 hover:bg-gray-100 text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors"
+            onClick={() => onNavigate('prev')}
+            aria-label="Previous period"
+            title="Previous (← or J)"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <div className="w-px h-5 bg-[var(--color-border)]" />
+          <button
+            className="p-1.5 hover:bg-gray-100 text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors"
+            onClick={() => onNavigate('next')}
+            aria-label="Next period"
+            title="Next (→ or K)"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Today: outlined pill, clearly clickable */}
         <button
-          className="btn-secondary"
-          onClick={() => onNavigate('prev')}
-          aria-label="Previous"
-        >
-          <ChevronLeft className="w-4 h-4" />
-        </button>
-        <button
-          className="btn-secondary"
-          onClick={() => onNavigate('next')}
-          aria-label="Next"
-        >
-          <ChevronRight className="w-4 h-4" />
-        </button>
-        <button
-          className="btn-ghost text-sm font-medium"
+          className="px-3 py-1.5 text-sm font-medium border border-[var(--color-border)] rounded-lg text-[var(--color-text)] hover:bg-gray-50 transition-colors"
           onClick={() => onNavigate('today')}
+          title="Jump to today (T)"
         >
           Today
         </button>
+
+        {/* Date heading — large, single line, truncates only if no other choice */}
+        <h2 className="text-xl font-bold text-[var(--color-text)] ml-2 truncate whitespace-nowrap">
+          {dateLabel}
+        </h2>
       </div>
 
-      {/* Center: Date Label */}
-      <span className="text-lg font-semibold text-[var(--color-text)]">
-        {dateLabel}
-      </span>
-
-      {/* Right: View toggle, Search, Add */}
-      <div className="flex items-center gap-3">
-        {/* View Toggle Group */}
-        <div className="inline-flex">
-          {VIEW_OPTIONS.map((opt, idx) => {
+      {/* ── Right cluster: view toggle + billing + search + add ── */}
+      <div className="flex items-center gap-2 flex-shrink-0">
+        {/* View toggle — segmented control on a gray track (Google-style) */}
+        <div className="inline-flex bg-gray-100 rounded-lg p-0.5">
+          {VIEW_OPTIONS.map((opt) => {
             const isActive = currentView === opt.value;
-            const isFirst = idx === 0;
-            const isLast = idx === VIEW_OPTIONS.length - 1;
-
             return (
               <button
                 key={opt.value}
                 onClick={() => onViewChange(opt.value)}
-                className={`px-3 py-1.5 text-sm font-medium transition-colors duration-150 cursor-pointer ${
-                  isFirst ? 'rounded-l-lg' : ''
-                } ${isLast ? 'rounded-r-lg' : ''} ${
+                className={`px-3 py-1 text-sm font-medium rounded-md transition-all duration-150 ${
                   isActive
-                    ? 'bg-[var(--color-primary)] text-white'
-                    : 'bg-white text-[var(--color-text)] border border-[var(--color-border)] hover:bg-gray-50'
+                    ? 'bg-white text-[var(--color-text)] shadow-sm'
+                    : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
                 }`}
               >
                 {opt.label}
@@ -90,38 +94,42 @@ export default function CalendarToolbar({
           })}
         </div>
 
-        {/* Billing toggle */}
+        {/* Billing toggle — icon-only, subtle */}
         {onToggleBilling && (
           <button
-            className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+            className={`p-1.5 rounded-lg transition-colors ${
               showBilling
-                ? 'bg-emerald-100 text-emerald-700 border border-emerald-300'
-                : 'text-[var(--color-text-secondary)] hover:bg-gray-100 border border-transparent'
+                ? 'bg-emerald-100 text-emerald-700'
+                : 'text-[var(--color-text-secondary)] hover:bg-gray-100 hover:text-[var(--color-text)]'
             }`}
             onClick={() => onToggleBilling(!showBilling)}
             title={showBilling ? 'Hide payment badges' : 'Show payment badges'}
           >
-            <DollarSign size={14} />
+            <DollarSign size={15} />
           </button>
         )}
 
-        {/* Search Input */}
+        {/* Search — narrower than before so the toolbar breathes */}
         <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-secondary)] pointer-events-none" />
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-secondary)] pointer-events-none" />
           <input
             type="text"
-            className="input pl-8"
-            style={{ width: 200 }}
-            placeholder="Search appointments..."
+            className="input pl-8 text-sm py-1.5"
+            style={{ width: 180 }}
+            placeholder="Search..."
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
           />
         </div>
 
-        {/* Add Appointment */}
-        <button className="btn-primary" onClick={onAddAppointment}>
-          <Plus className="w-4 h-4 mr-2" />
-          Add Appointment
+        {/* Add — compact label so the toolbar doesn't get pushed around */}
+        <button
+          className="btn-primary text-sm py-1.5 px-3 whitespace-nowrap"
+          onClick={onAddAppointment}
+          title="New appointment (N)"
+        >
+          <Plus className="w-4 h-4 mr-1" />
+          New
         </button>
       </div>
     </div>

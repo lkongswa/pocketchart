@@ -252,15 +252,20 @@ export default function CalendarPage() {
     }
   };
 
-  // Date label
+  // Date label — kept tight to fit a single line in the toolbar. Drops redundant
+  // year/month info when the range stays within the same period.
   const getDateLabel = (): string => {
     switch (currentView) {
       case 'day':
-        return format(currentDate, 'EEEE, MMMM d, yyyy');
+        return format(currentDate, 'EEEE, MMM d, yyyy');
       case 'week': {
         const ws = startOfWeek(currentDate, { weekStartsOn: 1 });
         const we = endOfWeek(currentDate, { weekStartsOn: 1 });
-        return `${format(ws, 'MMM d')} - ${format(we, 'MMM d, yyyy')}`;
+        const sameMonth = ws.getMonth() === we.getMonth() && ws.getFullYear() === we.getFullYear();
+        const sameYear = ws.getFullYear() === we.getFullYear();
+        if (sameMonth) return `${format(ws, 'MMM d')} – ${format(we, 'd, yyyy')}`;
+        if (sameYear) return `${format(ws, 'MMM d')} – ${format(we, 'MMM d, yyyy')}`;
+        return `${format(ws, 'MMM d, yyyy')} – ${format(we, 'MMM d, yyyy')}`;
       }
       case 'month':
         return format(currentDate, 'MMMM yyyy');
