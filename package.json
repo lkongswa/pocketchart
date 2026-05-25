@@ -68,7 +68,8 @@
       "createStartMenuShortcut": true,
       "shortcutName": "PocketChart",
       "include": "build/uninstaller.nsh",
-      "uninstallDisplayName": "PocketChart (your data will be kept safe)"
+      "uninstallDisplayName": "PocketChart (your data will be kept safe)",
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "publish": [
       {
