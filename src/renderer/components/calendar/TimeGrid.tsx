@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { format, isSameDay } from 'date-fns';
+import { MousePointerClick } from 'lucide-react';
 import type { Appointment, CalendarBlock } from '../../../shared/types';
 import AppointmentBlock from './AppointmentBlock';
 import type { PaymentIndicator } from './AppointmentBlock';
@@ -39,6 +40,11 @@ const SLOT_MINUTES = 15;
 const SLOTS_PER_HOUR = 60 / SLOT_MINUTES; // 4
 const SLOT_HEIGHT = 24; // pixels per SLOT_MINUTES-min slot
 const PX_PER_MINUTE = SLOT_HEIGHT / SLOT_MINUTES; // 1.6
+
+// Working-hours range. Slots outside this window get a subtle grey backdrop so
+// the eye locks onto the workday immediately. Weekend columns get the same tint.
+const WORK_START_HOUR = 8;
+const WORK_END_HOUR = 18; // 6pm
 
 /**
  * Format an hour:minute pair into a compact gutter label.
@@ -367,6 +373,8 @@ export default function TimeGrid({
         {columns.map((col, colIdx) => {
           const colAppts = getColumnAppointments(col.dateStr);
           const overlapLayout = computeOverlapLayout(colAppts);
+          const dayOfWeek = col.date.getDay(); // 0 = Sun, 6 = Sat
+          const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
 
           return (
             <div
@@ -376,20 +384,28 @@ export default function TimeGrid({
             >
               {/* Slot backgrounds and click/drop targets — 4 per hour at 15-min granularity.
                   Border style hints at the slot's position in the hour:
-                    :00 solid, :30 dashed, :15/:45 invisible (just click targets). */}
+                    :00 solid, :30 dashed, :15/:45 invisible (just click targets).
+                  Off-hours (before 8a / after 6p) and weekend columns get a subtle grey backdrop. */}
               {slots.map((slot, slotIdx) => {
                 const timeStr = toTimeString(slot.hour, slot.minute);
                 const slotKey = `${col.dateStr}-${timeStr}`;
                 const isDragTarget = dragOverSlot === slotKey;
+                const isOffHour = slot.hour < WORK_START_HOUR || slot.hour >= WORK_END_HOUR;
+                const isOffPeriod = isWeekend || isOffHour;
                 const borderClass =
                   slot.minute === 0 ? 'border-t border-[var(--color-border)]'
                   : slot.minute === 30 ? 'border-t border-dashed border-gray-200'
                   : ''; // :15 and :45 — no gridline, keeps the visual quiet
+                const bgClass = isDragTarget
+                  ? 'bg-blue-100/40'
+                  : isOffPeriod
+                    ? 'bg-gray-50/60'
+                    : '';
 
                 return (
                   <div
                     key={slotKey}
-                    className={`absolute left-0 right-0 ${borderClass} ${isDragTarget ? 'bg-blue-100/40' : ''}`}
+                    className={`absolute left-0 right-0 ${borderClass} ${bgClass}`}
                     style={{
                       top: slotIdx * SLOT_HEIGHT,
                       height: SLOT_HEIGHT,
@@ -453,7 +469,18 @@ export default function TimeGrid({
                 const h12 = blockHour === 0 ? 12 : blockHour > 12 ? blockHour - 12 : blockHour;
                 const suffix = blockHour >= 12 ? 'p' : 'a';
                 const minutesPart = parseInt(mStr || '0', 10);
-                const timeLabel = minutesPart === 0 ? `${h12}${suffix}` : `${h12}:${mStr.padStart(2, '0')}${suffix}`;
+                const startLabel = minutesPart === 0 ? `${h12}${suffix}` : `${h12}:${mStr.padStart(2, '0')}${suffix}`;
+                // Compute end label for the ghost preview during resize.
+                let timeLabel = startLabel;
+                if (isResizingThis) {
+                  const endTotal = blockHour * 60 + blockMin + effectiveDuration;
+                  const endH = Math.floor(endTotal / 60) % 24;
+                  const endM = endTotal % 60;
+                  const endH12 = endH === 0 ? 12 : endH > 12 ? endH - 12 : endH;
+                  const endSuffix = endH >= 12 ? 'p' : 'a';
+                  const endLabel = endM === 0 ? `${endH12}${endSuffix}` : `${endH12}:${endM.toString().padStart(2, '0')}${endSuffix}`;
+                  timeLabel = `${startLabel} → ${endLabel}`;
+                }
                 const isDone = block.completed === 1;
 
                 return (
@@ -507,7 +534,7 @@ export default function TimeGrid({
                       if (onBlockContextMenu) onBlockContextMenu(block, e.clientX, e.clientY);
                     }}
                   >
-                    <div className={`text-[10px] font-medium truncate pr-10 ${isDone ? 'line-through opacity-60' : ''}`}>{timeLabel}</div>
+                    <div className={`text-[10px] font-medium truncate pr-10 ${isDone ? 'line-through opacity-60' : ''} ${isResizingThis ? 'text-slate-700' : ''}`}>{timeLabel}</div>
                     {heightPx >= 36 && (
                       <div className={`text-[11px] truncate pr-10 ${isDone ? 'line-through opacity-60' : ''}`}>{block.title}</div>
                     )}
@@ -585,6 +612,24 @@ export default function TimeGrid({
             </div>
           );
         })}
+
+        {/* Empty-state coaching: only when nothing is on the calendar across all visible columns.
+            Positioned just below the auto-scroll-to-8am landing so it's visible immediately on mount. */}
+        {appointments.length === 0 && calendarBlocks.length === 0 && (
+          <div
+            className="absolute pointer-events-none flex justify-center"
+            style={{
+              left: 60,
+              right: 0,
+              top: (WORK_START_HOUR - startHour) * SLOTS_PER_HOUR * SLOT_HEIGHT + 32,
+            }}
+          >
+            <div className="flex items-center gap-2 bg-white/90 backdrop-blur px-4 py-2 rounded-full border border-dashed border-[var(--color-border)] text-sm text-[var(--color-text-secondary)] shadow-sm">
+              <MousePointerClick size={15} className="text-[var(--color-primary)]/70" />
+              <span>Click any time slot to schedule</span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

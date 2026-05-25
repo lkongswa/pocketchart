@@ -119,6 +119,9 @@ export default function CalendarPage() {
   // Empty-slot context menu state (right-click on a time slot)
   const [slotContextMenu, setSlotContextMenu] = useState<{ x: number; y: number; date: string; time: string } | null>(null);
 
+  // Keyboard shortcut help overlay
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+
   // Compute date range based on current view
   const getDateRange = useCallback((): { startDate: string; endDate: string } => {
     switch (currentView) {
@@ -428,6 +431,73 @@ export default function CalendarPage() {
       if (scratchpadTimerRef.current) clearTimeout(scratchpadTimerRef.current);
     };
   }, []);
+
+  // ── Keyboard shortcuts ──
+  // T = today, D/W/M = view switch, N = new appt, ← → or J/K = prev/next period, ? = help.
+  // Skipped while typing in an input/textarea or when any modal/menu is open.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Don't interfere with browser shortcuts or any in-progress text entry.
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) return;
+      // Bail if any modal / context menu is open — those have their own key handlers.
+      if (modalOpen || contextMenu || blockContextMenu || slotContextMenu) return;
+
+      switch (e.key) {
+        case 't':
+        case 'T':
+          handleNavigate('today');
+          e.preventDefault();
+          break;
+        case 'd':
+        case 'D':
+          setCurrentView('day');
+          e.preventDefault();
+          break;
+        case 'w':
+        case 'W':
+          setCurrentView('week');
+          e.preventDefault();
+          break;
+        case 'm':
+        case 'M':
+          setCurrentView('month');
+          e.preventDefault();
+          break;
+        case 'n':
+        case 'N':
+          handleAddAppointment();
+          e.preventDefault();
+          break;
+        case 'ArrowLeft':
+        case 'j':
+        case 'J':
+          handleNavigate('prev');
+          e.preventDefault();
+          break;
+        case 'ArrowRight':
+        case 'k':
+        case 'K':
+          handleNavigate('next');
+          e.preventDefault();
+          break;
+        case '?':
+          setShowShortcutsHelp((s) => !s);
+          e.preventDefault();
+          break;
+        case 'Escape':
+          if (showShortcutsHelp) {
+            setShowShortcutsHelp(false);
+            e.preventDefault();
+          }
+          break;
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [modalOpen, contextMenu, blockContextMenu, slotContextMenu, showShortcutsHelp]);
 
   // Handle todo dropped onto calendar — create admin block (NOT an appointment)
   const handleTodoDrop = async (todoId: number, date: string, time?: string) => {
@@ -1173,6 +1243,59 @@ export default function CalendarPage() {
 
       {/* Trial Expired Modal */}
       {showExpiredModal && <TrialExpiredModal onClose={dismissExpiredModal} />}
+
+      {/* Keyboard shortcut help (toggle with `?`) */}
+      {showShortcutsHelp && (
+        <div
+          className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setShowShortcutsHelp(false)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl max-w-md w-full p-6 border border-[var(--color-border)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-semibold text-[var(--color-text)]">Calendar shortcuts</h2>
+              <button
+                className="p-1 rounded hover:bg-gray-100 text-[var(--color-text-secondary)]"
+                onClick={() => setShowShortcutsHelp(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <ul className="space-y-2 text-sm text-[var(--color-text)]">
+              {[
+                { keys: ['T'], label: 'Jump to today' },
+                { keys: ['D'], label: 'Day view' },
+                { keys: ['W'], label: 'Week view' },
+                { keys: ['M'], label: 'Month view' },
+                { keys: ['N'], label: 'New appointment' },
+                { keys: ['←', 'J'], label: 'Previous period' },
+                { keys: ['→', 'K'], label: 'Next period' },
+                { keys: ['?'], label: 'Toggle this help' },
+                { keys: ['Esc'], label: 'Close menu / modal' },
+              ].map((row) => (
+                <li key={row.label} className="flex items-center justify-between py-1.5 border-b border-[var(--color-border)] last:border-b-0">
+                  <span className="text-[var(--color-text-secondary)]">{row.label}</span>
+                  <span className="flex items-center gap-1">
+                    {row.keys.map((k) => (
+                      <kbd
+                        key={k}
+                        className="inline-flex items-center justify-center min-w-[24px] h-6 px-1.5 rounded border border-[var(--color-border)] bg-gray-50 text-[11px] font-mono font-semibold text-[var(--color-text)]"
+                      >
+                        {k}
+                      </kbd>
+                    ))}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-4 text-[11px] text-[var(--color-text-secondary)]">
+              Shortcuts are paused while typing in any field or while a modal is open.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

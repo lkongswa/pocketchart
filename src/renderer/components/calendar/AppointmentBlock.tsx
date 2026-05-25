@@ -78,6 +78,16 @@ function formatTime12Long(time24: string): string {
   return `${h12}:${mStr} ${suffix}`;
 }
 
+// Compute the end time given a start time and a duration, formatted in the compact style.
+function computeEndTimeCompact(startTime24: string, durationMinutes: number): string {
+  const [hStr, mStr] = startTime24.split(':');
+  const totalMinutes = parseInt(hStr, 10) * 60 + parseInt(mStr, 10) + durationMinutes;
+  const endHour = Math.floor(totalMinutes / 60) % 24;
+  const endMin = totalMinutes % 60;
+  const endTime24 = `${endHour.toString().padStart(2, '0')}:${endMin.toString().padStart(2, '0')}`;
+  return formatTime12(endTime24);
+}
+
 export default function AppointmentBlock({
   appointment,
   slotHeight,
@@ -282,8 +292,10 @@ export default function AppointmentBlock({
       title={`${clientName} - ${formatTime12Long(appointment.scheduled_time)} (${effectiveDuration}m)`}
     >
       <div className="flex items-center justify-between gap-1">
-        <div className="text-xs text-[var(--color-text-secondary)] leading-tight whitespace-nowrap truncate min-w-0">
-          {formatTime12(appointment.scheduled_time)}{isResizing ? ` · ${effectiveDuration}m` : ''}
+        <div className={`text-xs leading-tight whitespace-nowrap truncate min-w-0 ${isResizing ? 'text-blue-600 font-semibold' : 'text-[var(--color-text-secondary)]'}`}>
+          {isResizing
+            ? `${formatTime12(appointment.scheduled_time)} → ${computeEndTimeCompact(appointment.scheduled_time, effectiveDuration)}`
+            : formatTime12(appointment.scheduled_time)}
         </div>
         <div className="flex items-center gap-0.5 flex-shrink-0">
           {sessionBadge}
