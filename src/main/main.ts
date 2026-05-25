@@ -6695,12 +6695,17 @@ function registerIpcHandlers() {
   });
 
   // Cross-cutting view: all contractor patients in the system, joined with their entity
-  // name + visit stats. A "visit" is an appointment that either (a) was explicitly
-  // marked completed (status='completed', which happens via "Mark Attended" or when a
-  // note/eval is linked) OR (b) has been invoiced (contract_invoice_id IS NOT NULL).
-  // Many contractor visits get billed without an attached note, so they stay in
-  // status='scheduled' forever — counting only by status would understate the real
-  // visit count. Excludes cancelled/no-show even if somehow linked to an invoice.
+  // name + visit stats.
+  //
+  // VISIT DEFINITION: a past (or today) appointment that's not cancelled/no-show. The
+  // date alone is the signal "did they show up" — we don't require status='completed'
+  // (most contractor visits get billed without attaching a per-visit note, so they
+  // stay in 'scheduled' status forever) and we don't require an invoice (the appt
+  // happened whether you've billed it yet or not). This matches the user's mental
+  // model: "person came to a session = visit".
+  //
+  // UPCOMING DEFINITION: future appointment still in 'scheduled' status. Today's
+  // appointments fall in 'visit', not 'upcoming'.
   safeHandle('contractorPatients:listAll', () => {
     requireTier('pro');
     return db.prepare(`
@@ -6713,7 +6718,7 @@ function registerIpcHandlers() {
           WHERE a.contractor_patient_id = cp.id
             AND a.deleted_at IS NULL
             AND a.status NOT IN ('cancelled', 'no-show')
-            AND (a.status = 'completed' OR a.contract_invoice_id IS NOT NULL)
+            AND a.scheduled_date <= date('now', 'localtime')
         ) as last_visit_date,
         (
           SELECT COUNT(*)
@@ -6721,7 +6726,7 @@ function registerIpcHandlers() {
           WHERE a.contractor_patient_id = cp.id
             AND a.deleted_at IS NULL
             AND a.status NOT IN ('cancelled', 'no-show')
-            AND (a.status = 'completed' OR a.contract_invoice_id IS NOT NULL)
+            AND a.scheduled_date <= date('now', 'localtime')
         ) as visit_count,
         (
           SELECT COUNT(*)
@@ -6729,8 +6734,7 @@ function registerIpcHandlers() {
           WHERE a.contractor_patient_id = cp.id
             AND a.deleted_at IS NULL
             AND a.status = 'scheduled'
-            AND a.contract_invoice_id IS NULL
-            AND a.scheduled_date >= date('now', 'localtime')
+            AND a.scheduled_date > date('now', 'localtime')
         ) as upcoming_count
       FROM contractor_patients cp
       LEFT JOIN contracted_entities e ON cp.entity_id = e.id

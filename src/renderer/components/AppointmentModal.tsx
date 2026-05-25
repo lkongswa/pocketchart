@@ -827,12 +827,55 @@ export default function AppointmentModal({
                   </button>
                 ))}
               </div>
-              {entityRate !== null && (
-                <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                  Rate: <span className="font-medium">${entityRate.toFixed(2)}</span>
-                  {feeScheduleCache.length > 1 && ' (auto-updated from fee schedule)'}
-                </p>
-              )}
+              {/* Editable rate: lets the user fix billing on appointments that were created
+                  without a rate (e.g., before the fee schedule existed, or imported from elsewhere).
+                  "Use contract rate" pulls the current fee-schedule rate for the selected session
+                  type so they don't have to look it up manually. */}
+              <div className="mt-2">
+                <label className="label">
+                  Rate <span className="text-[11px] text-[var(--color-text-secondary)] font-normal">(billed to entity)</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)] text-sm">$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      className="input pl-6"
+                      placeholder="0.00"
+                      value={entityRate === null ? '' : entityRate}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setEntityRate(v === '' ? null : parseFloat(v));
+                      }}
+                    />
+                  </div>
+                  {(() => {
+                    const target = (formData.session_type || 'visit') === 'eval' ? 'eval' : 'treatment';
+                    const match = feeScheduleCache.find((f) => f.service_type === target) || feeScheduleCache[0];
+                    const contractRate = match?.default_rate ?? null;
+                    const alreadyMatches = contractRate !== null && entityRate !== null && Math.abs(entityRate - contractRate) < 0.005;
+                    if (contractRate === null) return null;
+                    return (
+                      <button
+                        type="button"
+                        className="btn-secondary btn-sm whitespace-nowrap"
+                        disabled={alreadyMatches}
+                        onClick={() => setEntityRate(contractRate)}
+                        title={alreadyMatches ? 'Already at contract rate' : `Apply $${contractRate.toFixed(2)} from the ${target} fee schedule`}
+                      >
+                        {alreadyMatches ? `✓ $${contractRate.toFixed(2)}` : `Use $${contractRate.toFixed(2)}`}
+                      </button>
+                    );
+                  })()}
+                </div>
+                {entityRate === null && feeScheduleCache.length === 0 && (
+                  <p className="text-[11px] text-amber-600 mt-1">
+                    No fee schedule set for this contract — add one in the contract's settings to enable one-click rate apply.
+                  </p>
+                )}
+              </div>
             </div>
           )}
 
