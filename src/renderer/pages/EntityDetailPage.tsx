@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import type { ContractedEntity, EntityFeeSchedule, EntityDocument, EntityDocumentCategory, Appointment, Invoice, InvoiceItem, InvoiceStatus, ContractorPatient } from '@shared/types';
 import EntityFormModal from '../components/EntityFormModal';
+import AppointmentModal from '../components/AppointmentModal';
 import { useSectionColor } from '../hooks/useSectionColor';
 
 type Tab = 'overview' | 'appointments' | 'invoices';
@@ -60,6 +61,10 @@ const EntityDetailPage: React.FC = () => {
   const [generatingInvoice, setGeneratingInvoice] = useState(false);
   const [invoiceDate, setInvoiceDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [toast, setToast] = useState<string | null>(null);
+
+  // Edit-appointment modal state — clicking a row in the appointments table opens this
+  // so the user can fix patient/date/time/modality/rate without bouncing to the calendar.
+  const [editingAppt, setEditingAppt] = useState<Appointment | null>(null);
 
   // Invoices tab state
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -913,11 +918,13 @@ const EntityDetailPage: React.FC = () => {
                     return (
                       <tr
                         key={appt.id}
-                        className={`border-b border-[var(--color-border)] last:border-b-0 transition-colors ${
+                        className={`border-b border-[var(--color-border)] last:border-b-0 transition-colors cursor-pointer ${
                           isSelected ? 'bg-purple-50/60' : 'hover:bg-[var(--color-bg)]/50'
                         }`}
+                        onClick={() => setEditingAppt(appt)}
+                        title="Click to edit appointment"
                       >
-                        <td className="table-cell">
+                        <td className="table-cell" onClick={(e) => e.stopPropagation()}>
                           {!isInvoiced && (
                             <button onClick={() => toggleAppt(appt.id)}>
                               {isSelected
@@ -1399,6 +1406,21 @@ const EntityDetailPage: React.FC = () => {
         onClose={() => setEditModalOpen(false)}
         onSave={() => { loadEntity(); }}
         entity={entity}
+      />
+
+      {/* Edit-appointment modal — opens when the user clicks a row in the appointments table. */}
+      <AppointmentModal
+        isOpen={editingAppt !== null}
+        onClose={() => setEditingAppt(null)}
+        appointment={editingAppt}
+        onSave={async (data) => {
+          if (!editingAppt) return;
+          await window.api.appointments.update(editingAppt.id, data);
+          // Refresh both the Appointments table and the Overview pipeline stats so
+          // any rate / status / patient changes flow through immediately.
+          await loadAppointments();
+          await loadOverviewAppts().catch(() => {});
+        }}
       />
     </div>
   );

@@ -6695,10 +6695,12 @@ function registerIpcHandlers() {
   });
 
   // Cross-cutting view: all contractor patients in the system, joined with their entity
-  // name + their most recent COMPLETED visit + completed visit count + upcoming count.
-  // We only count status='completed' as a "visit" (a future scheduled appt isn't a visit,
-  // a cancellation isn't a visit, etc.) so the Visits column reflects real care delivered.
-  // Upcoming counts give the user a quick "how busy is this patient looking" signal.
+  // name + visit stats. A "visit" is an appointment that either (a) was explicitly
+  // marked completed (status='completed', which happens via "Mark Attended" or when a
+  // note/eval is linked) OR (b) has been invoiced (contract_invoice_id IS NOT NULL).
+  // Many contractor visits get billed without an attached note, so they stay in
+  // status='scheduled' forever — counting only by status would understate the real
+  // visit count. Excludes cancelled/no-show even if somehow linked to an invoice.
   safeHandle('contractorPatients:listAll', () => {
     requireTier('pro');
     return db.prepare(`
@@ -6710,14 +6712,16 @@ function registerIpcHandlers() {
           FROM appointments a
           WHERE a.contractor_patient_id = cp.id
             AND a.deleted_at IS NULL
-            AND a.status = 'completed'
+            AND a.status NOT IN ('cancelled', 'no-show')
+            AND (a.status = 'completed' OR a.contract_invoice_id IS NOT NULL)
         ) as last_visit_date,
         (
           SELECT COUNT(*)
           FROM appointments a
           WHERE a.contractor_patient_id = cp.id
             AND a.deleted_at IS NULL
-            AND a.status = 'completed'
+            AND a.status NOT IN ('cancelled', 'no-show')
+            AND (a.status = 'completed' OR a.contract_invoice_id IS NOT NULL)
         ) as visit_count,
         (
           SELECT COUNT(*)
@@ -6725,6 +6729,7 @@ function registerIpcHandlers() {
           WHERE a.contractor_patient_id = cp.id
             AND a.deleted_at IS NULL
             AND a.status = 'scheduled'
+            AND a.contract_invoice_id IS NULL
             AND a.scheduled_date >= date('now', 'localtime')
         ) as upcoming_count
       FROM contractor_patients cp
