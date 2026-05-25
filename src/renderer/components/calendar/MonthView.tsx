@@ -215,9 +215,13 @@ export default function MonthView({
               {/* Appointment Entries */}
               <div className="space-y-0.5">
                 {visibleAppts.map((appt) => {
-                  const clientName = `${appt.first_name || 'Unknown'} ${
-                    appt.last_name ? appt.last_name.charAt(0) + '.' : ''
-                  }`;
+                  // Contractor appts (entity_id set) carry their subject in patient_name + entity_name
+                  // instead of first_name/last_name. Match the day/week-view name selection so the
+                  // month grid stops showing "Unknown" for contract visits.
+                  const isContractorAppt = Boolean(appt.entity_id);
+                  const clientName = isContractorAppt
+                    ? (appt.patient_name?.trim() || appt.entity_name || 'Unknown patient')
+                    : `${appt.first_name || 'Unknown'} ${appt.last_name ? appt.last_name.charAt(0) + '.' : ''}`;
 
                   return (
                     <div
