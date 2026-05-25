@@ -22,6 +22,7 @@ interface DayViewProps {
   onBlockResize?: (blockId: number, durationMinutes: number) => void;
   onBlockToggleDone?: (block: CalendarBlock) => void;
   onBlockRemove?: (block: CalendarBlock) => void;
+  onCreateAtSlot?: (date: string, time: string, duration: number, anchorX: number, anchorY: number) => void;
   paymentStatusMap?: Record<number, PaymentIndicator>;
 }
 
@@ -42,6 +43,7 @@ export default function DayView({
   onBlockResize,
   onBlockToggleDone,
   onBlockRemove,
+  onCreateAtSlot,
   paymentStatusMap = {},
 }: DayViewProps) {
   const isToday = isSameDay(date, new Date());
@@ -94,6 +96,7 @@ export default function DayView({
         onBlockResize={onBlockResize}
         onBlockToggleDone={onBlockToggleDone}
         onBlockRemove={onBlockRemove}
+        onCreateAtSlot={onCreateAtSlot}
         paymentStatusMap={paymentStatusMap}
       />
     </div>

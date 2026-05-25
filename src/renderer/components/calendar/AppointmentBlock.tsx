@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { FileText } from 'lucide-react';
 import type { Appointment, AppointmentStatus, VisitType, SessionType } from '../../../shared/types';
 import { VISIT_TYPE_LABELS, SESSION_TYPE_LABELS } from '../../../shared/types';
+import AppointmentHoverCard from './AppointmentHoverCard';
 
 export type PaymentIndicator = 'paid' | 'unpaid' | 'none';
 
@@ -107,6 +108,40 @@ export default function AppointmentBlock({
   // Live preview duration during drag-resize; null when not resizing.
   const [previewDuration, setPreviewDuration] = useState<number | null>(null);
   const resizeStateRef = useRef<{ startY: number; startDuration: number } | null>(null);
+
+  // Hover quick-card state. We open after a small delay so it doesn't flash while the
+  // cursor is just passing over the block. anchorRect drives the portal positioning.
+  const [hoverAnchor, setHoverAnchor] = useState<DOMRect | null>(null);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const blockRef = useRef<HTMLDivElement>(null);
+
+  const HOVER_OPEN_DELAY = 380;
+  const HOVER_CLOSE_GRACE = 160;
+
+  const cancelHoverTimers = () => {
+    if (hoverTimerRef.current) {
+      clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+  };
+  const handleBlockMouseEnter = () => {
+    if (compact) return; // month view keeps the native tooltip
+    cancelHoverTimers();
+    hoverTimerRef.current = setTimeout(() => {
+      if (blockRef.current) {
+        setHoverAnchor(blockRef.current.getBoundingClientRect());
+      }
+    }, HOVER_OPEN_DELAY);
+  };
+  const handleBlockMouseLeave = () => {
+    cancelHoverTimers();
+    // small grace so the user can move the cursor INTO the card without it closing
+    hoverTimerRef.current = setTimeout(() => setHoverAnchor(null), HOVER_CLOSE_GRACE);
+  };
+
+  useEffect(() => {
+    return () => cancelHoverTimers();
+  }, []);
 
   const effectiveDuration = previewDuration ?? appointment.duration_minutes;
   // slotHeight is the px-height of a SLOT_MINUTES (=15)-minute slot, so 1 minute = slotHeight / 15 px.
@@ -277,6 +312,7 @@ export default function AppointmentBlock({
   const isResizing = previewDuration !== null;
   return (
     <div
+      ref={blockRef}
       className={`absolute left-0.5 right-0.5 rounded-md px-1.5 py-1 overflow-hidden cursor-pointer transition-shadow hover:shadow-md z-10 pointer-events-auto ${statusClasses[appointment.status]} ${isResizing ? 'ring-2 ring-blue-400' : ''}`}
       style={{ top: topPx, height: heightPx }}
       draggable={!isResizing}
@@ -289,7 +325,8 @@ export default function AppointmentBlock({
         onClick(appointment);
       }}
       onContextMenu={handleContextMenu}
-      title={`${clientName} - ${formatTime12Long(appointment.scheduled_time)} (${effectiveDuration}m)`}
+      onMouseEnter={handleBlockMouseEnter}
+      onMouseLeave={handleBlockMouseLeave}
     >
       <div className="flex items-center justify-between gap-1">
         <div className={`text-xs leading-tight whitespace-nowrap truncate min-w-0 ${isResizing ? 'text-blue-600 font-semibold' : 'text-[var(--color-text-secondary)]'}`}>
@@ -353,6 +390,16 @@ export default function AppointmentBlock({
           onMouseDown={handleResizeMouseDown}
           onClick={(e) => e.stopPropagation()}
           title="Drag to resize"
+        />
+      )}
+      {/* Hover quick-card — opens after ~380ms hover, suppressed while dragging/resizing */}
+      {hoverAnchor && !isResizing && (
+        <AppointmentHoverCard
+          appointment={appointment}
+          anchorRect={hoverAnchor}
+          onMouseEnter={cancelHoverTimers}
+          onMouseLeave={handleBlockMouseLeave}
+          paymentStatus={paymentStatus}
         />
       )}
     </div>

@@ -30,6 +30,10 @@ interface TimeGridProps {
   onBlockResize?: (blockId: number, durationMinutes: number) => void;
   onBlockToggleDone?: (block: CalendarBlock) => void;
   onBlockRemove?: (block: CalendarBlock) => void;
+  /** Click or drag on an empty slot → open the quick-create popover anchored at (anchorX, anchorY).
+   *  Single click without drag uses the DEFAULT_NEW_DURATION fallback; otherwise duration is the
+   *  drag distance snapped to 15-min increments. */
+  onCreateAtSlot?: (date: string, time: string, duration: number, anchorX: number, anchorY: number) => void;
   paymentStatusMap?: Record<number, PaymentIndicator>;
 }
 
@@ -45,6 +49,11 @@ const PX_PER_MINUTE = SLOT_HEIGHT / SLOT_MINUTES; // 1.6
 // the eye locks onto the workday immediately. Weekend columns get the same tint.
 const WORK_START_HOUR = 8;
 const WORK_END_HOUR = 18; // 6pm
+
+// Pure-click (no drag) on an empty slot opens the quick-create popover with this default.
+const DEFAULT_NEW_DURATION = 60;
+// How many pixels the cursor must move before mousedown→mouseup counts as a drag vs a click.
+const DRAG_THRESHOLD_PX = 5;
 
 /**
  * Format an hour:minute pair into a compact gutter label.
@@ -158,6 +167,7 @@ export default function TimeGrid({
   onBlockResize,
   onBlockToggleDone,
   onBlockRemove,
+  onCreateAtSlot,
   paymentStatusMap = {},
 }: TimeGridProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -173,6 +183,52 @@ export default function TimeGrid({
     startDuration: number;
     previewDuration: number;
   } | null>(null);
+
+  // Drag-to-create state. mousedown on an empty slot starts it; mousemove grows the
+  // teal ghost block, mouseup finalizes by handing the popover anchor + chosen duration
+  // back to the parent via onCreateAtSlot. A pure click (no movement past
+  // DRAG_THRESHOLD_PX) falls back to DEFAULT_NEW_DURATION.
+  const [creating, setCreating] = useState<{
+    columnIndex: number;
+    startDate: string;
+    startTime: string;
+    startTopPx: number;
+    startY: number;
+    currentDuration: number;
+    hasDragged: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!creating) return;
+    const onMove = (e: MouseEvent) => {
+      setCreating((cur) => {
+        if (!cur) return cur;
+        const delta = e.clientY - cur.startY;
+        if (Math.abs(delta) < DRAG_THRESHOLD_PX) return cur;
+        const minutes = delta / PX_PER_MINUTE;
+        const snapped = Math.round(minutes / SLOT_MINUTES) * SLOT_MINUTES;
+        // Each slot is SLOT_MINUTES tall; user starts "on" a slot, so minimum is SLOT_MINUTES.
+        const newDuration = Math.max(SLOT_MINUTES, Math.min(240, snapped + SLOT_MINUTES));
+        return { ...cur, currentDuration: newDuration, hasDragged: true };
+      });
+    };
+    const onUp = (e: MouseEvent) => {
+      setCreating((cur) => {
+        if (!cur) return null;
+        if (onCreateAtSlot) {
+          const finalDuration = cur.hasDragged ? cur.currentDuration : DEFAULT_NEW_DURATION;
+          onCreateAtSlot(cur.startDate, cur.startTime, finalDuration, e.clientX, e.clientY);
+        }
+        return null;
+      });
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [creating, onCreateAtSlot]);
 
   // Document-level listeners while a block resize is active.
   useEffect(() => {
@@ -416,11 +472,60 @@ export default function TimeGrid({
                     onDragEnter={handleDragEnter(slotKey)}
                     onDragLeave={handleDragLeave(slotKey)}
                     onDrop={handleDrop(col.dateStr, timeStr)}
-                    onClick={handleSlotClick(col.dateStr, timeStr)}
+                    onMouseDown={(e) => {
+                      // Only left-click starts drag-to-create. Right-click hands off to the context menu.
+                      if (e.button !== 0) return;
+                      // If a popover handler is wired, use the new flow. Otherwise fall through to the
+                      // legacy onClick → full modal path (preserved for callers that haven't opted in).
+                      if (onCreateAtSlot) {
+                        e.preventDefault();
+                        setCreating({
+                          columnIndex: colIdx,
+                          startDate: col.dateStr,
+                          startTime: timeStr,
+                          startTopPx: slotIdx * SLOT_HEIGHT,
+                          startY: e.clientY,
+                          currentDuration: SLOT_MINUTES,
+                          hasDragged: false,
+                        });
+                      } else {
+                        // Legacy fallback: single-click opens the full modal.
+                        onSlotClick(col.dateStr, timeStr);
+                      }
+                    }}
                     onContextMenu={handleSlotContextMenu(col.dateStr, timeStr)}
                   />
                 );
               })}
+
+              {/* Drag-to-create ghost block — appears in this column while the user is painting a duration */}
+              {creating && creating.columnIndex === colIdx && (
+                <div
+                  className="absolute left-1 right-1 z-20 bg-teal-100/70 border-2 border-dashed border-teal-400 rounded pointer-events-none flex flex-col"
+                  style={{
+                    top: creating.startTopPx,
+                    height: creating.currentDuration * PX_PER_MINUTE,
+                  }}
+                >
+                  <div className="text-[10px] font-semibold text-teal-700 px-1.5 pt-0.5 whitespace-nowrap">
+                    {(() => {
+                      const [hStr, mStr] = creating.startTime.split(':');
+                      const sh = parseInt(hStr, 10);
+                      const sm = parseInt(mStr, 10);
+                      const formatLabel = (h: number, m: number) => {
+                        const suffix = h >= 12 ? 'p' : 'a';
+                        const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+                        return m === 0 ? `${h12}${suffix}` : `${h12}:${m.toString().padStart(2, '0')}${suffix}`;
+                      };
+                      const endTotal = sh * 60 + sm + creating.currentDuration;
+                      const eh = Math.floor(endTotal / 60) % 24;
+                      const em = endTotal % 60;
+                      return `${formatLabel(sh, sm)} → ${formatLabel(eh, em)}`;
+                    })()}
+                  </div>
+                  <div className="text-[10px] text-teal-600/80 px-1.5">{creating.currentDuration}m · drag to resize</div>
+                </div>
+              )}
 
               {/* Appointment blocks */}
               {colAppts.map((appt) => {

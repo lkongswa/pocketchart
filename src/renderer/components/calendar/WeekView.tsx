@@ -22,6 +22,7 @@ interface WeekViewProps {
   onBlockResize?: (blockId: number, durationMinutes: number) => void;
   onBlockToggleDone?: (block: CalendarBlock) => void;
   onBlockRemove?: (block: CalendarBlock) => void;
+  onCreateAtSlot?: (date: string, time: string, duration: number, anchorX: number, anchorY: number) => void;
   paymentStatusMap?: Record<number, PaymentIndicator>;
 }
 
@@ -42,6 +43,7 @@ export default function WeekView({
   onBlockResize,
   onBlockToggleDone,
   onBlockRemove,
+  onCreateAtSlot,
   paymentStatusMap = {},
 }: WeekViewProps) {
   const today = new Date();
@@ -111,6 +113,7 @@ export default function WeekView({
         onBlockResize={onBlockResize}
         onBlockToggleDone={onBlockToggleDone}
         onBlockRemove={onBlockRemove}
+        onCreateAtSlot={onCreateAtSlot}
         paymentStatusMap={paymentStatusMap}
       />
     </div>

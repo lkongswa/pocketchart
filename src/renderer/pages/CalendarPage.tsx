@@ -23,6 +23,7 @@ import CalendarToolbar from '../components/calendar/CalendarToolbar';
 import DayView from '../components/calendar/DayView';
 import WeekView from '../components/calendar/WeekView';
 import MonthView from '../components/calendar/MonthView';
+import QuickCreatePopover from '../components/calendar/QuickCreatePopover';
 import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
 
 type CalendarView = 'day' | 'week' | 'month';
@@ -121,6 +122,15 @@ export default function CalendarPage() {
 
   // Keyboard shortcut help overlay
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+
+  // Quick-create popover anchored at a slot (drag-to-create or click-to-create)
+  const [quickCreate, setQuickCreate] = useState<{
+    date: string;
+    time: string;
+    duration: number;
+    anchorX: number;
+    anchorY: number;
+  } | null>(null);
 
   // Compute date range based on current view
   const getDateRange = useCallback((): { startDate: string; endDate: string } => {
@@ -331,13 +341,51 @@ export default function CalendarPage() {
     setModalOpen(true);
   };
 
-  // Slot click on time grid
+  // Slot click on time grid — opens the FULL appointment modal. Now mostly called
+  // from the right-click "New appointment here" context menu; the primary
+  // single-click/drag flow goes through handleCreateAtSlot → quick-create popover.
   const handleSlotClick = (date: string, time: string) => {
     if (!guardAction()) return;
     setEditingAppointment(null);
     setSelectedDate(date);
     setSelectedTime(time);
     setModalOpen(true);
+  };
+
+  // Drag-to-create or single-click on an empty slot → open quick-create popover.
+  const handleCreateAtSlot = (date: string, time: string, duration: number, anchorX: number, anchorY: number) => {
+    if (!guardAction()) return;
+    setQuickCreate({ date, time, duration, anchorX, anchorY });
+  };
+
+  // Save from the popover — minimum-fields appointment create.
+  const handleQuickCreateSave = async ({ clientId, duration }: { clientId: number; duration: number; clientName: string }) => {
+    if (!quickCreate) return;
+    await window.api.appointments.create({
+      client_id: clientId,
+      scheduled_date: quickCreate.date,
+      scheduled_time: quickCreate.time,
+      duration_minutes: duration,
+      status: 'scheduled',
+      session_type: 'visit',
+      visit_type: 'O' as any,
+    });
+    await loadAppointments();
+    setQuickCreate(null);
+  };
+
+  // "More options" in the popover → escalate to the full modal with the popover's state.
+  const handleQuickCreateMoreOptions = ({ clientId, duration }: { clientId: number | null; duration: number; clientName: string }) => {
+    if (!quickCreate) return;
+    setEditingAppointment(
+      clientId
+        ? ({ client_id: clientId, scheduled_date: quickCreate.date, scheduled_time: quickCreate.time, duration_minutes: duration, status: 'scheduled', session_type: 'visit' } as any)
+        : null
+    );
+    setSelectedDate(quickCreate.date);
+    setSelectedTime(quickCreate.time);
+    setModalOpen(true);
+    setQuickCreate(null);
   };
 
   // Save appointment
@@ -800,6 +848,7 @@ export default function CalendarPage() {
               onBlockResize={handleBlockResize}
               onBlockToggleDone={handleToggleBlockDone}
               onBlockRemove={handleBlockRemoveInline}
+              onCreateAtSlot={handleCreateAtSlot}
               paymentStatusMap={showBilling ? paymentStatusMap : {}}
             />
           ) : currentView === 'week' ? (
@@ -820,6 +869,7 @@ export default function CalendarPage() {
               onBlockResize={handleBlockResize}
               onBlockToggleDone={handleToggleBlockDone}
               onBlockRemove={handleBlockRemoveInline}
+              onCreateAtSlot={handleCreateAtSlot}
               paymentStatusMap={showBilling ? paymentStatusMap : {}}
             />
           ) : (
@@ -1243,6 +1293,19 @@ export default function CalendarPage() {
 
       {/* Trial Expired Modal */}
       {showExpiredModal && <TrialExpiredModal onClose={dismissExpiredModal} />}
+
+      {/* Quick-create popover (drag-to-create flow) */}
+      {quickCreate && (
+        <QuickCreatePopover
+          anchor={{ x: quickCreate.anchorX, y: quickCreate.anchorY }}
+          date={quickCreate.date}
+          time={quickCreate.time}
+          duration={quickCreate.duration}
+          onSave={handleQuickCreateSave}
+          onMoreOptions={handleQuickCreateMoreOptions}
+          onClose={() => setQuickCreate(null)}
+        />
+      )}
 
       {/* Keyboard shortcut help (toggle with `?`) */}
       {showShortcutsHelp && (
