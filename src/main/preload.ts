@@ -504,6 +504,7 @@ const api = {
   // ── Contractor Patients (Pro) ──
   contractorPatients: {
     list: (entityId: number) => ipcRenderer.invoke('contractorPatients:list', entityId),
+    listAll: () => ipcRenderer.invoke('contractorPatients:listAll'),
     get: (id: number) => ipcRenderer.invoke('contractorPatients:get', id),
     create: (data: any) => ipcRenderer.invoke('contractorPatients:create', data),
     update: (id: number, data: any) => ipcRenderer.invoke('contractorPatients:update', id, data),

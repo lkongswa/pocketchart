@@ -6694,6 +6694,32 @@ function registerIpcHandlers() {
     return db.prepare('SELECT * FROM contractor_patients WHERE entity_id = ? AND deleted_at IS NULL ORDER BY name ASC').all(entityId);
   });
 
+  // Cross-cutting view: all contractor patients in the system, joined with their entity
+  // name + their most recent appointment date. Used by the Clients page's "Contract
+  // Patients" tab so it can render the whole roster in one query.
+  safeHandle('contractorPatients:listAll', () => {
+    requireTier('pro');
+    return db.prepare(`
+      SELECT
+        cp.*,
+        e.name as entity_name,
+        (
+          SELECT MAX(a.scheduled_date)
+          FROM appointments a
+          WHERE a.contractor_patient_id = cp.id AND a.deleted_at IS NULL
+        ) as last_visit_date,
+        (
+          SELECT COUNT(*)
+          FROM appointments a
+          WHERE a.contractor_patient_id = cp.id AND a.deleted_at IS NULL
+        ) as visit_count
+      FROM contractor_patients cp
+      LEFT JOIN contracted_entities e ON cp.entity_id = e.id
+      WHERE cp.deleted_at IS NULL
+      ORDER BY cp.name ASC
+    `).all();
+  });
+
   safeHandle('contractorPatients:get', (_event, id: number) => {
     requireTier('pro');
     return db.prepare('SELECT * FROM contractor_patients WHERE id = ? AND deleted_at IS NULL').get(id);

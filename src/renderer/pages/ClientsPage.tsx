@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Search, Plus, Users, Eye, Tag, FileText, ClipboardList, Receipt } from 'lucide-react';
-import type { Client, ClientStatus, Discipline } from '../../shared/types';
+import { Search, Plus, Users, Eye, Tag, FileText, ClipboardList, Receipt, Building2, Calendar as CalendarIcon } from 'lucide-react';
+import type { Client, ClientStatus, Discipline, ContractorPatientRow } from '../../shared/types';
 import ClientFormModal from '../components/ClientFormModal';
 import TrialExpiredModal from '../components/TrialExpiredModal';
 import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
 import { useTrialGuard } from '../hooks/useTrialGuard';
+import { useLocalPreference } from '../hooks/useLocalPreference';
+import { useTier } from '../hooks/useTier';
 
 const statusBadgeClass: Record<ClientStatus, string> = {
   active: 'badge-active',
@@ -26,12 +28,20 @@ const disciplineBadgeClass: Record<Discipline, string> = {
   MFT: 'badge-mft',
 };
 
+type ViewMode = 'clients' | 'contracts';
+
 const ClientsPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { guardAction, showExpiredModal, dismissExpiredModal } = useTrialGuard();
+  const { hasFeature } = useTier();
+  const canAccessContracts = hasFeature('contractor_module');
+
+  // Tab state persists across launches so each user lands on the view they last used.
+  const [viewMode, setViewMode] = useLocalPreference<ViewMode>('clients-page-tab', 'clients');
 
   const [clients, setClients] = useState<Client[]>([]);
+  const [contractPatients, setContractPatients] = useState<ContractorPatientRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('');
@@ -97,9 +107,31 @@ const ClientsPage: React.FC = () => {
     }
   }, [statusFilter, disciplineFilter, search]);
 
+  const loadContractPatients = useCallback(async () => {
+    if (!canAccessContracts) {
+      setContractPatients([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const rows = await window.api.contractorPatients.listAll();
+      setContractPatients(rows);
+    } catch (err) {
+      console.error('Failed to load contract patients:', err);
+      setContractPatients([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [canAccessContracts]);
+
   useEffect(() => {
-    loadClients();
-  }, [loadClients]);
+    if (viewMode === 'clients') {
+      loadClients();
+    } else {
+      loadContractPatients();
+    }
+  }, [viewMode, loadClients, loadContractPatients]);
 
   const handleClientSaved = () => {
     loadClients();
@@ -147,15 +179,77 @@ const ClientsPage: React.FC = () => {
     );
   };
 
+  // Filter contract patients in-memory by the same search box (entity/MRN included).
+  const filteredContractPatients = contractPatients.filter((p) => {
+    const q = search.toLowerCase().trim();
+    if (!q) return true;
+    return (
+      p.name.toLowerCase().includes(q) ||
+      (p.mrn || '').toLowerCase().includes(q) ||
+      (p.entity_name || '').toLowerCase().includes(q) ||
+      (p.phone || '').toLowerCase().includes(q)
+    );
+  });
+
+  const formatVisitDate = (dateStr: string | null): string => {
+    if (!dateStr) return 'Never';
+    try {
+      const d = new Date(dateStr + 'T00:00:00');
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    } catch {
+      return dateStr;
+    }
+  };
+
   return (
     <div className="p-6">
       {/* Header */}
       <div className="page-header">
-        <h1 className="page-title">Clients</h1>
-        <button className="btn-primary gap-2" onClick={() => { if (guardAction()) setModalOpen(true); }}>
-          <Plus size={18} />
-          Add Client
-        </button>
+        <h1 className="page-title">{viewMode === 'clients' ? 'Clients' : 'Contract Patients'}</h1>
+        {viewMode === 'clients' && (
+          <button className="btn-primary gap-2" onClick={() => { if (guardAction()) setModalOpen(true); }}>
+            <Plus size={18} />
+            Add Client
+          </button>
+        )}
+        {viewMode === 'contracts' && (
+          <button className="btn-secondary gap-2" onClick={() => navigate('/entities')}>
+            <Building2 size={18} />
+            Manage Contracts
+          </button>
+        )}
+      </div>
+
+      {/* Tab toggle: My Clients ↔ Contract Patients */}
+      <div className="flex items-center gap-2 mb-4">
+        <div className="inline-flex bg-gray-100 rounded-lg p-0.5">
+          <button
+            type="button"
+            onClick={() => setViewMode('clients')}
+            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all duration-150 flex items-center gap-1.5 ${
+              viewMode === 'clients'
+                ? 'bg-white text-[var(--color-text)] shadow-sm'
+                : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
+            }`}
+          >
+            <Users size={14} />
+            My Clients
+            <span className="text-[10px] opacity-60">{viewMode === 'clients' ? `(${clients.length})` : ''}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('contracts')}
+            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all duration-150 flex items-center gap-1.5 ${
+              viewMode === 'contracts'
+                ? 'bg-white text-[var(--color-text)] shadow-sm'
+                : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
+            }`}
+          >
+            <Building2 size={14} />
+            Contract Patients
+            <span className="text-[10px] opacity-60">{viewMode === 'contracts' ? `(${contractPatients.length})` : ''}</span>
+          </button>
+        </div>
       </div>
 
       {/* Filters Row */}
@@ -169,39 +263,43 @@ const ClientsPage: React.FC = () => {
           <input
             type="text"
             className="input pl-9"
-            placeholder="Search clients by name..."
+            placeholder={viewMode === 'clients' ? 'Search clients by name...' : 'Search patients, MRN, entity...'}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
 
-        {/* Status Filter */}
-        <select
-          className="select-bare w-auto text-xs py-1.5 px-3"
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-        >
-          <option value="">All Statuses</option>
-          <option value="active">Active</option>
-          <option value="discharged">Discharged</option>
-          <option value="hold">On Hold</option>
-        </select>
+        {/* Status + Discipline filters only apply to the client roster */}
+        {viewMode === 'clients' && (
+          <>
+            <select
+              className="select-bare w-auto text-xs py-1.5 px-3"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
+              <option value="">All Statuses</option>
+              <option value="active">Active</option>
+              <option value="discharged">Discharged</option>
+              <option value="hold">On Hold</option>
+            </select>
 
-        {/* Discipline Filter */}
-        <select
-          className="select-bare w-auto text-xs py-1.5 px-3"
-          value={disciplineFilter}
-          onChange={(e) => setDisciplineFilter(e.target.value)}
-        >
-          <option value="">All Disciplines</option>
-          <option value="PT">PT</option>
-          <option value="OT">OT</option>
-          <option value="ST">ST</option>
-        </select>
+            <select
+              className="select-bare w-auto text-xs py-1.5 px-3"
+              value={disciplineFilter}
+              onChange={(e) => setDisciplineFilter(e.target.value)}
+            >
+              <option value="">All Disciplines</option>
+              <option value="PT">PT</option>
+              <option value="OT">OT</option>
+              <option value="ST">ST</option>
+            </select>
+          </>
+        )}
       </div>
 
-      {/* Client Table */}
-      {loading ? (
+      {/* Client Table — only when viewing the client roster */}
+      {viewMode === 'clients' && (
+        loading ? (
         <div className="card p-12 text-center text-[var(--color-text-secondary)]">
           Loading clients...
         </div>
@@ -305,6 +403,107 @@ const ClientsPage: React.FC = () => {
             </tbody>
           </table>
         </div>
+      )
+      )}
+
+      {/* Contract Patients Table */}
+      {viewMode === 'contracts' && (
+        !canAccessContracts ? (
+          <div className="card p-12 text-center">
+            <Building2 size={48} className="mx-auto text-[var(--color-text-secondary)] mb-4 opacity-40" />
+            <h3 className="text-lg font-semibold text-[var(--color-text)] mb-2">Contract Patients is a Pro feature</h3>
+            <p className="text-sm text-[var(--color-text-secondary)] mb-6">
+              Manage patient rosters for SNFs, home health agencies, and other contracted entities.
+            </p>
+            <button className="btn-primary" onClick={() => navigate('/settings')}>
+              Upgrade to Pro
+            </button>
+          </div>
+        ) : loading ? (
+          <div className="card p-12 text-center text-[var(--color-text-secondary)]">
+            Loading contract patients...
+          </div>
+        ) : filteredContractPatients.length === 0 ? (
+          <div className="card p-12 text-center">
+            <Building2 size={48} className="mx-auto text-[var(--color-text-secondary)] mb-4 opacity-40" />
+            <h3 className="text-lg font-semibold text-[var(--color-text)] mb-2">
+              {search ? 'No matching patients' : 'No contract patients yet'}
+            </h3>
+            <p className="text-sm text-[var(--color-text-secondary)] mb-6">
+              {search
+                ? 'Try a different search term, or clear the search to see all patients.'
+                : 'Patients get added automatically when you schedule a contracted-entity appointment.'}
+            </p>
+            <button className="btn-secondary gap-2" onClick={() => navigate('/entities')}>
+              <Building2 size={18} /> Manage Contracts
+            </button>
+          </div>
+        ) : (
+          <div className="card overflow-hidden">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-[var(--color-border)]">
+                  <th className="table-header">Patient</th>
+                  <th className="table-header">MRN</th>
+                  <th className="table-header">Entity</th>
+                  <th className="table-header">Phone</th>
+                  <th className="table-header">Last Visit</th>
+                  <th className="table-header">Visits</th>
+                  <th className="table-header">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredContractPatients.map((p) => (
+                  <tr
+                    key={p.id}
+                    className="group border-b border-[var(--color-border)] last:border-b-0 hover:bg-gray-50/50 cursor-pointer transition-colors"
+                    onClick={() => navigate(`/entities/${p.entity_id}`)}
+                  >
+                    <td className="table-cell font-medium">{p.name}</td>
+                    <td className="table-cell font-mono text-[var(--color-text-secondary)] text-xs">{p.mrn || '--'}</td>
+                    <td className="table-cell">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-purple-50 text-purple-700 text-xs font-medium">
+                        <Building2 size={11} /> {p.entity_name || '—'}
+                      </span>
+                    </td>
+                    <td className="table-cell text-[var(--color-text-secondary)] text-sm">{p.phone || '--'}</td>
+                    <td className="table-cell text-[var(--color-text-secondary)] text-sm">{formatVisitDate(p.last_visit_date)}</td>
+                    <td className="table-cell text-[var(--color-text-secondary)] text-sm">{p.visit_count}</td>
+                    <td className="table-cell">
+                      <div className="flex items-center gap-1">
+                        <button
+                          className="btn-ghost p-1.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="Schedule appointment"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate('/calendar', {
+                              state: {
+                                prefillAppt: {
+                                  entity_id: p.entity_id,
+                                  contractor_patient_id: p.id,
+                                  contractor_patient_name: p.name,
+                                },
+                              },
+                            });
+                          }}
+                        >
+                          <CalendarIcon size={14} />
+                        </button>
+                        <button
+                          className="btn-ghost p-1.5"
+                          title="View contract"
+                          onClick={(e) => { e.stopPropagation(); navigate(`/entities/${p.entity_id}`); }}
+                        >
+                          <Eye size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
       )}
 
       {/* Right-click context menu */}

@@ -638,6 +638,20 @@ export interface ContractorPatient {
   deleted_at: string | null;
 }
 
+/**
+ * A contractor patient enriched for the cross-cutting roster view (ClientsPage's
+ * "Contract Patients" tab). Adds the joined entity name and computed appointment
+ * stats so the table can render in one query without per-row lookups.
+ */
+export interface ContractorPatientRow extends ContractorPatient {
+  /** Joined from contracted_entities.name. */
+  entity_name: string | null;
+  /** YYYY-MM-DD of the most recent appointment for this patient (or null if never seen). */
+  last_visit_date: string | null;
+  /** Total non-deleted appointments for this patient. */
+  visit_count: number;
+}
+
 export type BillingCycle = 'weekly' | 'biweekly' | 'monthly' | 'custom';
 
 export interface ContractedEntity {
@@ -2126,6 +2140,8 @@ export interface PocketChartAPI {
   // ── Contractor Patients (Pro) ──
   contractorPatients: {
     list: (entityId: number) => Promise<ContractorPatient[]>;
+    /** Cross-cutting roster: every contractor patient, joined with entity name + visit stats. */
+    listAll: () => Promise<ContractorPatientRow[]>;
     get: (id: number) => Promise<ContractorPatient>;
     create: (data: Partial<ContractorPatient>) => Promise<ContractorPatient>;
     update: (id: number, data: Partial<ContractorPatient>) => Promise<ContractorPatient>;
