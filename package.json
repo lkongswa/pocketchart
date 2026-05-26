@@ -59,7 +59,7 @@
         "endpoint": "https://wus.codesigning.azure.net/",
         "codeSigningAccountName": "pocketchart",
         "certificateProfileName": "pocketchart-signing",
-        "publisherName": "Lyda Kongswangwongsa"
+        "publisherName": "Lyda kongswangwongsa"
       }
     },
     "nsis": {
