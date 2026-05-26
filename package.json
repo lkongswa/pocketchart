@@ -54,7 +54,6 @@
           ]
         }
       ],
-      "publisherName": "Lyda Kongswangwongsa",
       "azureSignOptions": {
         "endpoint": "https://wus.codesigning.azure.net/",
         "codeSigningAccountName": "pocketchart",
