@@ -190,11 +190,19 @@ export default function UpdateNotification() {
                   Your data was backed up successfully, but downloading v{version} failed.
                   This is often transient — CI may still be uploading, or the network blipped.
                 </p>
-                {errorMessage && (
-                  <p className="text-[11px] text-[var(--color-text-secondary)] mt-1 font-mono break-words">
-                    {errorMessage}
-                  </p>
-                )}
+                {errorMessage && (() => {
+                  // Some electron-updater errors (notably signature-mismatch) embed a
+                  // full Authenticode JSON dump in the message, hundreds of lines long.
+                  // Show only the first ~200 chars so the modal can't overflow its bounds.
+                  const trimmed = errorMessage.length > 200
+                    ? errorMessage.slice(0, 200).trimEnd() + '…'
+                    : errorMessage;
+                  return (
+                    <p className="text-[11px] text-[var(--color-text-secondary)] mt-1 font-mono break-words max-h-16 overflow-y-auto">
+                      {trimmed}
+                    </p>
+                  );
+                })()}
                 <div className="flex gap-2 mt-2 flex-wrap">
                   <button
                     onClick={handleDownload}

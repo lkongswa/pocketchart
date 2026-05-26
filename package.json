@@ -54,11 +54,12 @@
           ]
         }
       ],
+      "publisherName": "Lyda Kongswangwongsa",
       "azureSignOptions": {
         "endpoint": "https://wus.codesigning.azure.net/",
         "codeSigningAccountName": "pocketchart",
         "certificateProfileName": "pocketchart-signing",
-        "publisherName": "Lyda kongswangwongsa"
+        "publisherName": "Lyda Kongswangwongsa"
       }
     },
     "nsis": {
