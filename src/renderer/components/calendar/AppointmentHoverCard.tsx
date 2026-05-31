@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FileText, Clock, DollarSign, CheckCircle2, Ban, AlertTriangle, X } from 'lucide-react';
+import { FileText, Clock, DollarSign, CheckCircle2, Ban, AlertTriangle, X, Send } from 'lucide-react';
 import type { Appointment, AppointmentStatus } from '../../../shared/types';
 
 interface AppointmentHoverCardProps {
@@ -80,6 +80,13 @@ export default function AppointmentHoverCard({
   const statusMeta = STATUS_META[appointment.status];
   const hasNote = Boolean((appointment as any).note_id);
   const hasEval = Boolean((appointment as any).evaluation_id);
+  const reminderStatus = (appointment as any).reminder_status as string | undefined;
+  const reminderInfo =
+    reminderStatus === 'confirmed' ? { icon: <Send size={11} />, text: 'Confirmed by text', cls: 'text-emerald-600' }
+    : reminderStatus === 'cancelled' ? { icon: <Ban size={11} />, text: 'Cancelled by text', cls: 'text-gray-500' }
+    : reminderStatus === 'failed' ? { icon: <AlertTriangle size={11} />, text: 'Reminder failed', cls: 'text-amber-600' }
+    : reminderStatus === 'sent' ? { icon: <Send size={11} />, text: 'Reminder sent · awaiting reply', cls: 'text-slate-500' }
+    : null;
 
   return createPortal(
     <div
@@ -133,7 +140,7 @@ export default function AppointmentHoverCard({
       )}
 
       {/* Payment + note indicators */}
-      <div className="flex items-center gap-3 text-[11px] text-[var(--color-text-secondary)] border-t border-[var(--color-border)] pt-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--color-text-secondary)] border-t border-[var(--color-border)] pt-2">
         {paymentStatus !== 'none' && (
           <span className={`inline-flex items-center gap-1 ${paymentStatus === 'paid' ? 'text-emerald-600' : 'text-amber-600'}`}>
             <DollarSign size={11} />
@@ -144,6 +151,12 @@ export default function AppointmentHoverCard({
           <FileText size={11} />
           {hasNote ? 'Note written' : hasEval ? 'Eval linked' : 'No note yet'}
         </span>
+        {reminderInfo && (
+          <span className={`inline-flex items-center gap-1 ${reminderInfo.cls}`}>
+            {reminderInfo.icon}
+            {reminderInfo.text}
+          </span>
+        )}
       </div>
 
       <p className="mt-2 text-[10px] text-[var(--color-text-secondary)] text-center">

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Settings, Building2, User, Stethoscope, Info, Save, CheckCircle, Database, Download, FileSpreadsheet, HardDrive, FolderOpen, RotateCcw, Upload, Trash2, Image, Clock, AlertTriangle, AlertCircle, Shield, Lock, PenLine, BookOpen, ChevronDown, ShieldCheck, Key, Monitor, Loader2, DollarSign, Plus, Eye, EyeOff, KeyRound, Printer, RefreshCw, Sun, Moon, Palette, Type, Contrast } from 'lucide-react';
+import { Settings, Building2, User, Stethoscope, Info, Save, CheckCircle, Database, Download, FileSpreadsheet, HardDrive, FolderOpen, RotateCcw, Upload, Trash2, Image, Clock, AlertTriangle, AlertCircle, Shield, Lock, PenLine, BookOpen, ChevronDown, ShieldCheck, Key, Monitor, Loader2, DollarSign, Plus, Eye, EyeOff, KeyRound, Printer, Mail, MessageSquare, Bell, RefreshCw, Sun, Moon, Palette, Type, Contrast } from 'lucide-react';
 import type { Practice, Discipline, NoteFormat, CloudDetectionResult, AppTier, FeeScheduleEntry, DiscountTemplate, DiscountType } from '../../shared/types';
 import FeeScheduleModal from '../components/FeeScheduleModal';
 import { NOTE_FORMAT_LABELS, DISCIPLINE_DEFAULT_FORMAT } from '../../shared/types';
@@ -156,6 +156,35 @@ const FAX_PROVIDERS = {
   },
 };
 
+// Email provider schemas for Settings UI — mirrors EMAIL_PROVIDER_CREDENTIAL_SCHEMAS from main process
+const EMAIL_PROVIDERS = {
+  gmail_smtp: {
+    name: 'Google Workspace (Gmail)',
+    description: 'Send from your own paid Google Workspace account over SMTP.',
+    website: 'https://admin.google.com',
+    baaInfo: 'Requires a PAID Google Workspace plan with the BAA accepted (Admin console → Account → Legal & compliance). Free @gmail.com accounts are NOT covered by a BAA.',
+    fields: [
+      { key: 'fromAddress', label: 'Email Address', type: 'text' as const, placeholder: 'you@yourpractice.com', helpText: 'Your Workspace email — used as the From address.' },
+      { key: 'appPassword', label: 'App Password', type: 'password' as const, placeholder: '16-character app password', helpText: 'Google Account → Security → 2-Step Verification → App passwords. Requires 2FA. NOT your normal login password.' },
+    ],
+  },
+};
+
+// SMS provider schemas for Settings UI — mirrors SMS_PROVIDER_CREDENTIAL_SCHEMAS from main process
+const SMS_PROVIDERS = {
+  twilio: {
+    name: 'Twilio',
+    description: 'Programmable SMS for appointment reminders. HIPAA-eligible with a signed BAA.',
+    website: 'https://www.twilio.com',
+    baaInfo: 'Request a BAA from Twilio (paid account) and enable HIPAA-eligible config before sending PHI. Keep message bodies free of clinical detail.',
+    fields: [
+      { key: 'accountSid', label: 'Account SID', type: 'text' as const, placeholder: 'ACxxxxxxxxxxxxxxxx', helpText: 'Twilio Console → Account Info.' },
+      { key: 'authToken', label: 'Auth Token', type: 'password' as const, placeholder: 'Your Twilio auth token' },
+      { key: 'fromNumber', label: 'From Number', type: 'text' as const, placeholder: '+15551234567', helpText: 'Your Twilio phone number in E.164 format.' },
+    ],
+  },
+};
+
 // Clearinghouse provider schemas for Settings UI — mirrors CLEARINGHOUSE_CREDENTIAL_SCHEMAS from main process
 interface ClearinghouseField { key: string; label: string; type: 'text' | 'password'; placeholder: string; helpText?: string; }
 interface ClearinghouseProviderInfo { name: string; description: string; website: string; pricingNote: string; fields: ClearinghouseField[]; }
@@ -248,6 +277,41 @@ export default function SettingsPage() {
   const [faxSaving, setFaxSaving] = useState(false);
   const [faxTesting, setFaxTesting] = useState(false);
   const [faxTestResult, setFaxTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  // Email provider state
+  const [emailProvider, setEmailProvider] = useState<'gmail_smtp'>('gmail_smtp');
+  const [emailCredentials, setEmailCredentials] = useState<Record<string, string>>({});
+  const [emailConfigured, setEmailConfigured] = useState(false);
+  const [emailConfiguredProvider, setEmailConfiguredProvider] = useState<string | null>(null);
+  const [emailFromAddress, setEmailFromAddress] = useState('');
+  const [emailSaving, setEmailSaving] = useState(false);
+  const [emailTesting, setEmailTesting] = useState(false);
+  const [emailTestResult, setEmailTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  // SMS provider state
+  const [smsProvider, setSmsProvider] = useState<'twilio'>('twilio');
+  const [smsCredentials, setSmsCredentials] = useState<Record<string, string>>({});
+  const [smsConfigured, setSmsConfigured] = useState(false);
+  const [smsConfiguredProvider, setSmsConfiguredProvider] = useState<string | null>(null);
+  const [smsFromNumber, setSmsFromNumber] = useState('');
+  const [smsSaving, setSmsSaving] = useState(false);
+  const [smsTesting, setSmsTesting] = useState(false);
+  const [smsTestResult, setSmsTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  // Reminder templates state (Settings → Reminder Templates)
+  const [remLeadHours, setRemLeadHours] = useState(24);
+  const [remSmsTemplate, setRemSmsTemplate] = useState('');
+  const [remEmailSubject, setRemEmailSubject] = useState('');
+  const [remEmailBody, setRemEmailBody] = useState('');
+  const [remMeetingLink, setRemMeetingLink] = useState('');
+  const [remSaving, setRemSaving] = useState(false);
+  const remPreview = (tpl: string): string => {
+    const f: Record<string, string> = {
+      first: 'Jordan', last: 'Lee', date: 'Mon, Jun 2', time: '2:30 PM',
+      practice: 'Your Practice', meeting_link: remMeetingLink || 'https://zoom.us/j/123456789',
+    };
+    return (tpl || '').replace(/\{(\w+)\}/g, (_m, k) => f[k] ?? '').replace(/ {2,}/g, ' ').trim();
+  };
   const [showPhysicianDirectory, setShowPhysicianDirectory] = useState(false);
 
   // Clearinghouse (provider-agnostic) state
@@ -490,6 +554,41 @@ export default function SettingsPage() {
         setFaxProvider(status.provider as 'srfax' | 'faxage' | 'phaxio');
       }
     }).catch(() => setFaxConfigured(false));
+  }, []);
+
+  // Load email provider status
+  useEffect(() => {
+    window.api.email.getProviderStatus().then((status) => {
+      setEmailConfigured(status.configured);
+      setEmailConfiguredProvider(status.provider);
+      setEmailFromAddress(status.fromAddress || '');
+      if (status.provider) {
+        setEmailProvider(status.provider as 'gmail_smtp');
+      }
+    }).catch(() => setEmailConfigured(false));
+  }, []);
+
+  // Load SMS provider status
+  useEffect(() => {
+    window.api.sms.getProviderStatus().then((status) => {
+      setSmsConfigured(status.configured);
+      setSmsConfiguredProvider(status.provider);
+      setSmsFromNumber(status.fromNumber || '');
+      if (status.provider) {
+        setSmsProvider(status.provider as 'twilio');
+      }
+    }).catch(() => setSmsConfigured(false));
+  }, []);
+
+  // Load reminder templates config
+  useEffect(() => {
+    window.api.reminders.getConfig().then((cfg) => {
+      setRemLeadHours(cfg.leadHours || 24);
+      setRemSmsTemplate(cfg.smsTemplate || '');
+      setRemEmailSubject(cfg.emailSubject || '');
+      setRemEmailBody(cfg.emailBody || '');
+      setRemMeetingLink(cfg.defaultMeetingLink || '');
+    }).catch(() => {});
   }, []);
 
   // Load Clearinghouse config status
@@ -2840,6 +2939,490 @@ export default function SettingsPage() {
             <p>
               <strong>HIPAA Reminder:</strong> Ensure you have a signed Business Associate Agreement (BAA) with your fax provider before transmitting PHI.
             </p>
+          </div>
+        </div>
+      </CollapsibleSection>
+
+      {/* Email (Pro) — send statements/superbills + appointment reminders from your own BAA-covered account */}
+      <CollapsibleSection
+        icon={<Mail className="w-5 h-5" />}
+        title="Email"
+        description={emailConfigured ? `${EMAIL_PROVIDERS[emailConfiguredProvider as keyof typeof EMAIL_PROVIDERS]?.name || 'Configured'}${emailFromAddress ? ` · ${emailFromAddress}` : ''}` : 'Not configured'}
+        sectionId="settings-email"
+        isOpen={openSectionId === 'email'}
+        onToggle={() => toggleSection('email')}
+      >
+        <div className="space-y-4">
+          {/* Provider selector */}
+          <div>
+            <label className="label">Email Provider</label>
+            <select
+              className="input w-full"
+              value={emailProvider}
+              onChange={(e) => {
+                setEmailProvider(e.target.value as 'gmail_smtp');
+                setEmailCredentials({});
+                setEmailTestResult(null);
+              }}
+              disabled={emailSaving}
+            >
+              {Object.entries(EMAIL_PROVIDERS).map(([key, info]) => (
+                <option key={key} value={key}>{info.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Provider info */}
+          <div className="text-sm text-[var(--color-text-secondary)]">
+            <p>{EMAIL_PROVIDERS[emailProvider].description}</p>
+            <p className="mt-1">
+              <a href={EMAIL_PROVIDERS[emailProvider].website} className="text-blue-600 hover:underline" target="_blank" rel="noopener">
+                {EMAIL_PROVIDERS[emailProvider].website}
+              </a>
+            </p>
+            <p className="text-xs mt-1 text-amber-700">{EMAIL_PROVIDERS[emailProvider].baaInfo}</p>
+          </div>
+
+          {/* Configured state */}
+          {emailConfigured && emailConfiguredProvider === emailProvider ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-sm text-green-600">
+                <CheckCircle className="w-4 h-4" />
+                Sending as {emailFromAddress || EMAIL_PROVIDERS[emailProvider].name}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="btn-ghost text-sm flex items-center gap-1"
+                  disabled={emailTesting}
+                  onClick={async () => {
+                    setEmailTesting(true);
+                    setEmailTestResult(null);
+                    try {
+                      const result = await window.api.email.testProvider();
+                      setEmailTestResult(result);
+                    } catch (err: any) {
+                      setEmailTestResult({ success: false, message: err.message || 'Test failed' });
+                    } finally {
+                      setEmailTesting(false);
+                    }
+                  }}
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${emailTesting ? 'animate-spin' : ''}`} />
+                  {emailTesting ? 'Testing...' : 'Test Connection'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-danger text-sm"
+                  onClick={async () => {
+                    try {
+                      await window.api.email.removeProvider();
+                      setEmailConfigured(false);
+                      setEmailConfiguredProvider(null);
+                      setEmailFromAddress('');
+                      setEmailCredentials({});
+                      setEmailTestResult(null);
+                      setToast('Email credentials removed');
+                    } catch (err) {
+                      setToast('Failed to remove credentials');
+                    }
+                  }}
+                >
+                  Remove Credentials
+                </button>
+              </div>
+              {emailTestResult && (
+                <div className={`text-sm p-2 rounded ${emailTestResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                  {emailTestResult.message}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {/* Dynamic credential fields */}
+              <div className="grid grid-cols-1 gap-3">
+                {EMAIL_PROVIDERS[emailProvider].fields.map((field) => (
+                  <div key={field.key}>
+                    <label className="label">{field.label}</label>
+                    <input
+                      type={field.type}
+                      className="input w-full"
+                      value={emailCredentials[field.key] || ''}
+                      onChange={(e) => setEmailCredentials(prev => ({ ...prev, [field.key]: e.target.value }))}
+                      placeholder={field.placeholder}
+                    />
+                    {field.helpText && (
+                      <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">{field.helpText}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  className="btn-primary text-sm"
+                  disabled={emailSaving || !EMAIL_PROVIDERS[emailProvider].fields.every(f => (emailCredentials[f.key] || '').trim())}
+                  onClick={async () => {
+                    setEmailSaving(true);
+                    setEmailTestResult(null);
+                    try {
+                      await window.api.email.setProvider(emailProvider, emailCredentials);
+                      // Test connection immediately
+                      const testResult = await window.api.email.testProvider();
+                      setEmailTestResult(testResult);
+                      if (testResult.success) {
+                        setEmailConfigured(true);
+                        setEmailConfiguredProvider(emailProvider);
+                        setEmailFromAddress(emailCredentials.fromAddress || '');
+                        setEmailCredentials({});
+                        setToast(`${EMAIL_PROVIDERS[emailProvider].name} connected`);
+                      } else {
+                        // If test failed, remove the credentials
+                        await window.api.email.removeProvider();
+                        setEmailConfigured(false);
+                        setEmailConfiguredProvider(null);
+                      }
+                    } catch (err: any) {
+                      console.error('Failed to save email credentials:', err);
+                      setToast('Failed to save credentials');
+                    } finally {
+                      setEmailSaving(false);
+                    }
+                  }}
+                >
+                  {emailSaving ? 'Saving & Testing...' : 'Save & Test'}
+                </button>
+              </div>
+
+              {emailTestResult && (
+                <div className={`text-sm p-2 rounded ${emailTestResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                  {emailTestResult.message}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* HIPAA BAA reminder */}
+          <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
+            <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+            <p>
+              <strong>HIPAA Reminder:</strong> Only send PHI from a paid Google Workspace account with an accepted BAA. Free @gmail.com accounts are not covered.
+            </p>
+          </div>
+        </div>
+      </CollapsibleSection>
+
+      {/* SMS / Text Messaging (Pro) — appointment reminders + confirm/cancel replies */}
+      <CollapsibleSection
+        icon={<MessageSquare className="w-5 h-5" />}
+        title="Text Messaging"
+        description={smsConfigured ? `${SMS_PROVIDERS[smsConfiguredProvider as keyof typeof SMS_PROVIDERS]?.name || 'Configured'}${smsFromNumber ? ` · ${smsFromNumber}` : ''}` : 'Not configured'}
+        sectionId="settings-sms"
+        isOpen={openSectionId === 'sms'}
+        onToggle={() => toggleSection('sms')}
+      >
+        <div className="space-y-4">
+          {/* Provider selector */}
+          <div>
+            <label className="label">SMS Provider</label>
+            <select
+              className="input w-full"
+              value={smsProvider}
+              onChange={(e) => {
+                setSmsProvider(e.target.value as 'twilio');
+                setSmsCredentials({});
+                setSmsTestResult(null);
+              }}
+              disabled={smsSaving}
+            >
+              {Object.entries(SMS_PROVIDERS).map(([key, info]) => (
+                <option key={key} value={key}>{info.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Provider info */}
+          <div className="text-sm text-[var(--color-text-secondary)]">
+            <p>{SMS_PROVIDERS[smsProvider].description}</p>
+            <p className="mt-1">
+              <a href={SMS_PROVIDERS[smsProvider].website} className="text-blue-600 hover:underline" target="_blank" rel="noopener">
+                {SMS_PROVIDERS[smsProvider].website}
+              </a>
+            </p>
+            <p className="text-xs mt-1 text-amber-700">{SMS_PROVIDERS[smsProvider].baaInfo}</p>
+          </div>
+
+          {/* Configured state */}
+          {smsConfigured && smsConfiguredProvider === smsProvider ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-sm text-green-600">
+                <CheckCircle className="w-4 h-4" />
+                Sending from {smsFromNumber || SMS_PROVIDERS[smsProvider].name}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="btn-ghost text-sm flex items-center gap-1"
+                  disabled={smsTesting}
+                  onClick={async () => {
+                    setSmsTesting(true);
+                    setSmsTestResult(null);
+                    try {
+                      const result = await window.api.sms.testProvider();
+                      setSmsTestResult(result);
+                    } catch (err: any) {
+                      setSmsTestResult({ success: false, message: err.message || 'Test failed' });
+                    } finally {
+                      setSmsTesting(false);
+                    }
+                  }}
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${smsTesting ? 'animate-spin' : ''}`} />
+                  {smsTesting ? 'Testing...' : 'Test Connection'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-danger text-sm"
+                  onClick={async () => {
+                    try {
+                      await window.api.sms.removeProvider();
+                      setSmsConfigured(false);
+                      setSmsConfiguredProvider(null);
+                      setSmsFromNumber('');
+                      setSmsCredentials({});
+                      setSmsTestResult(null);
+                      setToast('Text messaging credentials removed');
+                    } catch (err) {
+                      setToast('Failed to remove credentials');
+                    }
+                  }}
+                >
+                  Remove Credentials
+                </button>
+              </div>
+              {smsTestResult && (
+                <div className={`text-sm p-2 rounded ${smsTestResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                  {smsTestResult.message}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {/* Dynamic credential fields */}
+              <div className="grid grid-cols-1 gap-3">
+                {SMS_PROVIDERS[smsProvider].fields.map((field) => (
+                  <div key={field.key}>
+                    <label className="label">{field.label}</label>
+                    <input
+                      type={field.type}
+                      className="input w-full"
+                      value={smsCredentials[field.key] || ''}
+                      onChange={(e) => setSmsCredentials(prev => ({ ...prev, [field.key]: e.target.value }))}
+                      placeholder={field.placeholder}
+                    />
+                    {field.helpText && (
+                      <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">{field.helpText}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  className="btn-primary text-sm"
+                  disabled={smsSaving || !SMS_PROVIDERS[smsProvider].fields.every(f => (smsCredentials[f.key] || '').trim())}
+                  onClick={async () => {
+                    setSmsSaving(true);
+                    setSmsTestResult(null);
+                    try {
+                      await window.api.sms.setProvider(smsProvider, smsCredentials);
+                      // Test connection immediately
+                      const testResult = await window.api.sms.testProvider();
+                      setSmsTestResult(testResult);
+                      if (testResult.success) {
+                        setSmsConfigured(true);
+                        setSmsConfiguredProvider(smsProvider);
+                        setSmsFromNumber(smsCredentials.fromNumber || '');
+                        setSmsCredentials({});
+                        setToast(`${SMS_PROVIDERS[smsProvider].name} connected`);
+                      } else {
+                        // If test failed, remove the credentials
+                        await window.api.sms.removeProvider();
+                        setSmsConfigured(false);
+                        setSmsConfiguredProvider(null);
+                      }
+                    } catch (err: any) {
+                      console.error('Failed to save SMS credentials:', err);
+                      setToast('Failed to save credentials');
+                    } finally {
+                      setSmsSaving(false);
+                    }
+                  }}
+                >
+                  {smsSaving ? 'Saving & Testing...' : 'Save & Test'}
+                </button>
+              </div>
+
+              {smsTestResult && (
+                <div className={`text-sm p-2 rounded ${smsTestResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                  {smsTestResult.message}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* HIPAA BAA reminder */}
+          <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
+            <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+            <p>
+              <strong>HIPAA Reminder:</strong> Only text PHI from a Twilio account with a signed BAA + HIPAA-eligible config. Keep reminders minimal — date, time, and a confirm/cancel prompt; no clinical detail.
+            </p>
+          </div>
+        </div>
+      </CollapsibleSection>
+
+      {/* Reminder Templates (Pro) — wording, default video link, timing */}
+      <CollapsibleSection
+        icon={<Bell className="w-5 h-5" />}
+        title="Reminder Templates"
+        description="Wording, default video link & timing"
+        sectionId="settings-reminders"
+        isOpen={openSectionId === 'reminders'}
+        onToggle={() => toggleSection('reminders')}
+      >
+        <div className="space-y-5">
+          <p className="text-sm text-[var(--color-text-secondary)]">
+            Customize the reminders sent to clients who have Appointment Reminders turned on. Merge fields auto-fill per client:
+            <span className="font-mono text-xs"> {'{first}'} {'{last}'} {'{date}'} {'{time}'} {'{practice}'} {'{meeting_link}'}</span>
+          </p>
+
+          {/* Timing */}
+          <div>
+            <label className="label">Send reminders this many hours before the appointment</label>
+            <input
+              type="number"
+              min={1}
+              max={168}
+              className="input w-32"
+              value={remLeadHours}
+              onChange={(e) => setRemLeadHours(parseInt(e.target.value, 10) || 24)}
+            />
+          </div>
+
+          {/* Default meeting link */}
+          <div>
+            <label className="label">Default video / Zoom link <span className="text-xs text-[var(--color-text-secondary)] font-normal">(used when an appointment has no link of its own)</span></label>
+            <input
+              type="url"
+              className="input w-full"
+              placeholder="https://zoom.us/j/your-personal-room"
+              value={remMeetingLink}
+              onChange={(e) => setRemMeetingLink(e.target.value)}
+            />
+          </div>
+
+          {/* SMS template */}
+          <div>
+            <label className="label">Text message template</label>
+            <textarea
+              className="input w-full font-mono text-sm"
+              rows={3}
+              value={remSmsTemplate}
+              onChange={(e) => setRemSmsTemplate(e.target.value)}
+            />
+            <div className="flex flex-wrap gap-1 mt-1">
+              {['{first}', '{date}', '{time}', '{practice}', '{meeting_link}'].map((tok) => (
+                <button
+                  key={tok}
+                  type="button"
+                  className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-gray-100 hover:bg-gray-200 text-gray-700"
+                  onClick={() => setRemSmsTemplate((v) => (v && !v.endsWith(' ') ? v + ' ' : v) + tok)}
+                >
+                  {tok}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">Preview: <span className="text-[var(--color-text)]">{remPreview(remSmsTemplate)}</span></p>
+          </div>
+
+          {/* Email subject + body */}
+          <div>
+            <label className="label">Email subject</label>
+            <input className="input w-full" value={remEmailSubject} onChange={(e) => setRemEmailSubject(e.target.value)} />
+          </div>
+          <div>
+            <label className="label">Email message</label>
+            <textarea
+              className="input w-full text-sm"
+              rows={4}
+              value={remEmailBody}
+              onChange={(e) => setRemEmailBody(e.target.value)}
+            />
+            <div className="flex flex-wrap gap-1 mt-1">
+              {['{first}', '{last}', '{practice}', '{meeting_link}'].map((tok) => (
+                <button
+                  key={tok}
+                  type="button"
+                  className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-gray-100 hover:bg-gray-200 text-gray-700"
+                  onClick={() => setRemEmailBody((v) => (v && !v.endsWith(' ') ? v + ' ' : v) + tok)}
+                >
+                  {tok}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Live email preview */}
+          <div>
+            <label className="label">Email preview</label>
+            <div className="border border-[var(--color-border)] rounded-lg overflow-hidden max-w-md">
+              <div className="px-4 py-2.5" style={{ background: '#0f766e' }}>
+                <div className="text-white text-sm font-semibold">Your Practice</div>
+                <div className="text-xs" style={{ color: '#c8efe9' }}>Appointment Reminder</div>
+              </div>
+              <div className="p-4 bg-white">
+                <div className="text-sm text-gray-700 whitespace-pre-wrap">{remPreview(remEmailBody)}</div>
+                <div className="border border-gray-200 rounded-lg p-3 bg-gray-50 mt-3 text-sm">
+                  <div className="flex justify-between"><span className="text-gray-500">Date</span><span className="font-semibold text-gray-900">Mon, Jun 2</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">Time</span><span className="font-semibold text-gray-900">2:30 PM</span></div>
+                </div>
+                {remMeetingLink && (
+                  <div className="text-center mt-3">
+                    <span className="inline-block text-white text-sm font-semibold px-4 py-2 rounded-lg" style={{ background: '#0f766e' }}>Join Video Visit</span>
+                  </div>
+                )}
+              </div>
+            </div>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">The date/time card and Join button are added automatically — you just write the message.</p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              className="btn-primary text-sm"
+              disabled={remSaving}
+              onClick={async () => {
+                setRemSaving(true);
+                try {
+                  await window.api.reminders.saveConfig({
+                    leadHours: remLeadHours,
+                    smsTemplate: remSmsTemplate,
+                    emailSubject: remEmailSubject,
+                    emailBody: remEmailBody,
+                    defaultMeetingLink: remMeetingLink,
+                  });
+                  setToast('Reminder templates saved');
+                } catch (err) {
+                  setToast('Failed to save templates');
+                } finally {
+                  setRemSaving(false);
+                }
+              }}
+            >
+              {remSaving ? 'Saving...' : 'Save Templates'}
+            </button>
           </div>
         </div>
       </CollapsibleSection>

@@ -101,6 +101,9 @@ const api = {
     delete: (id: number) => ipcRenderer.invoke('notes:delete', id),
     getEpisodeSummary: (clientId: number) => ipcRenderer.invoke('notes:getEpisodeSummary', clientId),
     getUnbilledForClient: (clientId: number) => ipcRenderer.invoke('notes:getUnbilledForClient', clientId),
+    generatePdf: (noteId: number) => ipcRenderer.invoke('notes:generatePdf', noteId),
+    generateBulkPdf: (noteIds: number[]) => ipcRenderer.invoke('notes:generateBulkPdf', noteIds),
+    savePdf: (data: { base64Pdf: string; filename: string }) => ipcRenderer.invoke('notes:savePdf', data),
   },
 
   // Evaluations
@@ -114,6 +117,7 @@ const api = {
     countIncomplete: () => ipcRenderer.invoke('evaluations:countIncomplete'),
     listIncomplete: () => ipcRenderer.invoke('evaluations:listIncomplete'),
     listAll: () => ipcRenderer.invoke('evaluations:listAll'),
+    generatePdf: (evalId: number) => ipcRenderer.invoke('evaluations:generatePdf', evalId),
   },
 
   // Appointments
@@ -608,6 +612,31 @@ const api = {
     getProviderStatus: () => ipcRenderer.invoke('fax:getProviderStatus'),
     testProvider: () => ipcRenderer.invoke('fax:testProvider'),
     removeProvider: () => ipcRenderer.invoke('fax:removeProvider'),
+  },
+
+  // ── Email (Pro) ──
+  email: {
+    send: (params: { to: string; subject: string; bodyText: string; bodyHtml?: string; attachments?: Array<{ fileName: string; contentBase64: string; contentType?: string }>; replyTo?: string; clientId?: number }) => ipcRenderer.invoke('email:send', params),
+    setProvider: (type: string, credentials: Record<string, string>) => ipcRenderer.invoke('email:setProvider', type, credentials),
+    getProviderStatus: () => ipcRenderer.invoke('email:getProviderStatus'),
+    testProvider: () => ipcRenderer.invoke('email:testProvider'),
+    removeProvider: () => ipcRenderer.invoke('email:removeProvider'),
+  },
+
+  // ── SMS / Text Messaging (Pro) ──
+  sms: {
+    setProvider: (type: string, credentials: Record<string, string>) => ipcRenderer.invoke('sms:setProvider', type, credentials),
+    getProviderStatus: () => ipcRenderer.invoke('sms:getProviderStatus'),
+    testProvider: () => ipcRenderer.invoke('sms:testProvider'),
+    removeProvider: () => ipcRenderer.invoke('sms:removeProvider'),
+    pollInbox: () => ipcRenderer.invoke('sms:pollInbox'),
+  },
+
+  // ── Appointment Reminders (Pro) ──
+  reminders: {
+    runDue: () => ipcRenderer.invoke('reminders:runDue'),
+    getConfig: () => ipcRenderer.invoke('reminders:getConfig'),
+    saveConfig: (cfg: { leadHours?: number; smsTemplate?: string; emailSubject?: string; emailBody?: string; defaultMeetingLink?: string }) => ipcRenderer.invoke('reminders:saveConfig', cfg),
   },
 
   // ── Waitlist (Pro) ──

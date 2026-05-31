@@ -109,6 +109,15 @@ export default function AppointmentModal({
       }
       setLoading(false);
 
+      // Always reset recurring UI on open — keeps a previous selection from
+      // leaking across modal sessions (esp. now that the UI is also visible
+      // when editing).
+      setRepeatFrequency('none');
+      setRepeatEndDate('');
+      setShowRepeat(false);
+      setRepeatMode('count');
+      setRepeatOccurrences(4);
+
       if (appointment) {
         setFormData({
           client_id: appointment.client_id,
@@ -167,11 +176,6 @@ export default function AppointmentModal({
           setModalityChoice('');
           setModalityCustom('');
         }
-        setRepeatFrequency('none');
-        setRepeatEndDate('');
-        setShowRepeat(false);
-        setRepeatMode('count');
-        setRepeatOccurrences(4);
       }
     }
 
@@ -311,13 +315,18 @@ export default function AppointmentModal({
     return dates;
   };
 
-  // Derive the effective end date when in count mode
+  // Derive the effective end date when in count mode.
+  // Semantics differ by mode: in create mode the count is the total series
+  // size (so we advance count-1 times past the base date); in edit mode the
+  // count is how many MORE to add (so we advance count times past the
+  // already-existing appointment).
   const effectiveEndDate = (() => {
     if (repeatFrequency === 'none') return '';
     if (repeatMode === 'date') return repeatEndDate;
     if (!formData.scheduled_date || repeatOccurrences < 1) return '';
+    const advanceSteps = appointment ? repeatOccurrences : repeatOccurrences - 1;
     let current = new Date(formData.scheduled_date + 'T00:00:00');
-    for (let i = 0; i < repeatOccurrences - 1; i++) {
+    for (let i = 0; i < advanceSteps; i++) {
       if (repeatFrequency === 'weekly') current = addWeeks(current, 1);
       else if (repeatFrequency === 'biweekly') current = addWeeks(current, 2);
       else if (repeatFrequency === 'monthly') current = addMonths(current, 1);
@@ -387,14 +396,24 @@ export default function AppointmentModal({
         service_modality: resolvedModality,
       };
 
-      if (repeatFrequency !== 'none' && effectiveEndDate && !appointment && onSaveBatch) {
-        // Create batch of recurring appointments
+      const wantsRecurring = repeatFrequency !== 'none' && !!effectiveEndDate && !!onSaveBatch;
+      if (wantsRecurring && !appointment) {
+        // New appointment + recurring: batch-create base and all recurring dates together.
         const recurringDates = generateRecurringDates(formData.scheduled_date, repeatFrequency, effectiveEndDate);
         const allItems: Partial<Appointment>[] = [
           baseData,
           ...recurringDates.map(d => ({ ...baseData, scheduled_date: d })),
         ];
-        await onSaveBatch(allItems);
+        await onSaveBatch!(allItems);
+      } else if (wantsRecurring && appointment) {
+        // Editing an existing appointment + opting into recurrence after the fact:
+        // update the original (so any concurrent field edits stick), then batch-create
+        // the additional dates that follow it.
+        await onSave(baseData);
+        const recurringDates = generateRecurringDates(formData.scheduled_date, repeatFrequency, effectiveEndDate);
+        if (recurringDates.length > 0) {
+          await onSaveBatch!(recurringDates.map(d => ({ ...baseData, scheduled_date: d })));
+        }
       } else {
         await onSave(baseData);
       }
@@ -879,9 +898,11 @@ export default function AppointmentModal({
             </div>
           )}
 
-          {/* Recurring Schedule (only for new appointments) */}
-          {!appointment && (
-            <div className={`rounded-lg border transition-colors ${showRepeat ? 'border-[var(--color-primary)]/30 bg-blue-50/40' : 'border-[var(--color-border)]'}`}>
+          {/* Recurring Schedule — available both at create time and when editing
+              an existing single appointment (so the user can add a series after
+              the fact). In edit mode the count means "add N more"; in create
+              mode it's "N total in the series". */}
+          <div className={`rounded-lg border transition-colors ${showRepeat ? 'border-[var(--color-primary)]/30 bg-blue-50/40' : 'border-[var(--color-border)]'}`}>
               {/* Checkbox toggle row */}
               <div className="flex items-center gap-2.5 px-3 py-2.5">
                 <input
@@ -900,7 +921,7 @@ export default function AppointmentModal({
                   <span className="text-sm font-medium text-[var(--color-text)]">Recurring schedule</span>
                   {showRepeat && repeatCount > 0 && (
                     <span className="ml-auto text-xs font-medium text-[var(--color-primary)]">
-                      {repeatCount + 1} appointments
+                      {appointment ? `+${repeatCount} more` : `${repeatCount + 1} appointments`}
                     </span>
                   )}
                 </label>
@@ -963,13 +984,14 @@ export default function AppointmentModal({
                   {/* Preview */}
                   {repeatCount > 0 && effectiveEndDate && (
                     <p className="text-xs text-[var(--color-primary)] font-medium">
-                      Creates {repeatCount + 1} appointments — last on {new Date(effectiveEndDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                      {appointment
+                        ? `Adds ${repeatCount} more ${repeatCount === 1 ? 'appointment' : 'appointments'}`
+                        : `Creates ${repeatCount + 1} appointments`} — last on {new Date(effectiveEndDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                     </p>
                   )}
                 </div>
               )}
             </div>
-          )}
 
           {/* Actions */}
           <div className="flex items-center justify-end gap-3 pt-4 border-t border-[var(--color-border)]">
@@ -984,7 +1006,9 @@ export default function AppointmentModal({
               {saving
                 ? 'Saving...'
                 : appointment
-                ? 'Update Appointment'
+                ? (repeatCount > 0
+                    ? `Save + Add ${repeatCount} More`
+                    : 'Update Appointment')
                 : repeatCount > 0
                 ? `Create ${repeatCount + 1} Appointments`
                 : 'Create Appointment'}

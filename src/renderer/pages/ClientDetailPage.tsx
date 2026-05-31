@@ -877,6 +877,28 @@ const ClientDetailPage: React.FC = () => {
     }
   };
 
+  // --- Note PDF download handlers ---
+
+  const handleDownloadNotePdf = async (noteId: number) => {
+    try {
+      const { base64Pdf, filename } = await window.api.notes.generatePdf(noteId);
+      await window.api.notes.savePdf({ base64Pdf, filename });
+    } catch (err: any) {
+      console.error('Failed to download note PDF:', err);
+    }
+  };
+
+  const handleDownloadNotesPacket = async () => {
+    if (signedNotes.length === 0) return;
+    try {
+      const noteIds = signedNotes.map(n => n.id);
+      const { base64Pdf, filename } = await window.api.notes.generateBulkPdf(noteIds);
+      await window.api.notes.savePdf({ base64Pdf, filename });
+    } catch (err: any) {
+      console.error('Failed to download notes packet:', err);
+    }
+  };
+
   // --- Loading / Not Found ---
 
   if (loading) {
@@ -1638,6 +1660,16 @@ const ClientDetailPage: React.FC = () => {
                     <LayoutGrid size={14} />
                   </button>
                 </div>
+                {signedNotes.length > 0 && (
+                  <button
+                    className="btn-secondary btn-sm gap-1.5"
+                    onClick={handleDownloadNotesPacket}
+                    title={`Download all ${signedNotes.length} signed note${signedNotes.length === 1 ? '' : 's'} as one PDF packet`}
+                  >
+                    <Download size={14} />
+                    Packet ({signedNotes.length})
+                  </button>
+                )}
                 <button
                   className="btn-primary btn-sm gap-1.5"
                   onClick={() => { if (guardAction()) navigate(`/clients/${clientId}/note/new`); }}
@@ -1686,6 +1718,13 @@ const ClientDetailPage: React.FC = () => {
                       <span className="flex-1" />
                       {note.signed_at && (
                         <>
+                          <button
+                            className="p-0.5 btn-ghost text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
+                            title="Download PDF"
+                            onClick={(e) => { e.stopPropagation(); handleDownloadNotePdf(note.id); }}
+                          >
+                            <Download size={11} />
+                          </button>
                           <button
                             className="p-0.5 btn-ghost text-[var(--color-text-secondary)] hover:text-violet-600"
                             title="Fax to Physician"
@@ -1753,6 +1792,13 @@ const ClientDetailPage: React.FC = () => {
                             <span className="flex items-center gap-1 text-xs text-emerald-600">
                               <CheckCircle size={12} /> Signed
                             </span>
+                            <button
+                              className="btn-ghost btn-sm text-xs px-1.5 py-0.5 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
+                              title="Download PDF"
+                              onClick={(e) => { e.stopPropagation(); handleDownloadNotePdf(note.id); }}
+                            >
+                              <Download size={12} />
+                            </button>
                             <button
                               className="btn-ghost btn-sm text-xs px-1.5 py-0.5 text-[var(--color-text-secondary)] hover:text-violet-600"
                               title="Fax to Physician"

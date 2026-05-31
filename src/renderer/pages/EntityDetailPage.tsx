@@ -4,11 +4,12 @@ import {
   ArrowLeft, Building2, Plus, Trash2, DollarSign, FileText, FolderOpen,
   Upload, Eye, Edit, Phone, Mail, MapPin, Calendar, CheckSquare, Square,
   FileCheck, RefreshCw, Receipt, ChevronDown, ChevronRight, Download, Send,
-  UserPlus,
+  UserPlus, Pencil,
 } from 'lucide-react';
 import type { ContractedEntity, EntityFeeSchedule, EntityDocument, EntityDocumentCategory, Appointment, Invoice, InvoiceItem, InvoiceStatus, ContractorPatient } from '@shared/types';
 import EntityFormModal from '../components/EntityFormModal';
 import AppointmentModal from '../components/AppointmentModal';
+import ContractorPatientEditModal from '../components/ContractorPatientEditModal';
 import { useSectionColor } from '../hooks/useSectionColor';
 
 type Tab = 'overview' | 'appointments' | 'invoices';
@@ -88,6 +89,7 @@ const EntityDetailPage: React.FC = () => {
   // Modal state
   const [showFeeModal, setShowFeeModal] = useState(false);
   const [showDocsModal, setShowDocsModal] = useState(false);
+  const [editingPatient, setEditingPatient] = useState<ContractorPatient | null>(null);
 
   const loadEntity = useCallback(async () => {
     setLoading(true);
@@ -276,6 +278,41 @@ const EntityDetailPage: React.FC = () => {
       await window.api.invoices.savePdf({ base64Pdf, filename });
     } catch (err) {
       console.error('Failed to generate invoice PDF:', err);
+    }
+  };
+
+  const handleDownloadNote = async (noteId: number) => {
+    try {
+      const { base64Pdf, filename } = await window.api.notes.generatePdf(noteId);
+      await window.api.notes.savePdf({ base64Pdf, filename });
+    } catch (err: any) {
+      console.error('Failed to generate note PDF:', err);
+      setToast(err?.message || 'Failed to download note PDF');
+    }
+  };
+
+  // Build a packet of all signed notes for the selected appointments.
+  // Requires all selected notes to belong to the same patient (the backend enforces this);
+  // for entity work the natural use case is "give me everything for kid X" so we group by
+  // contractor_patient_id and bail with a clear message if the selection spans patients.
+  const handleDownloadNotesPacket = async () => {
+    const selected = appointments.filter(a => selectedApptIds.has(a.id) && a.note_id);
+    if (selected.length === 0) {
+      setToast('Selected appointments have no notes attached');
+      return;
+    }
+    const patientKeys = new Set(selected.map(a => `${(a as any).contractor_patient_id || ''}|${a.client_id || ''}`));
+    if (patientKeys.size > 1) {
+      setToast('Bulk PDF only works for one patient at a time — narrow your selection');
+      return;
+    }
+    try {
+      const noteIds = selected.map(a => a.note_id as number);
+      const { base64Pdf, filename } = await window.api.notes.generateBulkPdf(noteIds);
+      await window.api.notes.savePdf({ base64Pdf, filename });
+    } catch (err: any) {
+      console.error('Failed to generate notes packet:', err);
+      setToast(err?.message || 'Failed to download notes packet');
     }
   };
 
@@ -810,7 +847,14 @@ const EntityDetailPage: React.FC = () => {
                 {unscheduledPatients.map((p) => (
                   <div key={p.id} className="flex items-center justify-between px-2 py-1.5 rounded hover:bg-[var(--color-bg)] transition-colors">
                     <div className="min-w-0">
-                      <div className="text-sm font-medium truncate">{p.name}</div>
+                      <div className="text-sm font-medium truncate flex items-center gap-2">
+                        {p.name}
+                        {!p.dob && (
+                          <span className="text-[10px] uppercase tracking-wide text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded" title="No DOB on file — click the pencil to add one (shows on PDF notes)">
+                            No DOB
+                          </span>
+                        )}
+                      </div>
                       {(p.phone || p.notes) && (
                         <div className="text-xs text-[var(--color-text-secondary)] truncate">
                           {p.phone ? p.phone : ''}
@@ -819,13 +863,22 @@ const EntityDetailPage: React.FC = () => {
                         </div>
                       )}
                     </div>
-                    <button
-                      className="btn-ghost btn-sm gap-1.5 text-purple-700 hover:bg-purple-50 flex-shrink-0"
-                      onClick={() => handleSchedulePatient(p)}
-                      title={`Schedule appointment for ${p.name}`}
-                    >
-                      <Calendar size={13} /> Schedule
-                    </button>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button
+                        className="btn-ghost btn-sm p-1.5 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
+                        onClick={() => setEditingPatient(p)}
+                        title={`Edit ${p.name} (DOB, MRN, phone, notes)`}
+                      >
+                        <Pencil size={13} />
+                      </button>
+                      <button
+                        className="btn-ghost btn-sm gap-1.5 text-purple-700 hover:bg-purple-50"
+                        onClick={() => handleSchedulePatient(p)}
+                        title={`Schedule appointment for ${p.name}`}
+                      >
+                        <Calendar size={13} /> Schedule
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -860,8 +913,22 @@ const EntityDetailPage: React.FC = () => {
               </button>
             </div>
 
-            {selectedApptIds.size > 0 && (
+            {selectedApptIds.size > 0 && (() => {
+              const notesInSelection = appointments
+                .filter(a => selectedApptIds.has(a.id) && a.note_id)
+                .length;
+              return (
               <div className="flex items-center gap-3">
+                {notesInSelection > 0 && (
+                  <button
+                    className="btn-secondary btn-sm gap-1.5"
+                    onClick={handleDownloadNotesPacket}
+                    title="Download a single PDF packet of notes for this patient"
+                  >
+                    <Download size={14} />
+                    Notes Packet ({notesInSelection})
+                  </button>
+                )}
                 <input
                   type="date"
                   className="input text-sm"
@@ -877,7 +944,8 @@ const EntityDetailPage: React.FC = () => {
                   {generatingInvoice ? 'Generating…' : `Generate Invoice (${formatCurrency(selectedTotal)})`}
                 </button>
               </div>
-            )}
+              );
+            })()}
           </div>
 
           {apptLoading ? (
@@ -909,6 +977,7 @@ const EntityDetailPage: React.FC = () => {
                     <th className="table-header">Status</th>
                     <th className="table-header text-right">Rate</th>
                     <th className="table-header">Invoice</th>
+                    <th className="table-header w-12 text-center">Note</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -964,6 +1033,19 @@ const EntityDetailPage: React.FC = () => {
                             <span className="text-xs text-[var(--color-text-secondary)]">Unbilled</span>
                           )}
                         </td>
+                        <td className="table-cell text-center" onClick={(e) => e.stopPropagation()}>
+                          {appt.note_id ? (
+                            <button
+                              className="btn-ghost btn-sm p-1 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
+                              onClick={() => handleDownloadNote(appt.note_id as number)}
+                              title="Download note as PDF"
+                            >
+                              <Download size={13} />
+                            </button>
+                          ) : (
+                            <span className="text-[var(--color-text-secondary)]/40 text-xs">—</span>
+                          )}
+                        </td>
                       </tr>
                     );
                   })}
@@ -977,6 +1059,7 @@ const EntityDetailPage: React.FC = () => {
                       <td className="table-cell text-right text-sm font-bold text-purple-700">
                         {formatCurrency(selectedTotal)}
                       </td>
+                      <td />
                       <td />
                     </tr>
                   </tfoot>
@@ -1408,6 +1491,15 @@ const EntityDetailPage: React.FC = () => {
         entity={entity}
       />
 
+      {/* Edit contractor patient modal — pencil icon in Unscheduled Patients launches this. */}
+      <ContractorPatientEditModal
+        patient={editingPatient}
+        onClose={() => setEditingPatient(null)}
+        onSaved={(updated) => {
+          setContractorPatients(prev => prev.map(p => p.id === updated.id ? updated : p));
+        }}
+      />
+
       {/* Edit-appointment modal — opens when the user clicks a row in the appointments table. */}
       <AppointmentModal
         isOpen={editingAppt !== null}
@@ -1418,6 +1510,14 @@ const EntityDetailPage: React.FC = () => {
           await window.api.appointments.update(editingAppt.id, data);
           // Refresh both the Appointments table and the Overview pipeline stats so
           // any rate / status / patient changes flow through immediately.
+          await loadAppointments();
+          await loadOverviewAppts().catch(() => {});
+        }}
+        onSaveBatch={async (items) => {
+          // Used when the user opts an existing appointment into a recurring
+          // series during edit — the modal updates the original via onSave and
+          // then batch-creates the additional dates through this callback.
+          await window.api.appointments.createBatch(items);
           await loadAppointments();
           await loadOverviewAppts().catch(() => {});
         }}

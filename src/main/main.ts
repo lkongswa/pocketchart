@@ -23,8 +23,11 @@ import { parseCSVFile, autoDetectColumns as autoDetectCSVColumns, matchClients a
 import type { CSVColumnMapping, CSVPaymentRow } from './csvPaymentImport';
 import type { AppTier, NoteFormat, DischargeData, DischargeGoalStatus } from '../shared/types';
 import { generateIntakePdf } from './intakeFormGenerator';
+import { buildNotePdf, buildEvalPdf, buildBulkNotesPdf } from './notePdfGenerator';
+import type { NoteRow, EvalRow, PatientInfo, EntityInfo, GoalInfo } from './notePdfGenerator';
 import { DEFAULT_INTAKE_TEMPLATES } from '../shared/intakeTemplates';
 import { FaxRouter, matchFaxToClient, normalizeFaxNumber, type FaxProviderType } from './fax';
+import { MessagingRouter, sendDueReminders, DEFAULT_REMINDER_TEMPLATES, type EmailProviderType, type SmsProviderType } from './messaging';
 import { NOTE_FORMAT_SECTIONS, DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS, INVOICE_COLUMNS, ENTITY_INVOICE_DEFAULT_COLUMNS, CLIENT_INVOICE_DEFAULT_COLUMNS, parseInvoiceColumns } from '../shared/types';
 import type { InvoiceColumnKey } from '../shared/types';
 import { ClearinghouseRouter, type ClearinghouseProviderType } from './clearinghouse';
@@ -736,6 +739,14 @@ function registerIpcHandlers() {
     console.error('[FaxRouter] Failed to initialize (non-fatal):', err);
   }
 
+  // ── Messaging Router (email now; SMS later) ──
+  const messagingRouter = new MessagingRouter();
+  try {
+    messagingRouter.initialize(db, decryptSecure, encryptSecure);
+  } catch (err) {
+    console.error('[MessagingRouter] Failed to initialize (non-fatal):', err);
+  }
+
   // ── Clearinghouse Router (multi-provider abstraction) ──
   const clearinghouseRouter = new ClearinghouseRouter();
   try {
@@ -932,8 +943,9 @@ function registerIpcHandlers() {
         onset_date, onset_qualifier, employment_related, auto_accident, auto_accident_state,
         other_accident, claim_accept_assignment, patient_signature_source, insured_signature_source,
         prior_auth_number, additional_claim_info, service_facility_name, service_facility_npi,
-        status, discipline)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        status, discipline,
+        send_appointment_reminders, reminder_channel, sms_consent_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.first_name, data.last_name, data.dob, data.phone, data.email, data.address,
       data.city || '', data.state || '', data.zip || '', data.gender || '', data.mrn || '',
@@ -952,7 +964,8 @@ function registerIpcHandlers() {
       data.patient_signature_source || 'SOF', data.insured_signature_source || 'SOF',
       data.prior_auth_number || '', data.additional_claim_info || '',
       data.service_facility_name || '', data.service_facility_npi || '',
-      data.status || 'active', data.discipline
+      data.status || 'active', data.discipline,
+      data.send_appointment_reminders ? 1 : 0, data.reminder_channel || 'sms', data.sms_consent_at || null
     );
     const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(result.lastInsertRowid) as any;
     auditLog({ actionType: 'client_created', entityType: 'client', entityId: client.id, clientId: client.id });
@@ -988,6 +1001,7 @@ function registerIpcHandlers() {
         other_accident=?, claim_accept_assignment=?, patient_signature_source=?, insured_signature_source=?,
         prior_auth_number=?, additional_claim_info=?, service_facility_name=?, service_facility_npi=?,
         status=?, discipline=?,
+        send_appointment_reminders=?, reminder_channel=?, sms_consent_at=?,
         updated_at=CURRENT_TIMESTAMP
       WHERE id=? AND deleted_at IS NULL
     `).run(
@@ -1008,7 +1022,9 @@ function registerIpcHandlers() {
       data.patient_signature_source || 'SOF', data.insured_signature_source || 'SOF',
       data.prior_auth_number || '', data.additional_claim_info || '',
       data.service_facility_name || '', data.service_facility_npi || '',
-      data.status, data.discipline, id
+      data.status, data.discipline,
+      data.send_appointment_reminders ? 1 : 0, data.reminder_channel || 'sms', data.sms_consent_at || null,
+      id
     );
 
     if (changedFields.length > 0) {
@@ -1409,6 +1425,119 @@ function registerIpcHandlers() {
     return db.prepare('SELECT * FROM notes WHERE id = ? AND deleted_at IS NULL').get(id);
   });
 
+  // ── Note PDF generation ─────────────────────────────────────────────
+  // Hydrates a note with patient/entity/practice/goals, then builds a downloadable PDF.
+  // Works for both client SOAP notes and contractor notes (the note's contractor_patient_id
+  // and entity_id discriminate which join branch we take).
+  function loadNoteForPdf(noteId: number): {
+    note: NoteRow;
+    patient: PatientInfo | null;
+    entity: EntityInfo | null;
+    goals: GoalInfo[];
+  } | null {
+    const note = db.prepare(`
+      SELECT n.*, cp.name as contractor_patient_name, e.name as entity_name
+      FROM notes n
+      LEFT JOIN contractor_patients cp ON n.contractor_patient_id = cp.id
+      LEFT JOIN contracted_entities e ON n.entity_id = e.id
+      WHERE n.id = ? AND n.deleted_at IS NULL
+    `).get(noteId) as NoteRow & { entity_id?: number | null; client_id?: number | null } | undefined;
+    if (!note) return null;
+
+    let patient: PatientInfo | null = null;
+    if (note.client_id) {
+      patient = db.prepare('SELECT first_name, last_name, dob, mrn FROM clients WHERE id = ?').get(note.client_id) as PatientInfo | undefined ?? null;
+    } else if ((note as any).contractor_patient_id) {
+      const cp = db.prepare('SELECT name, dob, mrn FROM contractor_patients WHERE id = ?').get((note as any).contractor_patient_id) as { name?: string; dob?: string; mrn?: string } | undefined;
+      if (cp) {
+        const parts = (cp.name || '').trim().split(/\s+/);
+        patient = {
+          first_name: parts.slice(0, -1).join(' '),
+          last_name: parts.slice(-1)[0] || '',
+          dob: cp.dob,
+          mrn: cp.mrn,
+        };
+      }
+    }
+
+    const entity: EntityInfo | null = note.entity_name ? { name: note.entity_name } : null;
+
+    // Resolve goals_addressed
+    let goals: GoalInfo[] = [];
+    try {
+      const ids: number[] = JSON.parse(note.goals_addressed || '[]');
+      if (Array.isArray(ids) && ids.length > 0) {
+        const placeholders = ids.map(() => '?').join(',');
+        const rows = db.prepare(
+          `SELECT id, goal_text, category FROM goals WHERE id IN (${placeholders})`
+        ).all(...ids) as Array<{ id: number; goal_text: string; category?: string }>;
+        // Preserve input order
+        const byId = new Map(rows.map(r => [r.id, r]));
+        goals = ids
+          .map(id => byId.get(id))
+          .filter((r): r is { id: number; goal_text: string; category?: string } => Boolean(r))
+          .map(r => ({ id: r.id, text: r.goal_text, category: r.category }));
+      }
+    } catch { /* ignore */ }
+
+    return { note, patient, entity, goals };
+  }
+
+  safeHandle('notes:generatePdf', (_event, noteId: number) => {
+    const loaded = loadNoteForPdf(noteId);
+    if (!loaded) throw new Error('Note not found');
+    const practice = db.prepare('SELECT * FROM practice WHERE id = 1').get() || null;
+    return buildNotePdf({
+      note: loaded.note,
+      patient: loaded.patient,
+      practice,
+      entity: loaded.entity,
+      goals: loaded.goals,
+      logoBase64: getLogoBase64(),
+    });
+  });
+
+  safeHandle('notes:generateBulkPdf', (_event, noteIds: number[]) => {
+    if (!Array.isArray(noteIds) || noteIds.length === 0) throw new Error('No notes specified');
+    const loaded = noteIds.map(loadNoteForPdf).filter((x): x is NonNullable<ReturnType<typeof loadNoteForPdf>> => x !== null);
+    if (loaded.length === 0) throw new Error('No valid notes found');
+
+    // Verify all notes belong to the same patient (client_id OR contractor_patient_id).
+    // Mixing patients in one packet would be a privacy issue.
+    const firstNote = loaded[0].note as any;
+    const sameClient = firstNote.client_id;
+    const sameCp = firstNote.contractor_patient_id;
+    for (const { note } of loaded) {
+      const n = note as any;
+      if (sameClient && n.client_id !== sameClient) throw new Error('All notes must belong to the same patient');
+      if (sameCp && n.contractor_patient_id !== sameCp) throw new Error('All notes must belong to the same patient');
+    }
+
+    const practice = db.prepare('SELECT * FROM practice WHERE id = 1').get() || null;
+    const goalsByNoteId: Record<number, GoalInfo[]> = {};
+    for (const { note, goals } of loaded) goalsByNoteId[note.id] = goals;
+
+    return buildBulkNotesPdf({
+      notes: loaded.map(l => l.note),
+      patient: loaded[0].patient,
+      practice,
+      entity: loaded[0].entity,
+      goalsByNoteId,
+      logoBase64: getLogoBase64(),
+    });
+  });
+
+  safeHandle('notes:savePdf', async (_event, data: { base64Pdf: string; filename: string }) => {
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      title: 'Save Note PDF',
+      defaultPath: data.filename,
+      filters: [{ name: 'PDF Document', extensions: ['pdf'] }],
+    });
+    if (canceled || !filePath) return null;
+    fs.writeFileSync(filePath, Buffer.from(data.base64Pdf, 'base64'));
+    return filePath;
+  });
+
   safeHandle('notes:create', (_event, data) => {
     // Auto-stamp rendering provider NPI from practice settings if not provided
     let renderingNpi = data.rendering_provider_npi || '';
@@ -1772,6 +1901,24 @@ function registerIpcHandlers() {
 
   safeHandle('evaluations:get', (_event, id: number) => {
     return db.prepare('SELECT * FROM evaluations WHERE id = ? AND deleted_at IS NULL').get(id);
+  });
+
+  safeHandle('evaluations:generatePdf', (_event, evalId: number) => {
+    const evaluation = db.prepare('SELECT * FROM evaluations WHERE id = ? AND deleted_at IS NULL').get(evalId) as EvalRow & { client_id?: number | null } | undefined;
+    if (!evaluation) throw new Error('Evaluation not found');
+
+    let patient: PatientInfo | null = null;
+    if (evaluation.client_id) {
+      patient = db.prepare('SELECT first_name, last_name, dob, mrn FROM clients WHERE id = ?').get(evaluation.client_id) as PatientInfo | undefined ?? null;
+    }
+    const practice = db.prepare('SELECT * FROM practice WHERE id = 1').get() || null;
+
+    return buildEvalPdf({
+      evaluation,
+      patient,
+      practice,
+      logoBase64: getLogoBase64(),
+    });
   });
 
   safeHandle('evaluations:create', (_event, data) => {
@@ -6804,8 +6951,9 @@ function registerIpcHandlers() {
     const result = db.prepare(`
       INSERT INTO notes (contractor_patient_id, entity_id, patient_name, date_of_service, time_in, time_out,
         subjective, objective, assessment, plan, medical_history, interventions_provided,
+        long_term_goals, short_term_goals,
         note_type, signed_at, signature_typed)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.contractor_patient_id || null,
       data.entity_id || null,
@@ -6819,6 +6967,8 @@ function registerIpcHandlers() {
       data.plan || '',
       data.medical_history || '',
       data.interventions_provided || '',
+      data.long_term_goals || '',
+      data.short_term_goals || '',
       noteType,
       data.signed_at || null,
       data.signature_typed || ''
@@ -6832,7 +6982,7 @@ function registerIpcHandlers() {
 
   safeHandle('contractorNotes:update', (_event, id: number, data: any) => {
     requireTier('pro');
-    const allowed = ['subjective', 'objective', 'assessment', 'plan', 'time_in', 'time_out', 'signed_at', 'signature_typed', 'patient_name', 'medical_history', 'interventions_provided', 'note_type'];
+    const allowed = ['subjective', 'objective', 'assessment', 'plan', 'time_in', 'time_out', 'signed_at', 'signature_typed', 'patient_name', 'medical_history', 'interventions_provided', 'long_term_goals', 'short_term_goals', 'note_type'];
     const fields = Object.keys(data).filter(k => allowed.includes(k));
     if (!fields.length) throw new Error('No valid fields to update');
     const set = fields.map(f => `${f} = ?`).join(', ') + ', updated_at = CURRENT_TIMESTAMP';
@@ -8302,6 +8452,212 @@ function registerIpcHandlers() {
     faxRouter.removeProvider(db);
     auditLog({ actionType: 'fax_provider_removed', entityType: 'settings', entityId: 0, detail: {} });
     return true;
+  });
+
+  // ── Email Provider Management + Send ──
+
+  safeHandle('email:setProvider', (_event, type: EmailProviderType, credentials: Record<string, string>) => {
+    requireTier('pro');
+    messagingRouter.setEmailProvider(type, credentials, db, encryptSecure);
+    auditLog({ actionType: 'email_provider_set', entityType: 'settings', entityId: 0, detail: { provider: type } });
+    return true;
+  });
+
+  safeHandle('email:getProviderStatus', () => {
+    return {
+      configured: messagingRouter.isEmailConfigured(),
+      provider: messagingRouter.getEmailProviderType(),
+      fromAddress: messagingRouter.getEmailFromAddress(),
+    };
+  });
+
+  safeHandle('email:testProvider', async () => {
+    requireTier('pro');
+    return messagingRouter.testEmailConnection();
+  });
+
+  safeHandle('email:removeProvider', () => {
+    requireTier('pro');
+    messagingRouter.removeEmailProvider(db);
+    auditLog({ actionType: 'email_provider_removed', entityType: 'settings', entityId: 0, detail: {} });
+    return true;
+  });
+
+  safeHandle('email:send', async (_event, params: { to: string; subject: string; bodyText: string; bodyHtml?: string; attachments?: Array<{ fileName: string; contentBase64: string; contentType?: string }>; replyTo?: string; clientId?: number }) => {
+    requireTier('pro');
+    const provider = messagingRouter.getEmailProvider(); // throws if not configured
+    const result = await provider.sendEmail(params);
+    auditLog({
+      actionType: 'email_sent',
+      entityType: 'communication',
+      entityId: 0,
+      clientId: params.clientId ?? null,
+      detail: { to: params.to, subject: params.subject, success: result.success, hasAttachments: !!(params.attachments && params.attachments.length) },
+    });
+    return result;
+  });
+
+  // ── SMS (Text Messaging) Provider Management ──
+
+  safeHandle('sms:setProvider', (_event, type: SmsProviderType, credentials: Record<string, string>) => {
+    requireTier('pro');
+    messagingRouter.setSmsProvider(type, credentials, db, encryptSecure);
+    auditLog({ actionType: 'sms_provider_set', entityType: 'settings', entityId: 0, detail: { provider: type } });
+    return true;
+  });
+
+  safeHandle('sms:getProviderStatus', () => {
+    return {
+      configured: messagingRouter.isSmsConfigured(),
+      provider: messagingRouter.getSmsProviderType(),
+      fromNumber: messagingRouter.getSmsFromNumber(),
+    };
+  });
+
+  safeHandle('sms:testProvider', async () => {
+    requireTier('pro');
+    return messagingRouter.testSmsConnection();
+  });
+
+  safeHandle('sms:removeProvider', () => {
+    requireTier('pro');
+    messagingRouter.removeSmsProvider(db);
+    auditLog({ actionType: 'sms_provider_removed', entityType: 'settings', entityId: 0, detail: {} });
+    return true;
+  });
+
+  // ── Appointment Reminder Engine ──
+  // Invoked by the renderer poll loop (App.tsx) on launch + every few minutes.
+  // Finds due appointments, sends via the client's channel, stamps reminder_status.
+  const getReminderSetting = (key: string): string | null => {
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as any;
+    return row?.value ?? null;
+  };
+  const loadReminderConfig = () => ({
+    leadHours: parseInt(getReminderSetting('reminder_lead_hours') || '', 10) || 24,
+    templates: {
+      smsTemplate: getReminderSetting('reminder_tpl_sms') ?? DEFAULT_REMINDER_TEMPLATES.smsTemplate,
+      emailSubject: getReminderSetting('reminder_tpl_email_subject') ?? DEFAULT_REMINDER_TEMPLATES.emailSubject,
+      emailBody: getReminderSetting('reminder_tpl_email_body') ?? DEFAULT_REMINDER_TEMPLATES.emailBody,
+      defaultMeetingLink: getReminderSetting('reminder_default_meeting_link') ?? DEFAULT_REMINDER_TEMPLATES.defaultMeetingLink,
+    },
+  });
+  let reminderRunInFlight = false;
+  safeHandle('reminders:runDue', async () => {
+    if (!messagingRouter.isEmailConfigured() && !messagingRouter.isSmsConfigured()) {
+      return { sent: 0, failed: 0, skipped: 0 };
+    }
+    if (reminderRunInFlight) return { sent: 0, failed: 0, skipped: 0, busy: true };
+    reminderRunInFlight = true;
+    try {
+      const practiceRow = db.prepare('SELECT name FROM practice LIMIT 1').get() as any;
+      const practiceName = (practiceRow?.name || 'your provider').toString();
+      const { leadHours, templates } = loadReminderConfig();
+      const summary = await sendDueReminders({ db, messagingRouter, practiceName, leadHours, templates });
+      for (const r of summary.results) {
+        auditLog({
+          actionType: r.success ? 'reminder_sent' : 'reminder_failed',
+          entityType: 'appointment',
+          entityId: r.appointmentId,
+          clientId: r.clientId,
+          detail: { channel: r.channel, success: r.success, error: r.error || undefined },
+        });
+      }
+      return { sent: summary.sent, failed: summary.failed, skipped: summary.skipped };
+    } finally {
+      reminderRunInFlight = false;
+    }
+  });
+
+  safeHandle('reminders:getConfig', () => {
+    const { leadHours, templates } = loadReminderConfig();
+    return { leadHours, ...templates };
+  });
+
+  safeHandle('reminders:saveConfig', (_event, cfg: { leadHours?: number; smsTemplate?: string; emailSubject?: string; emailBody?: string; defaultMeetingLink?: string }) => {
+    requireTier('pro');
+    const upsert = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+    if (cfg.leadHours != null) upsert.run('reminder_lead_hours', String(cfg.leadHours));
+    if (cfg.smsTemplate != null) upsert.run('reminder_tpl_sms', cfg.smsTemplate);
+    if (cfg.emailSubject != null) upsert.run('reminder_tpl_email_subject', cfg.emailSubject);
+    if (cfg.emailBody != null) upsert.run('reminder_tpl_email_body', cfg.emailBody);
+    if (cfg.defaultMeetingLink != null) upsert.run('reminder_default_meeting_link', cfg.defaultMeetingLink);
+    auditLog({ actionType: 'reminder_config_saved', entityType: 'settings', entityId: 0, detail: {} });
+    return { success: true };
+  });
+
+  // ── SMS Inbound — poll Twilio for replies, parse C/X → confirm/cancel ──
+  // Polled (no webhook), matched to the client's reminded appointment by phone number.
+  safeHandle('sms:pollInbox', async () => {
+    if (!messagingRouter.isSmsConfigured()) return { confirmed: 0, cancelled: 0 };
+    let provider;
+    try { provider = messagingRouter.getSmsProvider(); } catch { return { confirmed: 0, cancelled: 0 }; }
+
+    const sinceStr = getReminderSetting('sms_inbox_since');
+    const since = sinceStr ? new Date(sinceStr) : new Date(Date.now() - 3 * 24 * 3600 * 1000);
+
+    let inbound: Array<{ messageSid: string; from: string; body: string; receivedAt: string }>;
+    try {
+      inbound = await provider.getInbox(since);
+    } catch (err) {
+      console.error('[sms:pollInbox] failed to fetch inbox:', err);
+      return { confirmed: 0, cancelled: 0 };
+    }
+
+    const norm = (p: string) => (p || '').replace(/\D/g, '').slice(-10);
+
+    // Candidate appointments: reminded + still scheduled (small set).
+    const candidates = db.prepare(`
+      SELECT a.id, a.client_id, a.scheduled_date, a.scheduled_time, a.reminder_status, c.phone
+      FROM appointments a JOIN clients c ON c.id = a.client_id
+      WHERE a.reminder_status IN ('sent','confirmed') AND a.status = 'scheduled' AND a.deleted_at IS NULL
+    `).all() as any[];
+
+    let confirmed = 0;
+    let cancelled = 0;
+    let newestMs = since.getTime();
+
+    for (const msg of inbound) {
+      const t = new Date(msg.receivedAt).getTime();
+      if (!Number.isNaN(t) && t > newestMs) newestMs = t;
+
+      const body = (msg.body || '').trim().toLowerCase();
+      const isConfirm = /^(c|y|yes|confirm)\b/.test(body);
+      const isCancel = /^(x|n|no|cancel)\b/.test(body);
+      if (!isConfirm && !isCancel) continue;
+
+      const from = norm(msg.from);
+      if (!from) continue;
+
+      const matches = candidates.filter(
+        (a) => norm(a.phone) === from && (a.reminder_status === 'sent' || a.reminder_status === 'confirmed')
+      );
+      if (!matches.length) continue;
+      matches.sort((a, b) => `${a.scheduled_date} ${a.scheduled_time}`.localeCompare(`${b.scheduled_date} ${b.scheduled_time}`));
+      const appt = matches[0];
+      const nowIso = new Date().toISOString();
+
+      if (isCancel) {
+        const apptDT = new Date(`${appt.scheduled_date}T${(appt.scheduled_time || '00:00')}:00`).getTime();
+        const lateCancel = (!Number.isNaN(apptDT) && apptDT - Date.now() < 24 * 3600 * 1000) ? 1 : 0;
+        db.prepare(`UPDATE appointments SET status='cancelled', cancelled_at=?, cancellation_reason=?, late_cancel=?, reminder_status='cancelled', reminder_responded_at=? WHERE id=?`)
+          .run(nowIso, 'Client cancelled via text reply', lateCancel, nowIso, appt.id);
+        auditLog({ actionType: 'appointment_cancelled_by_text', entityType: 'appointment', entityId: appt.id, clientId: appt.client_id, detail: {} });
+        appt.reminder_status = 'cancelled';
+        cancelled++;
+      } else if (isConfirm && appt.reminder_status === 'sent') {
+        db.prepare(`UPDATE appointments SET reminder_status='confirmed', reminder_responded_at=? WHERE id=?`).run(nowIso, appt.id);
+        auditLog({ actionType: 'appointment_confirmed_by_text', entityType: 'appointment', entityId: appt.id, clientId: appt.client_id, detail: {} });
+        appt.reminder_status = 'confirmed';
+        confirmed++;
+      }
+    }
+
+    // Advance the high-water mark so we don't reprocess old replies.
+    const upsert = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+    upsert.run('sms_inbox_since', new Date(newestMs).toISOString());
+
+    return { confirmed, cancelled };
   });
 
   // ══════════════════════════════════════════════════════════════════════

@@ -21,6 +21,7 @@ import {
   Receipt,
   AlertTriangle,
   Sparkles,
+  Download,
 } from 'lucide-react';
 import type { Client, Evaluation, Discipline, GoalType, EvalGoalEntry, CptLine, PlaceOfService, SOAPSection, MeasurementType, PatternOverride, Physician } from '../../shared/types';
 import FaxPrompt from '../components/FaxPrompt';
@@ -3443,6 +3444,23 @@ export default function EvalFormPage() {
           >
             Cancel
           </button>
+          {savedEvalId && (
+            <button
+              className="btn-ghost flex items-center gap-2 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
+              onClick={async () => {
+                try {
+                  const { base64Pdf, filename } = await window.api.evaluations.generatePdf(savedEvalId);
+                  await window.api.notes.savePdf({ base64Pdf, filename });
+                } catch (err) {
+                  console.error('Failed to download eval PDF:', err);
+                }
+              }}
+              title="Download evaluation as PDF"
+            >
+              <Download className="w-4 h-4" />
+              PDF
+            </button>
+          )}
           {!existingSignedAt && (
           <button
             className="btn-primary flex items-center gap-2"

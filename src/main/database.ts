@@ -2465,6 +2465,58 @@ function runMigrations(): void {
         }
       },
     },
+    {
+      version: 65,
+      description: 'Contractor eval template: long_term_goals + short_term_goals columns on notes',
+      up: () => {
+        const cols = db.prepare("PRAGMA table_info(notes)").all() as any[];
+        const names = new Set(cols.map(c => c.name));
+        if (!names.has('long_term_goals')) {
+          db.exec("ALTER TABLE notes ADD COLUMN long_term_goals TEXT DEFAULT ''");
+        }
+        if (!names.has('short_term_goals')) {
+          db.exec("ALTER TABLE notes ADD COLUMN short_term_goals TEXT DEFAULT ''");
+        }
+      },
+    },
+    {
+      version: 66,
+      description: 'Appointment reminders: per-client reminder prefs + per-appointment reminder status',
+      up: () => {
+        // Per-client reminder preferences (set once in the chart modal)
+        if (!columnExists('clients', 'send_appointment_reminders')) {
+          db.exec('ALTER TABLE clients ADD COLUMN send_appointment_reminders INTEGER DEFAULT 0');
+        }
+        if (!columnExists('clients', 'reminder_channel')) {
+          db.exec("ALTER TABLE clients ADD COLUMN reminder_channel TEXT DEFAULT 'sms'");
+        }
+        if (!columnExists('clients', 'sms_consent_at')) {
+          db.exec('ALTER TABLE clients ADD COLUMN sms_consent_at TEXT DEFAULT NULL');
+        }
+        // Per-appointment reminder status (engine-managed; read by the calendar glyph)
+        if (!columnExists('appointments', 'reminder_status')) {
+          db.exec("ALTER TABLE appointments ADD COLUMN reminder_status TEXT DEFAULT 'none'");
+        }
+        if (!columnExists('appointments', 'reminder_sent_at')) {
+          db.exec('ALTER TABLE appointments ADD COLUMN reminder_sent_at TEXT DEFAULT NULL');
+        }
+        if (!columnExists('appointments', 'reminder_message_sid')) {
+          db.exec('ALTER TABLE appointments ADD COLUMN reminder_message_sid TEXT DEFAULT NULL');
+        }
+        if (!columnExists('appointments', 'reminder_responded_at')) {
+          db.exec('ALTER TABLE appointments ADD COLUMN reminder_responded_at TEXT DEFAULT NULL');
+        }
+      },
+    },
+    {
+      version: 67,
+      description: 'Appointment reminders: optional per-appointment meeting link (telehealth / video visit)',
+      up: () => {
+        if (!columnExists('appointments', 'meeting_link')) {
+          db.exec('ALTER TABLE appointments ADD COLUMN meeting_link TEXT DEFAULT NULL');
+        }
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
@@ -2722,7 +2774,8 @@ function createTables(): void {
 
 // ── Backup, Restore & Integrity Functions ──
 
-const LATEST_SCHEMA_VERSION = 55;
+// Must track the highest migration version above — used by the backup restore-compatibility check.
+const LATEST_SCHEMA_VERSION = 67;
 
 /**
  * Run PRAGMA quick_check — a fast consistency check on every launch.

@@ -28,6 +28,7 @@ import {
   LogOut,
   Archive,
   AlertTriangle,
+  Download,
 } from 'lucide-react';
 import type { Client, Note, Goal, GoalStatus, Discipline, SOAPSection, NoteFormat, CptLine, PlaceOfService, ContractedEntity, EntityFeeSchedule, StagedGoal, ProgressReportGoalStatus, ProgressReportData, ComplianceTracking, VisitType, Evaluation, NoteMode, DischargeData, DischargeGoalStatus, DischargeReason, DischargeRecommendation, EpisodeSummary, MeasurementType } from '../../shared/types';
 import { getPatternCategories } from '../../shared/goal-patterns';
@@ -1613,6 +1614,18 @@ export default function NoteFormPage() {
     }
   };
 
+  const handleDownloadPdf = async () => {
+    const targetId = savedNoteId || (noteId ? parseInt(noteId, 10) : null);
+    if (!targetId) return;
+    try {
+      const { base64Pdf, filename } = await window.api.notes.generatePdf(targetId);
+      await window.api.notes.savePdf({ base64Pdf, filename });
+    } catch (err) {
+      console.error('Failed to download note PDF:', err);
+      setToast('Failed to download PDF.');
+    }
+  };
+
   const handleCreateInvoice = async () => {
     if (!clientId || !savedNoteId) return;
     try {
@@ -3067,6 +3080,14 @@ export default function NoteFormPage() {
                   </button>
                   <button
                     className="btn-secondary btn-sm flex items-center gap-1.5"
+                    onClick={handleDownloadPdf}
+                    title="Download note as PDF"
+                  >
+                    <Download className="w-4 h-4" />
+                    Download PDF
+                  </button>
+                  <button
+                    className="btn-secondary btn-sm flex items-center gap-1.5"
                     onClick={handleGenerateSuperbill}
                     disabled={generatingSuperbill}
                   >
@@ -3127,6 +3148,16 @@ export default function NoteFormPage() {
             >
               Cancel
             </button>
+            {isEditing && (
+              <button
+                className="btn-ghost flex items-center gap-2 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
+                onClick={handleDownloadPdf}
+                title="Download note as PDF"
+              >
+                <Download className="w-4 h-4" />
+                PDF
+              </button>
+            )}
             <button
               className="btn-primary flex items-center gap-2"
               onClick={() => handleSave(false)}

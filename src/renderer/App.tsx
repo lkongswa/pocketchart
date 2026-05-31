@@ -812,6 +812,49 @@ const App: React.FC = () => {
     };
   }, [dbReady]);
 
+  // Background appointment-reminder engine (every 5 minutes while the app is open).
+  // Sends due reminders for opted-in clients via their configured channel; no-ops if
+  // no email/SMS provider is configured.
+  useEffect(() => {
+    if (!dbReady) return;
+
+    let interval: ReturnType<typeof setInterval> | null = null;
+
+    const checkReminders = async () => {
+      try {
+        const result = await window.api.reminders.runDue();
+        if (result.sent > 0) {
+          setGlobalToast(`${result.sent} appointment reminder${result.sent > 1 ? 's' : ''} sent`);
+        }
+      } catch (err) {
+        console.error('Background reminder run failed:', err);
+      }
+      // Poll inbound SMS replies (C = confirm, X = cancel)
+      try {
+        const inbox = await window.api.sms.pollInbox();
+        if (inbox.confirmed > 0 || inbox.cancelled > 0) {
+          const parts: string[] = [];
+          if (inbox.confirmed) parts.push(`${inbox.confirmed} confirmed`);
+          if (inbox.cancelled) parts.push(`${inbox.cancelled} cancelled`);
+          setGlobalToast(`Text replies — ${parts.join(', ')}`);
+          window.dispatchEvent(new Event('pocketchart:appointments-updated'));
+        }
+      } catch (err) {
+        console.error('Background SMS inbox poll failed:', err);
+      }
+    };
+
+    const startTimer = setTimeout(() => {
+      checkReminders();
+      interval = setInterval(checkReminders, 5 * 60 * 1000);
+    }, 12000);
+
+    return () => {
+      clearTimeout(startTimer);
+      if (interval) clearInterval(interval);
+    };
+  }, [dbReady]);
+
   const handleUnlock = () => {
     setIsLocked(false);
     lastActivityRef.current = Date.now();

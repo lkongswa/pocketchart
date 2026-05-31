@@ -10,6 +10,7 @@ import type {
   OnsetQualifier,
   SignatureSource,
   ReferringQualifier,
+  ReminderChannel,
 } from '../../shared/types';
 import {
   ONSET_QUALIFIER_LABELS,
@@ -141,6 +142,10 @@ interface FormData {
   service_facility_name: string;
   service_facility_npi: string;
   status: ClientStatus;
+  // Appointment reminders
+  send_appointment_reminders: boolean;
+  reminder_channel: ReminderChannel;
+  sms_consent_at: string | null;
 }
 
 const emptyForm: FormData = {
@@ -188,6 +193,9 @@ const emptyForm: FormData = {
   service_facility_name: '',
   service_facility_npi: '',
   status: 'active',
+  send_appointment_reminders: false,
+  reminder_channel: 'sms',
+  sms_consent_at: null,
 };
 
 function parseSecondaryDx(raw: string): SecondaryDxEntry[] {
@@ -275,6 +283,9 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
         service_facility_name: client.service_facility_name || '',
         service_facility_npi: client.service_facility_npi || '',
         status: client.status,
+        send_appointment_reminders: !!client.send_appointment_reminders,
+        reminder_channel: client.reminder_channel || 'sms',
+        sms_consent_at: client.sms_consent_at || null,
       });
     } else {
       // New client: check for waitlist pre-fill data, then default discipline from practice
@@ -448,9 +459,14 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
     try {
       const secondaryDxArr = form.secondary_dx_entries.filter(e => e.code.trim());
       const { secondary_dx_entries, ...rest } = form;
+      // Stamp TCPA consent the first time reminders are enabled; preserve the date thereafter.
+      const sms_consent_at = form.send_appointment_reminders
+        ? (form.sms_consent_at || new Date().toISOString())
+        : form.sms_consent_at;
       const submitData = {
         ...rest,
         secondary_dx: JSON.stringify(secondaryDxArr),
+        sms_consent_at,
       };
       let saved: Client;
       if (client) {
@@ -1164,6 +1180,55 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
                     rows={2}
                   />
                 </div>
+              </div>
+            )}
+          </div>
+
+          {/* Appointment Reminders */}
+          <div className="rounded-lg border-l-4 border-cyan-400 bg-cyan-50/30 p-4">
+            <h3 className="section-title text-cyan-700">Appointment Reminders</h3>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                className="w-4 h-4 rounded border-gray-300 text-cyan-600 focus:ring-cyan-500"
+                checked={form.send_appointment_reminders}
+                onChange={(e) => setForm(prev => ({ ...prev, send_appointment_reminders: e.target.checked }))}
+              />
+              <span className="text-sm text-[var(--color-text)]">Automatically send this client appointment reminders</span>
+            </label>
+
+            {form.send_appointment_reminders && (
+              <div className="mt-3 grid grid-cols-2 gap-4">
+                <div>
+                  <label className="label" htmlFor="reminder_channel">Reminder Channel</label>
+                  <select
+                    id="reminder_channel"
+                    name="reminder_channel"
+                    className="select"
+                    value={form.reminder_channel}
+                    onChange={handleChange}
+                  >
+                    <option value="sms">Text message</option>
+                    <option value="email">Email</option>
+                    <option value="both">Text + Email</option>
+                  </select>
+                </div>
+                <div className="flex items-end">
+                  <p className="text-xs text-[var(--color-text-tertiary)]">
+                    Sent ~24h before each appointment while PocketChart is open, using the contact info on file. Requires Text Messaging / Email set up in Settings.
+                  </p>
+                </div>
+                {form.reminder_channel !== 'email' && !form.phone.trim() && (
+                  <p className="col-span-2 text-xs text-amber-600">⚠ No phone number on file — add one above so text reminders can send.</p>
+                )}
+                {form.reminder_channel !== 'sms' && !form.email.trim() && (
+                  <p className="col-span-2 text-xs text-amber-600">⚠ No email on file — add one above so email reminders can send.</p>
+                )}
+                <p className="col-span-2 text-[11px] text-[var(--color-text-tertiary)]">
+                  {form.sms_consent_at
+                    ? `Consent to contact recorded ${new Date(form.sms_consent_at).toLocaleDateString()}.`
+                    : 'Enabling records the client’s consent to receive automated reminders (date-stamped on save).'}
+                </p>
               </div>
             )}
           </div>

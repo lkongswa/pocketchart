@@ -3,6 +3,8 @@ export type ClientStatus = 'active' | 'discharged' | 'hold';
 export type GoalType = 'STG' | 'LTG';
 export type GoalStatus = 'active' | 'met' | 'discontinued' | 'modified';
 export type AppointmentStatus = 'scheduled' | 'completed' | 'cancelled' | 'no-show';
+export type ReminderChannel = 'sms' | 'email' | 'both';
+export type ReminderStatus = 'none' | 'sent' | 'confirmed' | 'cancelled' | 'failed';
 export type VisitType = 'T' | 'H' | 'O' | 'C';
 export type SessionType = 'visit' | 'eval' | 'recert';
 export type WaitlistStatus = 'waiting' | 'contacted' | 'scheduled_intake' | 'converted' | 'declined';
@@ -296,6 +298,10 @@ export interface Client {
   status: ClientStatus;
   discipline: Discipline;
   assigned_user_id: number | null;           // V4: Multi-provider
+  // Appointment reminders (Messaging feature)
+  send_appointment_reminders: boolean;       // per-client toggle (stored 0/1)
+  reminder_channel: ReminderChannel;         // 'sms' | 'email' | 'both'
+  sms_consent_at: string | null;             // TCPA consent timestamp, set when the toggle is enabled
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -392,6 +398,9 @@ export interface Note {
   // Contractor eval template fields (v60)
   medical_history?: string;
   interventions_provided?: string;
+  // Contractor eval template fields (v65)
+  long_term_goals?: string;
+  short_term_goals?: string;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -430,6 +439,12 @@ export interface Appointment {
   cancelled_at: string | null;               // V2/V3: Cancellation tracking
   cancellation_reason: string;               // V2/V3: Cancellation tracking
   late_cancel: boolean;                      // V2/V3: Cancellation tracking
+  // Appointment reminders (Messaging feature) — engine-managed, read by the calendar glyph
+  reminder_status: ReminderStatus;           // none | sent | confirmed | cancelled | failed
+  reminder_sent_at: string | null;           // ISO timestamp when the reminder went out
+  reminder_message_sid: string | null;       // provider message id (status polling + reply correlation)
+  reminder_responded_at: string | null;      // ISO timestamp when the client replied
+  meeting_link: string | null;               // Optional telehealth / video-visit link for this appointment
   // Contractor module fields
   entity_id: number | null;
   entity_rate: number | null;
@@ -1776,6 +1791,12 @@ export interface PocketChartAPI {
     delete: (id: number) => Promise<boolean>;
     getEpisodeSummary: (clientId: number) => Promise<EpisodeSummary>;
     getUnbilledForClient: (clientId: number) => Promise<Array<{ id: number; date_of_service: string; cpt_code: string; charge_amount: number; entity_id: number | null }>>;
+    /** Build a single-note PDF (works for both client SOAP notes and contractor notes). */
+    generatePdf: (noteId: number) => Promise<{ base64Pdf: string; filename: string }>;
+    /** Build a multi-note PDF packet. All notes must belong to the same patient. */
+    generateBulkPdf: (noteIds: number[]) => Promise<{ base64Pdf: string; filename: string }>;
+    /** Save a previously-generated PDF via system save dialog. Returns the chosen path, or null if canceled. */
+    savePdf: (data: { base64Pdf: string; filename: string }) => Promise<string | null>;
   };
   evaluations: {
     listByClient: (clientId: number) => Promise<Evaluation[]>;
@@ -1787,6 +1808,7 @@ export interface PocketChartAPI {
     countIncomplete: () => Promise<number>;
     listIncomplete: () => Promise<any[]>;
     listAll: () => Promise<any[]>;
+    generatePdf: (evalId: number) => Promise<{ base64Pdf: string; filename: string }>;
   };
   appointments: {
     list: (filters?: { startDate?: string; endDate?: string; clientId?: number }) => Promise<Appointment[]>;
@@ -2350,6 +2372,28 @@ export interface PocketChartAPI {
     getProviderStatus: () => Promise<{ configured: boolean; provider: FaxProviderType | null; faxNumber?: string }>;
     testProvider: () => Promise<{ success: boolean; message: string; faxNumber?: string; balance?: string }>;
     removeProvider: () => Promise<boolean>;
+  };
+  // ── Email (Pro) ──
+  email: {
+    send: (params: { to: string; subject: string; bodyText: string; bodyHtml?: string; attachments?: Array<{ fileName: string; contentBase64: string; contentType?: string }>; replyTo?: string; clientId?: number }) => Promise<{ success: boolean; messageId: string; error?: string }>;
+    setProvider: (type: string, credentials: Record<string, string>) => Promise<boolean>;
+    getProviderStatus: () => Promise<{ configured: boolean; provider: string | null; fromAddress?: string }>;
+    testProvider: () => Promise<{ success: boolean; message: string; fromAddress?: string }>;
+    removeProvider: () => Promise<boolean>;
+  };
+  // ── SMS / Text Messaging (Pro) ──
+  sms: {
+    setProvider: (type: string, credentials: Record<string, string>) => Promise<boolean>;
+    getProviderStatus: () => Promise<{ configured: boolean; provider: string | null; fromNumber?: string }>;
+    testProvider: () => Promise<{ success: boolean; message: string; fromNumber?: string }>;
+    removeProvider: () => Promise<boolean>;
+    pollInbox: () => Promise<{ confirmed: number; cancelled: number }>;
+  };
+  // ── Appointment Reminders (Pro) ──
+  reminders: {
+    runDue: () => Promise<{ sent: number; failed: number; skipped: number; busy?: boolean }>;
+    getConfig: () => Promise<{ leadHours: number; smsTemplate: string; emailSubject: string; emailBody: string; defaultMeetingLink: string }>;
+    saveConfig: (cfg: { leadHours?: number; smsTemplate?: string; emailSubject?: string; emailBody?: string; defaultMeetingLink?: string }) => Promise<{ success: boolean }>;
   };
   // ── Intake Forms ──
   intakeForms: {

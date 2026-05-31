@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Search, Plus, Users, Eye, Tag, FileText, ClipboardList, Receipt, Building2, Calendar as CalendarIcon } from 'lucide-react';
-import type { Client, ClientStatus, Discipline, ContractorPatientRow } from '../../shared/types';
+import { Search, Plus, Users, Eye, Tag, FileText, ClipboardList, Receipt, Building2, Calendar as CalendarIcon, Pencil } from 'lucide-react';
+import type { Client, ClientStatus, Discipline, ContractorPatient, ContractorPatientRow } from '../../shared/types';
 import ClientFormModal from '../components/ClientFormModal';
+import ContractorPatientEditModal from '../components/ContractorPatientEditModal';
 import TrialExpiredModal from '../components/TrialExpiredModal';
 import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
 import { useTrialGuard } from '../hooks/useTrialGuard';
@@ -48,6 +49,7 @@ const ClientsPage: React.FC = () => {
   const [disciplineFilter, setDisciplineFilter] = useState<string>('');
   const [modalOpen, setModalOpen] = useState(false);
   const [discountClientIds, setDiscountClientIds] = useState<Set<number>>(new Set());
+  const [editingContractorPatient, setEditingContractorPatient] = useState<ContractorPatient | null>(null);
 
   // Compliance badges state
   const [clientAlerts, setClientAlerts] = useState<Map<number, string[]>>(new Map());
@@ -480,6 +482,13 @@ const ClientsPage: React.FC = () => {
                       <div className="flex items-center gap-1">
                         <button
                           className="btn-ghost p-1.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="Edit patient (DOB, MRN, phone, notes)"
+                          onClick={(e) => { e.stopPropagation(); setEditingContractorPatient(p); }}
+                        >
+                          <Pencil size={14} />
+                        </button>
+                        <button
+                          className="btn-ghost p-1.5 opacity-0 group-hover:opacity-100 transition-opacity"
                           title="Schedule appointment"
                           onClick={(e) => {
                             e.stopPropagation();
@@ -528,6 +537,20 @@ const ClientsPage: React.FC = () => {
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
         onSave={handleClientSaved}
+      />
+
+      {/* Edit contractor patient modal — launched from the pencil icon on Contract Patients rows. */}
+      <ContractorPatientEditModal
+        patient={editingContractorPatient}
+        onClose={() => setEditingContractorPatient(null)}
+        onSaved={(updated) => {
+          setContractPatients(prev => prev.map(p =>
+            p.id === updated.id
+              // Preserve the joined / computed columns the row needs (entity_name, visit counts).
+              ? { ...p, name: updated.name, dob: updated.dob, mrn: updated.mrn, phone: updated.phone, address: updated.address, notes: updated.notes }
+              : p
+          ));
+        }}
       />
 
       {/* Trial Expired Modal */}

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { FileText } from 'lucide-react';
+import { FileText, Send } from 'lucide-react';
 import type { Appointment, AppointmentStatus, VisitType, SessionType } from '../../../shared/types';
 import { VISIT_TYPE_LABELS, SESSION_TYPE_LABELS } from '../../../shared/types';
 import AppointmentHoverCard from './AppointmentHoverCard';
@@ -284,6 +284,18 @@ export default function AppointmentBlock({
     </span>
   ) : null;
 
+  // Reminder status glyph (paper airplane). Shown once a reminder has been sent;
+  // green = confirmed by client, amber = send failed. Cancelled is conveyed by the block style.
+  const reminderStatus = (appointment as any).reminder_status as string | undefined;
+  const reminderBadge = reminderStatus && reminderStatus !== 'none' && reminderStatus !== 'cancelled' ? (
+    <span
+      className="flex items-center flex-shrink-0"
+      title={reminderStatus === 'confirmed' ? 'Confirmed by text' : reminderStatus === 'failed' ? 'Reminder failed to send' : 'Reminder sent — awaiting reply'}
+    >
+      <Send className={`w-3 h-3 ${reminderStatus === 'confirmed' ? 'text-emerald-600' : reminderStatus === 'failed' ? 'text-amber-500' : 'text-slate-400'}`} />
+    </span>
+  ) : null;
+
   // Compact mode: inline rendering for month view
   if (compact) {
     return (
@@ -304,6 +316,7 @@ export default function AppointmentBlock({
         {sessionBadge}
         {visitBadge}
         {dollarBadge}
+        {reminderBadge}
       </div>
     );
   }
@@ -338,6 +351,7 @@ export default function AppointmentBlock({
           {sessionBadge}
           {visitBadge}
           {dollarBadge}
+          {reminderBadge}
         </div>
       </div>
       <div
