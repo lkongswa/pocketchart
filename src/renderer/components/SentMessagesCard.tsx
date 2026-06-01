@@ -1,17 +1,15 @@
 // SentMessagesCard — a Dashboard card giving the practitioner a receipt for outbound
 // messaging: appointment reminders (SMS/email), client confirm/cancel text replies, and
-// invoice / intake-form emails. Data comes from window.api.messages.listSent (derived from
-// the audit log — no separate table). The card shows the latest few; "View all" opens a
-// modal with more, filterable by kind. The card hides itself entirely when nothing has been
-// sent, so it never clutters the dashboard for practices not using messaging.
-import React, { useEffect, useState, useCallback } from 'react';
+// invoice / intake-form emails. The latest sends are passed in by the Dashboard (which
+// fetches them so it can decide the side-by-side layout); "View all" lazily loads more via
+// window.api.messages.listSent. Renders nothing when there's nothing to show.
+import React, { useState, useCallback } from 'react';
 import { Send, Mail, MessageSquare, X, ArrowDownLeft } from 'lucide-react';
 import type { SentMessage, SentMessageStatus, SentMessageChannel } from '../../shared/types';
 
-const CARD_LIMIT = 8;
 const MODAL_LIMIT = 200;
 
-type KindFilter = 'all' | 'reminders' | 'invoices' | 'intake';
+type KindFilter = 'all' | 'reminders' | 'invoices' | 'intake' | 'documents';
 
 function relTime(iso: string): string {
   const t = new Date(iso).getTime();
@@ -36,7 +34,7 @@ const STATUS_STYLES: Record<SentMessageStatus, { label: string; cls: string }> =
 
 function StatusChip({ status }: { status: SentMessageStatus }) {
   const s = STATUS_STYLES[status] || STATUS_STYLES.sent;
-  return <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${s.cls}`}>{s.label}</span>;
+  return <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded flex-shrink-0 whitespace-nowrap ${s.cls}`}>{s.label}</span>;
 }
 
 function ChannelIcon({ channel, isReply }: { channel: SentMessageChannel | null; isReply: boolean }) {
@@ -53,7 +51,7 @@ function MessageRow({ m }: { m: SentMessage }) {
       <ChannelIcon channel={m.channel} isReply={isReply} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-[var(--color-text)] truncate">{m.who}</span>
+          <span className="text-sm font-medium text-[var(--color-text)] truncate min-w-0">{m.who}</span>
           <StatusChip status={m.status} />
         </div>
         {sub && <div className="text-xs text-[var(--color-text-secondary)] truncate">{sub}</div>}
@@ -68,27 +66,20 @@ function matchesFilter(m: SentMessage, f: KindFilter): boolean {
   if (f === 'reminders') return m.kind === 'reminder' || m.kind === 'reply';
   if (f === 'invoices') return m.kind === 'invoice';
   if (f === 'intake') return m.kind === 'intake';
+  if (f === 'documents') return m.kind === 'documents';
   return true;
 }
 
-export default function SentMessagesCard() {
-  const [recent, setRecent] = useState<SentMessage[]>([]);
-  const [loaded, setLoaded] = useState(false);
+interface SentMessagesCardProps {
+  /** Latest sends, fetched by the parent (Dashboard) so it can decide the side-by-side layout. */
+  messages: SentMessage[];
+}
 
+export default function SentMessagesCard({ messages }: SentMessagesCardProps) {
   const [showAll, setShowAll] = useState(false);
   const [allMsgs, setAllMsgs] = useState<SentMessage[]>([]);
   const [allLoading, setAllLoading] = useState(false);
   const [filter, setFilter] = useState<KindFilter>('all');
-
-  useEffect(() => {
-    let active = true;
-    window.api.messages
-      .listSent({ limit: CARD_LIMIT })
-      .then((data) => { if (active) setRecent(data); })
-      .catch(() => { /* never break the dashboard over the message log */ })
-      .finally(() => { if (active) setLoaded(true); });
-    return () => { active = false; };
-  }, []);
 
   const openAll = useCallback(async () => {
     setShowAll(true);
@@ -104,8 +95,8 @@ export default function SentMessagesCard() {
     }
   }, []);
 
-  // Hide entirely until we know there's something to show.
-  if (!loaded || recent.length === 0) return null;
+  // Nothing sent yet — render nothing (the parent drops the 2-col layout to match).
+  if (messages.length === 0) return null;
 
   const filtered = allMsgs.filter((m) => matchesFilter(m, filter));
   const FILTERS: { key: KindFilter; label: string }[] = [
@@ -113,10 +104,11 @@ export default function SentMessagesCard() {
     { key: 'reminders', label: 'Reminders' },
     { key: 'invoices', label: 'Invoices' },
     { key: 'intake', label: 'Intake' },
+    { key: 'documents', label: 'Documents' },
   ];
 
   return (
-    <div className="card mt-6">
+    <div className="card">
       <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border)]">
         <div className="flex items-center gap-2">
           <Send size={18} className="text-teal-500" />
@@ -127,7 +119,7 @@ export default function SentMessagesCard() {
         </button>
       </div>
       <div className="divide-y divide-[var(--color-border)]">
-        {recent.map((m) => <MessageRow key={m.id} m={m} />)}
+        {messages.map((m) => <MessageRow key={m.id} m={m} />)}
       </div>
 
       {/* View-all modal */}

@@ -14,8 +14,10 @@ import {
   DollarSign,
   CheckCircle,
   Save,
+  Send,
+  AlertCircle,
 } from 'lucide-react';
-import type { Client, Note, Appointment } from '../../shared/types';
+import type { Client, Note, Appointment, SentMessage } from '../../shared/types';
 import BasicAlertsPanel from '../components/BasicAlertsPanel';
 import DashboardWorkspace from '../components/DashboardWorkspace';
 import ReviewPromptCard from '../components/ReviewPromptCard';
@@ -32,6 +34,30 @@ interface DashboardStats {
 }
 
 const BACKUP_REMINDER_DAYS = 7;
+
+// Per-appointment reminder status icon, shown inline in the Upcoming Appointments list so
+// the practitioner can see at a glance whether a reminder went out / was confirmed — without
+// scrolling to the Recent Messages card. Mirrors the calendar's reminder glyph semantics.
+// Renders an empty fixed-width slot for 'none' so the date/time column stays aligned.
+function ReminderIndicator({ status }: { status?: string | null }) {
+  let icon: React.ReactNode = null;
+  let title = '';
+  if (status === 'confirmed') {
+    icon = <CheckCircle size={15} className="text-emerald-500" />;
+    title = 'Reminder confirmed by client';
+  } else if (status === 'sent') {
+    icon = <Send size={13} className="text-slate-400" />;
+    title = 'Reminder sent';
+  } else if (status === 'failed') {
+    icon = <AlertCircle size={15} className="text-amber-500" />;
+    title = 'Reminder failed to send';
+  }
+  return (
+    <span className="w-5 flex items-center justify-center flex-shrink-0" title={title}>
+      {icon}
+    </span>
+  );
+}
 
 const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
@@ -53,6 +79,7 @@ const DashboardPage: React.FC = () => {
   const [integrityIssues, setIntegrityIssues] = useState<{ tamperedNotes: number[]; tamperedEvals: number[] } | null>(null);
   const [reviewEligible, setReviewEligible] = useState(false);
   const [reviewMilestone, setReviewMilestone] = useState<string | null>(null);
+  const [sentMessages, setSentMessages] = useState<SentMessage[]>([]);
 
   useEffect(() => {
     loadDashboardData();
@@ -221,6 +248,15 @@ const DashboardPage: React.FC = () => {
         .filter((appt) => appt.status === 'scheduled')
         .slice(0, 10);
       setUpcomingAppointments(upcoming);
+
+      // Recent sent messages (reminders + invoice/intake emails) for the side-by-side card.
+      // Fetched here so the 2-column layout decision is made before first paint.
+      try {
+        const sent = await window.api.messages.listSent({ limit: 8 });
+        setSentMessages(sent);
+      } catch {
+        setSentMessages([]);
+      }
 
       // Outstanding balance
       const balanceData = await window.api.dashboard.getOutstandingBalance().catch(() => ({ outstanding: 0, unpaidCount: 0 }));
@@ -441,7 +477,9 @@ const DashboardPage: React.FC = () => {
         ))}
       </div>
 
-      {/* Upcoming Appointments — primary content block, full width */}
+      {/* Upcoming Appointments + Recent Messages — side by side once messages exist */}
+      <div className={sentMessages.length > 0 ? 'grid grid-cols-1 lg:grid-cols-2 gap-6 items-start' : ''}>
+      {/* Upcoming Appointments */}
       <div className="card">
         <div className="flex items-center gap-2 px-5 py-4 border-b border-[var(--color-border)]">
           <Clock size={18} className="text-teal-500" />
@@ -518,6 +556,7 @@ const DashboardPage: React.FC = () => {
                       <PenLine size={14} className="text-teal-600" />
                     </button>
                     )}
+                    <ReminderIndicator status={appt.reminder_status} />
                     <div className="text-right">
                       <p className="text-sm font-medium text-[var(--color-text)]">
                         {formatDate(appt.scheduled_date)}
@@ -535,8 +574,9 @@ const DashboardPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Sent Messages — receipt for reminders + invoice/intake emails (hides when empty) */}
-      <SentMessagesCard />
+        {/* Sent Messages — receipt for reminders + invoice/intake emails (hides when empty) */}
+        <SentMessagesCard messages={sentMessages} />
+      </div>
 
       {/* Workspace: Scratchpad + Tasks */}
       <DashboardWorkspace />
