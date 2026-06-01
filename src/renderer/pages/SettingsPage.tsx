@@ -325,6 +325,17 @@ export default function SettingsPage() {
     return (tpl || '').replace(/\{(\w+)\}/g, (_m, k) => f[k] ?? '').replace(/ {2,}/g, ' ').trim();
   };
 
+  // Intake email template state (Settings → Intake Email)
+  const [intakeEmailSubject, setIntakeEmailSubject] = useState('');
+  const [intakeEmailBody, setIntakeEmailBody] = useState('');
+  const [intakeEmailSaving, setIntakeEmailSaving] = useState(false);
+  const intakeEmailPreview = (tpl: string): string => {
+    const f: Record<string, string> = {
+      first_name: 'Jordan', client: 'Jordan Lee', practice: 'Your Practice', date: 'Jun 1, 2026',
+    };
+    return (tpl || '').replace(/\{(\w+)\}/g, (_m, k) => f[k] ?? '').replace(/ {2,}/g, ' ').trim();
+  };
+
   const [showPhysicianDirectory, setShowPhysicianDirectory] = useState(false);
 
   // Clearinghouse (provider-agnostic) state
@@ -609,6 +620,14 @@ export default function SettingsPage() {
     window.api.invoiceEmail.getConfig().then((cfg) => {
       setInvEmailSubject(cfg.subject || '');
       setInvEmailBody(cfg.body || '');
+    }).catch(() => {});
+  }, []);
+
+  // Load intake email template config
+  useEffect(() => {
+    window.api.intakeEmail.getConfig().then((cfg) => {
+      setIntakeEmailSubject(cfg.subject || '');
+      setIntakeEmailBody(cfg.body || '');
     }).catch(() => {});
   }, []);
 
@@ -3533,6 +3552,96 @@ export default function SettingsPage() {
               }}
             >
               {invEmailSaving ? 'Saving...' : 'Save Template'}
+            </button>
+          </div>
+        </div>
+      </CollapsibleSection>
+
+      {/* Intake Email (Pro) — subject/body template for emailing intake form packets */}
+      <CollapsibleSection
+        icon={<Mail className="w-5 h-5" />}
+        title="Intake Email"
+        description="Message sent when you email intake forms to a client"
+        sectionId="settings-intake-email"
+        isOpen={openSectionId === 'intake-email'}
+        onToggle={() => toggleSection('intake-email')}
+      >
+        <div className="space-y-5">
+          <p className="text-sm text-[var(--color-text-secondary)]">
+            The message used when you email intake forms to a client from the packet builder. The form packet PDF is
+            attached automatically — and if you generate it fillable, your client can complete it on their computer
+            (no printing or scanning). Merge fields auto-fill per client:
+            <span className="font-mono text-xs"> {'{first_name}'} {'{client}'} {'{practice}'} {'{date}'}</span>
+          </p>
+
+          {/* Subject */}
+          <div>
+            <label className="label">Email subject</label>
+            <input className="input w-full" value={intakeEmailSubject} onChange={(e) => setIntakeEmailSubject(e.target.value)} />
+          </div>
+
+          {/* Body */}
+          <div>
+            <label className="label">Email message</label>
+            <textarea
+              className="input w-full text-sm"
+              rows={6}
+              value={intakeEmailBody}
+              onChange={(e) => setIntakeEmailBody(e.target.value)}
+            />
+            <div className="flex flex-wrap gap-1 mt-1">
+              {['{first_name}', '{client}', '{practice}', '{date}'].map((tok) => (
+                <button
+                  key={tok}
+                  type="button"
+                  className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-gray-100 hover:bg-gray-200 text-gray-700"
+                  onClick={() => setIntakeEmailBody((v) => (v && !v.endsWith(' ') && !v.endsWith('\n') ? v + ' ' : v) + tok)}
+                >
+                  {tok}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Live email preview */}
+          <div>
+            <label className="label">Email preview</label>
+            <div className="border border-[var(--color-border)] rounded-lg overflow-hidden max-w-md">
+              <div className="px-4 py-2.5" style={{ background: '#0f766e' }}>
+                <div className="text-white text-sm font-semibold">Your Practice</div>
+                <div className="text-xs" style={{ color: '#c8efe9' }}>New Patient Forms</div>
+              </div>
+              <div className="p-4 bg-white">
+                <div className="text-sm text-gray-700 whitespace-pre-wrap">{intakeEmailPreview(intakeEmailBody)}</div>
+                <div className="border border-gray-200 rounded-lg p-3 bg-gray-50 mt-3 text-sm">
+                  <div className="text-gray-500 text-xs mb-1">Forms included</div>
+                  <div className="text-gray-900">• New Patient Intake</div>
+                  <div className="text-gray-900">• Consent for Treatment</div>
+                </div>
+                <div className="text-xs text-gray-400 mt-3">Open the attached PDF in any reader, type into the fields, and save.</div>
+              </div>
+            </div>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">The forms list and PDF attachment are added automatically — you just write the message.</p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              className="btn-primary text-sm"
+              disabled={intakeEmailSaving}
+              onClick={async () => {
+                setIntakeEmailSaving(true);
+                try {
+                  await window.api.intakeEmail.saveConfig({ subject: intakeEmailSubject, body: intakeEmailBody });
+                  setToast('Intake email template saved');
+                } catch (err) {
+                  setToast('Failed to save intake email template');
+                } finally {
+                  setIntakeEmailSaving(false);
+                }
+              }}
+            >
+              {intakeEmailSaving ? 'Saving...' : 'Save Template'}
             </button>
           </div>
         </div>

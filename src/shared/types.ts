@@ -1742,6 +1742,23 @@ export interface IntegrityCheckResult {
   timestamp: string;
 }
 
+// A single outbound-message record for the Sent Messages log (derived from the audit log:
+// appointment reminders, confirm/cancel replies, invoice emails, intake-form emails).
+export type SentMessageKind = 'reminder' | 'reply' | 'invoice' | 'intake' | 'email';
+export type SentMessageChannel = 'sms' | 'email';
+export type SentMessageStatus = 'sent' | 'failed' | 'confirmed' | 'cancelled';
+export interface SentMessage {
+  id: number;
+  timestamp: string;          // ISO 8601 (UTC-normalized)
+  kind: SentMessageKind;
+  channel: SentMessageChannel | null;
+  status: SentMessageStatus;
+  who: string;                // client name, else recipient, else 'Unknown'
+  recipient: string;          // email / phone if known
+  context: string;            // e.g. "Appt Sun, Jun 2 · 10:00 AM", "Invoice INV-0042", "2 intake forms"
+  error: string | null;
+}
+
 // API interface exposed through preload
 export interface PocketChartAPI {
   app: {
@@ -2431,7 +2448,28 @@ export interface PocketChartAPI {
     resetTemplate: (slug: string) => Promise<IntakeFormTemplate>;
     generatePdf: (data: { templateIds: number[]; clientId?: number; fillable?: boolean }) => Promise<{ base64Pdf: string; filename: string }>;
     savePdf: (data: { base64Pdf: string; filename: string }) => Promise<string | null>;
+    prepareEmail: (data: { templateIds: number[]; clientId?: number; fillable?: boolean }) => Promise<{
+      emailConfigured: boolean;
+      fromAddress: string;
+      to: string;
+      subject: string;
+      bodyText: string;
+      formNames: string[];
+    }>;
+    email: (data: { templateIds: number[]; clientId?: number; fillable?: boolean; to: string; subject: string; bodyText: string }) => Promise<{
+      success: boolean;
+      error?: string;
+    }>;
     reorderTemplates: (ids: number[]) => Promise<boolean>;
+  };
+  // ── Intake Email template (Pro) ──
+  intakeEmail: {
+    getConfig: () => Promise<{ subject: string; body: string }>;
+    saveConfig: (cfg: { subject?: string; body?: string }) => Promise<{ success: boolean }>;
+  };
+  // ── Sent Messages log (reminders + invoice/intake emails, from the audit log) ──
+  messages: {
+    listSent: (opts?: { limit?: number; offset?: number }) => Promise<SentMessage[]>;
   };
   // ── Waitlist (Pro) ──
   waitlist: {

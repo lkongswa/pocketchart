@@ -600,7 +600,18 @@ const api = {
     resetTemplate: (slug: string) => ipcRenderer.invoke('intakeForms:resetTemplate', slug),
     generatePdf: (data: { templateIds: number[]; clientId?: number; fillable?: boolean }) => ipcRenderer.invoke('intakeForms:generatePdf', data),
     savePdf: (data: { base64Pdf: string; filename: string }) => ipcRenderer.invoke('intakeForms:savePdf', data),
+    prepareEmail: (data: { templateIds: number[]; clientId?: number; fillable?: boolean }) => ipcRenderer.invoke('intakeForms:prepareEmail', data),
+    email: (data: { templateIds: number[]; clientId?: number; fillable?: boolean; to: string; subject: string; bodyText: string }) => ipcRenderer.invoke('intakeForms:email', data),
     reorderTemplates: (ids: number[]) => ipcRenderer.invoke('intakeForms:reorderTemplates', ids),
+  },
+  // ── Intake Email template (Pro) ──
+  intakeEmail: {
+    getConfig: () => ipcRenderer.invoke('intakeEmail:getConfig'),
+    saveConfig: (cfg: { subject?: string; body?: string }) => ipcRenderer.invoke('intakeEmail:saveConfig', cfg),
+  },
+  // ── Sent Messages log ──
+  messages: {
+    listSent: (opts?: { limit?: number; offset?: number }) => ipcRenderer.invoke('messages:listSent', opts),
   },
 
   // ── Fax ──

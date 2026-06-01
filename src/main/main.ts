@@ -27,7 +27,7 @@ import { buildNotePdf, buildEvalPdf, buildBulkNotesPdf } from './notePdfGenerato
 import type { NoteRow, EvalRow, PatientInfo, EntityInfo, GoalInfo } from './notePdfGenerator';
 import { DEFAULT_INTAKE_TEMPLATES } from '../shared/intakeTemplates';
 import { FaxRouter, matchFaxToClient, normalizeFaxNumber, type FaxProviderType } from './fax';
-import { MessagingRouter, sendDueReminders, DEFAULT_REMINDER_TEMPLATES, DEFAULT_INVOICE_EMAIL_TEMPLATE, mergeInvoiceTemplate, buildInvoiceEmailHtml, type EmailProviderType, type SmsProviderType } from './messaging';
+import { MessagingRouter, sendDueReminders, DEFAULT_REMINDER_TEMPLATES, DEFAULT_INVOICE_EMAIL_TEMPLATE, mergeInvoiceTemplate, buildInvoiceEmailHtml, DEFAULT_INTAKE_EMAIL_TEMPLATE, mergeIntakeTemplate, buildIntakeEmailHtml, type EmailProviderType, type SmsProviderType } from './messaging';
 import { NOTE_FORMAT_SECTIONS, DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS, INVOICE_COLUMNS, ENTITY_INVOICE_DEFAULT_COLUMNS, CLIENT_INVOICE_DEFAULT_COLUMNS, parseInvoiceColumns } from '../shared/types';
 import type { InvoiceColumnKey } from '../shared/types';
 import { ClearinghouseRouter, type ClearinghouseProviderType } from './clearinghouse';
@@ -8115,7 +8115,9 @@ function registerIpcHandlers() {
     return { ...row, sections: JSON.parse(row.sections || '[]'), is_active: !!row.is_active };
   });
 
-  safeHandle('intakeForms:generatePdf', async (_event, data: { templateIds: number[]; clientId?: number; fillable?: boolean }) => {
+  // Shared: build the intake packet PDF (+ filename) from selected templates, optionally
+  // pre-filled for a client. Used by the download (generatePdf) and email flows.
+  const buildIntakePacket = async (data: { templateIds: number[]; clientId?: number; fillable?: boolean }) => {
     const templates = data.templateIds.map(id => {
       const row = db.prepare('SELECT * FROM intake_form_templates WHERE id = ?').get(id) as any;
       if (!row) throw new Error(`Template ${id} not found`);
@@ -8154,6 +8156,11 @@ function registerIpcHandlers() {
     const clientName = clientInfo ? `${clientInfo.first_name}_${clientInfo.last_name}` : 'blank';
     const filename = `intake_packet_${clientName}_${new Date().toISOString().slice(0, 10)}.pdf`;
 
+    return { base64Pdf, filename, templates, clientInfo };
+  };
+
+  safeHandle('intakeForms:generatePdf', async (_event, data: { templateIds: number[]; clientId?: number; fillable?: boolean }) => {
+    const { base64Pdf, filename } = await buildIntakePacket(data);
     return { base64Pdf, filename };
   });
 
@@ -8166,6 +8173,114 @@ function registerIpcHandlers() {
 
     fs.writeFileSync(filePath, Buffer.from(data.base64Pdf, 'base64'));
     return filePath;
+  });
+
+  // ── Intake email ──
+  // Prepare: merge the saved Intake Email template with this client's first name + practice
+  // and return prefilled (editable) subject/body + recipient for the send dialog. Read-only.
+  safeHandle('intakeForms:prepareEmail', async (_event, data: { templateIds: number[]; clientId?: number; fillable?: boolean }) => {
+    const formNames = data.templateIds
+      .map(id => (db.prepare('SELECT name FROM intake_form_templates WHERE id = ?').get(id) as any)?.name || '')
+      .filter(Boolean);
+
+    const getSetting = (k: string): string | null => (db.prepare('SELECT value FROM settings WHERE key = ?').get(k) as any)?.value ?? null;
+    const tplSubject = getSetting('intake_email_subject') ?? DEFAULT_INTAKE_EMAIL_TEMPLATE.subject;
+    const tplBody = getSetting('intake_email_body') ?? DEFAULT_INTAKE_EMAIL_TEMPLATE.body;
+    const practiceRow = db.prepare('SELECT name FROM practice WHERE id = 1').get() as any;
+    const practiceName = (practiceRow?.name || 'Your Practice').toString();
+
+    // Recipient + greeting come from the selected client (if any). Blank packets have no
+    // client, so the sender types the recipient and the greeting falls back to "there".
+    let recipient = '';
+    let firstName = 'there';
+    let fullName = '';
+    if (data.clientId) {
+      const client = db.prepare('SELECT first_name, last_name, email FROM clients WHERE id = ?').get(data.clientId) as any;
+      if (client) {
+        recipient = (client.email || '').trim();
+        firstName = (client.first_name || '').trim() || 'there';
+        fullName = `${client.first_name || ''} ${client.last_name || ''}`.trim();
+      }
+    }
+
+    const fields: Record<string, string> = {
+      first_name: firstName,
+      client: fullName,
+      practice: practiceName,
+      date: new Date().toLocaleDateString('en-US'),
+    };
+
+    return {
+      emailConfigured: messagingRouter.isEmailConfigured(),
+      fromAddress: messagingRouter.getEmailFromAddress(),
+      to: recipient,
+      subject: mergeIntakeTemplate(tplSubject, fields, true),
+      bodyText: mergeIntakeTemplate(tplBody, fields, false),
+      formNames,
+    };
+  });
+
+  // Send: build the packet PDF (fillable + pre-filled per the dialog), wrap the (possibly
+  // edited) body in the styled HTML shell, attach the PDF, send via the user's own email
+  // provider, then audit-log the send.
+  safeHandle('intakeForms:email', async (_event, args: { templateIds: number[]; clientId?: number; fillable?: boolean; to: string; subject: string; bodyText: string }) => {
+    requireTier('pro');
+    const provider = messagingRouter.getEmailProvider(); // throws if not configured
+    const to = (args.to || '').trim();
+    if (!to) throw new Error('No recipient email address');
+
+    const { base64Pdf, filename, templates } = await buildIntakePacket({
+      templateIds: args.templateIds,
+      clientId: args.clientId,
+      fillable: args.fillable,
+    });
+    const practiceRow = db.prepare('SELECT name FROM practice WHERE id = 1').get() as any;
+    const practiceName = (practiceRow?.name || 'Your Practice').toString();
+    const formNames = (templates as any[]).map((t) => t.name).filter(Boolean);
+
+    const bodyHtml = buildIntakeEmailHtml({
+      practiceName,
+      bodyText: args.bodyText || '',
+      formNames,
+      fillable: !!args.fillable,
+    });
+
+    const result = await provider.sendEmail({
+      to,
+      fromName: practiceName,
+      subject: (args.subject || '').trim() || `New patient forms from ${practiceName}`,
+      bodyText: args.bodyText || '',
+      bodyHtml,
+      attachments: [{ fileName: filename, contentBase64: base64Pdf, contentType: 'application/pdf' }],
+    });
+
+    auditLog({
+      actionType: result.success ? 'intake_emailed' : 'intake_email_failed',
+      entityType: 'client',
+      entityId: args.clientId || null,
+      clientId: args.clientId || null,
+      detail: { to, forms: formNames, fillable: !!args.fillable, success: result.success, error: result.error || undefined },
+    });
+
+    return { success: result.success, error: result.error };
+  });
+
+  // Intake email template config (Settings → Intake Email). Subject + body are plain text
+  // with {merge} fields; the HTML shell + attachment are added at send time.
+  safeHandle('intakeEmail:getConfig', () => {
+    const getSetting = (k: string): string | null => (db.prepare('SELECT value FROM settings WHERE key = ?').get(k) as any)?.value ?? null;
+    return {
+      subject: getSetting('intake_email_subject') ?? DEFAULT_INTAKE_EMAIL_TEMPLATE.subject,
+      body: getSetting('intake_email_body') ?? DEFAULT_INTAKE_EMAIL_TEMPLATE.body,
+    };
+  });
+
+  safeHandle('intakeEmail:saveConfig', (_event, cfg: { subject?: string; body?: string }) => {
+    requireTier('pro');
+    const upsert = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+    if (typeof cfg.subject === 'string') upsert.run('intake_email_subject', cfg.subject);
+    if (typeof cfg.body === 'string') upsert.run('intake_email_body', cfg.body);
+    return { success: true };
   });
 
   safeHandle('intakeForms:reorderTemplates', (_event, ids: number[]) => {
@@ -8805,6 +8920,107 @@ function registerIpcHandlers() {
     upsert.run('sms_inbox_since', new Date(newestMs).toISOString());
 
     return { confirmed, cancelled };
+  });
+
+  // ── Sent Messages log ──
+  // A unified, read-only "what went out" feed derived from the audit log: appointment
+  // reminders (per channel), client confirm/cancel text replies, invoice emails, and
+  // intake-form emails. No separate message table — these events are already audit-logged
+  // at send time, so this just surfaces them with friendly context. Read-only.
+  safeHandle('messages:listSent', (_event, opts?: { limit?: number; offset?: number }) => {
+    const limit = Math.min(Math.max(opts?.limit ?? 50, 1), 500);
+    const offset = Math.max(opts?.offset ?? 0, 0);
+    const ACTIONS = [
+      'reminder_sent', 'reminder_failed',
+      'appointment_confirmed_by_text', 'appointment_cancelled_by_text',
+      'invoice_emailed', 'invoice_email_failed',
+      'intake_emailed', 'intake_email_failed',
+      'email_sent',
+    ];
+    const placeholders = ACTIONS.map(() => '?').join(',');
+    const rows = db.prepare(`
+      SELECT al.id, al.timestamp, al.action_type, al.entity_type, al.entity_id, al.client_id, al.detail,
+             a.scheduled_date, a.scheduled_time,
+             inv.invoice_number,
+             c.first_name, c.last_name, c.email AS client_email, c.phone AS client_phone
+      FROM audit_log al
+      LEFT JOIN appointments a ON al.entity_type = 'appointment' AND a.id = al.entity_id
+      LEFT JOIN invoices inv ON al.entity_type = 'invoice' AND inv.id = al.entity_id
+      LEFT JOIN clients c ON c.id = al.client_id
+      WHERE al.action_type IN (${placeholders})
+      ORDER BY al.id DESC
+      LIMIT ? OFFSET ?
+    `).all(...ACTIONS, limit, offset) as any[];
+
+    // audit_log.timestamp is stored via datetime('now') = UTC "YYYY-MM-DD HH:MM:SS" (no tz).
+    // Normalize to a real ISO instant so the renderer's new Date() shows the correct local time.
+    const toIso = (ts: string): string => {
+      if (!ts) return new Date(0).toISOString();
+      if (ts.includes('T')) return ts; // already ISO (e.g. reminder_sent_at style, if ever)
+      return ts.replace(' ', 'T') + 'Z';
+    };
+    const fmtApptDate = (d: string): string =>
+      new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    const fmtApptTime = (t: string): string => {
+      const [hStr, mStr] = (t || '00:00').split(':');
+      const h = parseInt(hStr, 10) || 0;
+      const m = parseInt(mStr, 10) || 0;
+      const suffix = h >= 12 ? 'PM' : 'AM';
+      const h12 = h % 12 === 0 ? 12 : h % 12;
+      return `${h12}:${String(m).padStart(2, '0')} ${suffix}`;
+    };
+
+    return rows.map((r) => {
+      let detail: any = {};
+      try { detail = r.detail ? JSON.parse(r.detail) : {}; } catch { detail = {}; }
+      const clientName = (r.first_name || r.last_name) ? `${r.first_name || ''} ${r.last_name || ''}`.trim() : '';
+
+      let kind: string;
+      let channel: string | null = null;
+      let status: string;
+      let recipient = '';
+      switch (r.action_type) {
+        case 'reminder_sent': kind = 'reminder'; channel = detail.channel || null; status = 'sent'; break;
+        case 'reminder_failed': kind = 'reminder'; channel = detail.channel || null; status = 'failed'; break;
+        case 'appointment_confirmed_by_text': kind = 'reply'; channel = 'sms'; status = 'confirmed'; break;
+        case 'appointment_cancelled_by_text': kind = 'reply'; channel = 'sms'; status = 'cancelled'; break;
+        case 'invoice_emailed': kind = 'invoice'; channel = 'email'; status = 'sent'; recipient = detail.to || ''; break;
+        case 'invoice_email_failed': kind = 'invoice'; channel = 'email'; status = 'failed'; recipient = detail.to || ''; break;
+        case 'intake_emailed': kind = 'intake'; channel = 'email'; status = 'sent'; recipient = detail.to || ''; break;
+        case 'intake_email_failed': kind = 'intake'; channel = 'email'; status = 'failed'; recipient = detail.to || ''; break;
+        case 'email_sent': kind = 'email'; channel = 'email'; status = detail.success === false ? 'failed' : 'sent'; recipient = detail.to || ''; break;
+        default: kind = 'reminder'; status = 'sent';
+      }
+
+      if (!recipient) recipient = channel === 'sms' ? (r.client_phone || '') : (r.client_email || '');
+
+      let context = '';
+      if (kind === 'reminder' || kind === 'reply') {
+        context = r.scheduled_date
+          ? `Appt ${fmtApptDate(r.scheduled_date)}${r.scheduled_time ? ` · ${fmtApptTime(r.scheduled_time)}` : ''}`
+          : 'Appointment';
+      } else if (kind === 'invoice') {
+        const num = r.invoice_number || detail.invoice_number || '';
+        context = num ? `Invoice ${num}` : 'Invoice';
+      } else if (kind === 'intake') {
+        const n = Array.isArray(detail.forms) ? detail.forms.length : 0;
+        context = n ? `${n} intake form${n !== 1 ? 's' : ''}` : 'Intake forms';
+      } else if (kind === 'email') {
+        context = detail.subject ? String(detail.subject) : 'Email';
+      }
+
+      return {
+        id: r.id,
+        timestamp: toIso(r.timestamp),
+        kind,
+        channel,
+        status,
+        who: clientName || recipient || 'Unknown',
+        recipient,
+        context,
+        error: detail.error || null,
+      };
+    });
   });
 
   // ══════════════════════════════════════════════════════════════════════

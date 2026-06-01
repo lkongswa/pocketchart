@@ -20,6 +20,7 @@ import BasicAlertsPanel from '../components/BasicAlertsPanel';
 import DashboardWorkspace from '../components/DashboardWorkspace';
 import ReviewPromptCard from '../components/ReviewPromptCard';
 import OnboardingChecklist from '../components/OnboardingChecklist';
+import SentMessagesCard from '../components/SentMessagesCard';
 
 interface DashboardStats {
   incompleteEvals: number;
@@ -533,6 +534,9 @@ const DashboardPage: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Sent Messages — receipt for reminders + invoice/intake emails (hides when empty) */}
+      <SentMessagesCard />
 
       {/* Workspace: Scratchpad + Tasks */}
       <DashboardWorkspace />
