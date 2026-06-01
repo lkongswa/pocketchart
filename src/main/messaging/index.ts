@@ -16,3 +16,4 @@ export * from './MessagingRouter';
 export * from './reminderEngine';
 export * from './invoiceEmail';
 export * from './intakeEmail';
+export * from './documentsEmail';

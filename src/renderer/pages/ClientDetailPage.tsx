@@ -89,6 +89,7 @@ import ClaimReadinessDialog from '../components/ClaimReadinessDialog';
 import CSVPaymentImportModal from '../components/CSVPaymentImportModal';
 import InvoiceModal from '../components/InvoiceModal';
 import GoodFaithEstimateModal from '../components/GoodFaithEstimateModal';
+import SendDocumentsModal from '../components/SendDocumentsModal';
 import TrialExpiredModal from '../components/TrialExpiredModal';
 import FaxSendModal from '../components/FaxSendModal';
 import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
@@ -332,6 +333,7 @@ const ClientDetailPage: React.FC = () => {
   const [generatingCMS1500, setGeneratingCMS1500] = useState(false);
   const [showCsvImportForClient, setShowCsvImportForClient] = useState(false);
   const [showGfeModal, setShowGfeModal] = useState(false);
+  const [showSendDocs, setShowSendDocs] = useState(false);
   // Fax modal state
   const [showFaxModal, setShowFaxModal] = useState(false);
   const [faxDocumentId, setFaxDocumentId] = useState<number | undefined>(undefined);
@@ -2537,25 +2539,35 @@ const ClientDetailPage: React.FC = () => {
           title="Documents"
           count={documents.length}
           actions={
-            <label className="btn-primary btn-sm gap-1.5 cursor-pointer">
-              <Upload size={14} /> Upload
-              <input
-                type="file"
-                className="hidden"
-                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.bmp,.tiff"
-                onChange={async (e) => {
-                  e.target.value = '';
-                  await handleUploadDocument({
-                    category: uploadCategory,
-                    certification_period_start: uploadCertStart || undefined,
-                    certification_period_end: uploadCertEnd || undefined,
-                    received_date: uploadReceivedDate || undefined,
-                    sent_date: uploadSentDate || undefined,
-                    physician_name: uploadPhysicianName || undefined,
-                  });
-                }}
-              />
-            </label>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="btn-secondary btn-sm gap-1.5"
+                onClick={() => setShowSendDocs(true)}
+                title="Email documents (GFE, intake, superbill, statements) to this client"
+              >
+                <Mail size={14} /> Send to client
+              </button>
+              <label className="btn-primary btn-sm gap-1.5 cursor-pointer">
+                <Upload size={14} /> Upload
+                <input
+                  type="file"
+                  className="hidden"
+                  accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.bmp,.tiff"
+                  onChange={async (e) => {
+                    e.target.value = '';
+                    await handleUploadDocument({
+                      category: uploadCategory,
+                      certification_period_start: uploadCertStart || undefined,
+                      certification_period_end: uploadCertEnd || undefined,
+                      received_date: uploadReceivedDate || undefined,
+                      sent_date: uploadSentDate || undefined,
+                      physician_name: uploadPhysicianName || undefined,
+                    });
+                  }}
+                />
+              </label>
+            </div>
           }
         >
 
@@ -2739,6 +2751,23 @@ const ClientDetailPage: React.FC = () => {
           onGenerated={() => {
             // Refresh documents list
             window.api.documents.list({ clientId }).then(setDocuments).catch(() => {});
+          }}
+        />
+      )}
+
+      {/* Send Documents (bulk email to client) */}
+      {client && (
+        <SendDocumentsModal
+          isOpen={showSendDocs}
+          onClose={() => setShowSendDocs(false)}
+          clientId={clientId}
+          clientFirstName={client.first_name}
+          clientEmail={client.email}
+          documents={documents}
+          invoices={invoices}
+          onSent={({ count, to, skipped }) => {
+            const base = `Emailed ${count} document${count !== 1 ? 's' : ''} to ${to}`;
+            setBillingToast(skipped.length ? `${base} · ${skipped.length} skipped` : base);
           }}
         />
       )}

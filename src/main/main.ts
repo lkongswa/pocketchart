@@ -27,7 +27,7 @@ import { buildNotePdf, buildEvalPdf, buildBulkNotesPdf } from './notePdfGenerato
 import type { NoteRow, EvalRow, PatientInfo, EntityInfo, GoalInfo } from './notePdfGenerator';
 import { DEFAULT_INTAKE_TEMPLATES } from '../shared/intakeTemplates';
 import { FaxRouter, matchFaxToClient, normalizeFaxNumber, type FaxProviderType } from './fax';
-import { MessagingRouter, sendDueReminders, DEFAULT_REMINDER_TEMPLATES, DEFAULT_INVOICE_EMAIL_TEMPLATE, mergeInvoiceTemplate, buildInvoiceEmailHtml, DEFAULT_INTAKE_EMAIL_TEMPLATE, mergeIntakeTemplate, buildIntakeEmailHtml, type EmailProviderType, type SmsProviderType } from './messaging';
+import { MessagingRouter, sendDueReminders, DEFAULT_REMINDER_TEMPLATES, DEFAULT_INVOICE_EMAIL_TEMPLATE, mergeInvoiceTemplate, buildInvoiceEmailHtml, DEFAULT_INTAKE_EMAIL_TEMPLATE, mergeIntakeTemplate, buildIntakeEmailHtml, buildDocumentsEmailHtml, type EmailProviderType, type SmsProviderType } from './messaging';
 import { NOTE_FORMAT_SECTIONS, DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS, INVOICE_COLUMNS, ENTITY_INVOICE_DEFAULT_COLUMNS, CLIENT_INVOICE_DEFAULT_COLUMNS, parseInvoiceColumns } from '../shared/types';
 import type { InvoiceColumnKey } from '../shared/types';
 import { ClearinghouseRouter, type ClearinghouseProviderType } from './clearinghouse';
@@ -8935,6 +8935,7 @@ function registerIpcHandlers() {
       'appointment_confirmed_by_text', 'appointment_cancelled_by_text',
       'invoice_emailed', 'invoice_email_failed',
       'intake_emailed', 'intake_email_failed',
+      'documents_emailed', 'documents_email_failed',
       'email_sent',
     ];
     const placeholders = ACTIONS.map(() => '?').join(',');
@@ -8988,6 +8989,8 @@ function registerIpcHandlers() {
         case 'invoice_email_failed': kind = 'invoice'; channel = 'email'; status = 'failed'; recipient = detail.to || ''; break;
         case 'intake_emailed': kind = 'intake'; channel = 'email'; status = 'sent'; recipient = detail.to || ''; break;
         case 'intake_email_failed': kind = 'intake'; channel = 'email'; status = 'failed'; recipient = detail.to || ''; break;
+        case 'documents_emailed': kind = 'documents'; channel = 'email'; status = 'sent'; recipient = detail.to || ''; break;
+        case 'documents_email_failed': kind = 'documents'; channel = 'email'; status = 'failed'; recipient = detail.to || ''; break;
         case 'email_sent': kind = 'email'; channel = 'email'; status = detail.success === false ? 'failed' : 'sent'; recipient = detail.to || ''; break;
         default: kind = 'reminder'; status = 'sent';
       }
@@ -9005,6 +9008,9 @@ function registerIpcHandlers() {
       } else if (kind === 'intake') {
         const n = Array.isArray(detail.forms) ? detail.forms.length : 0;
         context = n ? `${n} intake form${n !== 1 ? 's' : ''}` : 'Intake forms';
+      } else if (kind === 'documents') {
+        const n = typeof detail.count === 'number' ? detail.count : (Array.isArray(detail.docs) ? detail.docs.length : 0);
+        context = n ? `${n} document${n !== 1 ? 's' : ''}` : 'Documents';
       } else if (kind === 'email') {
         context = detail.subject ? String(detail.subject) : 'Email';
       }
@@ -9021,6 +9027,114 @@ function registerIpcHandlers() {
         error: detail.error || null,
       };
     });
+  });
+
+  // ── Email a bundle of client documents ──
+  // From the client chart: attach any mix of saved documents (incl. GFEs), a freshly generated
+  // intake packet, invoices/statements, and a superbill for a date range — all in ONE email to
+  // the client, via the user's own provider. Each spec is produced independently; one that can't
+  // be built is skipped (and reported back) rather than failing the whole send. Pro-gated.
+  // Audit-logged as documents_emailed so it appears in the Sent Messages feed.
+  safeHandle('clientDocuments:emailBundle', async (_event, args: {
+    clientId: number;
+    to: string;
+    subject: string;
+    bodyText: string;
+    specs: Array<
+      | { kind: 'document'; documentId: number }
+      | { kind: 'intake'; templateIds: number[]; fillable?: boolean }
+      | { kind: 'invoice'; invoiceId: number }
+      | { kind: 'superbill'; startDate: string; endDate: string }
+    >;
+  }) => {
+    requireTier('pro');
+    const provider = messagingRouter.getEmailProvider(); // throws if not configured
+    const to = (args.to || '').trim();
+    if (!to) throw new Error('No recipient email address');
+    if (!args.specs?.length) throw new Error('No documents selected');
+
+    const client = db.prepare('SELECT * FROM clients WHERE id = ? AND deleted_at IS NULL').get(args.clientId) as any;
+    if (!client) throw new Error('Client not found');
+    const practice = db.prepare('SELECT * FROM practice WHERE id = 1').get() as any || {};
+    const practiceName = (practice?.name || 'Your Practice').toString();
+
+    const mimeFor = (name: string): string => {
+      switch ((name.split('.').pop() || '').toLowerCase()) {
+        case 'pdf': return 'application/pdf';
+        case 'png': return 'image/png';
+        case 'jpg': case 'jpeg': return 'image/jpeg';
+        case 'gif': return 'image/gif';
+        case 'doc': return 'application/msword';
+        case 'docx': return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        case 'txt': return 'text/plain';
+        default: return 'application/octet-stream';
+      }
+    };
+
+    const attachments: Array<{ fileName: string; contentBase64: string; contentType?: string }> = [];
+    const labels: string[] = [];
+    const skipped: Array<{ label: string; reason: string }> = [];
+
+    for (const spec of args.specs) {
+      try {
+        if (spec.kind === 'document') {
+          const doc = db.prepare('SELECT * FROM client_documents WHERE id = ? AND deleted_at IS NULL').get(spec.documentId) as any;
+          if (!doc) { skipped.push({ label: `Document #${spec.documentId}`, reason: 'not found' }); continue; }
+          const filePath = path.join(getDataPath(), 'documents', String(doc.client_id), doc.filename);
+          if (!fs.existsSync(filePath)) { skipped.push({ label: doc.original_name || doc.filename, reason: 'file missing' }); continue; }
+          const name = doc.original_name || doc.filename;
+          attachments.push({ fileName: name, contentBase64: fs.readFileSync(filePath).toString('base64'), contentType: mimeFor(name) });
+          labels.push(name);
+        } else if (spec.kind === 'intake') {
+          const { base64Pdf, filename } = await buildIntakePacket({ templateIds: spec.templateIds, clientId: args.clientId, fillable: spec.fillable !== false });
+          attachments.push({ fileName: filename, contentBase64: base64Pdf, contentType: 'application/pdf' });
+          labels.push('Intake packet');
+        } else if (spec.kind === 'invoice') {
+          const { base64Pdf, filename } = buildInvoicePdfData(spec.invoiceId);
+          attachments.push({ fileName: filename, contentBase64: base64Pdf, contentType: 'application/pdf' });
+          labels.push(filename);
+        } else if (spec.kind === 'superbill') {
+          const notesData = db.prepare(
+            `SELECT * FROM notes WHERE client_id = ? AND date_of_service >= ? AND date_of_service <= ? AND deleted_at IS NULL ORDER BY date_of_service`
+          ).all(args.clientId, spec.startDate, spec.endDate) as any[];
+          if (notesData.length === 0) { skipped.push({ label: 'Superbill', reason: 'no notes in range' }); continue; }
+          const { base64Pdf, filename } = buildSuperbillPdf(client, notesData, practice);
+          attachments.push({ fileName: filename, contentBase64: base64Pdf, contentType: 'application/pdf' });
+          labels.push(filename);
+        }
+      } catch (err: any) {
+        skipped.push({ label: spec.kind, reason: err?.message || 'failed to prepare' });
+      }
+    }
+
+    if (attachments.length === 0) {
+      throw new Error(
+        skipped.length
+          ? `Nothing could be attached — ${skipped.map((s) => `${s.label}: ${s.reason}`).join('; ')}`
+          : 'No documents to send',
+      );
+    }
+
+    const bodyHtml = buildDocumentsEmailHtml({ practiceName, bodyText: args.bodyText || '', fileNames: labels });
+
+    const result = await provider.sendEmail({
+      to,
+      fromName: practiceName,
+      subject: (args.subject || '').trim() || `Documents from ${practiceName}`,
+      bodyText: args.bodyText || '',
+      bodyHtml,
+      attachments,
+    });
+
+    auditLog({
+      actionType: result.success ? 'documents_emailed' : 'documents_email_failed',
+      entityType: 'client',
+      entityId: args.clientId,
+      clientId: args.clientId,
+      detail: { to, docs: labels, count: attachments.length, skipped, success: result.success, error: result.error || undefined },
+    });
+
+    return { success: result.success, error: result.error, count: attachments.length, skipped };
   });
 
   // ══════════════════════════════════════════════════════════════════════

@@ -1744,7 +1744,14 @@ export interface IntegrityCheckResult {
 
 // A single outbound-message record for the Sent Messages log (derived from the audit log:
 // appointment reminders, confirm/cancel replies, invoice emails, intake-form emails).
-export type SentMessageKind = 'reminder' | 'reply' | 'invoice' | 'intake' | 'email';
+export type SentMessageKind = 'reminder' | 'reply' | 'invoice' | 'intake' | 'email' | 'documents';
+
+// A document to include in a client-documents bundle email (clientDocuments.emailBundle).
+export type ClientDocumentEmailSpec =
+  | { kind: 'document'; documentId: number }
+  | { kind: 'intake'; templateIds: number[]; fillable?: boolean }
+  | { kind: 'invoice'; invoiceId: number }
+  | { kind: 'superbill'; startDate: string; endDate: string };
 export type SentMessageChannel = 'sms' | 'email';
 export type SentMessageStatus = 'sent' | 'failed' | 'confirmed' | 'cancelled';
 export interface SentMessage {
@@ -2470,6 +2477,16 @@ export interface PocketChartAPI {
   // ── Sent Messages log (reminders + invoice/intake emails, from the audit log) ──
   messages: {
     listSent: (opts?: { limit?: number; offset?: number }) => Promise<SentMessage[]>;
+  };
+  // ── Email a bundle of client documents (GFE, intake, superbill, invoices, uploads) ──
+  clientDocuments: {
+    emailBundle: (data: {
+      clientId: number;
+      to: string;
+      subject: string;
+      bodyText: string;
+      specs: ClientDocumentEmailSpec[];
+    }) => Promise<{ success: boolean; error?: string; count: number; skipped: Array<{ label: string; reason: string }> }>;
   };
   // ── Waitlist (Pro) ──
   waitlist: {

@@ -613,6 +613,10 @@ const api = {
   messages: {
     listSent: (opts?: { limit?: number; offset?: number }) => ipcRenderer.invoke('messages:listSent', opts),
   },
+  // ── Email a bundle of client documents ──
+  clientDocuments: {
+    emailBundle: (data: { clientId: number; to: string; subject: string; bodyText: string; specs: any[] }) => ipcRenderer.invoke('clientDocuments:emailBundle', data),
+  },
 
   // ── Fax ──
   fax: {
