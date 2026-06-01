@@ -52,7 +52,9 @@ export class GmailSmtpProvider implements EmailProvider {
   async sendEmail(params: SendEmailParams): Promise<SendEmailResult> {
     try {
       const info = await this.transporter.sendMail({
-        from: this.fromAddress,
+        // A display name (e.g. the practice name) makes the recipient see "Aphasia Studio"
+        // rather than the Gmail account's own profile name. nodemailer quotes/encodes it.
+        from: params.fromName ? { name: params.fromName, address: this.fromAddress } : this.fromAddress,
         to: params.to,
         replyTo: params.replyTo,
         subject: params.subject,

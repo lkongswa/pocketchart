@@ -22,6 +22,8 @@ export interface SendEmailParams {
   bodyHtml?: string;         // Optional HTML body
   attachments?: EmailAttachment[];
   replyTo?: string;
+  fromName?: string;         // Optional display name for the From header (e.g. practice name).
+                             // When omitted, the provider account's own display name is used.
 }
 
 export interface SendEmailResult {

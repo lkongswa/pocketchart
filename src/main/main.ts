@@ -4982,6 +4982,7 @@ function registerIpcHandlers() {
 
     const result = await provider.sendEmail({
       to,
+      fromName: practiceName,
       subject: (args.subject || '').trim() || `Invoice ${invoice.invoice_number}`,
       bodyText: args.bodyText || '',
       bodyHtml,
@@ -6817,12 +6818,12 @@ function registerIpcHandlers() {
   safeHandle('contractedEntities:create', (_event, data: any) => {
     requireTier('pro');
     const result = db.prepare(`
-      INSERT INTO contracted_entities (name, contact_name, contact_email, contact_phone,
+      INSERT INTO contracted_entities (name, contact_name, contact_last_name, contact_email, contact_phone,
         billing_address_street, billing_address_city, billing_address_state, billing_address_zip,
         default_note_type, notes, requires_notes, billing_cycle, billing_day, invoice_columns)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      data.name, data.contact_name || '', data.contact_email || '', data.contact_phone || '',
+      data.name, data.contact_name || '', data.contact_last_name || '', data.contact_email || '', data.contact_phone || '',
       data.billing_address_street || '', data.billing_address_city || '',
       data.billing_address_state || '', data.billing_address_zip || '',
       data.default_note_type || 'soap', data.notes || '',
@@ -6836,7 +6837,7 @@ function registerIpcHandlers() {
     requireTier('pro');
     const fields: string[] = [];
     const values: any[] = [];
-    const allowed = ['name', 'contact_name', 'contact_email', 'contact_phone',
+    const allowed = ['name', 'contact_name', 'contact_last_name', 'contact_email', 'contact_phone',
       'billing_address_street', 'billing_address_city', 'billing_address_state', 'billing_address_zip',
       'default_note_type', 'notes', 'requires_notes', 'billing_cycle', 'billing_day', 'invoice_columns'];
     for (const key of allowed) {
@@ -8625,10 +8626,14 @@ function registerIpcHandlers() {
     return true;
   });
 
-  safeHandle('email:send', async (_event, params: { to: string; subject: string; bodyText: string; bodyHtml?: string; attachments?: Array<{ fileName: string; contentBase64: string; contentType?: string }>; replyTo?: string; clientId?: number }) => {
+  safeHandle('email:send', async (_event, params: { to: string; subject: string; bodyText: string; bodyHtml?: string; attachments?: Array<{ fileName: string; contentBase64: string; contentType?: string }>; replyTo?: string; clientId?: number; fromName?: string }) => {
     requireTier('pro');
     const provider = messagingRouter.getEmailProvider(); // throws if not configured
-    const result = await provider.sendEmail(params);
+    // Default the From display name to the practice name so recipients see the practice,
+    // not the email account's own profile name.
+    const emailPracticeRow = db.prepare('SELECT name FROM practice WHERE id = 1').get() as any;
+    const fromName = params.fromName || (emailPracticeRow?.name ? String(emailPracticeRow.name) : undefined);
+    const result = await provider.sendEmail({ ...params, fromName });
     auditLog({
       actionType: 'email_sent',
       entityType: 'communication',

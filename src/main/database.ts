@@ -2529,6 +2529,15 @@ function runMigrations(): void {
         }
       },
     },
+    {
+      version: 69,
+      description: 'Contracted entity: add contact last name field',
+      up: () => {
+        if (!columnExists('contracted_entities', 'contact_last_name')) {
+          db.exec("ALTER TABLE contracted_entities ADD COLUMN contact_last_name TEXT DEFAULT ''");
+        }
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
@@ -2787,7 +2796,7 @@ function createTables(): void {
 // ── Backup, Restore & Integrity Functions ──
 
 // Must track the highest migration version above — used by the backup restore-compatibility check.
-const LATEST_SCHEMA_VERSION = 68;
+const LATEST_SCHEMA_VERSION = 69;
 
 /**
  * Run PRAGMA quick_check — a fast consistency check on every launch.

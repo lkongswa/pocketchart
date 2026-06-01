@@ -674,7 +674,8 @@ export type BillingCycle = 'weekly' | 'biweekly' | 'monthly' | 'custom';
 export interface ContractedEntity {
   id: number;
   name: string;
-  contact_name: string;
+  contact_name: string;       // first name (used as the {contact} greeting in emails)
+  contact_last_name: string;  // last name (stored for records; not sent in emails)
   contact_email: string;
   contact_phone: string;
   billing_address_street: string;

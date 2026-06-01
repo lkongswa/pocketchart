@@ -24,6 +24,7 @@ const US_STATES = [
 export default function EntityFormModal({ isOpen, onClose, onSave, entity }: EntityFormModalProps) {
   const [name, setName] = useState('');
   const [contactName, setContactName] = useState('');
+  const [contactLastName, setContactLastName] = useState('');
   const [contactEmail, setContactEmail] = useState('');
   const [contactPhone, setContactPhone] = useState('');
   const [street, setStreet] = useState('');
@@ -43,6 +44,7 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
     if (entity) {
       setName(entity.name || '');
       setContactName(entity.contact_name || '');
+      setContactLastName(entity.contact_last_name || '');
       setContactEmail(entity.contact_email || '');
       setContactPhone(entity.contact_phone || '');
       setStreet(entity.billing_address_street || '');
@@ -58,6 +60,7 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
     } else {
       setName('');
       setContactName('');
+      setContactLastName('');
       setContactEmail('');
       setContactPhone('');
       setStreet('');
@@ -93,6 +96,7 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
       const data = {
         name: name.trim(),
         contact_name: contactName.trim(),
+        contact_last_name: contactLastName.trim(),
         contact_email: contactEmail.trim(),
         contact_phone: contactPhone.trim(),
         billing_address_street: street.trim(),
@@ -146,21 +150,28 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="label">Contact Name</label>
+              <label className="label">Contact First Name</label>
               <input className="input w-full" value={contactName} onChange={(e) => setContactName(e.target.value)}
-                placeholder="e.g., Sarah Johnson" />
+                placeholder="e.g., Sarah" />
             </div>
+            <div>
+              <label className="label">Contact Last Name</label>
+              <input className="input w-full" value={contactLastName} onChange={(e) => setContactLastName(e.target.value)}
+                placeholder="e.g., Johnson" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="label">Contact Phone</label>
               <input className="input w-full" value={contactPhone} onChange={(e) => setContactPhone(e.target.value)}
                 placeholder="(555) 123-4567" />
             </div>
-          </div>
-
-          <div>
-            <label className="label">Contact Email</label>
-            <input className="input w-full" type="email" value={contactEmail}
-              onChange={(e) => setContactEmail(e.target.value)} placeholder="billing@example.com" />
+            <div>
+              <label className="label">Contact Email</label>
+              <input className="input w-full" type="email" value={contactEmail}
+                onChange={(e) => setContactEmail(e.target.value)} placeholder="billing@example.com" />
+            </div>
           </div>
 
           <div className="border-t border-[var(--color-border)] pt-4">

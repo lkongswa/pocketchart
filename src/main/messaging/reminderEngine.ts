@@ -202,7 +202,7 @@ export async function sendDueReminders(opts: SendDueRemindersOptions): Promise<R
         const bodyHtml = buildReminderEmailHtml({ practiceName, bodyText: mergedBody, dayDate: fields.date, time: fields.time, meetingLink });
         const textParts = [mergedBody, '', `${fields.date} at ${fields.time}`];
         if (meetingLink) textParts.push('', `Join: ${meetingLink}`);
-        const r = await messagingRouter.getEmailProvider().sendEmail({ to: row.email.trim(), subject, bodyText: textParts.join('\n'), bodyHtml });
+        const r = await messagingRouter.getEmailProvider().sendEmail({ to: row.email.trim(), subject, bodyText: textParts.join('\n'), bodyHtml, fromName: practiceName });
         summary.results.push({ appointmentId: row.id, clientId: row.client_id, channel: 'email', success: r.success, error: r.error });
         if (r.success) anySuccess = true;
       }

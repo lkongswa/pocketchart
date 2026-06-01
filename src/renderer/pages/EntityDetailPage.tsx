@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Building2, Plus, Trash2, DollarSign, FileText, FolderOpen,
   Upload, Eye, Edit, Phone, Mail, MapPin, Calendar, CheckSquare, Square,
-  FileCheck, RefreshCw, Receipt, ChevronDown, ChevronRight, Download, Send,
+  FileCheck, RefreshCw, Receipt, ChevronDown, ChevronLeft, ChevronRight, Download, Send,
   UserPlus, Pencil,
 } from 'lucide-react';
 import type { ContractedEntity, EntityFeeSchedule, EntityDocument, EntityDocumentCategory, Appointment, Invoice, InvoiceItem, InvoiceStatus, ContractorPatient } from '@shared/types';
@@ -29,6 +29,29 @@ const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
   void:     { bg: 'bg-red-100',     text: 'text-red-700' },
   overdue:  { bg: 'bg-red-100',     text: 'text-red-700' },
 };
+
+type ApptTimeFilter = 'all' | 'this_month' | 'last_month' | 'custom';
+
+// Client-side date filtering for the appointments list, keyed on scheduled_date (YYYY-MM-DD).
+// "this_month" / "last_month" are relative to today; "custom" honors an optional start/end.
+function filterApptsByTime(list: Appointment[], mode: ApptTimeFilter, start: string, end: string): Appointment[] {
+  if (mode === 'this_month' || mode === 'last_month') {
+    const d = new Date();
+    d.setDate(1);
+    if (mode === 'last_month') d.setMonth(d.getMonth() - 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    return list.filter((a) => (a.scheduled_date || '').startsWith(key));
+  }
+  if (mode === 'custom') {
+    return list.filter((a) => {
+      const ds = a.scheduled_date || '';
+      if (start && ds < start) return false;
+      if (end && ds > end) return false;
+      return true;
+    });
+  }
+  return list;
+}
 
 const EntityDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -59,6 +82,9 @@ const EntityDetailPage: React.FC = () => {
   const [contractorPatients, setContractorPatients] = useState<ContractorPatient[]>([]);
   const [selectedApptIds, setSelectedApptIds] = useState<Set<number>>(new Set());
   const [apptFilter, setApptFilter] = useState<'unbilled' | 'all' | 'invoiced'>('unbilled');
+  const [apptTimeFilter, setApptTimeFilter] = useState<ApptTimeFilter>('all');
+  const [apptRangeStart, setApptRangeStart] = useState('');
+  const [apptRangeEnd, setApptRangeEnd] = useState('');
   const [generatingInvoice, setGeneratingInvoice] = useState(false);
   const [invoiceDate, setInvoiceDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [toast, setToast] = useState<string | null>(null);
@@ -199,6 +225,12 @@ const EntityDetailPage: React.FC = () => {
     }
   }, [tab, loadAppointments, loadContractorPatients]);
 
+  // Clear selection when the time filter changes — selected rows may scroll out of view,
+  // and we don't want a hidden selection silently rolled into a generated invoice.
+  useEffect(() => {
+    setSelectedApptIds(new Set());
+  }, [apptTimeFilter, apptRangeStart, apptRangeEnd]);
+
   useEffect(() => {
     if (tab === 'invoices') loadInvoices();
   }, [tab, loadInvoices]);
@@ -276,7 +308,8 @@ const EntityDetailPage: React.FC = () => {
   };
 
   const toggleAllAppts = () => {
-    const uninvoiced = appointments.filter((a) => !a.contract_invoice_id);
+    const uninvoiced = filterApptsByTime(appointments, apptTimeFilter, apptRangeStart, apptRangeEnd)
+      .filter((a) => !a.contract_invoice_id);
     if (selectedApptIds.size === uninvoiced.length) {
       setSelectedApptIds(new Set());
     } else {
@@ -529,8 +562,9 @@ const EntityDetailPage: React.FC = () => {
     { key: 'invoices',     label: 'Invoices',      icon: Receipt },
   ];
 
-  const uninvoicedAppts = appointments.filter((a) => !a.contract_invoice_id);
-  const selectedTotal = appointments
+  const visibleAppointments = filterApptsByTime(appointments, apptTimeFilter, apptRangeStart, apptRangeEnd);
+  const uninvoicedAppts = visibleAppointments.filter((a) => !a.contract_invoice_id);
+  const selectedTotal = visibleAppointments
     .filter((a) => selectedApptIds.has(a.id))
     .reduce((sum, a) => sum + (a.entity_rate || 0), 0);
 
@@ -640,10 +674,27 @@ const EntityDetailPage: React.FC = () => {
             {/* Month navigator */}
             <div className="flex items-center justify-between">
               <h3 className="text-base font-semibold text-[var(--color-text)]">Revenue Pipeline</h3>
-              <div className="flex items-center gap-1">
-                <button className="btn-ghost btn-sm px-2 text-[var(--color-text-secondary)]" onClick={() => setOverviewMonth(prevMonth)}>‹</button>
-                <span className="text-sm font-medium text-[var(--color-text)] min-w-[110px] text-center">{monthLabel}</span>
-                <button className="btn-ghost btn-sm px-2 text-[var(--color-text-secondary)]" onClick={() => setOverviewMonth(nextMonth)} disabled={isCurrentMonth}>›</button>
+              <div className="flex items-center gap-0.5 rounded-lg border border-[var(--color-border)] p-0.5">
+                <button
+                  type="button"
+                  className="flex items-center justify-center w-8 h-8 rounded-md text-[var(--color-text-secondary)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)] transition-colors"
+                  onClick={() => setOverviewMonth(prevMonth)}
+                  title="Previous month"
+                  aria-label="Previous month"
+                >
+                  <ChevronLeft size={18} />
+                </button>
+                <span className="text-sm font-semibold text-[var(--color-text)] min-w-[130px] text-center tabular-nums">{monthLabel}</span>
+                <button
+                  type="button"
+                  className="flex items-center justify-center w-8 h-8 rounded-md text-[var(--color-text-secondary)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)] transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-[var(--color-text-secondary)] disabled:cursor-not-allowed"
+                  onClick={() => setOverviewMonth(nextMonth)}
+                  disabled={isCurrentMonth}
+                  title={isCurrentMonth ? 'Already at current month' : 'Next month'}
+                  aria-label="Next month"
+                >
+                  <ChevronRight size={18} />
+                </button>
               </div>
             </div>
 
@@ -978,6 +1029,29 @@ const EntityDetailPage: React.FC = () => {
                   </button>
                 ))}
               </div>
+              {/* Time-range filter — narrow to a month (e.g. last month, to invoice it) or a custom range */}
+              <div className="inline-flex items-center rounded-full border border-[var(--color-border)] bg-[var(--color-bg)] p-0.5">
+                {([['this_month', 'This month'], ['last_month', 'Last month'], ['all', 'All time'], ['custom', 'Custom']] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    className={`text-xs px-2.5 py-1 rounded-full transition-colors ${
+                      apptTimeFilter === key
+                        ? 'bg-white text-[var(--color-text)] shadow-sm'
+                        : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
+                    }`}
+                    onClick={() => setApptTimeFilter(key)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {apptTimeFilter === 'custom' && (
+                <div className="inline-flex items-center gap-1.5">
+                  <input type="date" className="input text-xs w-36" value={apptRangeStart} onChange={(e) => setApptRangeStart(e.target.value)} aria-label="Start date" />
+                  <span className="text-xs text-[var(--color-text-secondary)]">to</span>
+                  <input type="date" className="input text-xs w-36" value={apptRangeEnd} onChange={(e) => setApptRangeEnd(e.target.value)} aria-label="End date" />
+                </div>
+              )}
               <button className="btn-ghost btn-sm" onClick={loadAppointments} title="Refresh">
                 <RefreshCw size={13} />
               </button>
@@ -1020,11 +1094,13 @@ const EntityDetailPage: React.FC = () => {
 
           {apptLoading ? (
             <div className="card p-8 text-center text-[var(--color-text-secondary)]">Loading appointments…</div>
-          ) : appointments.length === 0 ? (
+          ) : visibleAppointments.length === 0 ? (
             <div className="card p-8 text-center">
               <Calendar size={32} className="mx-auto text-[var(--color-text-secondary)] mb-3 opacity-40" />
               <p className="text-sm text-[var(--color-text-secondary)]">
-                {apptFilter === 'unbilled' ? 'No unbilled appointments. All caught up!'
+                {appointments.length > 0
+                  ? 'No appointments in this date range. Try a different month or "All time".'
+                  : apptFilter === 'unbilled' ? 'No unbilled appointments. All caught up!'
                   : apptFilter === 'invoiced' ? 'No invoiced appointments yet.'
                   : 'No appointments found.'}
               </p>
@@ -1051,7 +1127,7 @@ const EntityDetailPage: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {appointments.map((appt) => {
+                  {visibleAppointments.map((appt) => {
                     const isInvoiced = Boolean(appt.contract_invoice_id);
                     const isSelected = selectedApptIds.has(appt.id);
                     return (
