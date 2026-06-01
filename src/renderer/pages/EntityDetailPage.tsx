@@ -80,6 +80,18 @@ const EntityDetailPage: React.FC = () => {
   const [invoiceSaving, setInvoiceSaving] = useState(false);
   const [statusUpdatingId, setStatusUpdatingId] = useState<number | null>(null);
 
+  // Email-invoice dialog state
+  const [emailingInvoice, setEmailingInvoice] = useState<Invoice | null>(null);
+  const [emailPrep, setEmailPrep] = useState<{
+    emailConfigured: boolean; fromAddress: string; filename: string;
+    alreadyEmailedAt: string | null; alreadyEmailedTo: string | null;
+  } | null>(null);
+  const [emailTo, setEmailTo] = useState('');
+  const [emailSubject, setEmailSubject] = useState('');
+  const [emailBody, setEmailBody] = useState('');
+  const [emailLoading, setEmailLoading] = useState(false);
+  const [emailSending, setEmailSending] = useState(false);
+
   // Overview pipeline stats (all appts, loaded on mount)
   const [overviewAppts, setOverviewAppts] = useState<Appointment[]>([]);
   const [overviewMonth, setOverviewMonth] = useState<string>(() => new Date().toISOString().slice(0, 7)); // 'YYYY-MM'
@@ -401,6 +413,64 @@ const EntityDetailPage: React.FC = () => {
       loadInvoices();
     } catch (err: any) {
       setToast(err?.message || 'Failed to finalize invoice');
+    }
+  };
+
+  // Open the email dialog: ask the backend to merge the template with this invoice's
+  // fields and prefill the recipient (entity billing contact), subject, and body.
+  const openEmailInvoice = async (inv: Invoice) => {
+    setEmailingInvoice(inv);
+    setEmailPrep(null);
+    setEmailTo('');
+    setEmailSubject('');
+    setEmailBody('');
+    setEmailLoading(true);
+    try {
+      const prep = await window.api.invoices.prepareEmail(inv.id);
+      setEmailPrep({
+        emailConfigured: prep.emailConfigured,
+        fromAddress: prep.fromAddress,
+        filename: prep.filename,
+        alreadyEmailedAt: prep.alreadyEmailedAt,
+        alreadyEmailedTo: prep.alreadyEmailedTo,
+      });
+      setEmailTo(prep.to || '');
+      setEmailSubject(prep.subject || '');
+      setEmailBody(prep.bodyText || '');
+    } catch (err: any) {
+      setToast(err?.message || 'Failed to prepare invoice email');
+      setEmailingInvoice(null);
+    } finally {
+      setEmailLoading(false);
+    }
+  };
+
+  const handleSendInvoiceEmail = async () => {
+    if (!emailingInvoice) return;
+    const to = emailTo.trim();
+    if (!to) { setToast('Enter a recipient email address'); return; }
+    setEmailSending(true);
+    try {
+      const res = await window.api.invoices.email({
+        invoiceId: emailingInvoice.id,
+        to,
+        subject: emailSubject,
+        bodyText: emailBody,
+      });
+      if (res.success) {
+        setToast(`Invoice ${emailingInvoice.invoice_number} emailed to ${to}`);
+        // Reflect new status + emailed stamp in the row without a full reload.
+        setInvoices((prev) => prev.map((i) => i.id === emailingInvoice.id
+          ? { ...i, status: res.status, emailed_at: res.emailedAt, emailed_to: res.emailedTo }
+          : i));
+        setEmailingInvoice(null);
+      } else {
+        setToast(res.error || 'Failed to send email');
+      }
+    } catch (err: any) {
+      setToast(err?.message || 'Failed to send email');
+    } finally {
+      setEmailSending(false);
     }
   };
 
@@ -1144,6 +1214,15 @@ const EntityDetailPage: React.FC = () => {
                               </button>
                             )}
                             <button
+                              className={`btn-ghost btn-sm hover:text-[var(--color-primary)] ${(inv as any).emailed_at ? 'text-emerald-600' : 'text-[var(--color-text-secondary)]'}`}
+                              onClick={() => openEmailInvoice(inv)}
+                              title={(inv as any).emailed_at
+                                ? `Emailed ${new Date((inv as any).emailed_at).toLocaleDateString()}${(inv as any).emailed_to ? ' to ' + (inv as any).emailed_to : ''} — click to resend`
+                                : 'Email invoice'}
+                            >
+                              <Mail size={14} />
+                            </button>
+                            <button
                               className="btn-ghost btn-sm text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
                               onClick={() => handleDownloadInvoice(inv.id)}
                               title="Download PDF"
@@ -1320,6 +1399,99 @@ const EntityDetailPage: React.FC = () => {
                 Delete Invoice
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Email Invoice Dialog ── */}
+      {emailingInvoice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => !emailSending && setEmailingInvoice(null)}>
+          <div className="absolute inset-0 bg-black/40 pointer-events-none" />
+          <div className="relative z-10 bg-[var(--color-surface)] rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-2 px-6 py-4 border-b border-[var(--color-border)]">
+              <Mail size={18} className="text-[var(--color-primary)]" />
+              <h3 className="text-base font-semibold text-[var(--color-text)]">Email Invoice {emailingInvoice.invoice_number}</h3>
+            </div>
+
+            {emailLoading || !emailPrep ? (
+              <div className="px-6 py-10 text-center text-sm text-[var(--color-text-secondary)]">Preparing email…</div>
+            ) : !emailPrep.emailConfigured ? (
+              <div className="px-6 py-8 text-center">
+                <Mail size={32} className="mx-auto text-[var(--color-text-secondary)] mb-3 opacity-40" />
+                <p className="text-sm text-[var(--color-text)] font-medium mb-1">Email isn't set up yet</p>
+                <p className="text-sm text-[var(--color-text-secondary)] mb-5">
+                  Connect your email account in <strong>Settings → Email</strong> to send invoices from your own address.
+                </p>
+                <div className="flex justify-center gap-2">
+                  <button className="btn-secondary" onClick={() => setEmailingInvoice(null)}>Close</button>
+                  <button className="btn-primary" onClick={() => navigate('/settings?section=email')}>Go to Settings</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+                  {emailPrep.alreadyEmailedAt && (
+                    <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+                      <RefreshCw size={14} className="mt-0.5 flex-shrink-0" />
+                      <span>
+                        Already emailed on {new Date(emailPrep.alreadyEmailedAt).toLocaleDateString()}
+                        {emailPrep.alreadyEmailedTo ? ` to ${emailPrep.alreadyEmailedTo}` : ''}. Sending again will resend it.
+                      </span>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="label">To</label>
+                    <input
+                      type="email"
+                      className="input w-full"
+                      value={emailTo}
+                      onChange={(e) => setEmailTo(e.target.value)}
+                      placeholder="billing@agency.com"
+                    />
+                    {!emailTo.trim() && (
+                      <p className="text-xs text-amber-600 mt-1">No billing email on file for this agency — enter one above.</p>
+                    )}
+                    {emailPrep.fromAddress && (
+                      <p className="text-xs text-[var(--color-text-secondary)] mt-1">Sending from {emailPrep.fromAddress}</p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="label">Subject</label>
+                    <input className="input w-full" value={emailSubject} onChange={(e) => setEmailSubject(e.target.value)} />
+                  </div>
+
+                  <div>
+                    <label className="label">Message</label>
+                    <textarea
+                      className="input w-full text-sm"
+                      rows={6}
+                      value={emailBody}
+                      onChange={(e) => setEmailBody(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)] text-sm">
+                    <FileText size={15} className="text-[var(--color-primary)] flex-shrink-0" />
+                    <span className="text-[var(--color-text)] truncate">{emailPrep.filename}</span>
+                    <span className="ml-auto text-xs text-[var(--color-text-secondary)] whitespace-nowrap">PDF attached</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-[var(--color-border)]">
+                  <button className="btn-secondary" onClick={() => setEmailingInvoice(null)} disabled={emailSending}>Cancel</button>
+                  <button
+                    className="btn-primary gap-1.5"
+                    onClick={handleSendInvoiceEmail}
+                    disabled={emailSending || !/^\S+@\S+\.\S+$/.test(emailTo.trim())}
+                  >
+                    <Send size={14} />
+                    {emailSending ? 'Sending…' : 'Send Invoice'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

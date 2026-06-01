@@ -2517,6 +2517,18 @@ function runMigrations(): void {
         }
       },
     },
+    {
+      version: 68,
+      description: 'Contract invoice email: track when an invoice was emailed and to whom',
+      up: () => {
+        if (!columnExists('invoices', 'emailed_at')) {
+          db.exec('ALTER TABLE invoices ADD COLUMN emailed_at TEXT DEFAULT NULL');
+        }
+        if (!columnExists('invoices', 'emailed_to')) {
+          db.exec('ALTER TABLE invoices ADD COLUMN emailed_to TEXT DEFAULT NULL');
+        }
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
@@ -2775,7 +2787,7 @@ function createTables(): void {
 // ── Backup, Restore & Integrity Functions ──
 
 // Must track the highest migration version above — used by the backup restore-compatibility check.
-const LATEST_SCHEMA_VERSION = 67;
+const LATEST_SCHEMA_VERSION = 68;
 
 /**
  * Run PRAGMA quick_check — a fast consistency check on every launch.

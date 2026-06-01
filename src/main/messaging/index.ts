@@ -14,3 +14,4 @@ export {
 } from './SmsProvider';
 export * from './MessagingRouter';
 export * from './reminderEngine';
+export * from './invoiceEmail';

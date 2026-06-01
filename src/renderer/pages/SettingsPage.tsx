@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Settings, Building2, User, Stethoscope, Info, Save, CheckCircle, Database, Download, FileSpreadsheet, HardDrive, FolderOpen, RotateCcw, Upload, Trash2, Image, Clock, AlertTriangle, AlertCircle, Shield, Lock, PenLine, BookOpen, ChevronDown, ShieldCheck, Key, Monitor, Loader2, DollarSign, Plus, Eye, EyeOff, KeyRound, Printer, Mail, MessageSquare, Bell, RefreshCw, Sun, Moon, Palette, Type, Contrast } from 'lucide-react';
+import { Settings, Building2, User, Stethoscope, Info, Save, CheckCircle, Database, Download, FileSpreadsheet, HardDrive, FolderOpen, RotateCcw, Upload, Trash2, Image, Clock, AlertTriangle, AlertCircle, Shield, Lock, PenLine, BookOpen, ChevronDown, ShieldCheck, Key, Monitor, Loader2, DollarSign, Plus, Eye, EyeOff, KeyRound, Printer, Mail, MessageSquare, Bell, Receipt, RefreshCw, Sun, Moon, Palette, Type, Contrast } from 'lucide-react';
 import type { Practice, Discipline, NoteFormat, CloudDetectionResult, AppTier, FeeScheduleEntry, DiscountTemplate, DiscountType } from '../../shared/types';
 import FeeScheduleModal from '../components/FeeScheduleModal';
 import { NOTE_FORMAT_LABELS, DISCIPLINE_DEFAULT_FORMAT } from '../../shared/types';
@@ -312,6 +312,19 @@ export default function SettingsPage() {
     };
     return (tpl || '').replace(/\{(\w+)\}/g, (_m, k) => f[k] ?? '').replace(/ {2,}/g, ' ').trim();
   };
+
+  // Invoice email template state (Settings → Invoice Email)
+  const [invEmailSubject, setInvEmailSubject] = useState('');
+  const [invEmailBody, setInvEmailBody] = useState('');
+  const [invEmailSaving, setInvEmailSaving] = useState(false);
+  const invEmailPreview = (tpl: string): string => {
+    const f: Record<string, string> = {
+      entity: 'Sunrise Pediatrics', contact: 'Alex Rivera', invoice_number: 'INV-0042',
+      invoice_date: 'May 31, 2026', due_date: 'Jun 15, 2026', total: '$1,250.00', practice: 'Your Practice',
+    };
+    return (tpl || '').replace(/\{(\w+)\}/g, (_m, k) => f[k] ?? '').replace(/ {2,}/g, ' ').trim();
+  };
+
   const [showPhysicianDirectory, setShowPhysicianDirectory] = useState(false);
 
   // Clearinghouse (provider-agnostic) state
@@ -588,6 +601,14 @@ export default function SettingsPage() {
       setRemEmailSubject(cfg.emailSubject || '');
       setRemEmailBody(cfg.emailBody || '');
       setRemMeetingLink(cfg.defaultMeetingLink || '');
+    }).catch(() => {});
+  }, []);
+
+  // Load invoice email template config
+  useEffect(() => {
+    window.api.invoiceEmail.getConfig().then((cfg) => {
+      setInvEmailSubject(cfg.subject || '');
+      setInvEmailBody(cfg.body || '');
     }).catch(() => {});
   }, []);
 
@@ -3422,6 +3443,96 @@ export default function SettingsPage() {
               }}
             >
               {remSaving ? 'Saving...' : 'Save Templates'}
+            </button>
+          </div>
+        </div>
+      </CollapsibleSection>
+
+      {/* Invoice Email (Pro) — subject/body template for emailing contract invoices */}
+      <CollapsibleSection
+        icon={<Receipt className="w-5 h-5" />}
+        title="Invoice Email"
+        description="Message sent when you email an invoice"
+        sectionId="settings-invoice-email"
+        isOpen={openSectionId === 'invoice-email'}
+        onToggle={() => toggleSection('invoice-email')}
+      >
+        <div className="space-y-5">
+          <p className="text-sm text-[var(--color-text-secondary)]">
+            The message used when you email an invoice to a contracted agency (or client). The invoice PDF is
+            attached automatically. Merge fields auto-fill per invoice:
+            <span className="font-mono text-xs"> {'{entity}'} {'{contact}'} {'{invoice_number}'} {'{invoice_date}'} {'{due_date}'} {'{total}'} {'{practice}'}</span>
+          </p>
+
+          {/* Subject */}
+          <div>
+            <label className="label">Email subject</label>
+            <input className="input w-full" value={invEmailSubject} onChange={(e) => setInvEmailSubject(e.target.value)} />
+          </div>
+
+          {/* Body */}
+          <div>
+            <label className="label">Email message</label>
+            <textarea
+              className="input w-full text-sm"
+              rows={5}
+              value={invEmailBody}
+              onChange={(e) => setInvEmailBody(e.target.value)}
+            />
+            <div className="flex flex-wrap gap-1 mt-1">
+              {['{contact}', '{entity}', '{invoice_number}', '{total}', '{due_date}', '{practice}'].map((tok) => (
+                <button
+                  key={tok}
+                  type="button"
+                  className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-gray-100 hover:bg-gray-200 text-gray-700"
+                  onClick={() => setInvEmailBody((v) => (v && !v.endsWith(' ') && !v.endsWith('\n') ? v + ' ' : v) + tok)}
+                >
+                  {tok}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Live email preview */}
+          <div>
+            <label className="label">Email preview</label>
+            <div className="border border-[var(--color-border)] rounded-lg overflow-hidden max-w-md">
+              <div className="px-4 py-2.5" style={{ background: '#0f766e' }}>
+                <div className="text-white text-sm font-semibold">Your Practice</div>
+                <div className="text-xs" style={{ color: '#c8efe9' }}>Invoice INV-0042</div>
+              </div>
+              <div className="p-4 bg-white">
+                <div className="text-sm text-gray-700 whitespace-pre-wrap">{invEmailPreview(invEmailBody)}</div>
+                <div className="border border-gray-200 rounded-lg p-3 bg-gray-50 mt-3 text-sm">
+                  <div className="flex justify-between"><span className="text-gray-500">Invoice</span><span className="font-semibold text-gray-900">INV-0042</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">Date</span><span className="font-semibold text-gray-900">May 31, 2026</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">Due</span><span className="font-semibold text-gray-900">Jun 15, 2026</span></div>
+                  <div className="flex justify-between mt-1 pt-2 border-t border-gray-200"><span className="text-gray-500">Amount Due</span><span className="font-bold" style={{ color: '#0f766e' }}>$1,250.00</span></div>
+                </div>
+                <div className="text-xs text-gray-400 mt-3">The full invoice is attached as a PDF.</div>
+              </div>
+            </div>
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">The invoice summary card and PDF attachment are added automatically — you just write the message.</p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              className="btn-primary text-sm"
+              disabled={invEmailSaving}
+              onClick={async () => {
+                setInvEmailSaving(true);
+                try {
+                  await window.api.invoiceEmail.saveConfig({ subject: invEmailSubject, body: invEmailBody });
+                  setToast('Invoice email template saved');
+                } catch (err) {
+                  setToast('Failed to save invoice email template');
+                } finally {
+                  setInvEmailSaving(false);
+                }
+              }}
+            >
+              {invEmailSaving ? 'Saving...' : 'Save Template'}
             </button>
           </div>
         </div>

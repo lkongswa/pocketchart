@@ -1331,6 +1331,8 @@ export interface Invoice {
   stripe_invoice_id: string;
   stripe_payment_link_id: string;
   stripe_payment_link_url: string;
+  emailed_at: string | null;   // ISO timestamp of last successful email send; null if never emailed
+  emailed_to: string | null;   // recipient address of last successful email send
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -1962,6 +1964,31 @@ export interface PocketChartAPI {
     savePdf: (data: { base64Pdf: string; filename: string }) => Promise<string | null>;
     createFeeInvoice: (data: { client_id?: number; entity_id?: number; description: string; amount: number; service_date: string }) => Promise<Invoice>;
     noteStatuses: () => Promise<Record<number, { invoice_id: number; invoice_number: string; status: string }>>;
+    prepareEmail: (invoiceId: number) => Promise<{
+      emailConfigured: boolean;
+      fromAddress: string;
+      to: string;
+      billToName: string;
+      subject: string;
+      bodyText: string;
+      filename: string;
+      invoiceNumber: string;
+      total: string;
+      alreadyEmailedAt: string | null;
+      alreadyEmailedTo: string | null;
+    }>;
+    email: (data: { invoiceId: number; to: string; subject: string; bodyText: string }) => Promise<{
+      success: boolean;
+      error?: string;
+      status: InvoiceStatus;
+      emailedAt: string | null;
+      emailedTo: string | null;
+    }>;
+  };
+  // ── Invoice Email template (Pro) ──
+  invoiceEmail: {
+    getConfig: () => Promise<{ subject: string; body: string }>;
+    saveConfig: (cfg: { subject?: string; body?: string }) => Promise<{ success: boolean }>;
   };
   billing: {
     getPipelineData: (options?: { paidDays?: number }) => Promise<PipelineData>;

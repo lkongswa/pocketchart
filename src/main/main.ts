@@ -27,7 +27,7 @@ import { buildNotePdf, buildEvalPdf, buildBulkNotesPdf } from './notePdfGenerato
 import type { NoteRow, EvalRow, PatientInfo, EntityInfo, GoalInfo } from './notePdfGenerator';
 import { DEFAULT_INTAKE_TEMPLATES } from '../shared/intakeTemplates';
 import { FaxRouter, matchFaxToClient, normalizeFaxNumber, type FaxProviderType } from './fax';
-import { MessagingRouter, sendDueReminders, DEFAULT_REMINDER_TEMPLATES, type EmailProviderType, type SmsProviderType } from './messaging';
+import { MessagingRouter, sendDueReminders, DEFAULT_REMINDER_TEMPLATES, DEFAULT_INVOICE_EMAIL_TEMPLATE, mergeInvoiceTemplate, buildInvoiceEmailHtml, type EmailProviderType, type SmsProviderType } from './messaging';
 import { NOTE_FORMAT_SECTIONS, DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS, INVOICE_COLUMNS, ENTITY_INVOICE_DEFAULT_COLUMNS, CLIENT_INVOICE_DEFAULT_COLUMNS, parseInvoiceColumns } from '../shared/types';
 import type { InvoiceColumnKey } from '../shared/types';
 import { ClearinghouseRouter, type ClearinghouseProviderType } from './clearinghouse';
@@ -4859,8 +4859,18 @@ function registerIpcHandlers() {
     return true;
   });
 
-  // Generate invoice PDF
-  safeHandle('invoices:generatePdf', async (_event, invoiceId: number) => {
+  // Format an invoice date (YYYY-MM-DD) for human-facing email copy. Falls back to the
+  // raw string if unparseable.
+  const formatInvoiceDate = (s: string): string => {
+    if (!s) return '';
+    const d = new Date(s + 'T12:00:00');
+    if (Number.isNaN(d.getTime())) return s;
+    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  };
+
+  // Build an invoice PDF + load the related records (invoice / items / client / entity /
+  // practice). Shared by the download (invoices:generatePdf) and email (invoices:email) flows.
+  const buildInvoicePdfData = (invoiceId: number) => {
     const invoice = db.prepare('SELECT * FROM invoices WHERE id = ? AND deleted_at IS NULL').get(invoiceId) as any;
     if (!invoice) throw new Error('Invoice not found');
 
@@ -4887,7 +4897,139 @@ function registerIpcHandlers() {
     const practice = db.prepare('SELECT * FROM practice WHERE id = 1').get() as any;
 
     const { base64Pdf, filename } = buildInvoicePdf(invoice, items, client, practice, entity);
+    return { base64Pdf, filename, invoice, items, client, entity, practice };
+  };
+
+  // Generate invoice PDF
+  safeHandle('invoices:generatePdf', async (_event, invoiceId: number) => {
+    const { base64Pdf, filename } = buildInvoicePdfData(invoiceId);
     return { base64Pdf, filename };
+  });
+
+  // ── Invoice email ──
+  // Prepare: merge the saved Invoice Email template with this invoice's fields and return
+  // prefilled (editable) subject/body + recipient for the send dialog. Read-only.
+  safeHandle('invoices:prepareEmail', async (_event, invoiceId: number) => {
+    const { invoice, client, entity, filename } = buildInvoicePdfData(invoiceId);
+    const getSetting = (k: string): string | null => (db.prepare('SELECT value FROM settings WHERE key = ?').get(k) as any)?.value ?? null;
+    const tplSubject = getSetting('invoice_email_subject') ?? DEFAULT_INVOICE_EMAIL_TEMPLATE.subject;
+    const tplBody = getSetting('invoice_email_body') ?? DEFAULT_INVOICE_EMAIL_TEMPLATE.body;
+    const practiceRow = db.prepare('SELECT name FROM practice WHERE id = 1').get() as any;
+    const practiceName = (practiceRow?.name || 'Your Practice').toString();
+
+    // Recipient + greeting differ for agency (entity) vs client invoices.
+    let recipient = '';
+    let contactName = 'there';
+    let billToName = '';
+    if (entity) {
+      recipient = (entity.contact_email || '').trim();
+      contactName = (entity.contact_name || '').trim() || (entity.name || '').trim() || 'there';
+      billToName = entity.name || '';
+    } else if (client) {
+      recipient = (client.email || '').trim();
+      contactName = (client.first_name || '').trim() || 'there';
+      billToName = `${client.first_name || ''} ${client.last_name || ''}`.trim();
+    }
+
+    const total = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(invoice.total_amount || 0);
+    const fields: Record<string, string> = {
+      entity: billToName,
+      contact: contactName,
+      invoice_number: invoice.invoice_number || '',
+      invoice_date: formatInvoiceDate(invoice.invoice_date),
+      due_date: invoice.due_date ? formatInvoiceDate(invoice.due_date) : 'upon receipt',
+      total,
+      practice: practiceName,
+    };
+
+    return {
+      emailConfigured: messagingRouter.isEmailConfigured(),
+      fromAddress: messagingRouter.getEmailFromAddress(),
+      to: recipient,
+      billToName,
+      subject: mergeInvoiceTemplate(tplSubject, fields, true),
+      bodyText: mergeInvoiceTemplate(tplBody, fields, false),
+      filename,
+      invoiceNumber: invoice.invoice_number || '',
+      total,
+      alreadyEmailedAt: invoice.emailed_at || null,
+      alreadyEmailedTo: invoice.emailed_to || null,
+    };
+  });
+
+  // Send: build the PDF, wrap the (possibly edited) body in the styled HTML shell, attach
+  // the PDF, send via the user's own email provider, then stamp emailed_at/_to and promote
+  // a draft invoice to 'sent'.
+  safeHandle('invoices:email', async (_event, args: { invoiceId: number; to: string; subject: string; bodyText: string }) => {
+    requireTier('pro');
+    const provider = messagingRouter.getEmailProvider(); // throws if not configured
+    const to = (args.to || '').trim();
+    if (!to) throw new Error('No recipient email address');
+
+    const { base64Pdf, filename, invoice } = buildInvoicePdfData(args.invoiceId);
+    const practiceRow = db.prepare('SELECT name FROM practice WHERE id = 1').get() as any;
+    const practiceName = (practiceRow?.name || 'Your Practice').toString();
+    const total = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(invoice.total_amount || 0);
+
+    const bodyHtml = buildInvoiceEmailHtml({
+      practiceName,
+      bodyText: args.bodyText || '',
+      invoiceNumber: invoice.invoice_number || '',
+      invoiceDate: formatInvoiceDate(invoice.invoice_date),
+      dueDate: invoice.due_date ? formatInvoiceDate(invoice.due_date) : '',
+      total,
+    });
+
+    const result = await provider.sendEmail({
+      to,
+      subject: (args.subject || '').trim() || `Invoice ${invoice.invoice_number}`,
+      bodyText: args.bodyText || '',
+      bodyHtml,
+      attachments: [{ fileName: filename, contentBase64: base64Pdf, contentType: 'application/pdf' }],
+    });
+
+    let newStatus = invoice.status;
+    let emailedAt: string | null = null;
+    if (result.success) {
+      emailedAt = new Date().toISOString();
+      // Promote draft → sent (never downgrade paid/partial/void).
+      if (invoice.status === 'draft') {
+        newStatus = 'sent';
+        db.prepare('UPDATE invoices SET status = ?, emailed_at = ?, emailed_to = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+          .run('sent', emailedAt, to, args.invoiceId);
+      } else {
+        db.prepare('UPDATE invoices SET emailed_at = ?, emailed_to = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+          .run(emailedAt, to, args.invoiceId);
+      }
+    }
+
+    auditLog({
+      actionType: result.success ? 'invoice_emailed' : 'invoice_email_failed',
+      entityType: 'invoice',
+      entityId: args.invoiceId,
+      clientId: invoice.client_id || null,
+      detail: { to, invoice_number: invoice.invoice_number, entity_id: invoice.entity_id || null, success: result.success, error: result.error || undefined },
+    });
+
+    return { success: result.success, error: result.error, status: newStatus, emailedAt, emailedTo: result.success ? to : null };
+  });
+
+  // Invoice email template config (Settings → Invoice Email). Subject + body are plain text
+  // with {merge} fields; the HTML shell + attachment are added at send time.
+  safeHandle('invoiceEmail:getConfig', () => {
+    const getSetting = (k: string): string | null => (db.prepare('SELECT value FROM settings WHERE key = ?').get(k) as any)?.value ?? null;
+    return {
+      subject: getSetting('invoice_email_subject') ?? DEFAULT_INVOICE_EMAIL_TEMPLATE.subject,
+      body: getSetting('invoice_email_body') ?? DEFAULT_INVOICE_EMAIL_TEMPLATE.body,
+    };
+  });
+
+  safeHandle('invoiceEmail:saveConfig', (_event, cfg: { subject?: string; body?: string }) => {
+    requireTier('pro');
+    const upsert = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+    if (typeof cfg.subject === 'string') upsert.run('invoice_email_subject', cfg.subject);
+    if (typeof cfg.body === 'string') upsert.run('invoice_email_body', cfg.body);
+    return { success: true };
   });
 
   safeHandle('invoices:savePdf', async (_event, data: { base64Pdf: string; filename: string }) => {

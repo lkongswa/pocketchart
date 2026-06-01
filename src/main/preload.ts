@@ -322,6 +322,14 @@ const api = {
     savePdf: (data: { base64Pdf: string; filename: string }) => ipcRenderer.invoke('invoices:savePdf', data),
     noteStatuses: () => ipcRenderer.invoke('invoices:noteStatuses'),
     createFeeInvoice: (data: { client_id?: number; entity_id?: number; description: string; amount: number; service_date: string }) => ipcRenderer.invoke('invoices:createFeeInvoice', data),
+    prepareEmail: (invoiceId: number) => ipcRenderer.invoke('invoices:prepareEmail', invoiceId),
+    email: (data: { invoiceId: number; to: string; subject: string; bodyText: string }) => ipcRenderer.invoke('invoices:email', data),
+  },
+
+  // ── Invoice Email template (Pro) ──
+  invoiceEmail: {
+    getConfig: () => ipcRenderer.invoke('invoiceEmail:getConfig'),
+    saveConfig: (cfg: { subject?: string; body?: string }) => ipcRenderer.invoke('invoiceEmail:saveConfig', cfg),
   },
 
   // Revenue Pipeline
