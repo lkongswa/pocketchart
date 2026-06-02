@@ -26,7 +26,6 @@ import {
   CreditCard,
   Receipt,
   ExternalLink,
-  AlertCircle,
   Loader2,
   ChevronDown,
   ChevronRight,
@@ -88,6 +87,7 @@ import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
 import StoryBar, { type StoryStat } from '../components/StoryBar';
 import CertHeatmap from '../components/CertHeatmap';
 import EmailComposeModal from '../components/EmailComposeModal';
+import PaymentModal from '../components/PaymentModal';
 import { useTrialGuard } from '../hooks/useTrialGuard';
 import { useChartCompleteness } from '../hooks/useChartCompleteness';
 import { useClaimReadiness } from '../hooks/useClaimReadiness';
@@ -118,24 +118,6 @@ const goalStatusConfig: Record<GoalStatus, { className: string; icon: React.Elem
   met: { className: 'bg-green-100 text-green-700', icon: CheckCircle, label: 'Met' },
   discontinued: { className: 'bg-gray-100 text-gray-600', icon: XCircle, label: 'Discontinued' },
   modified: { className: 'bg-amber-100 text-amber-700', icon: RefreshCw, label: 'Modified' },
-};
-
-const STATUS_COLORS: Record<InvoiceStatus, { bg: string; text: string }> = {
-  draft: { bg: 'bg-gray-100', text: 'text-gray-700' },
-  sent: { bg: 'bg-blue-100', text: 'text-blue-700' },
-  paid: { bg: 'bg-emerald-100', text: 'text-emerald-700' },
-  partial: { bg: 'bg-amber-100', text: 'text-amber-700' },
-  void: { bg: 'bg-red-100', text: 'text-red-700' },
-  overdue: { bg: 'bg-red-100', text: 'text-red-700' },
-};
-
-const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
-  card: 'Card',
-  cash: 'Cash',
-  check: 'Check',
-  stripe: 'Stripe',
-  insurance: 'Insurance',
-  other: 'Other',
 };
 
 const formatCurrency = (amount: number) =>
@@ -251,8 +233,6 @@ const ClientDetailPage: React.FC = () => {
   const [newlyCreatedInvoice, setNewlyCreatedInvoice] = useState<Invoice | null>(null);
   const [feeSchedule, setFeeSchedule] = useState<FeeScheduleEntry[]>([]);
   const [entities, setEntities] = useState<ContractedEntity[]>([]);
-  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<number>>(new Set());
-  const [batchGenerating, setBatchGenerating] = useState(false);
   // BACKBURNER: drag-to-match disabled — Electron DnD unreliable
   // const [draggedPaymentId, setDraggedPaymentId] = useState<number | null>(null);
   // const [draggedInvoiceId, setDraggedInvoiceId] = useState<number | null>(null);
@@ -279,6 +259,8 @@ const ClientDetailPage: React.FC = () => {
   const [faxTracking, setFaxTracking] = useState<FaxTrackingEntry[]>([]);
   // Email-compose modal (note / eval / invoice → client)
   const [emailModal, setEmailModal] = useState<{ kind: 'note' | 'eval' | 'invoice'; id: number; to: string; subject: string; body: string; label: string } | null>(null);
+  // Inline record-payment modal (Billing pipeline)
+  const [recordPaymentInvoiceId, setRecordPaymentInvoiceId] = useState<number | null>(null);
   // CMS-1500 preview removed — now saves directly via dialog
 
   // Context menu state for notes/evals (Phase C)
@@ -717,24 +699,6 @@ const ClientDetailPage: React.FC = () => {
   // const handleMatchPaymentToInvoice = async (paymentId: number, invoiceId: number) => { ... };
   // const handleUnmatchPayment = async (paymentId: number) => { ... };
 
-  const handleGeneratePaymentLink = async (invoiceId: number) => {
-    setGeneratingPaymentLink(invoiceId);
-    try {
-      const result = await window.api.stripe.createPaymentLink(invoiceId);
-      if (result.url) {
-        await window.api.shell.openExternal(result.url);
-        setBillingToast(result.existing ? 'Payment link opened in browser' : 'Payment link created and opened in browser');
-        const invoicesData = await window.api.invoices.list({ clientId });
-        setInvoices(invoicesData);
-      }
-    } catch (err: any) {
-      console.error('Failed to create payment link:', err);
-      setBillingToast(err.message || 'Failed to create payment link');
-    } finally {
-      setGeneratingPaymentLink(null);
-    }
-  };
-
   const handleCheckPaymentStatus = async (invoiceId: number) => {
     setCheckingPaymentStatus(invoiceId);
     try {
@@ -786,41 +750,6 @@ const ClientDetailPage: React.FC = () => {
       setBillingToast(err.message || 'Failed to create payment link');
     } finally {
       setGeneratingPaymentLink(null);
-    }
-  };
-
-  const handleBatchGeneratePaymentLinks = async () => {
-    if (selectedInvoiceIds.size === 0) return;
-    setBatchGenerating(true);
-    let successCount = 0;
-    let failCount = 0;
-    const links: string[] = [];
-
-    for (const invoiceId of selectedInvoiceIds) {
-      try {
-        const result = await window.api.stripe.createPaymentLink(invoiceId);
-        if (result.url) {
-          links.push(result.url);
-          successCount++;
-        }
-      } catch {
-        failCount++;
-      }
-    }
-
-    if (links.length > 0) {
-      await navigator.clipboard.writeText(links.join('\n'));
-    }
-
-    const invoicesData = await window.api.invoices.list({ clientId });
-    setInvoices(invoicesData);
-    setSelectedInvoiceIds(new Set());
-    setBatchGenerating(false);
-
-    if (failCount > 0) {
-      setBillingToast(`Generated ${successCount} links, ${failCount} failed. Links copied.`);
-    } else {
-      setBillingToast(`${successCount} payment link${successCount > 1 ? 's' : ''} generated and copied to clipboard`);
     }
   };
 
@@ -957,7 +886,6 @@ const ClientDetailPage: React.FC = () => {
     .filter((i) => i.status !== 'paid' && i.status !== 'void')
     .reduce((sum, i) => sum + i.total_amount, 0);
   const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
-  const totalInvoiced = invoices.filter((i) => i.status !== 'void').reduce((sum, i) => sum + i.total_amount, 0);
   const unsignedNotes = notes.filter((n) => !n.signed_at);
   const displayNotes = showAllNotes ? notes : notes.slice(0, 5);
 
@@ -1026,7 +954,6 @@ const ClientDetailPage: React.FC = () => {
     : null;
   const recertDueSoon = certThru !== null && certDaysLeft !== null && certDaysLeft <= 45;
   const dueCount = missingNoteAppts.length + (progressRemaining !== null ? 1 : 0) + (recertDueSoon ? 1 : 0);
-  const billedNotes = signedNotes.filter((n) => billedNoteIds.has(n.id));
   const signedUnbilled = signedNotes.filter((n) => !billedNoteIds.has(n.id));
 
   const fmtTime12 = (t: string) => {
@@ -1066,6 +993,58 @@ const ClientDetailPage: React.FC = () => {
       </div>
     );
   };
+
+  // Billing "get paid" pipeline (Slice 10): Ready to invoice → Awaiting payment → Paid
+  const unpaidInvoices = invoices.filter((i) => i.status !== 'paid' && i.status !== 'void');
+  const paidInvoices = invoices.filter((i) => i.status === 'paid');
+
+  const handleBillNote = async (note: Note) => {
+    try {
+      await window.api.billing.quickInvoice({ clientId, noteIds: [note.id], entityId: (note as any).entity_id || undefined });
+      await loadData();
+    } catch (err) {
+      console.error('Quick invoice failed, opening invoice modal:', err);
+      if (guardAction()) setShowInvoiceModal(true);
+    }
+  };
+
+  const renderReadyCard = (note: Note) => {
+    let cpt = '';
+    try { const p = JSON.parse(note.cpt_codes || '[]'); if (Array.isArray(p) && p.length) cpt = p[0].code; } catch {}
+    if (!cpt && note.cpt_code) cpt = note.cpt_code;
+    return (
+      <div key={note.id} className="bg-white border border-[var(--color-border)] rounded-lg px-2 py-1.5 mb-1.5">
+        <div className="flex items-center gap-1.5">
+          <span className="font-medium text-xs text-[var(--color-text)]">{formatDate(note.date_of_service)}</span>
+          {cpt && <span className="text-[11px] text-[var(--color-text-secondary)]">{cpt}</span>}
+          <button
+            className="ml-auto px-2 py-0.5 rounded bg-emerald-600 text-white text-[10px] font-semibold hover:bg-emerald-700"
+            onClick={() => handleBillNote(note)}
+          >
+            Bill →
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderInvoiceCardP = (invoice: Invoice, paid: boolean) => (
+    <div key={invoice.id} className="bg-white border border-[var(--color-border)] rounded-lg px-2 py-1.5 mb-1.5" title={`Invoice ${invoice.invoice_number}`}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="font-medium text-xs text-[var(--color-text)]">{formatDate(invoice.invoice_date)}</div>
+        <div className={`text-xs font-semibold shrink-0 ${paid ? 'text-emerald-600' : 'text-[var(--color-text)]'}`}>{formatCurrency(invoice.total_amount)}</div>
+      </div>
+      {!paid && (
+        <div className="flex items-center gap-1 mt-1.5">
+          <button className="p-0.5 text-gray-400 hover:text-[var(--color-primary)]" title="View / edit invoice" onClick={async () => { try { const full = await window.api.invoices.get(invoice.id); setEditingInvoice(full); setShowInvoiceModal(true); } catch (err) { console.error(err); } }}><Eye size={12} /></button>
+          <button className="p-0.5 text-gray-400 hover:text-emerald-600" title="Email invoice to client" onClick={() => openInvoiceEmail(invoice.id)}><Mail size={12} /></button>
+          <span className="flex-1" />
+          <button className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-[10px] font-semibold hover:bg-blue-100 disabled:opacity-50" title="Generate & copy a payment link" onClick={() => handleGenerateAndCopyPaymentLink(invoice.id)} disabled={generatingPaymentLink === invoice.id}>{generatingPaymentLink === invoice.id ? <Loader2 size={11} className="animate-spin" /> : <ExternalLink size={11} />} Link</button>
+          <button className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[10px] font-semibold hover:bg-emerald-100" title="Record a payment" onClick={() => setRecordPaymentInvoiceId(invoice.id)}><CreditCard size={11} /> Record</button>
+        </div>
+      )}
+    </div>
+  );
 
   // --- Render ---
 
@@ -1547,8 +1526,7 @@ const ClientDetailPage: React.FC = () => {
             stats={[
               ...(dueCount > 0 ? [{ label: `Due: ${dueCount}`, tone: 'amber' as const }] : []),
               ...(unsignedNotes.length > 0 ? [{ label: `Draft: ${unsignedNotes.length}`, tone: 'orange' as const }] : []),
-              ...(signedUnbilled.length > 0 ? [{ label: `Signed: ${signedUnbilled.length}`, tone: 'green' as const }] : []),
-              ...(billedNotes.length > 0 ? [{ label: `Billed: ${billedNotes.length}`, tone: 'teal' as const }] : []),
+              ...(signedNotes.length > 0 ? [{ label: `Signed: ${signedNotes.length}`, tone: 'green' as const }] : []),
             ]}
             action={
               <button className="text-xs text-emerald-700 font-semibold hover:underline" onClick={() => { if (guardAction()) navigate(`/clients/${clientId}/note/new`); }}>
@@ -1585,9 +1563,12 @@ const ClientDetailPage: React.FC = () => {
                       <span className="w-2 h-2 rounded-full bg-amber-400" /> Due <span className="ml-auto text-amber-700">{dueCount}</span>
                     </div>
                     {missingNoteAppts.map((appt) => (
-                      <div key={appt.id} className="bg-white border border-[var(--color-border)] rounded-lg px-2 py-1.5 mb-1.5 cursor-pointer hover:shadow-sm transition-shadow" onClick={() => navigate(`/clients/${clientId}/note/new`, { state: { appointmentDate: appt.scheduled_date, appointmentTime: appt.scheduled_time, appointmentDuration: appt.duration_minutes } })}>
-                        <div className="font-medium text-xs text-[var(--color-text)]">{formatDate(appt.scheduled_date)}</div>
-                        <div className="text-[11px] text-[var(--color-text-secondary)]">{appt.scheduled_time ? fmtTime12(appt.scheduled_time) : ''} · ＋ create note</div>
+                      <div key={appt.id} className="bg-white border border-[var(--color-border)] rounded-lg px-2 py-1.5 mb-1.5 cursor-pointer hover:shadow-sm transition-shadow flex items-center gap-2" onClick={() => navigate(`/clients/${clientId}/note/new`, { state: { appointmentDate: appt.scheduled_date, appointmentTime: appt.scheduled_time, appointmentDuration: appt.duration_minutes } })} title="Create note">
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium text-xs text-[var(--color-text)]">{formatDate(appt.scheduled_date)}</div>
+                          {appt.scheduled_time && <div className="text-[11px] text-[var(--color-text-secondary)]">{fmtTime12(appt.scheduled_time)}</div>}
+                        </div>
+                        <span className="shrink-0 w-6 h-6 grid place-items-center rounded-md text-emerald-700 bg-emerald-50 text-lg font-semibold leading-none">+</span>
                       </div>
                     ))}
                     {progressRemaining !== null && (
@@ -1612,21 +1593,26 @@ const ClientDetailPage: React.FC = () => {
                     {unsignedNotes.map(renderNoteCard)}
                     {unsignedNotes.length === 0 && <div className="text-[11px] text-[var(--color-text-tertiary)] px-1 py-2">—</div>}
                   </div>
-                  {/* Signed (signed but not yet invoiced) */}
+                  {/* Signed — clinically complete (billing lives in the Billing tab) */}
                   <div className="min-w-[130px] flex-1 bg-gray-50 border border-[var(--color-border)] rounded-lg p-1.5">
                     <div className="flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wide text-[var(--color-text-secondary)] mb-1.5 px-0.5">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400" /> Signed <span className="ml-auto text-emerald-600">{signedUnbilled.length}</span>
+                      <span className="w-2 h-2 rounded-full bg-emerald-400" /> Signed <span className="ml-auto text-emerald-600">{signedNotes.length}</span>
                     </div>
-                    {signedUnbilled.map(renderNoteCard)}
-                    {signedUnbilled.length === 0 && <div className="text-[11px] text-[var(--color-text-tertiary)] px-1 py-2">—</div>}
+                    {signedNotes.map(renderNoteCard)}
+                    {signedNotes.length === 0 && <div className="text-[11px] text-[var(--color-text-tertiary)] px-1 py-2">—</div>}
                   </div>
-                  {/* Billed (note appears on an invoice) */}
-                  <div className="min-w-[130px] flex-1 bg-gray-50 border border-[var(--color-border)] rounded-lg p-1.5">
-                    <div className="flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wide text-[var(--color-text-secondary)] mb-1.5 px-0.5">
-                      <span className="w-2 h-2 rounded-full bg-teal-400" /> Billed <span className="ml-auto text-teal-600">{billedNotes.length}</span>
-                    </div>
-                    {billedNotes.map(renderNoteCard)}
-                    {billedNotes.length === 0 && <div className="text-[11px] text-[var(--color-text-tertiary)] px-1 py-2 leading-snug">Notes flow here once invoiced → Revenue Pipeline</div>}
+                  {/* → handoff into the Billing tab's get-paid pipeline */}
+                  <div className="flex items-center justify-center shrink-0 w-24 px-1">
+                    <button
+                      className="flex flex-col items-center gap-1 px-3 py-2.5 rounded-lg border border-[var(--color-border)] bg-white hover:border-emerald-300 hover:bg-emerald-50 hover:shadow-sm transition-all"
+                      onClick={() => handleTabChange('billing')}
+                      title="Go to Billing"
+                    >
+                      <span className="text-[var(--color-text-secondary)] text-lg leading-none">→</span>
+                      <span className="text-[10px] font-semibold text-[var(--color-primary)] leading-tight text-center">
+                        {signedUnbilled.length > 0 ? `${signedUnbilled.length} to bill` : 'Billing'}
+                      </span>
+                    </button>
                   </div>
                 </div>
               ) : (
@@ -1832,31 +1818,19 @@ const ClientDetailPage: React.FC = () => {
       {/* ══════════ BILLING TAB ══════════ */}
       {activeTab === 'billing' && <>
 
-      {/* ══════════ DISCOUNTS & PACKAGES (collapsible) ══════════ */}
-      <div className="rounded-lg border border-[var(--color-border)] overflow-hidden">
-        <button
-          className="w-full flex items-center justify-between px-4 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors"
-          onClick={() => setDiscountsExpanded(!discountsExpanded)}
-        >
-          <div className="flex items-center gap-2">
-            {discountsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            <DollarSign size={14} className="text-emerald-600" />
-            <span className="text-xs font-semibold text-[var(--color-text)]">Discounts & Packages</span>
-            {activeDiscounts.length > 0 && (
-              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-100 text-emerald-700">
-                {activeDiscounts.length} active
-              </span>
-            )}
-          </div>
-          <button
-            className="btn-ghost btn-sm text-xs gap-1"
-            onClick={(e) => { e.stopPropagation(); setShowDiscountModal(true); }}
-          >
-            <Plus size={12} /> Add
+      {/* ══════════ DISCOUNTS & PACKAGES ══════════ */}
+      <StoryBar
+        title="Discounts & Packages"
+        stats={activeDiscounts.length > 0 ? [{ label: `${activeDiscounts.length} active`, tone: 'green' as const }] : []}
+        action={
+          <button className="text-xs text-emerald-700 font-semibold hover:underline" onClick={() => setShowDiscountModal(true)}>
+            + Add
           </button>
-        </button>
-        {discountsExpanded && (
-          <div className="p-4 border-t border-[var(--color-border)]">
+        }
+        expanded={discountsExpanded}
+        onToggle={setDiscountsExpanded}
+      >
+        <div className="p-4">
             {activeDiscounts.map((disc) => (
               <div key={disc.id} className="mb-3 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
                 <div className="flex items-center justify-between">
@@ -1934,301 +1908,122 @@ const ClientDetailPage: React.FC = () => {
               </div>
             )}
           </div>
-        )}
-      </div>
+      </StoryBar>
 
-      {/* ══════════ FULL-WIDTH: BILLING SECTION ══════════ */}
-      <SectionCard
-        color="emerald"
-        icon={<Receipt size={18} />}
-        title="Billing & Payments"
-        actions={
-          <div className="flex items-center gap-2">
-            <button
-              className="btn-primary btn-sm gap-1.5"
-              onClick={() => { if (guardAction()) setShowInvoiceModal(true); }}
-            >
-              <Plus size={14} /> New Invoice
-            </button>
-            <button
-              className="btn-secondary btn-sm gap-1.5"
-              onClick={() => { if (guardAction()) navigate(`/billing?newPayment=${clientId}`); }}
-            >
-              <CreditCard size={14} /> Record Payment
-            </button>
-            <button
-              className="btn-ghost btn-sm gap-1.5"
-              onClick={() => { if (guardAction()) setShowCsvImportForClient(true); }}
-            >
-              <Upload size={14} /> Import CSV
-            </button>
-            <button
-              className="btn-secondary btn-sm gap-1.5"
-              onClick={() => navigate(`/clients/${clientId}/superbill`)}
-            >
-              <FileText size={14} /> Superbill
-            </button>
-            <button
-              className="btn-secondary btn-sm gap-1.5"
-              onClick={() => { if (guardAction()) setShowGfeModal(true); }}
-            >
-              <Shield size={14} /> GFE
-            </button>
-            <button
-              className="btn-secondary btn-sm gap-1.5"
-              onClick={() => setShowReadinessDialog(true)}
-              disabled={generatingCMS1500}
-            >
-              {generatingCMS1500 ? (
-                <Loader2 size={14} className="animate-spin" />
-              ) : (
-                <ClipboardList size={14} />
-              )}
-              Claim Preview
-              {claimReadiness.ready && signedNotes.length > 0 && (
-                <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              )}
-              {!claimReadiness.ready && (
-                <span className="w-2 h-2 rounded-full bg-red-400" />
-              )}
-            </button>
-          </div>
+      {/* ══════════ BILLING (money in/out) ══════════ */}
+      <StoryBar
+        title="Billing"
+        defaultExpanded
+        stats={[
+          { label: `Balance ${formatCurrency(balanceDue)}`, tone: balanceDue > 0 ? ('amber' as const) : ('neutral' as const) },
+          ...(totalPaid > 0 ? [{ label: `Collected ${formatCurrency(totalPaid)}`, tone: 'green' as const }] : []),
+        ]}
+        action={
+          <button className="btn-primary btn-sm gap-1.5" onClick={() => { if (guardAction()) setShowInvoiceModal(true); }}>
+            <Plus size={14} /> New Invoice
+          </button>
         }
       >
 
-        <div className="p-5">
-          {/* Summary Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
-            <div
-              className="flex items-center justify-between p-3 rounded-lg bg-amber-50 border border-amber-200 cursor-pointer hover:shadow-md transition-all"
-              onClick={() => navigate('/billing?tab=invoices')}
-            >
-              <div>
-                <p className="text-xs text-amber-600 font-medium">Balance Due</p>
-                <p className={`text-lg font-bold ${balanceDue > 0 ? 'text-amber-700' : 'text-gray-500'}`}>
-                  {formatCurrency(balanceDue)}
-                </p>
-              </div>
-              <AlertCircle className={`w-5 h-5 ${balanceDue > 0 ? 'text-amber-500' : 'text-gray-300'}`} />
-            </div>
-            <div
-              className="flex items-center justify-between p-3 rounded-lg bg-emerald-50 border border-emerald-200 cursor-pointer hover:shadow-md transition-all"
-              onClick={() => navigate('/billing?tab=payments')}
-            >
-              <div>
-                <p className="text-xs text-emerald-600 font-medium">Total Collected</p>
-                <p className="text-lg font-bold text-emerald-700">{formatCurrency(totalPaid)}</p>
-              </div>
-              <DollarSign className="w-5 h-5 text-emerald-500" />
-            </div>
-            <div
-              className="flex items-center justify-between p-3 rounded-lg bg-blue-50 border border-blue-200 cursor-pointer hover:shadow-md transition-all"
-              onClick={() => navigate('/billing?tab=invoices')}
-            >
-              <div>
-                <p className="text-xs text-blue-600 font-medium">Total Invoiced</p>
-                <p className="text-lg font-bold text-blue-700">{formatCurrency(totalInvoiced)}</p>
-              </div>
-              <Receipt className="w-5 h-5 text-blue-500" />
-            </div>
+        <div className="p-4">
+          {/* secondary money actions */}
+          <div className="flex items-center gap-2 mb-4">
+            <button className="btn-secondary btn-sm gap-1.5" onClick={() => { if (guardAction()) navigate(`/billing?newPayment=${clientId}`); }}>
+              <CreditCard size={14} /> Record Payment
+            </button>
+            <button className="btn-ghost btn-sm gap-1.5" onClick={() => { if (guardAction()) setShowCsvImportForClient(true); }}>
+              <Upload size={14} /> Import CSV
+            </button>
           </div>
+          {/* (summary totals are baked into the Invoices / Payments column headers below) */}
 
-          {/* Post-invoice payment link prompt banner */}
-          {newlyCreatedInvoice && (
-            <div className="mb-4 rounded-lg p-4 border border-green-200 bg-green-50 flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-green-800">
-                  Invoice {newlyCreatedInvoice.invoice_number} created &mdash; ${newlyCreatedInvoice.total_amount.toFixed(2)}
-                </p>
-                <p className="text-xs text-green-600">Send a payment link to collect now?</p>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  className="btn-primary btn-sm gap-1"
-                  onClick={async () => {
-                    await handleGenerateAndCopyPaymentLink(newlyCreatedInvoice.id);
-                    setNewlyCreatedInvoice(null);
-                  }}
-                  disabled={generatingPaymentLink === newlyCreatedInvoice.id}
-                >
-                  {generatingPaymentLink === newlyCreatedInvoice.id ? (
-                    <Loader2 size={14} className="animate-spin" />
-                  ) : (
-                    <CreditCard size={14} />
-                  )}
-                  Generate & Copy Link
-                </button>
-                <button
-                  className="btn-ghost btn-sm"
-                  onClick={() => setNewlyCreatedInvoice(null)}
-                >
-                  Dismiss
-                </button>
-              </div>
-            </div>
-          )}
+          {/* (post-invoice banner removed — collect actions live on the Awaiting-payment cards) */}
 
-          {/* Batch action bar for invoices */}
-          {selectedInvoiceIds.size > 0 && (
-            <div className="mb-4 rounded-lg p-3 flex items-center justify-between bg-blue-50 border border-blue-200">
-              <span className="text-sm font-medium text-blue-800">
-                {selectedInvoiceIds.size} invoice{selectedInvoiceIds.size > 1 ? 's' : ''} selected
-              </span>
-              <div className="flex gap-2">
-                <button
-                  className="btn-primary btn-sm gap-1"
-                  onClick={handleBatchGeneratePaymentLinks}
-                  disabled={batchGenerating}
-                >
-                  {batchGenerating ? (
-                    <Loader2 size={14} className="animate-spin" />
-                  ) : (
-                    <ExternalLink size={14} />
-                  )}
-                  Generate & Copy {selectedInvoiceIds.size > 1 ? 'Links' : 'Link'}
-                </button>
-                <button
-                  className="btn-ghost btn-sm"
-                  onClick={() => setSelectedInvoiceIds(new Set())}
-                >
-                  Clear
-                </button>
-              </div>
-            </div>
-          )}
+          {/* (batch multi-select removed — per-invoice actions live on the pipeline cards) */}
 
-          {/* ── Two-Column: Invoices | Payments ── */}
-          <div className="grid grid-cols-2 gap-4">
+          {/* ── Get-paid pipeline: Ready to invoice → Awaiting payment → Paid ── */}
+          <div className="flex gap-2 overflow-x-auto pb-1">
 
-            {/* LEFT: Invoices */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">Invoices</h4>
-                <button className="text-xs text-[var(--color-primary)] hover:underline" onClick={() => navigate('/billing?tab=invoices')}>
-                  View All
-                </button>
+            {/* Ready to invoice — signed notes not yet billed */}
+            <div className="min-w-[160px] flex-1 bg-gray-50 border border-[var(--color-border)] rounded-lg p-1.5">
+              <div className="flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wide text-[var(--color-text-secondary)] mb-1.5 px-0.5">
+                <span className="w-2 h-2 rounded-full bg-blue-400" /> Ready to invoice <span className="ml-auto text-[var(--color-text)]">{signedUnbilled.length}</span>
               </div>
-              {invoices.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-[var(--color-border)] p-4 text-center text-xs text-[var(--color-text-secondary)]">
-                  No invoices yet.
-                </div>
-              ) : (
-                <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
-                  {invoices.slice(0, 6).map((invoice) => {
-                    const isUnpaid = invoice.status !== 'paid' && invoice.status !== 'void';
-                    const isOverdue = invoice.status === 'overdue';
-                    const rowAccent = isOverdue
-                      ? 'border-l-4 border-l-red-400 bg-red-50/40'
-                      : isUnpaid
-                        ? 'border-l-4 border-l-amber-400 bg-amber-50/30'
-                        : 'border-l-4 border-l-emerald-400';
-                    return (
-                      <div
-                        key={invoice.id}
-                        className={`flex items-center justify-between px-3 py-2.5 hover:bg-gray-50 ${rowAccent}`}
-                      >
-                        <div className="min-w-0">
-                          <p className="text-xs font-medium text-[var(--color-text)] truncate">{invoice.invoice_number}</p>
-                          <p className="text-[10px] text-[var(--color-text-secondary)]">{formatDate(invoice.invoice_date)}</p>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <div className="text-right">
-                            <p className="text-xs font-semibold text-[var(--color-text)]">{formatCurrency(invoice.total_amount)}</p>
-                            <span className={`inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium ${(STATUS_COLORS[invoice.status] || STATUS_COLORS.draft).bg} ${(STATUS_COLORS[invoice.status] || STATUS_COLORS.draft).text}`}>
-                              {invoice.status || 'draft'}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <button
-                              className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-[var(--color-primary)] transition-colors"
-                              title="Edit invoice"
-                              onClick={async () => {
-                                try {
-                                  const full = await window.api.invoices.get(invoice.id);
-                                  setEditingInvoice(full);
-                                  setShowInvoiceModal(true);
-                                } catch (err) {
-                                  console.error('Failed to load invoice:', err);
-                                }
-                              }}
-                            >
-                              <Eye size={12} />
-                            </button>
-                            <button
-                              className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-emerald-600 transition-colors"
-                              title="Email to client"
-                              onClick={() => openInvoiceEmail(invoice.id)}
-                            >
-                              <Mail size={12} />
-                            </button>
-                            {isUnpaid && (
-                              <button
-                                className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-emerald-600 transition-colors"
-                                onClick={() => handleGeneratePaymentLink(invoice.id)}
-                                disabled={generatingPaymentLink === invoice.id}
-                                title="Generate payment link"
-                              >
-                                {generatingPaymentLink === invoice.id ? <Loader2 size={10} className="animate-spin" /> : <ExternalLink size={10} />}
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              {signedUnbilled.length === 0 ? (
+                <div className="flex items-center justify-center py-4 text-[var(--color-text-tertiary)] opacity-40" title="All signed notes billed"><CheckCircle size={20} /></div>
+              ) : signedUnbilled.map(renderReadyCard)}
             </div>
 
-            {/* RIGHT: Payments */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wide">Payments</h4>
-                <button className="text-xs text-[var(--color-primary)] hover:underline" onClick={() => navigate('/billing?tab=payments')}>
-                  View All
-                </button>
+            {/* Awaiting payment — unpaid invoices */}
+            <div className="min-w-[160px] flex-1 bg-gray-50 border border-[var(--color-border)] rounded-lg p-1.5">
+              <div className="flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wide text-[var(--color-text-secondary)] mb-1.5 px-0.5">
+                <span className="w-2 h-2 rounded-full bg-amber-400" /> Awaiting payment <span className="ml-auto text-amber-700">{balanceDue > 0 ? formatCurrency(balanceDue) : unpaidInvoices.length}</span>
               </div>
-              {payments.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-[var(--color-border)] p-4 text-center text-xs text-[var(--color-text-secondary)]">
-                  No payments recorded yet.
-                </div>
-              ) : (
-                <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
-                  {payments.slice(0, 6).map((payment) => {
-                    const isMatched = !!(payment as any).invoice_id;
-                    const rowAccent = isMatched
-                      ? 'border-l-4 border-l-emerald-400'
-                      : 'border-l-4 border-l-amber-400 bg-amber-50/30';
-                    return (
-                      <div
-                        key={payment.id}
-                        className={`flex items-center justify-between px-3 py-2.5 ${rowAccent} hover:bg-gray-50`}
-                      >
-                        <div className="min-w-0">
-                          <p className="text-xs font-medium text-[var(--color-text)]">{formatDate(payment.payment_date)}</p>
-                          <p className="text-[10px] text-[var(--color-text-secondary)]">
-                            {PAYMENT_METHOD_LABELS[payment.payment_method] || payment.payment_method || 'Other'}
-                            {payment.reference_number && ` · ${payment.reference_number}`}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <div className="text-right">
-                            <p className="text-xs font-semibold text-emerald-600">+{formatCurrency(payment.amount)}</p>
-                            {!isMatched && (
-                              <span className="inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-100 text-amber-700">unmatched</span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              {unpaidInvoices.length === 0 ? (
+                <div className="text-[11px] text-[var(--color-text-tertiary)] px-1 py-2">Nothing outstanding</div>
+              ) : unpaidInvoices.map((inv) => renderInvoiceCardP(inv, false))}
+            </div>
+
+            {/* Paid */}
+            <div className="min-w-[160px] flex-1 bg-gray-50 border border-[var(--color-border)] rounded-lg p-1.5">
+              <div className="flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wide text-[var(--color-text-secondary)] mb-1.5 px-0.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-400" /> Paid <span className="ml-auto text-emerald-600">{totalPaid > 0 ? formatCurrency(totalPaid) : paidInvoices.length}</span>
+                <button className="text-[10px] text-[var(--color-primary)] hover:underline font-normal normal-case" onClick={() => navigate('/billing?tab=payments')}>all</button>
+              </div>
+              {paidInvoices.length === 0 ? (
+                <div className="text-[11px] text-[var(--color-text-tertiary)] px-1 py-2">No payments yet</div>
+              ) : paidInvoices.map((inv) => renderInvoiceCardP(inv, true))}
             </div>
 
           </div>
         </div>
-      </SectionCard>
+      </StoryBar>
+
+      {/* ══════════ GENERATE & SEND (documents) ══════════ */}
+      <StoryBar
+        title="Generate & send"
+        stats={[{ label: claimReadiness.ready && signedNotes.length > 0 ? 'Claim ready' : 'Claim: needs info', tone: claimReadiness.ready && signedNotes.length > 0 ? ('green' as const) : ('amber' as const) }]}
+      >
+        <div className="p-3 divide-y divide-[var(--color-border)]">
+          <button
+            className="w-full flex items-center gap-3 px-2 py-2.5 hover:bg-gray-50 rounded-lg text-left transition-colors"
+            onClick={() => navigate(`/clients/${clientId}/superbill`)}
+          >
+            <FileText size={16} className="text-emerald-600 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-[var(--color-text)]">Superbill</div>
+              <div className="text-xs text-[var(--color-text-secondary)]">Itemized visit receipt the client can self-submit to insurance</div>
+            </div>
+            <ChevronRight size={15} className="text-[var(--color-text-tertiary)] shrink-0" />
+          </button>
+          <button
+            className="w-full flex items-center gap-3 px-2 py-2.5 hover:bg-gray-50 rounded-lg text-left transition-colors"
+            onClick={() => { if (guardAction()) setShowGfeModal(true); }}
+          >
+            <Shield size={16} className="text-emerald-600 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-[var(--color-text)]">Good Faith Estimate</div>
+              <div className="text-xs text-[var(--color-text-secondary)]">Up-front cost estimate for self-pay clients (No Surprises Act)</div>
+            </div>
+            <ChevronRight size={15} className="text-[var(--color-text-tertiary)] shrink-0" />
+          </button>
+          <button
+            className="w-full flex items-center gap-3 px-2 py-2.5 hover:bg-gray-50 rounded-lg text-left transition-colors disabled:opacity-60"
+            onClick={() => setShowReadinessDialog(true)}
+            disabled={generatingCMS1500}
+          >
+            {generatingCMS1500 ? <Loader2 size={16} className="animate-spin text-emerald-600 shrink-0" /> : <ClipboardList size={16} className="text-emerald-600 shrink-0" />}
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-[var(--color-text)] flex items-center gap-1.5">
+                Claim Preview (CMS-1500)
+                <span className={`w-2 h-2 rounded-full ${claimReadiness.ready && signedNotes.length > 0 ? 'bg-emerald-400' : 'bg-red-400'}`} />
+              </div>
+              <div className="text-xs text-[var(--color-text-secondary)]">Generate a CMS-1500 claim form to submit to the payer</div>
+            </div>
+            <ChevronRight size={15} className="text-[var(--color-text-tertiary)] shrink-0" />
+          </button>
+        </div>
+      </StoryBar>
 
       {/* CMS-1500 now saves directly via dialog — no preview needed */}
       </>}
@@ -2639,6 +2434,19 @@ const ClientDetailPage: React.FC = () => {
           }
         }}
       />
+
+      {/* Inline record-payment (Billing pipeline → Awaiting card) */}
+      {client && (
+        <PaymentModal
+          isOpen={recordPaymentInvoiceId !== null}
+          clients={[client]}
+          invoices={invoices}
+          preselectedClientId={client.id}
+          preselectedInvoiceId={recordPaymentInvoiceId || undefined}
+          onSave={() => { setRecordPaymentInvoiceId(null); setBillingToast('Payment recorded'); loadData(); }}
+          onClose={() => setRecordPaymentInvoiceId(null)}
+        />
+      )}
 
       {/* Email a note / eval / invoice to the client */}
       <EmailComposeModal
