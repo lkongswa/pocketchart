@@ -310,6 +310,8 @@ const ClientDetailPage: React.FC = () => {
   const [headerCondensed, setHeaderCondensed] = useState(false);
   // Compliance tracking — drives Treatment-plan cert stats + heatmap (Slice 6)
   const [compliance, setCompliance] = useState<ComplianceTracking | null>(null);
+  // Billed note IDs (notes that appear on an invoice) — Documentation kanban "Billed" column
+  const [billedNoteIds, setBilledNoteIds] = useState<Set<number>>(new Set());
 
   // Remove client (empty chart only)
   const [canRemoveClient, setCanRemoveClient] = useState(false);
@@ -380,7 +382,7 @@ const ClientDetailPage: React.FC = () => {
     if (!clientId) return;
     setLoading(true);
     try {
-      const [clientData, notesData, evalsData, goalsData, docsData, invoicesData, paymentsData, discountsData, activeDiscountsData, practiceData, feeScheduleData, entitiesData, appointmentsData, faxTrackingData, complianceData] = await Promise.all([
+      const [clientData, notesData, evalsData, goalsData, docsData, invoicesData, paymentsData, discountsData, activeDiscountsData, practiceData, feeScheduleData, entitiesData, appointmentsData, faxTrackingData, complianceData, billedIdsData] = await Promise.all([
         window.api.clients.get(clientId),
         window.api.notes.listByClient(clientId),
         window.api.evaluations.listByClient(clientId),
@@ -396,6 +398,7 @@ const ClientDetailPage: React.FC = () => {
         window.api.appointments.list({ clientId }).catch(() => []),
         window.api.fax.getOutboundByClient(clientId).catch(() => []),
         window.api.compliance.getByClient(clientId).catch(() => null),
+        window.api.notes.getBilledIdsForClient(clientId).catch(() => []),
       ]);
       setClient(clientData);
       setPractice(practiceData);
@@ -404,6 +407,7 @@ const ClientDetailPage: React.FC = () => {
       setAppointments(appointmentsData || []);
       setFaxTracking(faxTrackingData || []);
       setCompliance(complianceData || null);
+      setBilledNoteIds(new Set(billedIdsData || []));
       setGoals(goalsData || []);
       // Load progress histories for all goals
       if (goalsData?.length) {
@@ -1022,6 +1026,8 @@ const ClientDetailPage: React.FC = () => {
     : null;
   const recertDueSoon = certThru !== null && certDaysLeft !== null && certDaysLeft <= 45;
   const dueCount = missingNoteAppts.length + (progressRemaining !== null ? 1 : 0) + (recertDueSoon ? 1 : 0);
+  const billedNotes = signedNotes.filter((n) => billedNoteIds.has(n.id));
+  const signedUnbilled = signedNotes.filter((n) => !billedNoteIds.has(n.id));
 
   const fmtTime12 = (t: string) => {
     const [h, m] = t.split(':');
@@ -1541,7 +1547,8 @@ const ClientDetailPage: React.FC = () => {
             stats={[
               ...(dueCount > 0 ? [{ label: `Due: ${dueCount}`, tone: 'amber' as const }] : []),
               ...(unsignedNotes.length > 0 ? [{ label: `Draft: ${unsignedNotes.length}`, tone: 'orange' as const }] : []),
-              ...(signedNotes.length > 0 ? [{ label: `Signed: ${signedNotes.length}`, tone: 'green' as const }] : []),
+              ...(signedUnbilled.length > 0 ? [{ label: `Signed: ${signedUnbilled.length}`, tone: 'green' as const }] : []),
+              ...(billedNotes.length > 0 ? [{ label: `Billed: ${billedNotes.length}`, tone: 'teal' as const }] : []),
             ]}
             action={
               <button className="text-xs text-emerald-700 font-semibold hover:underline" onClick={() => { if (guardAction()) navigate(`/clients/${clientId}/note/new`); }}>
@@ -1605,20 +1612,21 @@ const ClientDetailPage: React.FC = () => {
                     {unsignedNotes.map(renderNoteCard)}
                     {unsignedNotes.length === 0 && <div className="text-[11px] text-[var(--color-text-tertiary)] px-1 py-2">—</div>}
                   </div>
-                  {/* Signed */}
+                  {/* Signed (signed but not yet invoiced) */}
                   <div className="min-w-[130px] flex-1 bg-gray-50 border border-[var(--color-border)] rounded-lg p-1.5">
                     <div className="flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wide text-[var(--color-text-secondary)] mb-1.5 px-0.5">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400" /> Signed <span className="ml-auto text-emerald-600">{signedNotes.length}</span>
+                      <span className="w-2 h-2 rounded-full bg-emerald-400" /> Signed <span className="ml-auto text-emerald-600">{signedUnbilled.length}</span>
                     </div>
-                    {signedNotes.map(renderNoteCard)}
-                    {signedNotes.length === 0 && <div className="text-[11px] text-[var(--color-text-tertiary)] px-1 py-2">—</div>}
+                    {signedUnbilled.map(renderNoteCard)}
+                    {signedUnbilled.length === 0 && <div className="text-[11px] text-[var(--color-text-tertiary)] px-1 py-2">—</div>}
                   </div>
-                  {/* Billed (per-note billed status is net-new — Slice 8) */}
+                  {/* Billed (note appears on an invoice) */}
                   <div className="min-w-[130px] flex-1 bg-gray-50 border border-[var(--color-border)] rounded-lg p-1.5">
                     <div className="flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wide text-[var(--color-text-secondary)] mb-1.5 px-0.5">
-                      <span className="w-2 h-2 rounded-full bg-teal-400" /> Billed <span className="ml-auto">0</span>
+                      <span className="w-2 h-2 rounded-full bg-teal-400" /> Billed <span className="ml-auto text-teal-600">{billedNotes.length}</span>
                     </div>
-                    <div className="text-[11px] text-[var(--color-text-tertiary)] px-1 py-2 leading-snug">Signed notes flow here once claimed → Revenue Pipeline</div>
+                    {billedNotes.map(renderNoteCard)}
+                    {billedNotes.length === 0 && <div className="text-[11px] text-[var(--color-text-tertiary)] px-1 py-2 leading-snug">Notes flow here once invoiced → Revenue Pipeline</div>}
                   </div>
                 </div>
               ) : (

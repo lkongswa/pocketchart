@@ -1892,6 +1892,16 @@ function registerIpcHandlers() {
     `).all(clientId);
   });
 
+  // Billed note IDs (note appears on an invoice) — drives the Documentation kanban "Billed" column
+  safeHandle('notes:getBilledIdsForClient', (_event, clientId: number) => {
+    return (db.prepare(`
+      SELECT n.id
+      FROM notes n
+      WHERE n.client_id = ? AND n.deleted_at IS NULL
+        AND n.id IN (SELECT DISTINCT note_id FROM invoice_items WHERE note_id IS NOT NULL)
+    `).all(clientId) as Array<{ id: number }>).map((r) => r.id);
+  });
+
   // ── Evaluations ──
   safeHandle('evaluations:listByClient', (_event, clientId: number) => {
     return db.prepare(

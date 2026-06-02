@@ -101,6 +101,7 @@ const api = {
     delete: (id: number) => ipcRenderer.invoke('notes:delete', id),
     getEpisodeSummary: (clientId: number) => ipcRenderer.invoke('notes:getEpisodeSummary', clientId),
     getUnbilledForClient: (clientId: number) => ipcRenderer.invoke('notes:getUnbilledForClient', clientId),
+    getBilledIdsForClient: (clientId: number) => ipcRenderer.invoke('notes:getBilledIdsForClient', clientId),
     generatePdf: (noteId: number) => ipcRenderer.invoke('notes:generatePdf', noteId),
     generateBulkPdf: (noteIds: number[]) => ipcRenderer.invoke('notes:generateBulkPdf', noteIds),
     savePdf: (data: { base64Pdf: string; filename: string }) => ipcRenderer.invoke('notes:savePdf', data),

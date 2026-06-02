@@ -1818,6 +1818,8 @@ export interface PocketChartAPI {
     delete: (id: number) => Promise<boolean>;
     getEpisodeSummary: (clientId: number) => Promise<EpisodeSummary>;
     getUnbilledForClient: (clientId: number) => Promise<Array<{ id: number; date_of_service: string; cpt_code: string; charge_amount: number; entity_id: number | null }>>;
+    /** Note IDs that appear on an invoice (billed) — drives the Documentation kanban "Billed" column. */
+    getBilledIdsForClient: (clientId: number) => Promise<number[]>;
     /** Build a single-note PDF (works for both client SOAP notes and contractor notes). */
     generatePdf: (noteId: number) => Promise<{ base64Pdf: string; filename: string }>;
     /** Build a multi-note PDF packet. All notes must belong to the same patient. */
