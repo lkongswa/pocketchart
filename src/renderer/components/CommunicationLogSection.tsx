@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { MessageSquare, Plus, Trash2, Phone, Mail, Users, FileText } from 'lucide-react';
+import { MessageSquare, Trash2, Phone, Mail, Users, FileText } from 'lucide-react';
 import type { CommunicationLogEntry, CommunicationType, CommunicationDirection } from '@shared/types';
+import StoryBar from './StoryBar';
 
 interface CommunicationLogSectionProps {
   clientId: number;
@@ -31,6 +32,7 @@ export default function CommunicationLogSection({ clientId }: CommunicationLogSe
   const [entries, setEntries] = useState<CommunicationLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [open, setOpen] = useState(false);
 
   // Form state
   const [commDate, setCommDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -85,22 +87,38 @@ export default function CommunicationLogSection({ clientId }: CommunicationLogSe
     }
   };
 
-  if (loading) {
-    return <div className="text-sm text-[var(--color-text-secondary)]">Loading communication log...</div>;
-  }
+  const lastDate = entries.reduce<string | null>(
+    (max, e) => (!max || e.communication_date > max ? e.communication_date : max),
+    null,
+  );
+  const fmtShort = (d: string) => {
+    try {
+      return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    } catch {
+      return d;
+    }
+  };
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="section-title flex items-center gap-2">
-          <MessageSquare size={16} className="text-[var(--color-primary)]" />
-          Communication Log
-        </h3>
-        <button className="btn-primary btn-sm gap-1.5" onClick={() => setShowForm(true)}>
-          <Plus size={14} /> Add Entry
+    <StoryBar
+      title="Communication Log"
+      stats={lastDate ? [{ label: `Last: ${fmtShort(lastDate)}` }] : []}
+      action={
+        <button
+          className="text-xs text-emerald-700 font-semibold hover:underline"
+          onClick={() => { setOpen(true); setShowForm(true); }}
+        >
+          + Add Entry
         </button>
-      </div>
-
+      }
+      expanded={open}
+      onToggle={setOpen}
+    >
+      <div className="p-4">
+        {loading ? (
+          <div className="text-sm text-[var(--color-text-secondary)]">Loading communication log...</div>
+        ) : (
+          <>
       {/* Add form */}
       {showForm && (
         <div className="card p-4 mb-4 space-y-3">
@@ -212,6 +230,9 @@ export default function CommunicationLogSection({ clientId }: CommunicationLogSe
           })}
         </div>
       )}
-    </div>
+          </>
+        )}
+      </div>
+    </StoryBar>
   );
 }

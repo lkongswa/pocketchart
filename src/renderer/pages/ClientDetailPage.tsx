@@ -7,10 +7,7 @@ import {
   ClipboardList,
   Edit,
   Archive,
-  Phone,
   Mail,
-  Calendar,
-  MapPin,
   Plus,
   CheckCircle,
   Clock,
@@ -34,10 +31,6 @@ import {
   ChevronDown,
   ChevronRight,
   Shield,
-  Stethoscope,
-  User,
-  Activity,
-  Flag,
   LogOut,
   Lock,
   List,
@@ -45,7 +38,7 @@ import {
   Printer,
   Check,
   Inbox,
-  CalendarCheck,
+  MoreHorizontal,
 } from 'lucide-react';
 import type {
   Client,
@@ -67,10 +60,10 @@ import type {
   PaymentMethod,
   Practice,
   Appointment,
-  AppointmentStatus,
   FaxTrackingEntry,
+  ComplianceTracking,
 } from '../../shared/types';
-import { CLIENT_DOCUMENT_CATEGORY_LABELS, SESSION_TYPE_LABELS, VISIT_TYPE_LABELS } from '../../shared/types';
+import { CLIENT_DOCUMENT_CATEGORY_LABELS } from '../../shared/types';
 import ClientFormModal from '../components/ClientFormModal';
 import GoalFormModal from '../components/GoalFormModal';
 import GoalBuilderModal from '../components/GoalBuilderModal';
@@ -84,7 +77,6 @@ import ComplianceSection from '../components/ComplianceSection';
 import CommunicationLogSection from '../components/CommunicationLogSection';
 import SectionCard from '../components/SectionCard';
 import ProFeatureGate from '../components/ProFeatureGate';
-import ChartCompleteness from '../components/ChartCompleteness';
 import ClaimReadinessDialog from '../components/ClaimReadinessDialog';
 import CSVPaymentImportModal from '../components/CSVPaymentImportModal';
 import InvoiceModal from '../components/InvoiceModal';
@@ -93,6 +85,8 @@ import SendDocumentsModal from '../components/SendDocumentsModal';
 import TrialExpiredModal from '../components/TrialExpiredModal';
 import FaxSendModal from '../components/FaxSendModal';
 import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
+import StoryBar, { type StoryStat } from '../components/StoryBar';
+import CertHeatmap from '../components/CertHeatmap';
 import { useTrialGuard } from '../hooks/useTrialGuard';
 import { useChartCompleteness } from '../hooks/useChartCompleteness';
 import { useClaimReadiness } from '../hooks/useClaimReadiness';
@@ -190,14 +184,19 @@ const formatDate = (dateStr: string): string => {
   }
 };
 
-/** DOB displayed as compact M/D/YYYY (e.g. 9/3/2019) */
-const formatDob = (dateStr: string): string => {
-  if (!dateStr) return '--';
+/** Whole-years age from a DOB string (null if missing/unparseable). */
+const ageFromDob = (dateStr?: string | null): number | null => {
+  if (!dateStr) return null;
   try {
-    const d = new Date(dateStr + 'T00:00:00');
-    return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+    const b = new Date(dateStr + 'T00:00:00');
+    if (isNaN(b.getTime())) return null;
+    const now = new Date();
+    let age = now.getFullYear() - b.getFullYear();
+    const m = now.getMonth() - b.getMonth();
+    if (m < 0 || (m === 0 && now.getDate() < b.getDate())) age--;
+    return age >= 0 && age < 150 ? age : null;
   } catch {
-    return dateStr;
+    return null;
   }
 };
 
@@ -208,64 +207,6 @@ const truncate = (str: string, max: number): string => {
 
 const formatCategory = (category: string): string =>
   category.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
-
-// --- Simple bar chart for billing ---
-
-// --- Collapsible Info Section ---
-
-type SectionColor = 'blue' | 'violet' | 'emerald' | 'amber' | 'slate' | 'teal';
-
-const sectionColorMap: Record<SectionColor, { border: string; bg: string; icon: string; dot: string }> = {
-  blue:    { border: 'border-blue-300',    bg: 'bg-blue-50/40',    icon: 'text-blue-500',    dot: 'bg-blue-400' },
-  violet:  { border: 'border-violet-300',  bg: 'bg-violet-50/40',  icon: 'text-violet-500',  dot: 'bg-violet-400' },
-  emerald: { border: 'border-emerald-300', bg: 'bg-emerald-50/40', icon: 'text-emerald-500', dot: 'bg-emerald-400' },
-  amber:   { border: 'border-amber-300',   bg: 'bg-amber-50/40',   icon: 'text-amber-500',   dot: 'bg-amber-400' },
-  slate:   { border: 'border-slate-300',   bg: 'bg-slate-50/40',   icon: 'text-slate-500',   dot: 'bg-slate-400' },
-  teal:    { border: 'border-teal-300',    bg: 'bg-teal-50/40',    icon: 'text-teal-500',    dot: 'bg-teal-400' },
-};
-
-interface CollapsibleInfoProps {
-  icon: React.ReactNode;
-  title: string;
-  isComplete: boolean;
-  children: React.ReactNode;
-  onEdit?: () => void;
-  color?: SectionColor;
-}
-
-function CollapsibleInfo({ icon, title, isComplete, children, onEdit, color = 'blue' }: CollapsibleInfoProps) {
-  const [isOpen, setIsOpen] = useState(false);
-  const scheme = sectionColorMap[color];
-
-  return (
-    <div
-      className={`rounded-lg border transition-all cursor-pointer select-none ${scheme.border} ${scheme.bg}`}
-      onClick={() => setIsOpen(!isOpen)}
-    >
-      <div className="w-full flex items-center gap-2 px-3 py-2">
-        <span className={`shrink-0 ${scheme.icon}`}>{icon}</span>
-        <span className="text-xs font-medium text-[var(--color-text)] flex-1 truncate">{title}</span>
-        <span className={`w-2 h-2 shrink-0 rounded-full ${isComplete ? 'bg-emerald-400' : 'bg-amber-400'}`} title={isComplete ? 'Complete' : 'Incomplete'} />
-        <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-[var(--color-text-secondary)] transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-      </div>
-      {isOpen && (
-        <div className="px-3 pb-3 border-t border-[var(--color-border)]/30" onClick={(e) => e.stopPropagation()}>
-          <div className="pt-2 text-sm space-y-1.5">
-            {children}
-          </div>
-          {onEdit && (
-            <button
-              className="mt-3 w-full py-1.5 text-xs font-medium text-[var(--color-primary)] bg-[var(--color-primary)]/5 hover:bg-[var(--color-primary)]/10 rounded-md flex items-center justify-center gap-1.5 transition-colors"
-              onClick={() => onEdit()}
-            >
-              <Edit size={12} /> Edit
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 // --- Main Component ---
 
@@ -280,9 +221,6 @@ const ClientDetailPage: React.FC = () => {
   const [notes, setNotes] = useState<Note[]>([]);
   const [evaluations, setEvaluations] = useState<Evaluation[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
-  const [apptStatusFilter, setApptStatusFilter] = useState<'all' | AppointmentStatus>('all');
-  const [showAllAppointments, setShowAllAppointments] = useState(false);
-  const [appointmentsExpanded, setAppointmentsExpanded] = useState(false);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [goalHistories, setGoalHistories] = useState<Record<number, GoalProgressEntry[]>>({});
   const [documents, setDocuments] = useState<ClientDocument[]>([]);
@@ -298,7 +236,6 @@ const ClientDetailPage: React.FC = () => {
   const [showAllNotes, setShowAllNotes] = useState(false);
   const [showAllGoals, setShowAllGoals] = useState(false);
   const [showActiveGoals, setShowActiveGoals] = useState(false);
-  const [headerExpanded, setHeaderExpanded] = useState(false);
   const [showInactiveGoals, setShowInactiveGoals] = useState(false);
   const [goalStatusMenuId, setGoalStatusMenuId] = useState<number | null>(null);
   const [expandedGoalIdx, setExpandedGoalIdx] = useState<number | null>(null); // all goals collapsed by default
@@ -364,6 +301,12 @@ const ClientDetailPage: React.FC = () => {
   const [goalBuilderOpen, setGoalBuilderOpen] = useState(false);
   const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
+  // Header overflow (⋯) menu anchor — Discharge / Reactivate / Remove
+  const [headerMenu, setHeaderMenu] = useState<{ x: number; y: number } | null>(null);
+  // Receding sticky header — true once the main content area is scrolled
+  const [headerCondensed, setHeaderCondensed] = useState(false);
+  // Compliance tracking — drives Treatment-plan cert stats + heatmap (Slice 6)
+  const [compliance, setCompliance] = useState<ComplianceTracking | null>(null);
 
   // Remove client (empty chart only)
   const [canRemoveClient, setCanRemoveClient] = useState(false);
@@ -396,8 +339,10 @@ const ClientDetailPage: React.FC = () => {
     setSavedTab(tab);
   };
 
-  // Compact notes mode
+  // Compact notes mode (within the list view)
   const [notesCompact, setNotesCompact] = useLocalPreference('client-notes-compact', true);
+  // Documentation surface — kanban board vs flat list (Q-D escape hatch)
+  const [notesView, setNotesView] = useLocalPreference<'kanban' | 'list'>('client-notes-view', 'kanban');
 
   // Fax tracking: maps eval/note IDs to sent/received-back status
   const evalFaxMap = useMemo(() => {
@@ -432,7 +377,7 @@ const ClientDetailPage: React.FC = () => {
     if (!clientId) return;
     setLoading(true);
     try {
-      const [clientData, notesData, evalsData, goalsData, docsData, invoicesData, paymentsData, discountsData, activeDiscountsData, practiceData, feeScheduleData, entitiesData, appointmentsData, faxTrackingData] = await Promise.all([
+      const [clientData, notesData, evalsData, goalsData, docsData, invoicesData, paymentsData, discountsData, activeDiscountsData, practiceData, feeScheduleData, entitiesData, appointmentsData, faxTrackingData, complianceData] = await Promise.all([
         window.api.clients.get(clientId),
         window.api.notes.listByClient(clientId),
         window.api.evaluations.listByClient(clientId),
@@ -447,6 +392,7 @@ const ClientDetailPage: React.FC = () => {
         window.api.contractedEntities.list().catch(() => []),
         window.api.appointments.list({ clientId }).catch(() => []),
         window.api.fax.getOutboundByClient(clientId).catch(() => []),
+        window.api.compliance.getByClient(clientId).catch(() => null),
       ]);
       setClient(clientData);
       setPractice(practiceData);
@@ -454,6 +400,7 @@ const ClientDetailPage: React.FC = () => {
       setEvaluations(evalsData || []);
       setAppointments(appointmentsData || []);
       setFaxTracking(faxTrackingData || []);
+      setCompliance(complianceData || null);
       setGoals(goalsData || []);
       // Load progress histories for all goals
       if (goalsData?.length) {
@@ -494,6 +441,17 @@ const ClientDetailPage: React.FC = () => {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Receding sticky header: condense once the <main> content area scrolls.
+  useEffect(() => {
+    const onScroll = (e: Event) => {
+      const t = e.target;
+      if (!(t instanceof HTMLElement) || t.tagName !== 'MAIN') return;
+      setHeaderCondensed(t.scrollTop > 16);
+    };
+    document.addEventListener('scroll', onScroll, true);
+    return () => document.removeEventListener('scroll', onScroll, true);
+  }, []);
 
   // Check if this client can be removed (empty chart only)
   useEffect(() => {
@@ -932,7 +890,6 @@ const ClientDetailPage: React.FC = () => {
     .reduce((sum, i) => sum + i.total_amount, 0);
   const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
   const totalInvoiced = invoices.filter((i) => i.status !== 'void').reduce((sum, i) => sum + i.total_amount, 0);
-  const activeGoals = goals.filter((g) => g.status === 'active');
   const unsignedNotes = notes.filter((n) => !n.signed_at);
   const displayNotes = showAllNotes ? notes : notes.slice(0, 5);
 
@@ -967,6 +924,78 @@ const ClientDetailPage: React.FC = () => {
   const referringComplete = Boolean(client.referring_physician);
   const claimInfoComplete = Boolean(client.onset_date && client.patient_signature_source);
 
+  // Banner identity + "Finish setup" chips (only the incomplete ones surface)
+  const clientAge = ageFromDob(client.dob);
+  const hasSignedEval = evaluations.some((e) => e.signed_at);
+  const setupChips = ([
+    { label: 'Demographics', complete: demographicsComplete },
+    { label: 'Diagnosis', complete: diagnosisComplete },
+    { label: 'Referral', complete: referringComplete },
+    { label: 'Insurance', complete: insuranceComplete },
+    { label: 'Docs', complete: documents.length > 0 },
+    { label: 'Claims', complete: claimInfoComplete },
+  ] as const).filter((c) => !c.complete).map((c) => c.label);
+
+  // Treatment-plan cert stats (from compliance tracking)
+  const certThru = compliance?.next_recert_due ? new Date(compliance.next_recert_due) : null;
+  const certDaysLeft = certThru ? Math.ceil((certThru.getTime() - Date.now()) / 86400000) : null;
+  const treatmentStats: StoryStat[] = [];
+  if (certThru) {
+    treatmentStats.push({
+      label: `🛡 Cert: thru ${certThru.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+      tone: certDaysLeft !== null && certDaysLeft <= 14 ? 'amber' : 'teal',
+    });
+  }
+  if (compliance?.recert_md_signature_status === 'received') {
+    treatmentStats.push({ label: '✓ Signed & certified', tone: 'green' });
+  } else if (hasSignedEval) {
+    treatmentStats.push({ label: 'Eval signed', tone: 'neutral' });
+  }
+
+  // Documentation kanban: "Due" column extras + counts
+  const progressRemaining = compliance && compliance.tracking_enabled && compliance.progress_visit_threshold > 0
+    ? Math.max(0, compliance.progress_visit_threshold - compliance.visits_since_last_progress)
+    : null;
+  const recertDueSoon = certThru !== null && certDaysLeft !== null && certDaysLeft <= 45;
+  const dueCount = missingNoteAppts.length + (progressRemaining !== null ? 1 : 0) + (recertDueSoon ? 1 : 0);
+
+  const fmtTime12 = (t: string) => {
+    const [h, m] = t.split(':');
+    const hr = parseInt(h, 10);
+    return `${hr === 0 ? 12 : hr > 12 ? hr - 12 : hr}:${m} ${hr >= 12 ? 'PM' : 'AM'}`;
+  };
+
+  // Compact note card for the kanban columns (preserves open / context-menu / download / fax / delete)
+  const renderNoteCard = (note: Note) => {
+    let cpt = '';
+    try { const p = JSON.parse(note.cpt_codes || '[]'); if (Array.isArray(p) && p.length) cpt = p[0].code; } catch {}
+    if (!cpt && note.cpt_code) cpt = note.cpt_code;
+    return (
+      <div
+        key={note.id}
+        className="bg-white border border-[var(--color-border)] rounded-lg px-2 py-1.5 mb-1.5 cursor-pointer hover:shadow-sm transition-shadow"
+        onClick={() => navigate(`/clients/${clientId}/note/${note.id}`)}
+        onContextMenu={(e) => { e.preventDefault(); setNoteContextMenu({ x: e.clientX, y: e.clientY, note }); }}
+      >
+        <div className="font-medium text-xs text-[var(--color-text)]">{formatDate(note.date_of_service)}</div>
+        <div className="flex items-center gap-1 text-[11px] text-[var(--color-text-secondary)] mt-0.5">
+          <span>SOAP</span>{cpt && <><span>·</span><span>{cpt}</span></>}
+          <span className="flex-1" />
+          {note.signed_at ? (
+            <>
+              <button className="p-0.5 hover:text-[var(--color-primary)]" title="Download PDF" onClick={(e) => { e.stopPropagation(); handleDownloadNotePdf(note.id); }}><Download size={11} /></button>
+              <button className="p-0.5 hover:text-violet-600" title="Fax to Physician" onClick={(e) => { e.stopPropagation(); setFaxDocumentId(note.id); setFaxDocType('note'); setShowFaxModal(true); }}><Printer size={11} /></button>
+              {noteFaxMap.get(note.id)?.sent && <span className="text-green-600" title="Faxed"><Check size={10} /></span>}
+              {noteFaxMap.get(note.id)?.receivedBack && <span className="text-blue-600" title="Signed copy received"><Inbox size={10} /></span>}
+            </>
+          ) : (
+            <button className={`p-0.5 rounded ${deletingNoteId === note.id ? 'bg-red-600 text-white' : 'text-red-500 hover:bg-red-50'}`} title="Delete draft" onClick={(e) => { e.stopPropagation(); handleDeleteNote(note.id); }}><Trash2 size={11} /></button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   // --- Render ---
 
   return (
@@ -995,258 +1024,89 @@ const ClientDetailPage: React.FC = () => {
         </div>
       )}
 
-      {/* Chart Completeness Indicator */}
-      <ChartCompleteness result={chartCompleteness} onCompleteChart={handleCompleteChart} />
-
-      {/* ══════════ HEADER CARD — COMPACT BY DEFAULT ══════════ */}
-      <div className="card p-4">
-        {/* Compact Header Row: Avatar + Name + Badges + Details Toggle + Actions */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-teal-400 to-teal-600 flex items-center justify-center text-white text-sm font-bold shrink-0">
+      {/* ══════════ PATIENT BANNER + HANGING TABS — sticky, recedes on scroll ══════════ */}
+      <div className="sticky top-0 z-30">
+      <div className={`card relative z-10 transition-all duration-200 ${headerCondensed ? 'py-2 px-4 shadow-lg' : 'p-4'}`}>
+        <div className="flex items-start justify-between gap-3">
+          {/* LEFT: patient identity */}
+          <div className="flex items-start gap-3 min-w-0">
+            <div className={`rounded-full bg-gradient-to-br from-teal-400 to-teal-600 flex items-center justify-center text-white font-bold shrink-0 transition-all duration-200 ${headerCondensed ? 'w-7 h-7 text-[0.6rem]' : 'w-10 h-10 text-sm'}`}>
               {client.first_name[0]}{client.last_name[0]}
             </div>
-            <h1 className="text-xl font-bold text-[var(--color-text)]">
-              {client.first_name} {client.last_name}
-            </h1>
-            <span className={statusBadgeClass[client.status]}>{statusLabel[client.status]}</span>
-            <span className={disciplineBadgeClass[client.discipline]}>{client.discipline}</span>
-            <button
-              className="btn-ghost btn-sm gap-1 text-[var(--color-text-secondary)]"
-              onClick={() => setHeaderExpanded(!headerExpanded)}
-            >
-              {headerExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-              {headerExpanded ? 'Less' : 'Details'}
-            </button>
-          </div>
-          <div className="flex items-center gap-2">
-            <button className="btn-secondary btn-sm gap-1.5" onClick={() => setEditModalOpen(true)}>
-              <Edit size={14} /> Edit
-            </button>
-            <button className="btn-ghost btn-sm gap-1.5" onClick={handleExportPdf} disabled={exportingPdf}>
-              <Download size={14} /> {exportingPdf ? 'Exporting...' : 'Export Chart'}
-            </button>
-            {client.status !== 'discharged' && (
-              <button
-                className="btn-ghost btn-sm gap-1.5 text-amber-600 hover:bg-amber-50"
-                onClick={() => navigate(`/clients/${client.id}/note/new`, {
-                  state: { noteMode: 'discharge', standalone: true }
-                })}
-              >
-                <LogOut size={14} /> Discharge Client
-              </button>
-            )}
-            {client.status === 'discharged' && (
-              <button className="btn-ghost btn-sm gap-1.5 text-green-600 hover:bg-green-50" onClick={handleReactivate}>
-                <Archive size={14} /> Reactivate
-              </button>
-            )}
-            {canRemoveClient && (
-              !confirmRemove ? (
-                <button
-                  className="btn-ghost btn-sm gap-1.5 text-red-500 hover:bg-red-50"
-                  onClick={() => setConfirmRemove(true)}
-                  title="Remove this client (no clinical records exist)"
-                >
-                  <Trash2 size={14} /> Remove
-                </button>
-              ) : (
-                <span className="flex items-center gap-1.5 text-xs">
-                  <span className="text-red-600 font-medium">Remove client?</span>
-                  <button
-                    className="btn-ghost btn-sm text-red-600 font-semibold hover:bg-red-50"
-                    onClick={handleRemoveClient}
-                    disabled={removing}
-                  >
-                    {removing ? 'Removing...' : 'Yes'}
-                  </button>
-                  <button
-                    className="btn-ghost btn-sm text-[var(--color-text-secondary)]"
-                    onClick={() => setConfirmRemove(false)}
-                  >
-                    No
-                  </button>
-                </span>
-              )
-            )}
-          </div>
-        </div>
-
-        {/* Expanded Details: DOB, Phone, Email */}
-        {headerExpanded && (
-          <div className="flex items-center gap-4 text-sm text-[var(--color-text-secondary)] mt-3 ml-13 pl-0.5">
-            {client.dob && (
-              <span className="flex items-center gap-1"><Calendar size={13} /> {formatDob(client.dob)}</span>
-            )}
-            {client.phone && (
-              <span className="flex items-center gap-1"><Phone size={13} /> {client.phone}</span>
-            )}
-            {client.email && (
-              <span className="flex items-center gap-1"><Mail size={13} /> {client.email}</span>
-            )}
-            {client.address && (
-              <span className="flex items-center gap-1"><MapPin size={13} /> {client.address}</span>
-            )}
-          </div>
-        )}
-
-        {/* Compact completeness strip (always visible) */}
-        <div className="flex items-center gap-3 mt-3 flex-wrap">
-          {([
-            { label: 'Demographics', complete: demographicsComplete },
-            { label: 'Diagnosis', complete: diagnosisComplete },
-            { label: 'Referral', complete: referringComplete },
-            { label: 'Compliance', complete: true },
-            { label: 'Insurance', complete: insuranceComplete },
-            { label: 'Docs', complete: documents.length > 0 },
-            { label: 'Claims', complete: claimInfoComplete },
-          ]).map(({ label, complete }) => (
-            <span key={label} className="flex items-center gap-1 text-xs text-[var(--color-text-secondary)]">
-              <span className={`w-2 h-2 rounded-full ${complete ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-              {label}
-            </span>
-          ))}
-        </div>
-
-        {/* Expanded: Full CollapsibleInfo sections */}
-        {headerExpanded && (
-          <>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
-              <CollapsibleInfo
-                icon={<User size={14} />}
-                title="Demographics"
-                isComplete={demographicsComplete}
-                onEdit={() => setEditModalOpen(true)}
-                color="blue"
-              >
-                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">DOB</span><span>{formatDob(client.dob)}</span></div>
-                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Sex</span><span>{client.gender ? client.gender.charAt(0).toUpperCase() + client.gender.slice(1) : '--'}</span></div>
-                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Phone</span><span>{client.phone || '--'}</span></div>
-                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Email</span><span className="truncate ml-2">{client.email || '--'}</span></div>
-                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Address</span><span className="truncate ml-2">{client.address || '--'}</span></div>
-              </CollapsibleInfo>
-
-              <CollapsibleInfo
-                icon={<Stethoscope size={14} />}
-                title="Diagnosis"
-                isComplete={diagnosisComplete}
-                onEdit={() => setEditModalOpen(true)}
-                color="violet"
-              >
-                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Primary Dx</span><span>{client.primary_dx_code || '--'}</span></div>
-                {client.primary_dx_description && <p className="text-xs text-[var(--color-text-secondary)] italic">{client.primary_dx_description}</p>}
-                {(() => {
-                  try {
-                    const secDx = JSON.parse(client.secondary_dx || '[]');
-                    if (Array.isArray(secDx) && secDx.length > 0) {
-                      return secDx.map((dx: any, i: number) => (
-                        <div key={i} className="flex justify-between">
-                          <span className="text-[var(--color-text-secondary)]">Dx {String.fromCharCode(66 + i)}</span>
-                          <span>{dx.code}</span>
-                        </div>
-                      ));
-                    }
-                  } catch {}
-                  return null;
-                })()}
-                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Default CPT</span><span>{client.default_cpt_code || '--'}</span></div>
-              </CollapsibleInfo>
-
-              <CollapsibleInfo
-                icon={<Activity size={14} />}
-                title="Referral"
-                isComplete={referringComplete}
-                onEdit={() => setEditModalOpen(true)}
-                color="amber"
-              >
-                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Physician</span><span>{client.referring_physician || '--'}</span></div>
-                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">NPI</span><span>{client.referring_npi || '--'}</span></div>
-                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Fax</span><span>{client.referring_fax || '--'}</span></div>
-              </CollapsibleInfo>
-
-              <CollapsibleInfo
-                icon={<Shield size={14} />}
-                title="Doc Compliance"
-                isComplete={true}
-                color="teal"
-              >
-                <p className="text-xs text-[var(--color-text-secondary)]">Note frequency, recertification dates & progress report alerts</p>
-                <button className="mt-2 text-xs text-[var(--color-primary)] hover:underline" onClick={() => handleTabChange('clinical')}>
-                  View Details
-                </button>
-              </CollapsibleInfo>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-3">
-              <CollapsibleInfo
-                icon={<Shield size={14} />}
-                title="Insurance"
-                isComplete={insuranceComplete}
-                onEdit={() => setEditModalOpen(true)}
-                color="emerald"
-              >
-                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Payer</span><span>{client.insurance_payer || '--'}</span></div>
-                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Member ID</span><span>{client.insurance_member_id || '--'}</span></div>
-                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Group</span><span>{client.insurance_group || '--'}</span></div>
-              </CollapsibleInfo>
-
-              <CollapsibleInfo
-                icon={<FolderOpen size={14} />}
-                title={`Documents (${documents.length})`}
-                isComplete={documents.length > 0}
-                color="slate"
-              >
-                <div className="space-y-1.5">
-                  {documents.slice(0, 3).map((doc) => (
-                    <div key={doc.id} className="flex items-center justify-between text-xs">
-                      <span className="truncate">{doc.original_name}</span>
-                      <button className="text-[var(--color-primary)] hover:underline" onClick={() => handleOpenDocument(doc.id)}>View</button>
-                    </div>
-                  ))}
-                  {documents.length > 3 && <p className="text-xs text-[var(--color-text-secondary)]">+{documents.length - 3} more</p>}
-                  {documents.length === 0 && <p className="text-xs text-[var(--color-text-secondary)]">No documents</p>}
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className={`font-bold text-[var(--color-text)] leading-none transition-all duration-200 ${headerCondensed ? 'text-base' : 'text-xl'}`}>
+                  {client.first_name} {client.last_name}
+                </h1>
+                <span className={statusBadgeClass[client.status]}>{statusLabel[client.status]}</span>
+                <span className={disciplineBadgeClass[client.discipline]}>{client.discipline}</span>
+              </div>
+              {/* line 2: age · dx (dx surfaces once a signed eval exists) */}
+              {!headerCondensed && (clientAge !== null || (hasSignedEval && (client.primary_dx_description || client.primary_dx_code))) && (
+                <div className="text-xs text-[var(--color-text-secondary)] mt-1 flex items-center gap-1.5 flex-wrap">
+                  {clientAge !== null && <span>{clientAge} yo</span>}
+                  {clientAge !== null && hasSignedEval && (client.primary_dx_description || client.primary_dx_code) && (
+                    <span className="text-[var(--color-text-tertiary)]">·</span>
+                  )}
+                  {hasSignedEval && (client.primary_dx_description || client.primary_dx_code) && (
+                    <span className="text-[var(--color-text)] font-medium">
+                      {client.primary_dx_description || client.primary_dx_code}
+                    </span>
+                  )}
                 </div>
-                <button className="mt-2 text-xs text-[var(--color-primary)] hover:underline flex items-center gap-1" onClick={() => handleTabChange('documents')}>
-                  <Upload size={10} /> Manage Documents
-                </button>
-              </CollapsibleInfo>
-
-              <CollapsibleInfo
-                icon={<FileText size={14} />}
-                title="Claim Info"
-                isComplete={claimInfoComplete}
-                onEdit={() => setEditModalOpen(true)}
-                color="violet"
-              >
-                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Onset</span><span>{client.onset_date ? formatDate(client.onset_date) : '--'}</span></div>
-                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Assignment</span><span>{client.claim_accept_assignment === 'Y' ? 'Yes' : client.claim_accept_assignment === 'N' ? 'No' : '--'}</span></div>
-                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Prior Auth</span><span>{client.prior_auth_number || '--'}</span></div>
-                <div className="flex justify-between"><span className="text-[var(--color-text-secondary)]">Patient Sig</span><span>{client.patient_signature_source || '--'}</span></div>
-              </CollapsibleInfo>
+              )}
+              {/* line 3: coverage (authorized-visits chip is V3 — deferred) */}
+              {!headerCondensed && client.insurance_payer && (
+                <div className="text-xs text-[var(--color-text-secondary)] mt-0.5 flex items-center gap-1">
+                  <CreditCard size={11} className="text-[var(--color-text-tertiary)]" />
+                  <span>{client.insurance_payer}</span>
+                </div>
+              )}
             </div>
-          </>
-        )}
-      </div>
-
-      {/* ══════════ COMPLIANCE BANNER ══════════ */}
-      {(() => {
-        const bannerItems: { label: string; color: 'amber' | 'red'; onClick?: () => void }[] = [];
-        if (unsignedNotes.length > 0) {
-          bannerItems.push({ label: `${unsignedNotes.length} unsigned note${unsignedNotes.length > 1 ? 's' : ''}`, color: 'amber' });
-        }
-        if (bannerItems.length === 0) return null;
-        return (
-          <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-amber-50 border border-amber-200">
-            <AlertCircle size={16} className="text-amber-500 shrink-0" />
-            <span className="text-sm text-amber-700">
-              {bannerItems.map(b => b.label).join(' | ')}
-            </span>
           </div>
-        );
-      })()}
+          {/* RIGHT: actions + finish-setup chips */}
+          <div className="flex flex-col items-end gap-2 shrink-0">
+            <div className="flex items-center gap-2">
+              <button className="btn-secondary btn-sm gap-1.5" onClick={() => setEditModalOpen(true)}>
+                <Edit size={14} /> Edit
+              </button>
+              <button className="btn-ghost btn-sm gap-1.5" onClick={handleExportPdf} disabled={exportingPdf}>
+                <Download size={14} /> {exportingPdf ? 'Exporting...' : 'Export'}
+              </button>
+              <button
+                className="btn-ghost btn-sm px-2"
+                title="More actions"
+                onClick={(e) => {
+                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                  setHeaderMenu({ x: Math.max(8, r.right - 184), y: r.bottom + 4 });
+                }}
+              >
+                <MoreHorizontal size={16} />
+              </button>
+            </div>
+            {!headerCondensed && setupChips.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                <span className="flex items-center gap-1 text-xs text-amber-600 font-medium">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> Finish setup:
+                </span>
+                {setupChips.map((label) => (
+                  <button
+                    key={label}
+                    className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 text-xs font-medium transition-colors"
+                    onClick={handleCompleteChart}
+                    title={`Complete ${label} — opens Edit`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>{/* end header card */}
 
-      {/* ══════════ TAB BAR ══════════ */}
-      <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+      {/* ══════════ HANGING TABS — dock under the banner with a deeper shadow ══════════ */}
+      <div className="flex gap-1.5 pl-4 -mt-px relative z-0">
         {([
           { key: 'clinical' as ClientTab, label: 'Clinical', icon: <FileText size={15} />, badge: unsignedNotes.length },
           { key: 'billing' as ClientTab, label: 'Billing', icon: <DollarSign size={15} />, badge: invoices.filter(i => i.status !== 'paid' && i.status !== 'void').length },
@@ -1254,10 +1114,10 @@ const ClientDetailPage: React.FC = () => {
         ]).map((tab) => (
           <button
             key={tab.key}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer ${
+            className={`flex items-center gap-1.5 px-4 pt-1.5 pb-2.5 rounded-b-xl border border-t-0 text-sm font-semibold cursor-pointer transition-colors ${
               activeTab === tab.key
-                ? 'bg-white text-[var(--color-primary)] shadow-sm'
-                : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
+                ? 'bg-white text-emerald-700 border-slate-200 shadow-[0_7px_11px_-3px_rgba(15,23,42,0.20)]'
+                : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-50 shadow-[0_6px_9px_-3px_rgba(15,23,42,0.16)]'
             }`}
             onClick={() => handleTabChange(tab.key)}
           >
@@ -1265,7 +1125,7 @@ const ClientDetailPage: React.FC = () => {
             {tab.label}
             {tab.badge > 0 && (
               <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                activeTab === tab.key ? 'bg-gray-100 text-gray-600' : 'bg-gray-200 text-gray-600'
+                activeTab === tab.key ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-200 text-slate-600'
               }`}>
                 {tab.badge}
               </span>
@@ -1273,40 +1133,47 @@ const ClientDetailPage: React.FC = () => {
           </button>
         ))}
       </div>
+      </div>{/* end sticky header unit */}
+
+      {/* unsigned-notes banner removed — now surfaced in the Documentation kanban (Draft column + stat) */}
 
       {/* ══════════ CLINICAL TAB ══════════ */}
       {activeTab === 'clinical' && <>
 
       {/* ══════════ TWO COLUMN: CLINICAL DATA ══════════ */}
-      <div className="grid grid-cols-12 gap-6">
-        {/* LEFT COLUMN: Recert + Evaluations + Goals (5 cols) */}
-        <div className="col-span-5 space-y-6">
-          {/* Recertification compliance card — anchored above evals */}
-          <ComplianceSection clientId={clientId} card="recert" />
+      <div className="grid md:grid-cols-[7fr_3fr] gap-6 items-start">
+        {/* LEFT (70%): Treatment plan + Documentation */}
+        <div className="space-y-6">
+          <StoryBar title="Treatment plan" stats={treatmentStats}>
+            <div className="p-3 space-y-4">
+              {/* eval → MD signature flow — cert ⚙/↺/stepper controls live here */}
+              <ComplianceSection clientId={clientId} card="recert" />
 
-          {/* Evaluations */}
-          <SectionCard
-            color="violet"
-            icon={<ClipboardList size={18} />}
-            title="Evaluations"
-            count={evaluations.length}
-            actions={<div className="flex items-center gap-2">
-                {evaluations.some(e => e.signed_at) && (
-                  <button
-                    className="btn-secondary btn-sm gap-1.5"
-                    onClick={() => { if (guardAction()) navigate(`/clients/${clientId}/eval/new`, { state: { reassessment: true } }); }}
-                  >
-                    <RefreshCw size={14} /> Reassessment
-                  </button>
-                )}
-                <button
-                  className="btn-primary btn-sm gap-1.5"
-                  onClick={() => { if (guardAction()) navigate(`/clients/${clientId}/eval/new`); }}
-                >
-                  <Plus size={14} /> New Eval
-                </button>
-              </div>}
-          >
+              {/* Evaluations */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-secondary)] flex items-center gap-1.5">
+                    <ClipboardList size={13} className="text-violet-500" /> Evaluations
+                    <span className="font-normal normal-case text-[var(--color-text-tertiary)]">({evaluations.length})</span>
+                  </h4>
+                  <div className="flex items-center gap-2">
+                    {evaluations.some(e => e.signed_at) && (
+                      <button
+                        className="btn-secondary btn-sm gap-1.5"
+                        onClick={() => { if (guardAction()) navigate(`/clients/${clientId}/eval/new`, { state: { reassessment: true } }); }}
+                      >
+                        <RefreshCw size={14} /> Reassessment
+                      </button>
+                    )}
+                    <button
+                      className="btn-primary btn-sm gap-1.5"
+                      onClick={() => { if (guardAction()) navigate(`/clients/${clientId}/eval/new`); }}
+                    >
+                      <Plus size={14} /> New Eval
+                    </button>
+                  </div>
+                </div>
+                <div className="rounded-lg border border-[var(--color-border)] overflow-hidden">
             {evaluations.length === 0 ? (
               <div className="p-6 text-center text-sm text-[var(--color-text-secondary)]">
                 No evaluations yet.
@@ -1378,19 +1245,21 @@ const ClientDetailPage: React.FC = () => {
                 ))}
               </div>
             )}
-          </SectionCard>
+                </div>
+              </div>
 
-          {/* Goals */}
-          <SectionCard
-            color="amber"
-            icon={<Target size={18} />}
-            title="Goals"
-            count={goals.length}
-            badge={establishedActive.length > 0 ? <span className="text-xs text-[var(--color-text-secondary)]">{establishedActive.length} established{pendingActive.length > 0 ? `, ${pendingActive.length} pending` : ''}</span> : undefined}
-            actions={<button className="btn-primary btn-sm gap-1.5" onClick={() => { if (guardAction()) openAddGoal(); }}>
-                <Plus size={14} /> Add Goal
-              </button>}
-          >
+              {/* Goals — the substance of the plan */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-secondary)] flex items-center gap-1.5">
+                    <Target size={13} className="text-amber-500" /> Goals
+                    <span className="font-normal normal-case text-[var(--color-text-tertiary)]">({goals.length}){establishedActive.length > 0 ? ` · ${establishedActive.length} established${pendingActive.length > 0 ? `, ${pendingActive.length} pending` : ''}` : ''}</span>
+                  </h4>
+                  <button className="btn-primary btn-sm gap-1.5" onClick={() => { if (guardAction()) openAddGoal(); }}>
+                    <Plus size={14} /> Add Goal
+                  </button>
+                </div>
+                <div className="rounded-lg border border-[var(--color-border)] overflow-hidden">
             {goals.length === 0 ? (
               <div className="p-6 text-center text-sm text-[var(--color-text-secondary)]">
                 No goals set yet. Add one to track progress.
@@ -1589,98 +1458,99 @@ const ClientDetailPage: React.FC = () => {
                 )}
               </>
             )}
-          </SectionCard>
-        </div>
-
-        {/* RIGHT COLUMN: Progress Report + SOAP Notes (7 cols) */}
-        <div className="col-span-7 space-y-6">
-          {/* Progress Report compliance card — anchored above notes */}
-          <ComplianceSection clientId={clientId} card="progress" />
-
-          {/* Appointments missing notes */}
-          {missingNoteAppts.length > 0 && (
-            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 overflow-hidden">
-              <div className="flex items-center gap-2 px-3 py-2">
-                <CalendarCheck size={14} className="text-amber-600 shrink-0" />
-                <span className="text-xs font-medium text-amber-800">
-                  {missingNoteAppts.length} appointment{missingNoteAppts.length !== 1 ? 's' : ''} missing notes
-                </span>
-              </div>
-              <div className="divide-y divide-amber-200">
-                {missingNoteAppts.slice(0, 5).map((appt) => (
-                  <div
-                    key={appt.id}
-                    className="flex items-center gap-3 px-3 py-1.5 hover:bg-amber-100/50 cursor-pointer transition-colors"
-                    onClick={() => navigate(`/clients/${clientId}/note/new`, {
-                      state: {
-                        appointmentDate: appt.scheduled_date,
-                        appointmentTime: appt.scheduled_time,
-                        appointmentDuration: appt.duration_minutes,
-                      }
-                    })}
-                  >
-                    <div className="w-1 h-4 rounded-full bg-amber-400 shrink-0" />
-                    <span className="text-xs text-amber-900">{formatDate(appt.scheduled_date)}</span>
-                    {appt.scheduled_time && (
-                      <span className="text-xs text-amber-700">
-                        {new Date(`2000-01-01T${appt.scheduled_time}`).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
-                      </span>
-                    )}
-                    <span className="text-[10px] text-amber-600 ml-auto">+ Create Note</span>
-                  </div>
-                ))}
-                {missingNoteAppts.length > 5 && (
-                  <div className="px-3 py-1.5 text-[10px] text-amber-600">
-                    +{missingNoteAppts.length - 5} more
-                  </div>
-                )}
+                </div>
               </div>
             </div>
-          )}
+          </StoryBar>
 
-          <SectionCard
-            color="blue"
-            icon={<FileText size={18} />}
-            title="SOAP Notes"
-            count={notes.length}
-            badge={unsignedNotes.length > 0 ? <span className="badge bg-red-100 text-red-600 text-xs">{unsignedNotes.length} unsigned</span> : undefined}
-            actions={
-              <div className="flex items-center gap-2">
-                <div className="flex items-center bg-gray-100 rounded-md p-0.5">
-                  <button
-                    className={`p-1 rounded ${notesCompact ? 'bg-white shadow-sm text-[var(--color-text)]' : 'text-[var(--color-text-secondary)]'}`}
-                    onClick={() => setNotesCompact(true)}
-                    title="Compact view"
-                  >
-                    <List size={14} />
-                  </button>
-                  <button
-                    className={`p-1 rounded ${!notesCompact ? 'bg-white shadow-sm text-[var(--color-text)]' : 'text-[var(--color-text-secondary)]'}`}
-                    onClick={() => setNotesCompact(false)}
-                    title="Detailed view"
-                  >
-                    <LayoutGrid size={14} />
-                  </button>
-                </div>
-                {signedNotes.length > 0 && (
-                  <button
-                    className="btn-secondary btn-sm gap-1.5"
-                    onClick={handleDownloadNotesPacket}
-                    title={`Download all ${signedNotes.length} signed note${signedNotes.length === 1 ? '' : 's'} as one PDF packet`}
-                  >
-                    <Download size={14} />
-                    Packet ({signedNotes.length})
-                  </button>
-                )}
-                <button
-                  className="btn-primary btn-sm gap-1.5"
-                  onClick={() => { if (guardAction()) navigate(`/clients/${clientId}/note/new`); }}
-                >
-                  <Plus size={14} /> New Note
-                </button>
-              </div>
+          <StoryBar
+            title="Documentation"
+            defaultExpanded
+            stats={[
+              ...(dueCount > 0 ? [{ label: `Due: ${dueCount}`, tone: 'amber' as const }] : []),
+              ...(unsignedNotes.length > 0 ? [{ label: `Draft: ${unsignedNotes.length}`, tone: 'orange' as const }] : []),
+              ...(signedNotes.length > 0 ? [{ label: `Signed: ${signedNotes.length}`, tone: 'green' as const }] : []),
+            ]}
+            action={
+              <button className="text-xs text-emerald-700 font-semibold hover:underline" onClick={() => { if (guardAction()) navigate(`/clients/${clientId}/note/new`); }}>
+                + Note
+              </button>
             }
           >
+            <div className="p-3">
+              {/* toolbar: board/list · compact/detailed (list only) · packet */}
+              <div className="flex items-center justify-between mb-2.5">
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center bg-gray-100 rounded-md p-0.5 text-[11px] font-semibold">
+                    <button className={`px-2 py-0.5 rounded ${notesView === 'kanban' ? 'bg-white shadow-sm text-[var(--color-text)]' : 'text-[var(--color-text-secondary)]'}`} onClick={() => setNotesView('kanban')}>Board</button>
+                    <button className={`px-2 py-0.5 rounded ${notesView === 'list' ? 'bg-white shadow-sm text-[var(--color-text)]' : 'text-[var(--color-text-secondary)]'}`} onClick={() => setNotesView('list')}>List</button>
+                  </div>
+                  {notesView === 'list' && (
+                    <div className="flex items-center bg-gray-100 rounded-md p-0.5">
+                      <button className={`p-1 rounded ${notesCompact ? 'bg-white shadow-sm text-[var(--color-text)]' : 'text-[var(--color-text-secondary)]'}`} onClick={() => setNotesCompact(true)} title="Compact"><List size={14} /></button>
+                      <button className={`p-1 rounded ${!notesCompact ? 'bg-white shadow-sm text-[var(--color-text)]' : 'text-[var(--color-text-secondary)]'}`} onClick={() => setNotesCompact(false)} title="Detailed"><LayoutGrid size={14} /></button>
+                    </div>
+                  )}
+                </div>
+                {signedNotes.length > 0 && (
+                  <button className="btn-secondary btn-sm gap-1.5" onClick={handleDownloadNotesPacket} title={`Download all ${signedNotes.length} signed note${signedNotes.length === 1 ? '' : 's'} as one PDF packet`}>
+                    <Download size={14} /> Packet ({signedNotes.length})
+                  </button>
+                )}
+              </div>
+              {notesView === 'kanban' ? (
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {/* Due */}
+                  <div className="min-w-[130px] flex-1 bg-gray-50 border border-[var(--color-border)] rounded-lg p-1.5">
+                    <div className="flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wide text-[var(--color-text-secondary)] mb-1.5 px-0.5">
+                      <span className="w-2 h-2 rounded-full bg-amber-400" /> Due <span className="ml-auto text-amber-700">{dueCount}</span>
+                    </div>
+                    {missingNoteAppts.map((appt) => (
+                      <div key={appt.id} className="bg-white border border-[var(--color-border)] rounded-lg px-2 py-1.5 mb-1.5 cursor-pointer hover:shadow-sm transition-shadow" onClick={() => navigate(`/clients/${clientId}/note/new`, { state: { appointmentDate: appt.scheduled_date, appointmentTime: appt.scheduled_time, appointmentDuration: appt.duration_minutes } })}>
+                        <div className="font-medium text-xs text-[var(--color-text)]">{formatDate(appt.scheduled_date)}</div>
+                        <div className="text-[11px] text-[var(--color-text-secondary)]">{appt.scheduled_time ? fmtTime12(appt.scheduled_time) : ''} · ＋ create note</div>
+                      </div>
+                    ))}
+                    {progressRemaining !== null && (
+                      <div className="rounded-lg border border-dashed border-[var(--color-border)] px-2 py-1.5 mb-1.5 opacity-80">
+                        <div className="font-medium text-xs text-[var(--color-text)]">📄 Progress report</div>
+                        <div className="text-[11px] text-[var(--color-text-secondary)]">coming due · in {progressRemaining} visit{progressRemaining === 1 ? '' : 's'}</div>
+                      </div>
+                    )}
+                    {recertDueSoon && (
+                      <div className="rounded-lg border border-dashed border-[var(--color-border)] px-2 py-1.5 mb-1.5 opacity-80">
+                        <div className="font-medium text-xs text-[var(--color-text)]">📄 Recertification</div>
+                        <div className="text-[11px] text-[var(--color-text-secondary)]">due {certThru ? certThru.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}</div>
+                      </div>
+                    )}
+                    {dueCount === 0 && <div className="text-[11px] text-[var(--color-text-tertiary)] px-1 py-2">Nothing due</div>}
+                  </div>
+                  {/* Draft */}
+                  <div className="min-w-[130px] flex-1 bg-gray-50 border border-[var(--color-border)] rounded-lg p-1.5">
+                    <div className="flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wide text-[var(--color-text-secondary)] mb-1.5 px-0.5">
+                      <span className="w-2 h-2 rounded-full bg-orange-400" /> Draft <span className="ml-auto text-orange-600">{unsignedNotes.length}</span>
+                    </div>
+                    {unsignedNotes.map(renderNoteCard)}
+                    {unsignedNotes.length === 0 && <div className="text-[11px] text-[var(--color-text-tertiary)] px-1 py-2">—</div>}
+                  </div>
+                  {/* Signed */}
+                  <div className="min-w-[130px] flex-1 bg-gray-50 border border-[var(--color-border)] rounded-lg p-1.5">
+                    <div className="flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wide text-[var(--color-text-secondary)] mb-1.5 px-0.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400" /> Signed <span className="ml-auto text-emerald-600">{signedNotes.length}</span>
+                    </div>
+                    {signedNotes.map(renderNoteCard)}
+                    {signedNotes.length === 0 && <div className="text-[11px] text-[var(--color-text-tertiary)] px-1 py-2">—</div>}
+                  </div>
+                  {/* Billed (per-note billed status is net-new — Slice 8) */}
+                  <div className="min-w-[130px] flex-1 bg-gray-50 border border-[var(--color-border)] rounded-lg p-1.5">
+                    <div className="flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wide text-[var(--color-text-secondary)] mb-1.5 px-0.5">
+                      <span className="w-2 h-2 rounded-full bg-teal-400" /> Billed <span className="ml-auto">0</span>
+                    </div>
+                    <div className="text-[11px] text-[var(--color-text-tertiary)] px-1 py-2 leading-snug">Signed notes flow here once claimed → Revenue Pipeline</div>
+                  </div>
+                </div>
+              ) : (
+                <>
             {notes.length === 0 ? (
               <div className="p-8 text-center text-sm text-[var(--color-text-secondary)]">
                 No SOAP notes yet. Create one to get started.
@@ -1849,134 +1719,28 @@ const ClientDetailPage: React.FC = () => {
                 {showAllNotes ? 'Show less' : `Show all ${notes.length} notes`}
               </button>
             )}
-          </SectionCard>
+                </>
+              )}
+            </div>
+          </StoryBar>
+        </div>{/* end left 70% */}
+
+        {/* RIGHT (30%): cert heatmap — replaces the appointments list (Q-B); day-click opens the linked note/eval */}
+        <div>
+          <CertHeatmap
+            clientId={clientId}
+            appointments={appointments}
+            compliance={compliance}
+            onOpenAppt={(appt) => {
+              if (appt.evaluation_id) navigate(`/clients/${clientId}/eval/${appt.evaluation_id}`);
+              else if (appt.note_id) navigate(`/clients/${clientId}/note/${appt.note_id}`);
+            }}
+            onComplianceChanged={loadData}
+          />
         </div>
       </div>
 
-      {/* ══════════ APPOINTMENTS ══════════ */}
-      {(() => {
-        const filteredAppts = apptStatusFilter === 'all'
-          ? appointments
-          : appointments.filter(a => a.status === apptStatusFilter);
-        const displayAppts = showAllAppointments ? filteredAppts : filteredAppts.slice(0, 10);
-        const statusCounts = appointments.reduce((acc, a) => { acc[a.status] = (acc[a.status] || 0) + 1; return acc; }, {} as Record<string, number>);
-        const fmt12 = (t: string) => { const [h, m] = t.split(':'); const hr = parseInt(h, 10); return `${hr === 0 ? 12 : hr > 12 ? hr - 12 : hr}:${m} ${hr >= 12 ? 'PM' : 'AM'}`; };
-        const statusBadge = (s: AppointmentStatus) => {
-          const map: Record<AppointmentStatus, { bg: string; text: string; label: string }> = {
-            scheduled: { bg: 'bg-blue-100', text: 'text-blue-700', label: 'Scheduled' },
-            completed: { bg: 'bg-emerald-100', text: 'text-emerald-700', label: 'Attended' },
-            cancelled: { bg: 'bg-gray-100', text: 'text-gray-500', label: 'Cancelled' },
-            'no-show': { bg: 'bg-red-100', text: 'text-red-600', label: 'No-Show' },
-          };
-          const c = map[s];
-          return <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${c.bg} ${c.text}`}>{c.label}</span>;
-        };
-        const filterChips: Array<{ value: 'all' | AppointmentStatus; label: string }> = [
-          { value: 'all', label: `All (${appointments.length})` },
-          { value: 'scheduled', label: `Scheduled (${statusCounts.scheduled || 0})` },
-          { value: 'completed', label: `Attended (${statusCounts.completed || 0})` },
-          { value: 'cancelled', label: `Cancelled (${statusCounts.cancelled || 0})` },
-          { value: 'no-show', label: `No-Show (${statusCounts['no-show'] || 0})` },
-        ];
-        return (
-          <SectionCard
-            color="teal"
-            icon={<Calendar size={18} />}
-            title="Appointments"
-            count={appointments.length}
-            collapsible
-            expanded={appointmentsExpanded}
-            onToggle={setAppointmentsExpanded}
-          >
-            {/* Filter chips */}
-            <div className="flex items-center gap-1.5 px-4 py-2 border-b border-[var(--color-border)] bg-gray-50/50">
-              {filterChips.map(chip => (
-                <button
-                  key={chip.value}
-                  className={`text-xs px-2.5 py-1 rounded-full font-medium transition-colors ${
-                    apptStatusFilter === chip.value
-                      ? 'bg-[var(--color-primary)] text-white'
-                      : 'bg-white text-[var(--color-text-secondary)] border border-[var(--color-border)] hover:bg-gray-100'
-                  }`}
-                  onClick={() => setApptStatusFilter(chip.value)}
-                >
-                  {chip.label}
-                </button>
-              ))}
-            </div>
-            {filteredAppts.length === 0 ? (
-              <div className="p-8 text-center text-sm text-[var(--color-text-secondary)]">
-                {appointments.length === 0 ? 'No appointments yet.' : 'No appointments match this filter.'}
-              </div>
-            ) : (
-              <div className="divide-y divide-[var(--color-border)]">
-                {displayAppts.map(appt => {
-                  const sessionType = (appt.session_type || 'visit') as keyof typeof SESSION_TYPE_LABELS;
-                  const visitType = appt.visit_type as keyof typeof VISIT_TYPE_LABELS | undefined;
-                  return (
-                    <div
-                      key={appt.id}
-                      className={`flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors ${
-                        appt.note_id || appt.evaluation_id ? 'cursor-pointer' : ''
-                      }`}
-                      onClick={() => {
-                        if (appt.evaluation_id) navigate(`/clients/${clientId}/eval/${appt.evaluation_id}`);
-                        else if (appt.note_id) navigate(`/clients/${clientId}/note/${appt.note_id}`);
-                      }}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className="text-sm font-medium text-[var(--color-text)] w-24 shrink-0">
-                          {formatDate(appt.scheduled_date)}
-                        </span>
-                        <span className="text-xs text-[var(--color-text-secondary)] w-16 shrink-0">
-                          {appt.scheduled_time ? fmt12(appt.scheduled_time) : ''}
-                        </span>
-                        <span className="badge bg-gray-100 text-gray-600 text-xs">
-                          {appt.duration_minutes}m
-                        </span>
-                        {sessionType !== 'visit' && (
-                          <span className={`text-xs px-1.5 py-0.5 rounded font-bold ${
-                            sessionType === 'eval' ? 'bg-violet-200 text-violet-700' : 'bg-amber-200 text-amber-700'
-                          }`}>
-                            {sessionType === 'eval' ? 'Eval' : 'Recert'}
-                          </span>
-                        )}
-                        {visitType && (
-                          <span className="text-xs text-[var(--color-text-tertiary)]">
-                            {VISIT_TYPE_LABELS[visitType] || visitType}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        {statusBadge(appt.status)}
-                        {appt.note_id && (
-                          <span className="text-xs text-emerald-500" title="Note linked">
-                            <FileText size={13} />
-                          </span>
-                        )}
-                        {appt.evaluation_id && (
-                          <span className="text-xs text-violet-500" title="Eval linked">
-                            <ClipboardList size={13} />
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {filteredAppts.length > 10 && (
-              <button
-                className="w-full py-2 text-xs text-[var(--color-primary)] font-medium hover:bg-gray-50 flex items-center justify-center gap-1"
-                onClick={() => setShowAllAppointments(!showAllAppointments)}
-              >
-                {showAllAppointments ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                {showAllAppointments ? 'Show less' : `Show all ${filteredAppts.length} appointments`}
-              </button>
-            )}
-          </SectionCard>
-        );
-      })()}
+      {/* (legacy appointments list removed — replaced by the cert heatmap in the right column) */}
 
       {/* Communication Log */}
       <ProFeatureGate feature="communication_log">
@@ -2792,6 +2556,22 @@ const ClientDetailPage: React.FC = () => {
       {/* Trial Expired Modal */}
       {showExpiredModal && <TrialExpiredModal onClose={dismissExpiredModal} />}
 
+      {/* Header overflow (⋯) menu — Discharge / Reactivate / Remove */}
+      {headerMenu && (
+        <ContextMenu
+          x={headerMenu.x}
+          y={headerMenu.y}
+          items={[
+            ...(client.status !== 'discharged'
+              ? [{ label: 'Discharge Client', icon: <LogOut size={14} />, onClick: () => navigate(`/clients/${client.id}/note/new`, { state: { noteMode: 'discharge', standalone: true } }) }]
+              : [{ label: 'Reactivate Client', icon: <Archive size={14} />, onClick: handleReactivate }]),
+            ...(canRemoveClient
+              ? [{ label: 'Remove Client', icon: <Trash2 size={14} />, className: 'text-red-600', dividerBefore: true, onClick: () => { if (window.confirm('Remove this client? No clinical records exist, and this cannot be undone.')) handleRemoveClient(); } }]
+              : []),
+          ] as ContextMenuItem[]}
+          onClose={() => setHeaderMenu(null)}
+        />
+      )}
       {/* Right-click context menus (Phase C) */}
       {noteContextMenu && (
         <ContextMenu
