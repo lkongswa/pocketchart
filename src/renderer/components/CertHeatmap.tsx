@@ -1,13 +1,16 @@
-import React, { useState } from 'react';
-import { ChevronLeft, ChevronRight, RotateCcw, Shield } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import { ChevronLeft, ChevronRight, RotateCcw, Shield, X, ChevronDown } from 'lucide-react';
 import type { Appointment, ComplianceTracking } from '@shared/types';
 
 /**
  * CertHeatmap — the redesigned client chart's right-column (30%) appointments view.
  * Tiny month grids over the cert quarter: green = visit, cream = within cert,
  * gray = after cert; cert-start + today ringed. Day-click on a visit opens its
- * linked note/eval (Q-B: heatmap-only, no list). A "Docs due" line carries the
- * progress-report controls (reset counter + click-to-edit visits-since-last).
+ * linked note/eval (Q-B: heatmap-only, no list); day-click on an EMPTY day opens
+ * a small quick-add popover (time + duration) that schedules an appointment for
+ * this client on that day. A "Docs due" line carries the progress-report
+ * controls (reset counter + click-to-edit visits-since-last).
  */
 
 interface CertHeatmapProps {
@@ -16,6 +19,10 @@ interface CertHeatmapProps {
   compliance: ComplianceTracking | null;
   onOpenAppt: (appt: Appointment) => void;
   onComplianceChanged: () => void;
+  /** Refresh callback fired after a quick-add appointment is created. */
+  onAppointmentChanged: () => void;
+  /** Escalate to the full appointment modal (recurring, eval/recert, contract, …), carrying over the popover's date/time/duration. */
+  onMoreOptions: (date: string, time: string, duration: number) => void;
 }
 
 const parseDate = (s?: string | null) => {
@@ -28,7 +35,7 @@ const sameDay = (a: Date, b: Date) =>
 const keyOf = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-export default function CertHeatmap({ clientId, appointments, compliance, onOpenAppt, onComplianceChanged }: CertHeatmapProps) {
+export default function CertHeatmap({ clientId, appointments, compliance, onOpenAppt, onComplianceChanged, onAppointmentChanged, onMoreOptions }: CertHeatmapProps) {
   const certStart = parseDate(compliance?.last_recert_date);
   const certEnd = parseDate(compliance?.next_recert_due);
   const today = new Date();
@@ -36,6 +43,8 @@ export default function CertHeatmap({ clientId, appointments, compliance, onOpen
   const [monthOffset, setMonthOffset] = useState(0);
   const [editingCount, setEditingCount] = useState(false);
   const [countInput, setCountInput] = useState('');
+  // Quick-add popover anchored to a clicked empty day. x/y are viewport coords.
+  const [quickAdd, setQuickAdd] = useState<{ date: string; x: number; y: number } | null>(null);
 
   // non-cancelled appointment per day
   const apptByDate = new Map<string, Appointment>();
@@ -100,15 +109,33 @@ export default function CertHeatmap({ clientId, appointments, compliance, onOpen
       const ring = sameDay(date, today)
         ? 'ring-2 ring-emerald-500 '
         : certStart && sameDay(date, certStart) ? 'ring-2 ring-teal-500 ' : '';
-      const clickable = isVisit && (appt!.note_id || appt!.evaluation_id);
+      // A visit with a linked note/eval opens it; an empty day opens the quick-add
+      // popover. A visit without a note/eval stays inert (avoids duplicate appts).
+      const openableVisit = isVisit && (appt!.note_id || appt!.evaluation_id);
+      const addable = !isVisit;
+
+      const onCellClick = openableVisit
+        ? () => onOpenAppt(appt!)
+        : addable
+          ? (e: React.MouseEvent<HTMLDivElement>) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              setQuickAdd({ date: keyOf(date), x: r.left, y: r.bottom });
+            }
+          : undefined;
+
+      const hover = openableVisit
+        ? 'cursor-pointer hover:opacity-80'
+        : addable
+          ? 'cursor-pointer hover:ring-1 hover:ring-emerald-400 hover:ring-inset'
+          : '';
 
       cells.push(
         <div
           key={d}
-          className={`w-[21px] h-[21px] rounded-[3px] flex items-center justify-center text-[9px] ${bg} ${txt} ${ring}${clickable ? 'cursor-pointer hover:opacity-80' : ''}`}
+          className={`w-[21px] h-[21px] rounded-[3px] flex items-center justify-center text-[9px] transition ${bg} ${txt} ${ring}${hover}`}
           style={style}
-          title={`${first.toLocaleDateString('en-US', { month: 'short' })} ${d}${isVisit ? ' · visit' : ''}${clickable ? ' · open note/eval' : ''}`}
-          onClick={clickable ? () => onOpenAppt(appt!) : undefined}
+          title={`${first.toLocaleDateString('en-US', { month: 'short' })} ${d}${isVisit ? ' · visit' : ''}${openableVisit ? ' · open note/eval' : addable ? ' · click to add appt' : ''}`}
+          onClick={onCellClick}
         >
           {d}
         </div>,
@@ -193,6 +220,151 @@ export default function CertHeatmap({ clientId, appointments, compliance, onOpen
           </div>
         )}
       </div>
+
+      {quickAdd && (
+        <QuickAddPopover
+          clientId={clientId}
+          date={quickAdd.date}
+          anchor={{ x: quickAdd.x, y: quickAdd.y }}
+          onClose={() => setQuickAdd(null)}
+          onChanged={onAppointmentChanged}
+          onMoreOptions={(time, duration) => { const d = quickAdd.date; setQuickAdd(null); onMoreOptions(d, time, duration); }}
+        />
+      )}
     </div>
+  );
+}
+
+const QUICK_DURATIONS = [15, 30, 45, 50, 60, 75, 90, 120];
+const durationLabel = (d: number) => (d < 60 ? `${d} min` : d % 60 === 0 ? `${d / 60}h` : `${Math.floor(d / 60)}h ${d % 60}m`);
+const POPOVER_W = 230;
+const POPOVER_H = 230;
+
+/**
+ * QuickAddPopover — lightweight "schedule on this day" popup for the heatmap.
+ * The client is already known (we're inside their chart), so this only asks for
+ * time + duration and creates a single scheduled visit. "More options" hands off
+ * to the full AppointmentModal for recurring / eval / contract cases.
+ */
+function QuickAddPopover({
+  clientId,
+  date,
+  anchor,
+  onClose,
+  onChanged,
+  onMoreOptions,
+}: {
+  clientId: number;
+  date: string;
+  anchor: { x: number; y: number };
+  onClose: () => void;
+  onChanged: () => void;
+  onMoreOptions: (time: string, duration: number) => void;
+}) {
+  const [time, setTime] = useState('09:00');
+  const [duration, setDuration] = useState(45);
+  const [saving, setSaving] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Seed duration from the practice's default session length (same source the full modal uses).
+  useEffect(() => {
+    window.api.settings
+      .get('default_session_length')
+      .then((v) => { if (v) setDuration(parseInt(v, 10)); })
+      .catch(() => {});
+  }, []);
+
+  // Close on outside click. The setTimeout keeps the opening click from closing it immediately.
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    const tid = setTimeout(() => document.addEventListener('mousedown', handler), 0);
+    return () => { clearTimeout(tid); document.removeEventListener('mousedown', handler); };
+  }, [onClose]);
+
+  const save = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await window.api.appointments.create({
+        client_id: clientId,
+        scheduled_date: date,
+        scheduled_time: time,
+        duration_minutes: duration,
+        status: 'scheduled',
+        session_type: 'visit',
+        visit_type: 'O' as any,
+      });
+      onChanged();
+      onClose();
+    } catch (err) {
+      console.error('Quick-add appointment failed:', err);
+      setSaving(false);
+    }
+  };
+
+  // Anchor below-right of the cell; flip left/up near viewport edges (the heatmap
+  // lives in the right column, so flipLeft is the common case).
+  const flipLeft = anchor.x + POPOVER_W + 16 > window.innerWidth;
+  const flipUp = anchor.y + POPOVER_H + 16 > window.innerHeight;
+  const left = flipLeft ? Math.max(8, anchor.x - POPOVER_W + 21) : anchor.x;
+  const top = flipUp ? Math.max(8, anchor.y - POPOVER_H - 25) : anchor.y + 4;
+
+  const prettyDate = new Date(date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
+  return createPortal(
+    <div
+      ref={ref}
+      className="fixed z-50 bg-white rounded-lg shadow-xl border border-[var(--color-border)] p-3 animate-in fade-in zoom-in-95 duration-100"
+      style={{ left, top, width: POPOVER_W }}
+      onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
+    >
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-xs font-semibold text-[var(--color-text)]">Add appointment</span>
+        <button className="p-0.5 rounded hover:bg-gray-100 text-[var(--color-text-secondary)]" onClick={onClose} title="Close (Esc)"><X size={13} /></button>
+      </div>
+      <div className="text-[11px] text-[var(--color-text-secondary)] mb-2">{prettyDate}</div>
+
+      <label className="block text-[11px] text-[var(--color-text-secondary)] mb-0.5">Time</label>
+      <input
+        type="time"
+        step={900}
+        autoFocus
+        value={time}
+        onChange={(e) => setTime(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') save(); }}
+        className="w-full mb-2 text-sm border border-[var(--color-border)] rounded-md px-2 py-1 focus:outline-none focus:border-teal-400"
+      />
+
+      <label className="block text-[11px] text-[var(--color-text-secondary)] mb-0.5">Duration</label>
+      <select
+        value={duration}
+        onChange={(e) => setDuration(parseInt(e.target.value, 10))}
+        className="w-full mb-3 text-sm border border-[var(--color-border)] rounded-md px-2 py-1 focus:outline-none focus:border-teal-400"
+      >
+        {QUICK_DURATIONS.map((d) => (
+          <option key={d} value={d}>{durationLabel(d)}</option>
+        ))}
+      </select>
+
+      <div className="flex items-center gap-2">
+        <button
+          className="flex-1 px-3 py-1.5 bg-teal-500 text-white text-sm font-medium rounded-md hover:bg-teal-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          disabled={saving}
+          onClick={save}
+        >
+          {saving ? 'Saving…' : 'Add'}
+        </button>
+        <button
+          className="px-2 py-1.5 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text)] flex items-center gap-1"
+          onClick={() => onMoreOptions(time, duration)}
+          title="Open the full appointment form (recurring, eval, contract…)"
+        >
+          More <ChevronDown size={12} />
+        </button>
+      </div>
+    </div>,
+    document.body,
   );
 }

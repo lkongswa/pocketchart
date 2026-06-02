@@ -86,6 +86,7 @@ import FaxSendModal from '../components/FaxSendModal';
 import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
 import StoryBar, { type StoryStat } from '../components/StoryBar';
 import CertHeatmap from '../components/CertHeatmap';
+import AppointmentModal from '../components/AppointmentModal';
 import EmailComposeModal from '../components/EmailComposeModal';
 import PaymentModal from '../components/PaymentModal';
 import { useTrialGuard } from '../hooks/useTrialGuard';
@@ -269,6 +270,9 @@ const ClientDetailPage: React.FC = () => {
   const [emailModal, setEmailModal] = useState<{ kind: 'note' | 'eval' | 'invoice'; id: number; to: string; subject: string; body: string; label: string } | null>(null);
   // Inline record-payment modal (Billing pipeline)
   const [recordPaymentInvoiceId, setRecordPaymentInvoiceId] = useState<number | null>(null);
+  // Appointment modal — opened from the heatmap quick-add's "More options" (full form, recurring/eval/etc.)
+  const [apptModalOpen, setApptModalOpen] = useState(false);
+  const [apptDraft, setApptDraft] = useState<Partial<Appointment> | null>(null);
   // CMS-1500 preview removed — now saves directly via dialog
 
   // Context menu state for notes/evals (Phase C)
@@ -441,6 +445,17 @@ const ClientDetailPage: React.FC = () => {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Heatmap quick-add → "More options": create (or batch-create, for recurring) via
+  // the full AppointmentModal. The draft never carries an id, so these always create.
+  const handleSaveAppt = async (data: Partial<Appointment>) => {
+    await window.api.appointments.create(data);
+    await loadData();
+  };
+  const handleSaveApptBatch = async (items: Partial<Appointment>[]) => {
+    await window.api.appointments.createBatch(items);
+    await loadData();
+  };
 
   // Receding sticky header: condense once the <main> content area scrolls.
   useEffect(() => {
@@ -1829,6 +1844,20 @@ const ClientDetailPage: React.FC = () => {
               else if (appt.note_id) navigate(`/clients/${clientId}/note/${appt.note_id}`);
             }}
             onComplianceChanged={loadData}
+            onAppointmentChanged={loadData}
+            onMoreOptions={(date, time, duration) => {
+              setApptDraft({
+                client_id: clientId,
+                first_name: client.first_name,
+                last_name: client.last_name,
+                scheduled_date: date,
+                scheduled_time: time,
+                duration_minutes: duration,
+                status: 'scheduled',
+                session_type: 'visit',
+              } as Partial<Appointment>);
+              setApptModalOpen(true);
+            }}
           />
         </div>
       </div>
@@ -2472,6 +2501,19 @@ const ClientDetailPage: React.FC = () => {
           preselectedInvoiceId={recordPaymentInvoiceId || undefined}
           onSave={() => { setRecordPaymentInvoiceId(null); setBillingToast('Payment recorded'); loadData(); }}
           onClose={() => setRecordPaymentInvoiceId(null)}
+        />
+      )}
+
+      {/* Full appointment form — heatmap quick-add "More options" (recurring / eval / contract) */}
+      {client && (
+        <AppointmentModal
+          isOpen={apptModalOpen}
+          onClose={() => { setApptModalOpen(false); setApptDraft(null); }}
+          onSave={handleSaveAppt}
+          onSaveBatch={handleSaveApptBatch}
+          appointment={apptDraft as Appointment | null}
+          defaultDate={apptDraft?.scheduled_date}
+          defaultTime={apptDraft?.scheduled_time}
         />
       )}
 
