@@ -2126,7 +2126,10 @@ export default function EvalFormPage() {
   /** Handle client record updates from Fix-It dialog */
   const handleClientUpdate = async (updates: Record<string, any>) => {
     if (!client) return;
-    await window.api.clients.update(client.id, updates);
+    // clients:update is a full-object replace (binds every column), and better-sqlite3
+    // throws on `undefined` binds — so merge the fixes into the full client object
+    // rather than passing a partial (which left first_name/etc. undefined → error → no save).
+    await window.api.clients.update(client.id, { ...client, ...updates });
     const updated = await window.api.clients.get(client.id);
     setClient(updated);
   };
