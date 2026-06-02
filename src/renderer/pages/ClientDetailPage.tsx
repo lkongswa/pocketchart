@@ -183,6 +183,14 @@ const ageFromDob = (dateStr?: string | null): number | null => {
   }
 };
 
+/** True if a date is within the last `days` (or always, for 'all'). */
+const withinRange = (dateStr: string, days: 'all' | number): boolean => {
+  if (days === 'all' || !dateStr) return true;
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d.getTime())) return true;
+  return Date.now() - d.getTime() <= (days as number) * 86_400_000;
+};
+
 const truncate = (str: string, max: number): string => {
   if (!str) return '';
   return str.length > max ? str.slice(0, max) + '...' : str;
@@ -330,6 +338,9 @@ const ClientDetailPage: React.FC = () => {
   const [notesCompact, setNotesCompact] = useLocalPreference('client-notes-compact', true);
   // Documentation surface — kanban board vs flat list (Q-D escape hatch)
   const [notesView, setNotesView] = useLocalPreference<'kanban' | 'list'>('client-notes-view', 'kanban');
+  // Time-range filters for the accumulating columns (Signed / Paid)
+  const [docRange, setDocRange] = useLocalPreference<'all' | '365' | '90' | '30'>('client-doc-range', 'all');
+  const [billRange, setBillRange] = useLocalPreference<'all' | '365' | '90' | '30'>('client-bill-range', 'all');
 
   // Fax tracking: maps eval/note IDs to sent/received-back status
   const evalFaxMap = useMemo(() => {
@@ -997,6 +1008,21 @@ const ClientDetailPage: React.FC = () => {
   // Billing "get paid" pipeline (Slice 10): Ready to invoice → Awaiting payment → Paid
   const unpaidInvoices = invoices.filter((i) => i.status !== 'paid' && i.status !== 'void');
   const paidInvoices = invoices.filter((i) => i.status === 'paid');
+  const signedFiltered = docRange === 'all' ? signedNotes : signedNotes.filter((n) => withinRange(n.date_of_service, Number(docRange)));
+  const paidFiltered = billRange === 'all' ? paidInvoices : paidInvoices.filter((i) => withinRange(i.invoice_date, Number(billRange)));
+  const rangeSelect = (value: string, onChange: (v: string) => void) => (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="text-[9px] font-normal normal-case bg-transparent border border-[var(--color-border)] rounded px-0.5 py-px text-[var(--color-text-secondary)] cursor-pointer"
+      title="Filter by time range"
+    >
+      <option value="all">all</option>
+      <option value="365">1y</option>
+      <option value="90">90d</option>
+      <option value="30">30d</option>
+    </select>
+  );
 
   const handleBillNote = async (note: Note) => {
     try {
@@ -1596,10 +1622,11 @@ const ClientDetailPage: React.FC = () => {
                   {/* Signed — clinically complete (billing lives in the Billing tab) */}
                   <div className="min-w-[130px] flex-1 bg-gray-50 border border-[var(--color-border)] rounded-lg p-1.5">
                     <div className="flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wide text-[var(--color-text-secondary)] mb-1.5 px-0.5">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400" /> Signed <span className="ml-auto text-emerald-600">{signedNotes.length}</span>
+                      <span className="w-2 h-2 rounded-full bg-emerald-400" /> Signed <span className="ml-auto text-emerald-600">{signedFiltered.length}</span>
+                      {rangeSelect(docRange, (v) => setDocRange(v as 'all' | '365' | '90' | '30'))}
                     </div>
-                    {signedNotes.map(renderNoteCard)}
-                    {signedNotes.length === 0 && <div className="text-[11px] text-[var(--color-text-tertiary)] px-1 py-2">—</div>}
+                    {signedFiltered.map(renderNoteCard)}
+                    {signedFiltered.length === 0 && <div className="text-[11px] text-[var(--color-text-tertiary)] px-1 py-2">{signedNotes.length > 0 ? 'none in range' : '—'}</div>}
                   </div>
                   {/* → handoff into the Billing tab's get-paid pipeline */}
                   <div className="flex items-center justify-center shrink-0 w-24 px-1">
@@ -1967,12 +1994,12 @@ const ClientDetailPage: React.FC = () => {
             {/* Paid */}
             <div className="min-w-[160px] flex-1 bg-gray-50 border border-[var(--color-border)] rounded-lg p-1.5">
               <div className="flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wide text-[var(--color-text-secondary)] mb-1.5 px-0.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-400" /> Paid <span className="ml-auto text-emerald-600">{totalPaid > 0 ? formatCurrency(totalPaid) : paidInvoices.length}</span>
-                <button className="text-[10px] text-[var(--color-primary)] hover:underline font-normal normal-case" onClick={() => navigate('/billing?tab=payments')}>all</button>
+                <span className="w-2 h-2 rounded-full bg-emerald-400" /> Paid <span className="ml-auto text-emerald-600">{paidFiltered.length}</span>
+                {rangeSelect(billRange, (v) => setBillRange(v as 'all' | '365' | '90' | '30'))}
               </div>
-              {paidInvoices.length === 0 ? (
-                <div className="text-[11px] text-[var(--color-text-tertiary)] px-1 py-2">No payments yet</div>
-              ) : paidInvoices.map((inv) => renderInvoiceCardP(inv, true))}
+              {paidFiltered.length === 0 ? (
+                <div className="text-[11px] text-[var(--color-text-tertiary)] px-1 py-2">{paidInvoices.length > 0 ? 'none in range' : 'No payments yet'}</div>
+              ) : paidFiltered.map((inv) => renderInvoiceCardP(inv, true))}
             </div>
 
           </div>
