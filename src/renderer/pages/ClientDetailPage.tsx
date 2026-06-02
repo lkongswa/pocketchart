@@ -87,6 +87,7 @@ import FaxSendModal from '../components/FaxSendModal';
 import ContextMenu, { type ContextMenuItem } from '../components/ContextMenu';
 import StoryBar, { type StoryStat } from '../components/StoryBar';
 import CertHeatmap from '../components/CertHeatmap';
+import EmailComposeModal from '../components/EmailComposeModal';
 import { useTrialGuard } from '../hooks/useTrialGuard';
 import { useChartCompleteness } from '../hooks/useChartCompleteness';
 import { useClaimReadiness } from '../hooks/useClaimReadiness';
@@ -276,6 +277,8 @@ const ClientDetailPage: React.FC = () => {
   const [faxDocumentId, setFaxDocumentId] = useState<number | undefined>(undefined);
   const [faxDocType, setFaxDocType] = useState<'eval' | 'note' | 'document' | undefined>(undefined);
   const [faxTracking, setFaxTracking] = useState<FaxTrackingEntry[]>([]);
+  // Email-compose modal (note / eval / invoice → client)
+  const [emailModal, setEmailModal] = useState<{ kind: 'note' | 'eval' | 'invoice'; id: number; to: string; subject: string; body: string; label: string } | null>(null);
   // CMS-1500 preview removed — now saves directly via dialog
 
   // Context menu state for notes/evals (Phase C)
@@ -859,6 +862,67 @@ const ClientDetailPage: React.FC = () => {
     }
   };
 
+  // --- Email-to-client handlers (note / eval / invoice) ---
+
+  const openNoteEmail = (note: Note) => {
+    if (!client) return;
+    const d = formatDate(note.date_of_service);
+    setEmailModal({
+      kind: 'note', id: note.id,
+      to: client.email || '',
+      subject: `SOAP note — ${client.first_name} ${client.last_name} (${d})`,
+      body: `Hi,\n\nPlease find attached the SOAP note dated ${d}.\n\nBest regards,\n${practice?.name || ''}`.trimEnd(),
+      label: `SOAP note — ${d}.pdf`,
+    });
+  };
+
+  const openEvalEmail = (evalItem: Evaluation) => {
+    if (!client) return;
+    const d = formatDate(evalItem.eval_date);
+    setEmailModal({
+      kind: 'eval', id: evalItem.id,
+      to: client.email || '',
+      subject: `Evaluation — ${client.first_name} ${client.last_name} (${d})`,
+      body: `Hi,\n\nPlease find attached the evaluation dated ${d}.\n\nBest regards,\n${practice?.name || ''}`.trimEnd(),
+      label: `Evaluation — ${d}.pdf`,
+    });
+  };
+
+  const openInvoiceEmail = async (invoiceId: number) => {
+    try {
+      const prep = await window.api.invoices.prepareEmail(invoiceId);
+      setEmailModal({
+        kind: 'invoice', id: invoiceId,
+        to: prep.to || client?.email || '',
+        subject: prep.subject || '',
+        body: prep.bodyText || '',
+        label: prep.filename || 'Invoice.pdf',
+      });
+    } catch (err) {
+      console.error('Failed to prepare invoice email:', err);
+      setBillingToast('Could not prepare invoice email');
+    }
+  };
+
+  const handleSendEmail = async (to: string, subject: string, body: string) => {
+    if (!emailModal) return;
+    if (emailModal.kind === 'invoice') {
+      await window.api.invoices.email({ invoiceId: emailModal.id, to, subject, bodyText: body });
+      const invoicesData = await window.api.invoices.list({ clientId });
+      setInvoices(invoicesData);
+    } else {
+      const gen = emailModal.kind === 'note'
+        ? await window.api.notes.generatePdf(emailModal.id)
+        : await window.api.evaluations.generatePdf(emailModal.id);
+      await window.api.email.send({
+        to, subject, bodyText: body,
+        attachments: [{ fileName: gen.filename, contentBase64: gen.base64Pdf, contentType: 'application/pdf' }],
+        clientId,
+      });
+    }
+    setBillingToast(`Emailed to ${to}`);
+  };
+
   // --- Loading / Not Found ---
 
   if (loading) {
@@ -984,6 +1048,7 @@ const ClientDetailPage: React.FC = () => {
           {note.signed_at ? (
             <>
               <button className="p-0.5 hover:text-[var(--color-primary)]" title="Download PDF" onClick={(e) => { e.stopPropagation(); handleDownloadNotePdf(note.id); }}><Download size={11} /></button>
+              <button className="p-0.5 hover:text-emerald-600" title="Email to client" onClick={(e) => { e.stopPropagation(); openNoteEmail(note); }}><Mail size={11} /></button>
               <button className="p-0.5 hover:text-violet-600" title="Fax to Physician" onClick={(e) => { e.stopPropagation(); setFaxDocumentId(note.id); setFaxDocType('note'); setShowFaxModal(true); }}><Printer size={11} /></button>
               {noteFaxMap.get(note.id)?.sent && <span className="text-green-600" title="Faxed"><Check size={10} /></span>}
               {noteFaxMap.get(note.id)?.receivedBack && <span className="text-blue-600" title="Signed copy received"><Inbox size={10} /></span>}
@@ -1207,6 +1272,13 @@ const ClientDetailPage: React.FC = () => {
                           <span className="flex items-center gap-1 text-xs text-emerald-600">
                             <CheckCircle size={12} /> Signed
                           </span>
+                          <button
+                            className="btn-ghost btn-sm text-xs px-1.5 py-0.5 text-[var(--color-text-secondary)] hover:text-emerald-600"
+                            title="Email to client"
+                            onClick={(e) => { e.stopPropagation(); openEvalEmail(evalItem); }}
+                          >
+                            <Mail size={12} />
+                          </button>
                           <button
                             className="btn-ghost btn-sm text-xs px-1.5 py-0.5 text-[var(--color-text-secondary)] hover:text-violet-600"
                             title="Fax to Physician"
@@ -2074,6 +2146,13 @@ const ClientDetailPage: React.FC = () => {
                             >
                               <Eye size={12} />
                             </button>
+                            <button
+                              className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-emerald-600 transition-colors"
+                              title="Email to client"
+                              onClick={() => openInvoiceEmail(invoice.id)}
+                            >
+                              <Mail size={12} />
+                            </button>
                             {isUnpaid && (
                               <button
                                 className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-emerald-600 transition-colors"
@@ -2551,6 +2630,19 @@ const ClientDetailPage: React.FC = () => {
             window.api.fax.getOutboundByClient(clientId).then(setFaxTracking).catch(() => {});
           }
         }}
+      />
+
+      {/* Email a note / eval / invoice to the client */}
+      <EmailComposeModal
+        isOpen={!!emailModal}
+        onClose={() => setEmailModal(null)}
+        heading={emailModal?.kind === 'invoice' ? 'Email invoice to client' : emailModal?.kind === 'eval' ? 'Email evaluation to client' : 'Email note to client'}
+        attachmentLabel={emailModal?.label}
+        defaultTo={emailModal?.to || ''}
+        defaultSubject={emailModal?.subject || ''}
+        defaultBody={emailModal?.body || ''}
+        onSend={handleSendEmail}
+        onConfigureEmail={() => navigate('/settings?section=email')}
       />
 
       {/* Trial Expired Modal */}
