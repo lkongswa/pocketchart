@@ -115,6 +115,11 @@ export default function AppointmentBlock({
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const blockRef = useRef<HTMLDivElement>(null);
 
+  // True only while THIS block is being dragged (native DnD). The hover quick-card is
+  // suppressed during a drag — otherwise it sits over the day column to the right (exactly
+  // where you drag to reschedule onto the next day) and steals the drop.
+  const [isDragging, setIsDragging] = useState(false);
+
   const HOVER_OPEN_DELAY = 380;
   const HOVER_CLOSE_GRACE = 160;
 
@@ -126,6 +131,7 @@ export default function AppointmentBlock({
   };
   const handleBlockMouseEnter = () => {
     if (compact) return; // month view keeps the native tooltip
+    if (isDragging) return; // never pop the card mid-drag
     cancelHoverTimers();
     hoverTimerRef.current = setTimeout(() => {
       if (blockRef.current) {
@@ -190,6 +196,15 @@ export default function AppointmentBlock({
     const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
     e.dataTransfer.setData('application/grab-offset-y', (e.clientY - rect.top).toString());
     e.dataTransfer.effectAllowed = 'move';
+    // Kill the hover quick-card (and any pending open-timer) the instant a drag begins so it
+    // can't cover the day column you're dragging toward and intercept the drop.
+    cancelHoverTimers();
+    setHoverAnchor(null);
+    setIsDragging(true);
+  };
+
+  const handleDragEnd = () => {
+    setIsDragging(false);
   };
 
   // Allow todo items to be dropped onto time slots that already have appointments
@@ -303,6 +318,7 @@ export default function AppointmentBlock({
         className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-xs truncate cursor-pointer ${statusClasses[appointment.status]}`}
         draggable={true}
         onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
         onClick={(e) => {
           e.stopPropagation();
           onClick(appointment);
@@ -330,6 +346,7 @@ export default function AppointmentBlock({
       style={{ top: topPx, height: heightPx }}
       draggable={!isResizing}
       onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
       onClick={(e) => {
@@ -407,7 +424,7 @@ export default function AppointmentBlock({
         />
       )}
       {/* Hover quick-card — opens after ~380ms hover, suppressed while dragging/resizing */}
-      {hoverAnchor && !isResizing && (
+      {hoverAnchor && !isResizing && !isDragging && (
         <AppointmentHoverCard
           appointment={appointment}
           anchorRect={hoverAnchor}
