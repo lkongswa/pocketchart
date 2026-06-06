@@ -130,8 +130,6 @@
   },
   "overrides": {
     "tar": "7.5.13",
-    "sockjs": {
-      "uuid": "$uuid"
-    }
+    "uuid": "^13.0.0"
   }
 }
