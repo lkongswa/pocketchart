@@ -90,6 +90,18 @@ const FORCE_PRO = false;
 autoUpdater.autoDownload = false;       // Don't download until user says yes
 autoUpdater.autoInstallOnAppQuit = true; // Install on next restart after download
 
+// TEST-ONLY feed override. When PC_UPDATE_FEED is set (NEVER in production),
+// point the updater at a local/generic feed and allow "updating" to a lower
+// version. This lets the full check→download→verify→install flow be exercised
+// repeatedly against already-signed builds without cutting a new release —
+// the primary use is validating the Authenticode publisher-name check. Inert
+// whenever the env var is absent, so it has zero effect on shipped builds.
+if (process.env.PC_UPDATE_FEED) {
+  autoUpdater.setFeedURL({ provider: 'generic', url: process.env.PC_UPDATE_FEED });
+  autoUpdater.allowDowngrade = true;
+  console.warn(`[updater] TEST feed override active → ${process.env.PC_UPDATE_FEED} (allowDowngrade=true)`);
+}
+
 // ── IPC Error Wrapper ──
 // Wraps every handler in try/catch so malformed args or DB errors
 // return a structured error instead of crashing the main process.

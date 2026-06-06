@@ -46,6 +46,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win --publish never
 
+      - name: Verify publisher name matches signature (auto-update guard)
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path release -Filter "*.exe" | Select-Object -First 1
+          if (-not $exe) { Write-Error "No installer found in release/"; exit 1 }
+          ./test/update-harness/verify-publisher-match.ps1 `
+            -ExePath $exe.FullName `
+            -YmlPath release/win-unpacked/resources/app-update.yml
+
       - name: Create GitHub Release and upload assets
         if: startsWith(github.ref, 'refs/tags/v')
         env:
