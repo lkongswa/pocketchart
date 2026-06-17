@@ -6964,14 +6964,28 @@ function registerIpcHandlers() {
 
     const total = appts.reduce((sum: number, a: any) => sum + (a.entity_rate || 0), 0);
 
-    // Generate invoice number (reuse existing helper if available, else simple timestamp)
-    const existing = db.prepare("SELECT invoice_number FROM invoices ORDER BY id DESC LIMIT 1").get() as any;
+    // Generate a unique contractor invoice number: PC-<year>-<seq>.
+    // Base the sequence on the highest existing PC-<year>-* number — NOT on the
+    // single latest invoice, whose trailing digits are unreliable (client invoices
+    // use an INV-YYYYMM-NNN scheme whose counter resets monthly). Soft-deleted rows
+    // still reserve their number via the UNIQUE index, so scan ALL rows, and bump
+    // past any collision as a safety net against legacy/duplicate data.
+    const prefix = `PC-${new Date().getFullYear()}-`;
+    const lastPc = db.prepare(
+      `SELECT invoice_number FROM invoices WHERE invoice_number LIKE ?
+       ORDER BY CAST(substr(invoice_number, ?) AS INTEGER) DESC LIMIT 1`
+    ).get(`${prefix}%`, prefix.length + 1) as any;
     let nextNum = 1;
-    if (existing?.invoice_number) {
-      const m = existing.invoice_number.match(/(\d+)$/);
+    if (lastPc?.invoice_number) {
+      const m = lastPc.invoice_number.match(/(\d+)$/);
       if (m) nextNum = parseInt(m[1], 10) + 1;
     }
-    const invoiceNumber = `PC-${new Date().getFullYear()}-${String(nextNum).padStart(4, '0')}`;
+    let invoiceNumber = `${prefix}${String(nextNum).padStart(4, '0')}`;
+    const numberExists = db.prepare('SELECT 1 FROM invoices WHERE invoice_number = ?');
+    while (numberExists.get(invoiceNumber)) {
+      nextNum += 1;
+      invoiceNumber = `${prefix}${String(nextNum).padStart(4, '0')}`;
+    }
 
     const result = db.prepare(`
       INSERT INTO invoices (entity_id, invoice_number, invoice_date, due_date, subtotal, discount_amount, total_amount, status, notes)
