@@ -1,6 +1,6 @@
 {
   "name": "pocketchart",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Local-first clinical documentation for solo practitioners",
   "main": "dist/main/main.js",
   "scripts": {
