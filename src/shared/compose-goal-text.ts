@@ -122,15 +122,16 @@ function getSegmentPrefix(
     return 'involving';
   }
 
-  // Complexity for receptive language: "at 2-step complexity"
+  // Complexity / level for receptive language
   if (key === 'complexity') {
     const lower = segmentValue.toLowerCase();
-    // If it's just a level like "2-step", "paragraph-level" — add "at" + "level"
-    if (/^\d+-step$|^multi-step$|^paragraph-level$/.test(lower)) {
-      return 'at';
-    }
-    return 'at';
+    if (/ level$/.test(lower)) return 'at the';        // "at the single-word level", "at the sentence level"
+    if (/critical element/.test(lower)) return 'with'; // "with 2 critical elements"
+    return 'at';                                       // "at 2-step", "at multi-step"
   }
+
+  // Reading mode: "aloud" / "for comprehension" attach directly after the level
+  if (key === 'mode') return '';
 
   // Device in PT: "using a cane", "with no device"
   if (key === 'device') {
@@ -204,6 +205,7 @@ function isVerbPhrase(text: string): boolean {
   const verbStarters = [
     'use ', 'retell ', 'answer ', 'formulate ', 'follow ', 'identify ', 'make ',
     'read ', 'take ', 'maintain ', 'produce ', 'reduce ', 'utilize ',
+    'understand ', 'point ',
   ];
   const lower = text.toLowerCase();
   return verbStarters.some(v => lower.startsWith(v));
@@ -341,6 +343,17 @@ function renderSegment(key: string, input: GoalCompositionInput): string {
     const str = String(value);
     if (/level$/i.test(str)) return str;
     return `${str} level`;
+  }
+
+  // Receptive complexity / level: normalize the word & sentence/paragraph levels
+  // so the "at the X level" connector reads naturally; leave step / critical-element values as-is.
+  if (key === 'complexity') {
+    const str = String(value);
+    const lower = str.toLowerCase();
+    if (lower === 'single word') return 'single-word level';
+    if (lower === 'sentence' || lower === 'sentence level') return 'sentence level';
+    if (lower === 'paragraph' || lower === 'paragraph level') return 'paragraph level';
+    return str; // "2 critical elements", "2-step", "multi-step"
   }
 
   // Number with suffix

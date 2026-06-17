@@ -108,8 +108,10 @@ export const CATEGORY_DEFAULT_MEASUREMENT: Record<string, MeasurementType> = {
   'Play Skills': 'cue_level',
   // ST
   'Articulation': 'percentage',
+  'Motor Speech': 'percentage',
   'Language Comprehension': 'percentage',
   'Language Expression': 'percentage',
+  'Literacy': 'percentage',
   'Fluency': 'severity',
   'Voice': 'severity',
   'Pragmatics': 'cue_level',

@@ -16,6 +16,7 @@ export interface GoalCardData {
   goalId: number | null;
 
   goal_text: string;
+  goal_text_manual: boolean;  // User hand-edited the text — pattern re-compose suppressed
   goal_type: GoalType;
   category: string;
   target_date: string;
@@ -50,6 +51,7 @@ export interface GoalCardFieldUpdate {
   target?: number;
   instrument?: string;
   goal_text?: string;
+  goal_text_manual?: boolean;
   pattern_id?: string | undefined;
   components?: Record<string, any> | undefined;
 }
@@ -77,6 +79,7 @@ export function evalEntryToCardData(
     index,
     goalId: linkedGoalId,
     goal_text: entry.goal_text,
+    goal_text_manual: !!entry.goal_text_manual,
     goal_type: entry.goal_type,
     category: entry.category,
     target_date: entry.target_date,
@@ -112,6 +115,7 @@ export function goalToCardData(
     index,
     goalId: goal.id,
     goal_text: goal.goal_text,
+    goal_text_manual: false,  // Saved goals store frozen text; no live re-compose
     goal_type: goal.goal_type,
     category: goal.category,
     target_date: goal.target_date,
@@ -163,4 +167,47 @@ export function generateGoalFingerprint(
   }
 
   return snippets.length > 0 ? snippets.join(' · ') : pattern.label;
+}
+
+/** A nested goal-card group: goal type (STG/LTG) → skill (category). */
+export interface GoalCardGroup {
+  goalType: GoalType;
+  category: string;                               // "skill" label; '' → "Other"
+  items: { card: GoalCardData; index: number }[]; // index = original array position
+}
+
+const GOAL_TYPE_ORDER: GoalType[] = ['STG', 'LTG'];
+
+/**
+ * Group goal cards for nested display: primary by goal type (STG before LTG),
+ * secondary by category ("skill"). Each item keeps its ORIGINAL array index so
+ * callers can leave their index-based handlers (expand/delete/update) untouched.
+ */
+export function groupGoalCards(cards: GoalCardData[]): GoalCardGroup[] {
+  const groups: GoalCardGroup[] = [];
+  const byKey = new Map<string, GoalCardGroup>();
+
+  cards.forEach((card, index) => {
+    const goalType: GoalType = card.goal_type === 'LTG' ? 'LTG' : 'STG';
+    const category = card.category?.trim() || 'Other';
+    const key = `${goalType}|||${category}`;
+    let group = byKey.get(key);
+    if (!group) {
+      group = { goalType, category, items: [] };
+      byKey.set(key, group);
+      groups.push(group);
+    }
+    group.items.push({ card, index });
+  });
+
+  // STG before LTG; then category alphabetical with "Other" pushed to the end.
+  groups.sort((a, b) => {
+    const byType = GOAL_TYPE_ORDER.indexOf(a.goalType) - GOAL_TYPE_ORDER.indexOf(b.goalType);
+    if (byType !== 0) return byType;
+    if (a.category === 'Other' && b.category !== 'Other') return 1;
+    if (b.category === 'Other' && a.category !== 'Other') return -1;
+    return a.category.localeCompare(b.category);
+  });
+
+  return groups;
 }

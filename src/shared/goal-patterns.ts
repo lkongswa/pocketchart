@@ -151,6 +151,40 @@ const ST_PATTERNS: GoalPattern[] = [
     compositionOrder: ['process_phrase', 'context', 'metric_target', 'cueing', 'consistency', 'baseline_suffix', 'timeframe'],
   },
 
+  // ── Motor Speech / Motor Planning (apraxia) ──
+  {
+    id: 'st_motor_planning',
+    discipline: 'ST',
+    category: 'Motor Speech',
+    label: 'Motor Speech / Motor Planning',
+    icon: '🔁',
+    verb: 'produce',
+    measurement_type: 'percentage',
+    components: [
+      {
+        key: 'target',
+        label: 'Target',
+        type: 'chip_single',
+        options: ['volitional speech movements', 'speech sound sequences', 'functional phrases', 'automatic speech', 'novel utterances'],
+      },
+      {
+        key: 'linguistic_level',
+        label: 'Linguistic Level',
+        type: 'chip_single',
+        options: ['phoneme', 'syllable', 'word', 'multisyllabic word', 'phrase', 'sentence'],
+        defaultValue: 'word',
+      },
+      {
+        key: 'cueing',
+        label: 'Cueing Level (Target)',
+        type: 'chip_single',
+        options: ['independently', 'given integral stimulation', 'given tactile/PROMPT cues', 'given phonetic placement cues', 'given a slowed-rate model'],
+      },
+      { key: 'consistency', label: 'Consistency Criterion', type: 'consistency' },
+    ],
+    compositionOrder: ['target', 'linguistic_level', 'metric_target', 'cueing', 'consistency', 'baseline_suffix', 'timeframe'],
+  },
+
   // ── Language Expression ──
   {
     id: 'st_expressive_language',
@@ -192,6 +226,33 @@ const ST_PATTERNS: GoalPattern[] = [
     compositionOrder: ['skill', 'context', 'metric_target', 'cueing', 'consistency', 'baseline_suffix', 'timeframe'],
   },
 
+  // ── Naming / Word Retrieval ──
+  {
+    id: 'st_naming',
+    discipline: 'ST',
+    category: 'Language Expression',
+    label: 'Naming / Word Retrieval',
+    icon: '🏷️',
+    verb: 'name',
+    measurement_type: 'percentage',
+    components: [
+      {
+        key: 'target',
+        label: 'Target',
+        type: 'chip_single',
+        options: ['common objects', 'pictured nouns', 'actions/verbs', 'category items', 'familiar people', 'functional words'],
+      },
+      {
+        key: 'cueing',
+        label: 'Cueing Level (Target)',
+        type: 'chip_single',
+        options: ['independently', 'given semantic cues', 'given phonemic cues', 'given a sentence-completion cue', 'given a written cue'],
+      },
+      { key: 'consistency', label: 'Consistency Criterion', type: 'consistency' },
+    ],
+    compositionOrder: ['target', 'metric_target', 'cueing', 'consistency', 'baseline_suffix', 'timeframe'],
+  },
+
   // ── Language Comprehension ──
   {
     id: 'st_receptive_language',
@@ -207,6 +268,9 @@ const ST_PATTERNS: GoalPattern[] = [
         label: 'Target Skill',
         type: 'chip_single',
         options: [
+          'understand single words',
+          'identify objects/pictures by name',
+          'point to named items',
           'follow multi-step directions',
           'identify vocabulary by description',
           'answer comprehension questions',
@@ -217,9 +281,9 @@ const ST_PATTERNS: GoalPattern[] = [
       },
       {
         key: 'complexity',
-        label: 'Complexity',
+        label: 'Level / Complexity',
         type: 'chip_single',
-        options: ['1-step', '2-step', '3-step', 'multi-step', 'paragraph-level'],
+        options: ['single word', '2 critical elements', '3 critical elements', '1-step', '2-step', '3-step', 'multi-step', 'sentence level', 'paragraph level'],
       },
       {
         key: 'cueing',
@@ -663,6 +727,39 @@ const ST_PATTERNS: GoalPattern[] = [
       { key: 'consistency', label: 'Consistency Criterion', type: 'consistency' },
     ],
     compositionOrder: ['skill', 'context', 'metric_target', 'cueing', 'consistency', 'baseline_suffix', 'timeframe'],
+  },
+
+  // ── Literacy: Reading ──
+  {
+    id: 'st_reading',
+    discipline: 'ST',
+    category: 'Literacy',
+    label: 'Reading',
+    icon: '📖',
+    verb: 'read',
+    measurement_type: 'percentage',
+    components: [
+      {
+        key: 'reading_level',
+        label: 'Reading Level',
+        type: 'chip_single',
+        options: ['single words', 'phrases', 'sentences', 'short paragraphs', 'functional text'],
+      },
+      {
+        key: 'mode',
+        label: 'Mode',
+        type: 'chip_single',
+        options: ['aloud', 'for comprehension'],
+      },
+      {
+        key: 'cueing',
+        label: 'Cueing Level (Target)',
+        type: 'chip_single',
+        options: ['independently', 'given phonemic cues', 'given visual cues', 'given a model'],
+      },
+      { key: 'consistency', label: 'Consistency Criterion', type: 'consistency' },
+    ],
+    compositionOrder: ['reading_level', 'mode', 'metric_target', 'cueing', 'consistency', 'baseline_suffix', 'timeframe'],
   },
 
   // ── Pediatric: Feeding / Food Acceptance ──

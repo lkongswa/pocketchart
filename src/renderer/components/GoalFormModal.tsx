@@ -29,8 +29,8 @@ const CATEGORY_OPTIONS: Record<Discipline, string[]> = {
     'Handwriting', 'Self-Care', 'Feeding', 'Upper Extremity', 'Cognitive', 'Play Skills',
   ],
   ST: [
-    'Articulation', 'Language Comprehension', 'Language Expression',
-    'Fluency', 'Voice', 'Pragmatics', 'Phonological Awareness',
+    'Articulation', 'Motor Speech', 'Language Comprehension', 'Language Expression',
+    'Fluency', 'Voice', 'Pragmatics', 'Phonological Awareness', 'Literacy',
     'Feeding/Swallowing', 'AAC', 'Cognitive-Communication',
   ],
   MFT: [
