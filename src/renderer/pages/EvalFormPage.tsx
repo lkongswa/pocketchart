@@ -31,7 +31,7 @@ import { getPatternById, applyOverrides, customPatternToGoalPattern } from '../.
 import type { CustomPattern } from '../../shared/types';
 import type { GoalProgressEntry } from '../../shared/types';
 import { CATEGORY_DEFAULT_MEASUREMENT, DEFAULT_INSTRUMENTS } from '../../shared/goal-metrics';
-import { evalEntryToCardData, generateGoalFingerprint } from '../../shared/goal-card-data';
+import { evalEntryToCardData, generateGoalFingerprint, groupGoalCards } from '../../shared/goal-card-data';
 import CollapsedGoalCard from '../components/CollapsedGoalCard';
 import ExpandedGoalCard from '../components/ExpandedGoalCard';
 import type { ValidationIssue, ValidationFixes } from '../../shared/types/validation';
@@ -133,7 +133,7 @@ interface EvalContent {
 const CATEGORY_OPTIONS: Record<Discipline, string[]> = {
   PT: ['Mobility', 'Strength', 'Balance', 'ROM', 'Pain Management', 'Gait', 'Functional Activity', 'Endurance', 'Transfers', 'Posture', 'Gross Motor Development', 'Coordination'],
   OT: ['ADLs', 'Fine Motor', 'Visual Motor', 'Sensory Processing', 'Handwriting', 'Self-Care', 'Feeding', 'Upper Extremity', 'Cognitive', 'Play Skills', 'Self-Regulation'],
-  ST: ['Articulation', 'Language Comprehension', 'Language Expression', 'Early Language', 'Fluency', 'Voice', 'Pragmatics', 'Social Communication', 'Phonological Awareness', 'Feeding/Swallowing', 'AAC', 'Cognitive-Communication', 'Literacy'],
+  ST: ['Articulation', 'Motor Speech', 'Language Comprehension', 'Language Expression', 'Early Language', 'Fluency', 'Voice', 'Pragmatics', 'Social Communication', 'Phonological Awareness', 'Feeding/Swallowing', 'AAC', 'Cognitive-Communication', 'Literacy'],
   MFT: ['Depression', 'Anxiety', 'Trauma', 'Relationship', 'Family Systems', 'Coping Skills', 'Self-Esteem', 'Grief', 'Behavioral', 'Communication'],
 };
 
@@ -1650,12 +1650,23 @@ export default function EvalFormPage() {
               ? (DEFAULT_INSTRUMENTS[field.category] || '') : '';
           }
         }
-        // Auto-compose if pattern-based goal, or if text was previously auto-composed
-        if (updated.pattern_id && updated.pattern_id !== 'custom_freeform') {
+        // Manual-text override handling:
+        // - A direct goal_text edit (or goal_text_manual:true) pins the entry to manual text — no re-compose.
+        // - goal_text_manual:false means the user switched back to the pattern — re-compose now.
+        // - Otherwise, only auto-compose when the text is NOT manually overridden.
+        const editedText = field.goal_text !== undefined;
+        if (field.goal_text_manual === false) {
+          updated.goal_text_manual = false;
           updated.goal_text = composeGoalText(updated);
-        } else if (!g.goal_text.trim() || isAutoComposedGoalText(g.goal_text)) {
-          // Legacy: only recompose if it was auto-composed before
-          updated.goal_text = composeGoalText(updated);
+        } else if (editedText || field.goal_text_manual === true) {
+          updated.goal_text_manual = true; // keep the user's text as typed
+        } else if (!updated.goal_text_manual) {
+          if (updated.pattern_id && updated.pattern_id !== 'custom_freeform') {
+            updated.goal_text = composeGoalText(updated);
+          } else if (!g.goal_text.trim() || isAutoComposedGoalText(g.goal_text)) {
+            // Legacy: only recompose if it was auto-composed before
+            updated.goal_text = composeGoalText(updated);
+          }
         }
         return updated;
       })
@@ -1676,8 +1687,9 @@ export default function EvalFormPage() {
       if (!entry) return prev;
       const updatedComps = { ...(entry.components || {}), [key]: value };
       const updated = { ...entry, components: updatedComps };
-      // Recompose goal text so the narrative reflects the new component choice
-      if (updated.pattern_id && updated.pattern_id !== 'custom_freeform') {
+      // Recompose goal text so the narrative reflects the new component choice —
+      // unless the user has hand-edited the text (manual override wins).
+      if (!updated.goal_text_manual && updated.pattern_id && updated.pattern_id !== 'custom_freeform') {
         updated.goal_text = composeGoalText(updated);
       }
       return prev.map((g, i) => i !== idx ? g : updated);
@@ -1716,6 +1728,7 @@ export default function EvalFormPage() {
       category: pattern.category,
       measurement_type: mt as MeasurementType,
       instrument: inst,
+      goal_text_manual: false, // picking a pattern resets to a freshly composed goal
     });
   }, [updateGoalField]);
 
@@ -2933,33 +2946,54 @@ export default function EvalFormPage() {
               </p>
             </div>
           ) : (
-            <div className="space-y-2">
-              {goalCards.map((card, idx) =>
-                expandedGoalIdx === idx ? (
-                  <ExpandedGoalCard
-                    key={idx}
-                    data={card}
-                    discipline={discipline as Discipline}
-                    patternOverrides={patternOverrides}
-                    customPatterns={customGoalPatterns}
-                    disabled={!!existingSignedAt}
-                    onCollapse={handleGoalCollapse}
-                    onFieldChange={(field) => updateGoalField(idx, field)}
-                    onComponentChange={(key, value) => handleGoalComponentChange(idx, key, value)}
-                    onDelete={!existingSignedAt ? () => handleGoalDelete(idx) : undefined}
-                    onPatternSelect={(pattern) => handleGoalPatternSelect(idx, pattern)}
-                    onPatternClear={() => handleGoalPatternClear(idx)}
-                    onCustomPattern={() => handleGoalCustomPattern(idx)}
-                  />
-                ) : (
-                  <CollapsedGoalCard
-                    key={idx}
-                    data={card}
-                    fingerprint={generateGoalFingerprint(card.pattern_id, card.components, card.category)}
-                    onClick={() => setExpandedGoalIdx(idx)}
-                  />
-                )
-              )}
+            <div className="space-y-3">
+              {(() => {
+                // Nested grouping: Short-Term / Long-Term → skill (category).
+                // Original array index is preserved so handlers stay index-based.
+                let lastType: GoalType | null = null;
+                return groupGoalCards(goalCards).map((group) => {
+                  const showTypeHeader = group.goalType !== lastType;
+                  lastType = group.goalType;
+                  return (
+                    <div key={`${group.goalType}-${group.category}`} className="space-y-2">
+                      {showTypeHeader && (
+                        <div className={`text-xs font-bold uppercase tracking-wide pt-1 ${group.goalType === 'STG' ? 'text-blue-600' : 'text-purple-600'}`}>
+                          {group.goalType === 'STG' ? 'Short-Term Goals' : 'Long-Term Goals'}
+                        </div>
+                      )}
+                      <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-secondary)] font-semibold pl-0.5">
+                        {group.category}
+                      </div>
+                      {group.items.map(({ card, index: idx }) =>
+                        expandedGoalIdx === idx ? (
+                          <ExpandedGoalCard
+                            key={idx}
+                            data={card}
+                            discipline={discipline as Discipline}
+                            patternOverrides={patternOverrides}
+                            customPatterns={customGoalPatterns}
+                            disabled={!!existingSignedAt}
+                            onCollapse={handleGoalCollapse}
+                            onFieldChange={(field) => updateGoalField(idx, field)}
+                            onComponentChange={(key, value) => handleGoalComponentChange(idx, key, value)}
+                            onDelete={!existingSignedAt ? () => handleGoalDelete(idx) : undefined}
+                            onPatternSelect={(pattern) => handleGoalPatternSelect(idx, pattern)}
+                            onPatternClear={() => handleGoalPatternClear(idx)}
+                            onCustomPattern={() => handleGoalCustomPattern(idx)}
+                          />
+                        ) : (
+                          <CollapsedGoalCard
+                            key={idx}
+                            data={card}
+                            fingerprint={generateGoalFingerprint(card.pattern_id, card.components, card.category)}
+                            onClick={() => setExpandedGoalIdx(idx)}
+                          />
+                        )
+                      )}
+                    </div>
+                  );
+                });
+              })()}
             </div>
           )}
 

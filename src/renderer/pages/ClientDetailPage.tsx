@@ -70,7 +70,7 @@ import ClientDiscountModal from '../components/ClientDiscountModal';
 import ClientDiscountBadge from '../components/ClientDiscountBadge';
 import CollapsedGoalCard from '../components/CollapsedGoalCard';
 import ExpandedGoalCard from '../components/ExpandedGoalCard';
-import { goalToCardData, generateGoalFingerprint } from '../../shared/goal-card-data';
+import { goalToCardData, generateGoalFingerprint, groupGoalCards } from '../../shared/goal-card-data';
 import type { PatternOverride } from '../../shared/types';
 import ComplianceSection from '../components/ComplianceSection';
 import CommunicationLogSection from '../components/CommunicationLogSection';
@@ -1375,11 +1375,28 @@ const ClientDetailPage: React.FC = () => {
                       Active Goals ({allActiveGoals.length})
                     </button>
                     {showActiveGoals && (
-                    <div className="p-3 pt-0 space-y-2">
-                    {activeGoalCards.map((card, idx) => {
-                      const goal = allActiveGoals[idx];
-                      const isEstablished = isEstablishedGoal(goal);
-                      return expandedGoalIdx === idx ? (
+                    <div className="p-3 pt-0 space-y-3">
+                    {(() => {
+                      // Nested grouping: Short-Term / Long-Term → skill (category).
+                      // Original array index is preserved so handlers stay index-based.
+                      let lastType: string | null = null;
+                      return groupGoalCards(activeGoalCards).map((group) => {
+                        const showTypeHeader = group.goalType !== lastType;
+                        lastType = group.goalType;
+                        return (
+                          <div key={`${group.goalType}-${group.category}`} className="space-y-2">
+                            {showTypeHeader && (
+                              <div className={`text-xs font-bold uppercase tracking-wide pt-1 ${group.goalType === 'STG' ? 'text-blue-600' : 'text-purple-600'}`}>
+                                {group.goalType === 'STG' ? 'Short-Term Goals' : 'Long-Term Goals'}
+                              </div>
+                            )}
+                            <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-secondary)] font-semibold pl-0.5">
+                              {group.category}
+                            </div>
+                            {group.items.map(({ card, index: idx }) => {
+                              const goal = allActiveGoals[idx];
+                              const isEstablished = isEstablishedGoal(goal);
+                              return expandedGoalIdx === idx ? (
                         <ExpandedGoalCard
                           key={goal.id}
                           data={card}
@@ -1437,7 +1454,11 @@ const ClientDetailPage: React.FC = () => {
                           onClick={() => setExpandedGoalIdx(idx)}
                         />
                       );
-                    })}
+                            })}
+                          </div>
+                        );
+                      });
+                    })()}
                   </div>
                     )}
                   </div>

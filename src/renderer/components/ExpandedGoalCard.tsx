@@ -91,8 +91,11 @@ const ExpandedGoalCard: React.FC<ExpandedGoalCardProps> = ({
   onEditModal,
 }) => {
   const [showPatternPicker, setShowPatternPicker] = useState(false);
-  const [editingText, setEditingText] = useState(false);
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
+
+  // Manual-edit state lives on the goal (data.goal_text_manual) so it survives
+  // collapse/expand and re-renders, instead of resetting with local component state.
+  const manualEdit = !!data.goal_text_manual;
 
   const isSTG = data.goal_type === 'STG';
   const borderColor = isSTG ? 'border-l-blue-400' : 'border-l-purple-400';
@@ -287,13 +290,13 @@ const ExpandedGoalCard: React.FC<ExpandedGoalCardProps> = ({
             {!disabled && hasPattern && (
               <button
                 className="text-[10px] text-teal-600 hover:underline cursor-pointer flex items-center gap-1"
-                onClick={() => setEditingText(!editingText)}
+                onClick={() => onFieldChange({ goal_text_manual: !manualEdit })}
               >
-                <Pen size={9} /> {editingText ? 'use pattern' : 'edit manually'}
+                <Pen size={9} /> {manualEdit ? 'use pattern' : 'edit manually'}
               </button>
             )}
           </div>
-          {editingText || !hasPattern ? (
+          {manualEdit || !hasPattern ? (
             <textarea
               className="w-full text-sm text-[var(--color-text)] bg-white/60 rounded border border-teal-200 p-2 resize-none focus:outline-none focus:border-teal-400"
               rows={2}

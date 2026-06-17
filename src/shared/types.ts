@@ -231,6 +231,7 @@ export interface EvalGoalEntry {
   pattern_id?: string;      // Which goal pattern was used
   components?: Record<string, any>;  // Component selections for pattern-based goals
   is_carried_over?: boolean;  // Carried from prior eval (reassessment/PR)
+  goal_text_manual?: boolean; // User hand-edited goal_text — suppress pattern re-compose
 }
 
 export interface Practice {
