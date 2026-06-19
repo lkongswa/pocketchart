@@ -37,8 +37,13 @@ interface ClipboardAppointment {
   status: string;
   clientName: string;
   patient_name?: string | null;
+  // The actual contractor-patient FK. Must be carried alongside patient_name —
+  // copying only the free-text name and dropping this id orphans the pasted
+  // appointment from its patient record.
+  contractor_patient_id?: number | null;
   visit_type?: string | null;
   session_type?: string | null;
+  service_modality?: string | null;
 }
 
 // Context menu state
@@ -684,8 +689,10 @@ export default function CalendarPage() {
       status: 'scheduled',
       clientName,
       patient_name: (appt as any).patient_name ?? null,
+      contractor_patient_id: (appt as any).contractor_patient_id ?? null,
       visit_type: (appt as any).visit_type ?? null,
       session_type: (appt as any).session_type ?? null,
+      service_modality: (appt as any).service_modality ?? null,
     });
     setContextMenu(null);
   };
@@ -785,8 +792,10 @@ export default function CalendarPage() {
       scheduled_time: time,
       status: 'scheduled',
       patient_name: clipboardAppt.patient_name ?? '',
+      contractor_patient_id: clipboardAppt.contractor_patient_id ?? null,
       visit_type: (clipboardAppt.visit_type ?? 'O') as any,
       session_type: (clipboardAppt.session_type ?? 'visit') as any,
+      service_modality: (clipboardAppt.service_modality ?? '') as any,
     };
     await window.api.appointments.create(pasteData);
     await loadAppointments();

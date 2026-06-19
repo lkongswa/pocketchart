@@ -2148,16 +2148,43 @@ function registerIpcHandlers() {
   });
 
   safeHandle('appointments:update', (_event, id: number, data) => {
+    // Merge against the existing row so callers that send a partial payload don't
+    // clobber fields they never touched. Two concrete hazards this guards against:
+    //   1. contractor_patient_id was previously NEVER written here, so editing a
+    //      contractor appointment's patient updated the free-text patient_name but
+    //      left the FK pointing at the OLD patient — a silent desync.
+    //   2. The appointment modal's save payload omits note_id/evaluation_id; binding
+    //      `undefined` throws in better-sqlite3, and coercing it to NULL would unlink
+    //      the appointment's note/eval. Preserving the existing value avoids both.
+    const existing = db.prepare('SELECT * FROM appointments WHERE id = ? AND deleted_at IS NULL').get(id) as any;
+    if (!existing) return null;
+    // For a field the caller explicitly provided (even as null), use it; otherwise
+    // fall back to the current stored value.
+    const pick = (key: string, fallbackEmpty = false) =>
+      data[key] !== undefined ? data[key] : (fallbackEmpty ? (existing[key] ?? '') : existing[key]);
+
     db.prepare(`
       UPDATE appointments SET client_id=?, scheduled_date=?, scheduled_time=?,
         duration_minutes=?, status=?, note_id=?, entity_id=?, entity_rate=?, patient_name=?,
-        visit_type=?, session_type=?, evaluation_id=?, service_modality=?
+        visit_type=?, session_type=?, evaluation_id=?, service_modality=?, contractor_patient_id=?
       WHERE id=? AND deleted_at IS NULL
-    `).run(data.client_id || null, data.scheduled_date, data.scheduled_time,
-      data.duration_minutes, data.status, data.note_id,
-      data.entity_id || null, data.entity_rate || null, data.patient_name || '',
-      data.visit_type || 'O', data.session_type || 'visit', data.evaluation_id || null,
-      data.service_modality || '', id);
+    `).run(
+      pick('client_id') || null,
+      pick('scheduled_date'),
+      pick('scheduled_time'),
+      pick('duration_minutes'),
+      pick('status'),
+      pick('note_id') ?? null,
+      pick('entity_id') || null,
+      pick('entity_rate') ?? null,
+      pick('patient_name', true) || '',
+      pick('visit_type') || 'O',
+      pick('session_type') || 'visit',
+      pick('evaluation_id') ?? null,
+      pick('service_modality', true) || '',
+      pick('contractor_patient_id') ?? null,
+      id
+    );
     return db.prepare(apptSelectQuery + ' AND a.id = ?').get(id);
   });
 

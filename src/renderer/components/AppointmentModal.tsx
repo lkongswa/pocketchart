@@ -128,6 +128,16 @@ export default function AppointmentModal({
           visit_type: (appointment as any).visit_type || 'O',
           session_type: appointment.session_type || 'visit',
         });
+        // Clear any selection state left over from a PREVIOUS modal session before
+        // re-seeding from THIS appointment. Without this, a stale selectedItem /
+        // selectedPatient could survive and get written back on save — silently
+        // re-assigning the appointment to the wrong client/patient. The effects
+        // below (and the search/patient comboboxes) repopulate these from the
+        // appointment currently being edited.
+        setSelectedItem(null);
+        setSelectedPatient(null);
+        setContractorPatients([]);
+        setFeeScheduleCache([]);
         // Restore selection
         if (appointment.entity_id && appointment.entity_name) {
           setSearchQuery(appointment.entity_name);
