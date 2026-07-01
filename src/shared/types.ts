@@ -341,9 +341,19 @@ export interface GoalProgressEntry {
   value: string;
   numeric_value: number;
   instrument: string;
-  source_type: 'eval' | 'progress_report' | 'recert' | 'discharge';
+  source_type: 'eval' | 'progress_report' | 'recert' | 'discharge' | 'session';
   source_document_id: number;
 }
+
+/** A single goal's measured performance captured on a session note. */
+export interface SessionGoalProgress {
+  value: string;             // human-readable, e.g. "75%", "ModA", "4/5"
+  numeric: number;           // numeric value for charting/sorting
+  measurement_type: string;  // mirrors the goal's measurement_type at capture time
+}
+
+/** JSON shape stored in notes.goal_progress — keyed by goal id. */
+export type SessionGoalProgressMap = Record<number, SessionGoalProgress>;
 
 export interface Evaluation {
   id: number;
@@ -379,6 +389,7 @@ export interface Note {
   assessment: string;
   plan: string;
   goals_addressed: string; // JSON array of goal IDs
+  goal_progress: string;   // JSON map { [goalId]: { value, numeric, measurement_type } } — per-session goal performance
   signature_image: string;
   signature_typed: string;
   signed_at: string;

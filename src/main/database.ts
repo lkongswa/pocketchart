@@ -2538,6 +2538,19 @@ function runMigrations(): void {
         }
       },
     },
+    {
+      version: 70,
+      description: 'Add per-session goal progress to notes (JSON map of goalId → measured value)',
+      up: () => {
+        // Stores the working per-goal performance entered on a SOAP session note.
+        // Shape: { [goalId]: { value: string, numeric: number, measurement_type: string } }
+        // On sign, these are committed to goal_progress_history (source_type='session')
+        // so the value joins the cross-session trend shown in the lookback + treatment plan.
+        if (!columnExists('notes', 'goal_progress')) {
+          db.exec("ALTER TABLE notes ADD COLUMN goal_progress TEXT DEFAULT '{}'");
+        }
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
@@ -2796,7 +2809,7 @@ function createTables(): void {
 // ── Backup, Restore & Integrity Functions ──
 
 // Must track the highest migration version above — used by the backup restore-compatibility check.
-const LATEST_SCHEMA_VERSION = 69;
+const LATEST_SCHEMA_VERSION = 70;
 
 /**
  * Run PRAGMA quick_check — a fast consistency check on every launch.

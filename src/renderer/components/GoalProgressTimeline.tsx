@@ -20,6 +20,7 @@ const SOURCE_LABELS: Record<string, string> = {
   progress_report: 'PR',
   recert: 'Recert',
   discharge: 'DC',
+  session: 'Session',
 };
 
 function formatShortDate(dateStr: string): string {

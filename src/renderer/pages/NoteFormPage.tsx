@@ -159,6 +159,9 @@ export default function NoteFormPage() {
   const [assessment, setAssessment] = useState('');
   const [plan, setPlan] = useState('');
   const [goalsAddressed, setGoalsAddressed] = useState<number[]>([]);
+  // Per-session goal performance (the value addressed this visit), keyed by goal id.
+  // Persisted on the note as goal_progress JSON; committed to goal_progress_history on sign.
+  const [sessionProgress, setSessionProgress] = useState<import('../../shared/types').SessionGoalProgressMap>({});
   const [signatureImage, setSignatureImage] = useState('');
   const [signatureTyped, setSignatureTyped] = useState('');
   const [existingSignedAt, setExistingSignedAt] = useState('');
@@ -365,6 +368,16 @@ export default function NoteFormPage() {
       setClient(clientData);
       setGoals(goalsData);
 
+      // Load cross-session progress history for all goals so the trend (lookback panel,
+      // Goals Addressed timeline) is available the moment the note opens.
+      try {
+        const goalIds = (goalsData as Goal[]).map((g) => g.id);
+        if (goalIds.length) {
+          const histories = await window.api.goals.getProgressHistoryBatch(goalIds);
+          setGoalHistories((prev) => ({ ...prev, ...histories }));
+        }
+      } catch { /* trend is non-critical */ }
+
       // Derive categories from goal patterns
       setPatternCategories(getPatternCategories(clientData.discipline as Discipline));
 
@@ -443,6 +456,12 @@ export default function NoteFormPage() {
           setGoalsAddressed(parsedGoals);
         } catch {
           setGoalsAddressed([]);
+        }
+        try {
+          const parsedProgress = JSON.parse(note.goal_progress || '{}');
+          setSessionProgress(parsedProgress && typeof parsedProgress === 'object' ? parsedProgress : {});
+        } catch {
+          setSessionProgress({});
         }
         setExistingSignedAt(note.signed_at || '');
         // For unsigned drafts with no saved signature, pre-fill from settings
@@ -671,6 +690,7 @@ export default function NoteFormPage() {
         assessment,
         plan,
         goals_addressed: JSON.stringify(goalsAddressed),
+        goal_progress: JSON.stringify(sessionProgress),
         signature_image: '',
         signature_typed: '',
         signed_at: '',
@@ -718,7 +738,7 @@ export default function NoteFormPage() {
     } catch (err) {
       console.error('Auto-save failed:', err);
     }
-  }, [clientId, client, existingSignedAt, subjective, objective, assessment, plan, dateOfService, timeIn, timeOut, cptLines, cptModifiers, placeOfService, chargeAmount, goalsAddressed, savedNoteId, isContractedVisit, entityId, rateOverride, rateOverrideReason, noteType, patientName, noteMode, isProgressReport, isDischarge, clinicalSummary, continuedTreatmentJustification, planOfCareUpdate, prFrequencyPerWeek, prDurationWeeks, complianceData, dischargeData, isStandaloneDischarge]);
+  }, [clientId, client, existingSignedAt, subjective, objective, assessment, plan, dateOfService, timeIn, timeOut, cptLines, cptModifiers, placeOfService, chargeAmount, goalsAddressed, sessionProgress, savedNoteId, isContractedVisit, entityId, rateOverride, rateOverrideReason, noteType, patientName, noteMode, isProgressReport, isDischarge, clinicalSummary, continuedTreatmentJustification, planOfCareUpdate, prFrequencyPerWeek, prDurationWeeks, complianceData, dischargeData, isStandaloneDischarge]);
 
   // Keep ref current for the navigation blocker
   performAutoSaveRef.current = performAutoSave;
@@ -1301,6 +1321,7 @@ export default function NoteFormPage() {
         assessment: mergedAssessment,
         plan: mergedPlan,
         goals_addressed: JSON.stringify(goalsAddressed),
+        goal_progress: JSON.stringify(sessionProgress),
         note_type: noteMode !== 'soap' ? noteMode : (isContractedVisit ? noteType : 'soap'),
         entity_id: isContractedVisit ? entityId ?? undefined : undefined,
         rate_override: isContractedVisit ? rateOverride ?? undefined : undefined,
@@ -1400,6 +1421,7 @@ export default function NoteFormPage() {
         assessment: mergedAssessment,
         plan: mergedPlan,
         goals_addressed: JSON.stringify(goalsAddressed),
+        goal_progress: JSON.stringify(sessionProgress),
         signature_image: sign ? signatureImage : '',
         signature_typed: sign ? signatureTyped : '',
         signed_at: sign ? new Date().toISOString() : '',
@@ -1533,6 +1555,30 @@ export default function NoteFormPage() {
               } catch (_) { /* ignore */ }
             }
           }
+        }
+      }
+
+      // Commit per-session goal performance to the cross-session trend.
+      // Regular SOAP/eval sessions only — progress reports & discharges write their own
+      // history entries above with their specific source_type.
+      if (sign && !isProgressReport && !isDischarge && resultNoteId) {
+        for (const goalId of goalsAddressed) {
+          const entry = sessionProgress[goalId];
+          if (!entry || !entry.value) continue;
+          const goal = goals.find((g) => g.id === goalId);
+          try {
+            await window.api.goals.addProgressEntry({
+              goal_id: goalId,
+              client_id: parseInt(clientId!, 10),
+              recorded_date: mergedDateOfService,
+              measurement_type: entry.measurement_type || goal?.measurement_type || 'percentage',
+              value: entry.value,
+              numeric_value: entry.numeric ?? 0,
+              instrument: goal?.instrument || '',
+              source_type: 'session' as any,
+              source_document_id: resultNoteId,
+            });
+          } catch (_) { /* trend write is non-critical */ }
         }
       }
 
@@ -2620,34 +2666,92 @@ export default function NoteFormPage() {
                 Goals Addressed
               </h3>
               <div className="space-y-2">
-                {activeGoals.map((goal) => (
-                  <label
-                    key={goal.id}
-                    className="flex items-start gap-3 p-2 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={goalsAddressed.includes(goal.id)}
-                      onChange={() => toggleGoalAddressed(goal.id)}
-                      className="mt-0.5 w-4 h-4 rounded border-gray-300 text-[var(--color-primary)] accent-[var(--color-primary)]"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <span className="text-sm text-[var(--color-text)] leading-snug">
-                        {goal.goal_text}
-                      </span>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <span className={`badge text-[10px] ${goal.goal_type === 'STG' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
-                          {goal.goal_type}
-                        </span>
-                        {goal.category && (
-                          <span className="text-[10px] text-[var(--color-text-secondary)]">
-                            {goal.category}
+                {activeGoals.map((goal) => {
+                  const isAddressed = goalsAddressed.includes(goal.id);
+                  const mt = (goal.measurement_type || 'percentage') as MeasurementType;
+                  const sp = sessionProgress[goal.id];
+                  return (
+                    <div
+                      key={goal.id}
+                      className={`rounded-lg transition-colors ${isAddressed ? 'bg-[var(--color-primary)]/5 border border-[var(--color-primary)]/20' : 'hover:bg-gray-50'}`}
+                    >
+                      <label className="flex items-start gap-3 p-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={isAddressed}
+                          onChange={() => toggleGoalAddressed(goal.id)}
+                          className="mt-0.5 w-4 h-4 rounded border-gray-300 text-[var(--color-primary)] accent-[var(--color-primary)]"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <span className="text-sm text-[var(--color-text)] leading-snug">
+                            {goal.goal_text}
                           </span>
-                        )}
-                      </div>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className={`badge text-[10px] ${goal.goal_type === 'STG' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
+                              {goal.goal_type}
+                            </span>
+                            {goal.category && (
+                              <span className="text-[10px] text-[var(--color-text-secondary)]">
+                                {goal.category}
+                              </span>
+                            )}
+                            {!isAddressed && sp?.value && (
+                              <span className="text-[10px] text-[var(--color-text-secondary)] italic">
+                                last entered {formatMetricValue(mt, sp.value, goal.instrument)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </label>
+                      {/* Per-session performance — captured only for goals addressed this visit */}
+                      {isAddressed && (
+                        <div className="pl-9 pr-3 pb-3 space-y-2">
+                          {mt !== 'custom_text' && (
+                            <MeasurementChips
+                              measurement_type={mt}
+                              label="This session"
+                              value={sp?.value || ''}
+                              numericValue={sp?.numeric ?? 0}
+                              colorScheme="target"
+                              disabled={!!existingSignedAt}
+                              onSelect={(val, num) => setSessionProgress((prev) => {
+                                const next = { ...prev };
+                                if (!val) { delete next[goal.id]; }
+                                else { next[goal.id] = { value: val, numeric: num, measurement_type: mt }; }
+                                return next;
+                              })}
+                            />
+                          )}
+                          {/* Reference: where this goal is headed */}
+                          {(goal.baseline_value || goal.baseline > 0 || goal.target_value || goal.target > 0) && (
+                            <GoalProgressBar
+                              measurement_type={mt}
+                              baseline_value={goal.baseline_value || `${goal.baseline}`}
+                              baseline_numeric={goal.baseline ?? 0}
+                              current_value={sp?.value || undefined}
+                              current_numeric={sp?.numeric ?? undefined}
+                              target_value={goal.target_value || `${goal.target}`}
+                              target_numeric={goal.target ?? 0}
+                              compact
+                            />
+                          )}
+                          {/* Trend across prior sessions */}
+                          {goalHistories[goal.id]?.length >= 2 && (
+                            <GoalProgressTimeline
+                              history={goalHistories[goal.id]}
+                              measurement_type={mt}
+                              target_value={goal.target_value || `${goal.target}`}
+                              target_numeric={goal.target ?? 0}
+                              baseline_numeric={goal.baseline ?? 0}
+                              instrument={goal.instrument}
+                              compact
+                            />
+                          )}
+                        </div>
+                      )}
                     </div>
-                  </label>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -3220,6 +3324,18 @@ export default function NoteFormPage() {
                           baseline_numeric={goal.baseline ?? 0}
                           target_value={goal.target_value || `${goal.target}`}
                           target_numeric={goal.target ?? 0}
+                          compact
+                        />
+                      )}
+                      {/* Session-over-session trend */}
+                      {goalHistories[goal.id]?.length >= 2 && (
+                        <GoalProgressTimeline
+                          history={goalHistories[goal.id]}
+                          measurement_type={(goal.measurement_type || 'percentage') as MeasurementType}
+                          target_value={goal.target_value || `${goal.target}`}
+                          target_numeric={goal.target ?? 0}
+                          baseline_numeric={goal.baseline ?? 0}
+                          instrument={goal.instrument}
                           compact
                         />
                       )}

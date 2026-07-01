@@ -1560,17 +1560,17 @@ function registerIpcHandlers() {
 
     const result = db.prepare(`
       INSERT INTO notes (client_id, date_of_service, time_in, time_out, units, cpt_code,
-        subjective, objective, assessment, plan, goals_addressed, signed_at,
+        subjective, objective, assessment, plan, goals_addressed, goal_progress, signed_at,
         cpt_codes, signature_image, signature_typed, rendering_provider_npi,
         cpt_modifiers, charge_amount, place_of_service, diagnosis_pointers,
         entity_id, rate_override, rate_override_reason,
         frequency_per_week, duration_weeks, frequency_notes, note_type, patient_name,
         progress_report_data, discharge_data)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.client_id, data.date_of_service, data.time_in, data.time_out, data.units,
       data.cpt_code, data.subjective, data.objective, data.assessment, data.plan,
-      data.goals_addressed || '[]', data.signed_at,
+      data.goals_addressed || '[]', data.goal_progress || '{}', data.signed_at,
       data.cpt_codes || '[]', data.signature_image || '', data.signature_typed || '',
       renderingNpi,
       data.cpt_modifiers || '[]', data.charge_amount || 0,
@@ -1703,7 +1703,7 @@ function registerIpcHandlers() {
 
     db.prepare(`
       UPDATE notes SET date_of_service=?, time_in=?, time_out=?, units=?, cpt_code=?,
-        subjective=?, objective=?, assessment=?, plan=?, goals_addressed=?, signed_at=?,
+        subjective=?, objective=?, assessment=?, plan=?, goals_addressed=?, goal_progress=?, signed_at=?,
         cpt_codes=?, signature_image=?, signature_typed=?,
         cpt_modifiers=?, charge_amount=?, place_of_service=?, diagnosis_pointers=?,
         rendering_provider_npi=?,
@@ -1715,7 +1715,7 @@ function registerIpcHandlers() {
     `).run(
       data.date_of_service, data.time_in, data.time_out, data.units, data.cpt_code,
       data.subjective, data.objective, data.assessment, data.plan,
-      data.goals_addressed || '[]', data.signed_at,
+      data.goals_addressed || '[]', data.goal_progress || '{}', data.signed_at,
       data.cpt_codes || '[]', data.signature_image || '', data.signature_typed || '',
       data.cpt_modifiers || '[]', data.charge_amount || 0,
       data.place_of_service || '11', data.diagnosis_pointers || '[1]',

@@ -322,7 +322,7 @@ const ExpandedGoalCard: React.FC<ExpandedGoalCardProps> = ({
               <div key={entry.id} className={`flex items-center gap-1 px-2 py-0.5 rounded ${colorCls}`}>
                 <span className="text-[10px] font-bold">{formatMetricValue(mt, entry.value, data.instrument)}</span>
                 <span className="text-[9px] opacity-70">
-                  {entry.source_type === 'eval' ? 'Eval' : entry.source_type === 'progress_report' ? 'PR' : entry.source_type}
+                  {entry.source_type === 'eval' ? 'Eval' : entry.source_type === 'progress_report' ? 'PR' : entry.source_type === 'recert' ? 'Recert' : entry.source_type === 'discharge' ? 'DC' : entry.source_type === 'session' ? 'Session' : entry.source_type}
                   {' '}{formatShortDate(entry.recorded_date)}
                 </span>
               </div>
