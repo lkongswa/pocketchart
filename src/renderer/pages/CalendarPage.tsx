@@ -105,6 +105,9 @@ export default function CalendarPage() {
   const { hasFeature } = useTier();
   const canAccessWaitlist = hasFeature('waitlist');
   const [newTodoText, setNewTodoText] = useState('');
+  // Inline edit state for sidebar (unplaced) tasks
+  const [editingSidebarTodoId, setEditingSidebarTodoId] = useState<number | null>(null);
+  const [editSidebarTodoText, setEditSidebarTodoText] = useState('');
 
   // Scratchpad state
   const [scratchpadContent, setScratchpadContent] = useState('');
@@ -121,6 +124,9 @@ export default function CalendarPage() {
 
   // Block context menu state
   const [blockContextMenu, setBlockContextMenu] = useState<BlockContextMenu | null>(null);
+  // Inline edit state for placed calendar blocks
+  const [editingBlock, setEditingBlock] = useState<CalendarBlock | null>(null);
+  const [editBlockText, setEditBlockText] = useState('');
 
   // Empty-slot context menu state (right-click on a time slot)
   const [slotContextMenu, setSlotContextMenu] = useState<{ x: number; y: number; date: string; time: string } | null>(null);
@@ -441,6 +447,25 @@ export default function CalendarPage() {
     await loadIncompleteTodos();
   };
 
+  const handleStartEditTodo = (todo: DashboardTodo) => {
+    setEditingSidebarTodoId(todo.id);
+    setEditSidebarTodoText(todo.text);
+  };
+
+  const handleCancelEditTodo = () => {
+    setEditingSidebarTodoId(null);
+    setEditSidebarTodoText('');
+  };
+
+  const handleSaveEditTodo = async (id: number) => {
+    const text = editSidebarTodoText.trim();
+    if (!text) { handleCancelEditTodo(); return; }
+    await window.api.dashboardTodos.update(id, { text });
+    setEditingSidebarTodoId(null);
+    setEditSidebarTodoText('');
+    await loadIncompleteTodos();
+  };
+
   // ── Sidebar: Scratchpad ──
   const loadScratchpad = async () => {
     const note = await window.api.scratchpad.get();
@@ -662,6 +687,27 @@ export default function CalendarPage() {
     setBlockContextMenu(null);
     await window.api.calendarBlocks.delete(block.id);
     await loadCalendarBlocks();
+  };
+
+  // Rename a placed block. If it's linked to a task, keep the underlying task text in sync.
+  const handleStartEditBlock = (block: CalendarBlock) => {
+    setBlockContextMenu(null);
+    setEditingBlock(block);
+    setEditBlockText(block.title);
+  };
+
+  const handleSaveEditBlock = async () => {
+    if (!editingBlock) return;
+    const text = editBlockText.trim();
+    if (!text) { setEditingBlock(null); setEditBlockText(''); return; }
+    await window.api.calendarBlocks.update(editingBlock.id, { title: text });
+    if (editingBlock.source_todo_id) {
+      await window.api.dashboardTodos.update(editingBlock.source_todo_id, { text });
+    }
+    setEditingBlock(null);
+    setEditBlockText('');
+    await loadCalendarBlocks();
+    await loadIncompleteTodos();
   };
 
   // Inline block remove (X button): if linked to a todo, restore it; otherwise just delete
@@ -1023,11 +1069,13 @@ export default function CalendarPage() {
                           No pending tasks.
                         </div>
                       ) : (
-                        sidebarTodos.map((todo) => (
+                        sidebarTodos.map((todo) => {
+                          const isEditing = editingSidebarTodoId === todo.id;
+                          return (
                           <div
                             key={todo.id}
-                            className="group flex items-center gap-1.5 px-2 py-1.5 rounded-md hover:bg-gray-50 cursor-grab transition-colors"
-                            draggable
+                            className={`group flex items-center gap-1.5 px-2 py-1.5 rounded-md hover:bg-gray-50 transition-colors ${isEditing ? '' : 'cursor-grab'}`}
+                            draggable={!isEditing}
                             onDragStart={(e) => {
                               e.dataTransfer.setData('application/todo-id', todo.id.toString());
                               e.dataTransfer.effectAllowed = 'move';
@@ -1047,20 +1095,54 @@ export default function CalendarPage() {
                             >
                               {todo.completed ? <Check size={10} /> : null}
                             </button>
-                            <span className="text-xs text-[var(--color-text)] leading-tight flex-1 truncate">
-                              {todo.text}
-                            </span>
-                            <button
-                              className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-50 text-red-400 hover:text-red-500 transition-all"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteTodo(todo.id);
-                              }}
-                            >
-                              <Trash2 size={12} />
-                            </button>
+                            {isEditing ? (
+                              <input
+                                type="text"
+                                autoFocus
+                                className="flex-1 min-w-0 text-xs border border-teal-400 rounded px-1.5 py-1 focus:outline-none"
+                                value={editSidebarTodoText}
+                                onChange={(e) => setEditSidebarTodoText(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') { e.preventDefault(); handleSaveEditTodo(todo.id); }
+                                  else if (e.key === 'Escape') { e.preventDefault(); handleCancelEditTodo(); }
+                                }}
+                                onBlur={() => handleSaveEditTodo(todo.id)}
+                              />
+                            ) : (
+                              <span
+                                className="text-xs text-[var(--color-text)] leading-tight flex-1 truncate cursor-text"
+                                onDoubleClick={() => handleStartEditTodo(todo)}
+                                title={todo.text}
+                              >
+                                {todo.text}
+                              </span>
+                            )}
+                            {!isEditing && (
+                              <>
+                                <button
+                                  className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-teal-50 text-[var(--color-text-secondary)] hover:text-teal-500 transition-all"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleStartEditTodo(todo);
+                                  }}
+                                  title="Edit task"
+                                >
+                                  <Edit3 size={12} />
+                                </button>
+                                <button
+                                  className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-50 text-red-400 hover:text-red-500 transition-all"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteTodo(todo.id);
+                                  }}
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </>
+                            )}
                           </div>
-                        ))
+                          );
+                        })
                       )}
                     </div>
 
@@ -1238,6 +1320,11 @@ export default function CalendarPage() {
             icon: <CheckCircle2 size={14} className={block.completed ? 'text-amber-500' : 'text-emerald-500'} />,
             onClick: () => handleToggleBlockDone(block),
           },
+          {
+            label: 'Edit',
+            icon: <Edit3 size={14} />,
+            onClick: () => handleStartEditBlock(block),
+          },
         ];
         if (block.source_todo_id) {
           items.push({
@@ -1293,6 +1380,49 @@ export default function CalendarPage() {
           />
         );
       })()}
+
+      {/* Rename modal for a placed calendar block */}
+      {editingBlock && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) { setEditingBlock(null); setEditBlockText(''); } }}
+        >
+          <div className="bg-white rounded-lg shadow-xl w-80 p-4">
+            <h3 className="text-sm font-semibold text-[var(--color-text)] mb-2">Edit task</h3>
+            <input
+              type="text"
+              autoFocus
+              className="w-full text-sm border border-[var(--color-border)] rounded-md px-2.5 py-2 focus:outline-none focus:border-teal-400 focus:ring-1 focus:ring-teal-400/30"
+              value={editBlockText}
+              onChange={(e) => setEditBlockText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); handleSaveEditBlock(); }
+                else if (e.key === 'Escape') { e.preventDefault(); setEditingBlock(null); setEditBlockText(''); }
+              }}
+            />
+            {editingBlock.source_todo_id ? (
+              <p className="text-[11px] text-[var(--color-text-secondary)] mt-1.5">
+                Also updates the linked task.
+              </p>
+            ) : null}
+            <div className="flex justify-end gap-2 mt-3">
+              <button
+                className="px-3 py-1.5 text-xs rounded-md border border-[var(--color-border)] hover:bg-gray-50 text-[var(--color-text-secondary)]"
+                onClick={() => { setEditingBlock(null); setEditBlockText(''); }}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-3 py-1.5 text-xs rounded-md bg-teal-500 text-white hover:bg-teal-600 disabled:opacity-50"
+                onClick={handleSaveEditBlock}
+                disabled={!editBlockText.trim()}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <AppointmentModal
         isOpen={modalOpen}

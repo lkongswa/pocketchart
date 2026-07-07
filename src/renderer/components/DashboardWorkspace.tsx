@@ -8,6 +8,7 @@ import {
   Check,
   GripVertical,
   Star,
+  Pencil,
 } from 'lucide-react';
 import type { DashboardNote, DashboardTodo } from '../../shared/types';
 
@@ -81,6 +82,8 @@ function TodoPanel({ searchQuery }: { searchQuery: string }) {
   const [todos, setTodos] = useState<DashboardTodo[]>([]);
   const [newText, setNewText] = useState('');
   const [dragId, setDragId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editText, setEditText] = useState('');
 
   const loadTodos = useCallback(() => {
     window.api.dashboardTodos.list().then(setTodos);
@@ -109,6 +112,30 @@ function TodoPanel({ searchQuery }: { searchQuery: string }) {
   const togglePriority = async (todo: DashboardTodo) => {
     await window.api.dashboardTodos.update(todo.id, { priority: todo.priority ? 0 : 1 });
     loadTodos();
+  };
+
+  const startEdit = (todo: DashboardTodo) => {
+    setEditingId(todo.id);
+    setEditText(todo.text);
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditText('');
+  };
+
+  const saveEdit = async (id: number) => {
+    const text = editText.trim();
+    if (!text) { cancelEdit(); return; }
+    await window.api.dashboardTodos.update(id, { text });
+    setEditingId(null);
+    setEditText('');
+    loadTodos();
+  };
+
+  const handleEditKeyDown = (e: React.KeyboardEvent, id: number) => {
+    if (e.key === 'Enter') { e.preventDefault(); saveEdit(id); }
+    else if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -203,7 +230,7 @@ function TodoPanel({ searchQuery }: { searchQuery: string }) {
               className={`group flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-50 transition-colors ${
                 dragId === todo.id ? 'opacity-50' : ''
               }`}
-              draggable
+              draggable={editingId !== todo.id}
               onDragStart={(e) => handleDragStart(e, todo.id)}
               onDragOver={handleDragOver}
               onDrop={(e) => handleDrop(e, todo.id)}
@@ -225,37 +252,64 @@ function TodoPanel({ searchQuery }: { searchQuery: string }) {
               >
                 {todo.completed ? <Check size={10} /> : null}
               </button>
-              {/* Text */}
-              <span
-                className={`flex-1 text-sm leading-tight ${
-                  todo.completed
-                    ? 'line-through text-[var(--color-text-secondary)]'
-                    : 'text-[var(--color-text)]'
-                }`}
-              >
-                {highlightMatch(todo.text)}
-              </span>
-              {/* Priority star */}
-              <button
-                type="button"
-                className={`shrink-0 transition-all ${
-                  todo.priority
-                    ? 'text-amber-400 hover:text-amber-500'
-                    : 'opacity-0 group-hover:opacity-60 text-[var(--color-text-secondary)] hover:text-amber-400'
-                }`}
-                onClick={() => togglePriority(todo)}
-                title={todo.priority ? 'Remove priority' : 'Mark as priority'}
-              >
-                <Star size={14} fill={todo.priority ? 'currentColor' : 'none'} />
-              </button>
-              {/* Delete */}
-              <button
-                type="button"
-                className="shrink-0 opacity-0 group-hover:opacity-100 text-[var(--color-text-secondary)] hover:text-red-500 transition-all"
-                onClick={() => deleteTodo(todo.id)}
-              >
-                <X size={14} />
-              </button>
+              {/* Text (or edit field) */}
+              {editingId === todo.id ? (
+                <input
+                  type="text"
+                  autoFocus
+                  className="input flex-1 text-sm py-1"
+                  value={editText}
+                  onChange={(e) => setEditText(e.target.value)}
+                  onKeyDown={(e) => handleEditKeyDown(e, todo.id)}
+                  onBlur={() => saveEdit(todo.id)}
+                />
+              ) : (
+                <span
+                  className={`flex-1 text-sm leading-tight cursor-text ${
+                    todo.completed
+                      ? 'line-through text-[var(--color-text-secondary)]'
+                      : 'text-[var(--color-text)]'
+                  }`}
+                  onDoubleClick={() => startEdit(todo)}
+                  title="Double-click to edit"
+                >
+                  {highlightMatch(todo.text)}
+                </span>
+              )}
+              {editingId !== todo.id && (
+                <>
+                  {/* Edit */}
+                  <button
+                    type="button"
+                    className="shrink-0 opacity-0 group-hover:opacity-100 text-[var(--color-text-secondary)] hover:text-teal-500 transition-all"
+                    onClick={() => startEdit(todo)}
+                    title="Edit task"
+                  >
+                    <Pencil size={13} />
+                  </button>
+                  {/* Priority star */}
+                  <button
+                    type="button"
+                    className={`shrink-0 transition-all ${
+                      todo.priority
+                        ? 'text-amber-400 hover:text-amber-500'
+                        : 'opacity-0 group-hover:opacity-60 text-[var(--color-text-secondary)] hover:text-amber-400'
+                    }`}
+                    onClick={() => togglePriority(todo)}
+                    title={todo.priority ? 'Remove priority' : 'Mark as priority'}
+                  >
+                    <Star size={14} fill={todo.priority ? 'currentColor' : 'none'} />
+                  </button>
+                  {/* Delete */}
+                  <button
+                    type="button"
+                    className="shrink-0 opacity-0 group-hover:opacity-100 text-[var(--color-text-secondary)] hover:text-red-500 transition-all"
+                    onClick={() => deleteTodo(todo.id)}
+                  >
+                    <X size={14} />
+                  </button>
+                </>
+              )}
             </div>
           ))}
         </div>

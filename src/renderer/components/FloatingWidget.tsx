@@ -11,6 +11,7 @@ import {
   Link2,
   UserPlus,
   Lock,
+  Pencil,
 } from 'lucide-react';
 import type { DashboardTodo, QuickLink } from '../../shared/types';
 import { useTier } from '../hooks/useTier';
@@ -58,6 +59,8 @@ export default function FloatingWidget() {
   // ─── Tasks tab state ───
   const [todos, setTodos] = useState<DashboardTodo[]>([]);
   const [newTodoText, setNewTodoText] = useState('');
+  const [editingTodoId, setEditingTodoId] = useState<number | null>(null);
+  const [editTodoText, setEditTodoText] = useState('');
 
   // ─── Scratchpad tab state ───
   const [scratchpadContent, setScratchpadContent] = useState('');
@@ -99,6 +102,30 @@ export default function FloatingWidget() {
   const deleteTodo = async (id: number) => {
     await window.api.dashboardTodos.delete(id);
     await loadTodos();
+  };
+
+  const startEditTodo = (todo: DashboardTodo) => {
+    setEditingTodoId(todo.id);
+    setEditTodoText(todo.text);
+  };
+
+  const cancelEditTodo = () => {
+    setEditingTodoId(null);
+    setEditTodoText('');
+  };
+
+  const saveEditTodo = async (id: number) => {
+    const text = editTodoText.trim();
+    if (!text) { cancelEditTodo(); return; }
+    await window.api.dashboardTodos.update(id, { text });
+    setEditingTodoId(null);
+    setEditTodoText('');
+    await loadTodos();
+  };
+
+  const handleEditTodoKeyDown = (e: React.KeyboardEvent, id: number) => {
+    if (e.key === 'Enter') { e.preventDefault(); saveEditTodo(id); }
+    else if (e.key === 'Escape') { e.preventDefault(); cancelEditTodo(); }
   };
 
   // ─── Scratchpad ───
@@ -301,21 +328,46 @@ export default function FloatingWidget() {
                         >
                           {todo.completed ? <Check size={10} /> : null}
                         </button>
-                        <span
-                          className={`flex-1 text-xs leading-tight truncate ${
-                            todo.completed
-                              ? 'line-through text-[var(--color-text-secondary)]'
-                              : 'text-[var(--color-text)]'
-                          }`}
-                        >
-                          {todo.text}
-                        </span>
-                        <button
-                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-50 text-red-400 hover:text-red-500 transition-all"
-                          onClick={() => deleteTodo(todo.id)}
-                        >
-                          <Trash2 size={12} />
-                        </button>
+                        {editingTodoId === todo.id ? (
+                          <input
+                            type="text"
+                            autoFocus
+                            className="flex-1 min-w-0 text-xs border border-teal-400 rounded px-1.5 py-1 focus:outline-none"
+                            value={editTodoText}
+                            onChange={(e) => setEditTodoText(e.target.value)}
+                            onKeyDown={(e) => handleEditTodoKeyDown(e, todo.id)}
+                            onBlur={() => saveEditTodo(todo.id)}
+                          />
+                        ) : (
+                          <span
+                            className={`flex-1 text-xs leading-tight truncate cursor-text ${
+                              todo.completed
+                                ? 'line-through text-[var(--color-text-secondary)]'
+                                : 'text-[var(--color-text)]'
+                            }`}
+                            onDoubleClick={() => startEditTodo(todo)}
+                            title={todo.text}
+                          >
+                            {todo.text}
+                          </span>
+                        )}
+                        {editingTodoId !== todo.id && (
+                          <>
+                            <button
+                              className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-teal-50 text-[var(--color-text-secondary)] hover:text-teal-500 transition-all"
+                              onClick={() => startEditTodo(todo)}
+                              title="Edit task"
+                            >
+                              <Pencil size={12} />
+                            </button>
+                            <button
+                              className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-50 text-red-400 hover:text-red-500 transition-all"
+                              onClick={() => deleteTodo(todo.id)}
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </>
+                        )}
                       </div>
                     ))
                   )}
