@@ -33,7 +33,14 @@ interface AlertCategory {
 
 const URGENCY_ORDER = { overdue: 0, due_soon: 1, upcoming: 2 } as const;
 
-export default function BasicAlertsPanel() {
+interface BasicAlertsPanelProps {
+  /** When true, render only the category list — the parent supplies the "Needs Attention" header. */
+  hideHeader?: boolean;
+  /** Reports the number of loaded alert items (0 when none / not eligible) so a parent rail can show an empty state. */
+  onLoaded?: (count: number) => void;
+}
+
+export default function BasicAlertsPanel({ hideHeader = false, onLoaded }: BasicAlertsPanelProps = {}) {
   const navigate = useNavigate();
   const { isBasicOrHigher } = useTier();
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
@@ -43,6 +50,7 @@ export default function BasicAlertsPanel() {
   useEffect(() => {
     if (!isBasicOrHigher) {
       setLoading(false);
+      onLoaded?.(0);
       return;
     }
     loadAlerts();
@@ -139,8 +147,10 @@ export default function BasicAlertsPanel() {
       }
 
       setAlerts(items);
+      onLoaded?.(items.length);
     } catch (err) {
       console.error('Failed to load basic alerts:', err);
+      onLoaded?.(0);
     } finally {
       setLoading(false);
     }
@@ -216,13 +226,15 @@ export default function BasicAlertsPanel() {
   const totalCount = categories.reduce((sum, c) => sum + c.items.length, 0);
 
   return (
-    <div className="mb-6">
-      <div className="flex items-center gap-2 mb-3">
-        <AlertTriangle size={16} className="text-amber-500" />
-        <h2 className="text-sm font-semibold text-[var(--color-text)]">
-          Needs Attention ({totalCount})
-        </h2>
-      </div>
+    <div className={hideHeader ? '' : 'mb-6'}>
+      {!hideHeader && (
+        <div className="flex items-center gap-2 mb-3">
+          <AlertTriangle size={16} className="text-amber-500" />
+          <h2 className="text-sm font-semibold text-[var(--color-text)]">
+            Needs Attention ({totalCount})
+          </h2>
+        </div>
+      )}
       <div className="space-y-2">
         {categories.map((cat) => {
           const expanded = expandedCategories.has(cat.id);

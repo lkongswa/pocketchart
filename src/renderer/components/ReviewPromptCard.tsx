@@ -67,7 +67,7 @@ export default function ReviewPromptCard({ milestone, onComplete }: ReviewPrompt
 
   return (
     <div
-      className={`mb-6 relative rounded-lg border border-gray-200 border-l-4 border-l-teal-400 bg-white p-5 transition-opacity duration-300 ${
+      className={`fixed bottom-4 right-4 z-40 w-[360px] max-w-[calc(100vw-2rem)] relative rounded-xl border border-gray-200 border-l-4 border-l-teal-400 bg-white p-5 shadow-xl transition-opacity duration-300 ${
         transitioning ? 'opacity-0' : 'opacity-100'
       }`}
     >

@@ -11,8 +11,8 @@ import {
   endOfMonth,
 } from 'date-fns';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Copy, Clipboard, Edit3, Trash2, X, Ban, AlertTriangle, ListTodo, ChevronLeft, ChevronRight, GripVertical, CheckCircle2, Undo2, Plus, FileText, Link2, Check, UserPlus, Lock, PanelRightOpen } from 'lucide-react';
-import type { Appointment, Invoice, InvoiceItem, DashboardTodo, CalendarBlock, QuickLink } from '../../shared/types';
+import { Copy, Clipboard, Edit3, Trash2, X, Ban, AlertTriangle, ListTodo, ChevronLeft, ChevronRight, GripVertical, CheckCircle2, Undo2, Plus, FileText, Link2, Check, UserPlus, Lock, PanelRightOpen, PanelRightClose, Clock, Send, Search } from 'lucide-react';
+import type { Appointment, AppointmentStatus, Invoice, InvoiceItem, DashboardTodo, CalendarBlock, QuickLink } from '../../shared/types';
 import { useTier } from '../hooks/useTier';
 import WaitlistPanel from '../components/WaitlistPanel';
 import type { PaymentIndicator } from '../components/calendar/AppointmentBlock';
@@ -76,6 +76,8 @@ export default function CalendarPage() {
   });
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
+  // Transient toast for manual reminder sends (bottom-right).
+  const [toast, setToast] = useState<{ msg: string; kind: 'success' | 'error' } | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | undefined>(undefined);
@@ -97,7 +99,7 @@ export default function CalendarPage() {
   const [incompleteTodos, setIncompleteTodos] = useState<DashboardTodo[]>([]);
 
   // Payment badge toggle — OFF by default
-  const [showBilling, setShowBilling] = useLocalPreference('calendar-show-billing', false);
+  // Payment badges are always shown on appointments (the old $ toolbar toggle is gone).
 
   // Sidebar tab state
   type SidebarTab = 'tasks' | 'scratchpad' | 'links' | 'waitlist';
@@ -263,31 +265,29 @@ export default function CalendarPage() {
     }
   };
 
-  // Date label — kept tight to fit a single line in the toolbar. Drops redundant
-  // year/month info when the range stays within the same period.
-  const getDateLabel = (): string => {
-    switch (currentView) {
-      case 'day':
-        return format(currentDate, 'EEEE, MMM d, yyyy');
-      case 'week': {
-        const ws = startOfWeek(currentDate, { weekStartsOn: 1 });
-        const we = endOfWeek(currentDate, { weekStartsOn: 1 });
-        const sameMonth = ws.getMonth() === we.getMonth() && ws.getFullYear() === we.getFullYear();
-        const sameYear = ws.getFullYear() === we.getFullYear();
-        if (sameMonth) return `${format(ws, 'MMM d')} – ${format(we, 'd, yyyy')}`;
-        if (sameYear) return `${format(ws, 'MMM d')} – ${format(we, 'MMM d, yyyy')}`;
-        return `${format(ws, 'MMM d, yyyy')} – ${format(we, 'MMM d, yyyy')}`;
-      }
-      case 'month':
-        return format(currentDate, 'MMMM yyyy');
-    }
+  // Month/year dropdowns in the toolbar — jump while keeping the day-of-month
+  // (clamped so e.g. Jan 31 → Feb lands on Feb 28, not Mar 3).
+  const jumpToMonthYear = (year: number, month: number) => {
+    setCurrentDate((d) => {
+      const lastDay = new Date(year, month + 1, 0).getDate();
+      return new Date(year, month, Math.min(d.getDate(), lastDay));
+    });
   };
+  const handleMonthChange = (month: number) => jumpToMonthYear(currentDate.getFullYear(), month);
+  const handleYearChange = (year: number) => jumpToMonthYear(year, currentDate.getMonth());
 
-  // Search filter
+  // Search filter — covers private clients (first/last name) AND contractor
+  // appointments (patient_name / contractor_patient_name + agency name).
   const filteredAppointments = searchQuery.trim()
     ? appointments.filter((appt) => {
-        const fullName = `${appt.first_name || ''} ${appt.last_name || ''}`.toLowerCase();
-        return fullName.includes(searchQuery.toLowerCase());
+        const q = searchQuery.toLowerCase();
+        const haystack = [
+          `${appt.first_name || ''} ${appt.last_name || ''}`,
+          (appt as any).patient_name || '',
+          (appt as any).contractor_patient_name || '',
+          (appt as any).entity_name || '',
+        ].join(' ').toLowerCase();
+        return haystack.includes(q);
       })
     : appointments;
 
@@ -301,6 +301,41 @@ export default function CalendarPage() {
   };
 
   // Note icon click — route by session type (preserves all original navigation logic)
+  // Auto-dismiss the reminder toast.
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  // Manual (re)send of an appointment reminder from the calendar airplane icon.
+  const handleSendReminder = async (appt: Appointment) => {
+    const name = appt.first_name || 'client';
+    try {
+      const res = await window.api.reminders.sendForAppointment(appt.id);
+      if (res.success) {
+        const via = res.channel === 'sms' ? ' via text' : res.channel === 'email' ? ' via email' : '';
+        setToast({ msg: `Reminder sent to ${name}${via}.`, kind: 'success' });
+      } else {
+        setToast({ msg: res.error || 'Could not send reminder.', kind: 'error' });
+      }
+      await loadAppointments();
+    } catch (err: any) {
+      setToast({ msg: err?.message || 'Could not send reminder.', kind: 'error' });
+    }
+  };
+
+  // Change an appointment's status from the context menu — works in both directions
+  // (e.g. Attended → Scheduled). Cancel/No-show route through their fee-prompting handlers.
+  const handleSetStatus = async (appt: Appointment, status: AppointmentStatus) => {
+    setContextMenu(null);
+    if (appt.status === status) return;
+    if (status === 'cancelled') { await handleCancelAppointment(appt); return; }
+    if (status === 'no-show') { await handleNoShow(appt); return; }
+    await window.api.appointments.update(appt.id, { ...appt, status });
+    await loadAppointments();
+  };
+
   const handleNoteClick = (appt: Appointment) => {
     // Contractor appointments → ContractorNotePage
     if (appt.entity_id) {
@@ -857,18 +892,18 @@ export default function CalendarPage() {
   const weekStart = startOfWeek(currentDate, { weekStartsOn: 1 });
 
   return (
-    <div className="p-6 h-screen flex flex-col">
+    <div className="p-6 h-screen flex gap-3 overflow-hidden">
+      {/* ── Left column: toolbar sized to the calendar + the calendar itself ── */}
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
       <CalendarToolbar
         currentView={currentView}
         onViewChange={setCurrentView}
         currentDate={currentDate}
         onNavigate={handleNavigate}
-        dateLabel={getDateLabel()}
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
-        onAddAppointment={handleAddAppointment}
-        showBilling={showBilling}
-        onToggleBilling={setShowBilling}
+        month={currentDate.getMonth()}
+        onMonthChange={handleMonthChange}
+        year={currentDate.getFullYear()}
+        onYearChange={handleYearChange}
       />
 
       {/* Clipboard indicator */}
@@ -887,9 +922,9 @@ export default function CalendarPage() {
         </div>
       )}
 
-      <div className="flex-1 overflow-hidden mt-4 flex gap-0">
+      <div className="flex-1 overflow-hidden mt-2">
         {/* Main calendar area */}
-        <div className="flex-1 overflow-hidden">
+        <div className="h-full overflow-hidden">
           {loading ? (
             <div className="flex items-center justify-center h-64">
               <div className="text-[var(--color-text-secondary)]">Loading appointments...</div>
@@ -902,6 +937,7 @@ export default function CalendarPage() {
               onSlotClick={handleSlotClick}
               onAppointmentClick={handleAppointmentClick}
               onNoteClick={handleNoteClick}
+              onSendReminder={handleSendReminder}
               onAppointmentDrop={handleAppointmentDrop}
               onBlockDrop={handleBlockDrop}
               onTodoDrop={handleTodoDrop}
@@ -913,7 +949,7 @@ export default function CalendarPage() {
               onBlockToggleDone={handleToggleBlockDone}
               onBlockRemove={handleBlockRemoveInline}
               onCreateAtSlot={handleCreateAtSlot}
-              paymentStatusMap={showBilling ? paymentStatusMap : {}}
+              paymentStatusMap={paymentStatusMap}
             />
           ) : currentView === 'week' ? (
             <WeekView
@@ -923,6 +959,7 @@ export default function CalendarPage() {
               onSlotClick={handleSlotClick}
               onAppointmentClick={handleAppointmentClick}
               onNoteClick={handleNoteClick}
+              onSendReminder={handleSendReminder}
               onAppointmentDrop={handleAppointmentDrop}
               onBlockDrop={handleBlockDrop}
               onTodoDrop={handleTodoDrop}
@@ -934,7 +971,7 @@ export default function CalendarPage() {
               onBlockToggleDone={handleToggleBlockDone}
               onBlockRemove={handleBlockRemoveInline}
               onCreateAtSlot={handleCreateAtSlot}
-              paymentStatusMap={showBilling ? paymentStatusMap : {}}
+              paymentStatusMap={paymentStatusMap}
             />
           ) : (
             <MonthView
@@ -948,10 +985,30 @@ export default function CalendarPage() {
               onBlockContextMenu={handleBlockContextMenu}
               onBlockToggleDone={handleToggleBlockDone}
               onBlockRemove={handleBlockRemoveInline}
-              paymentStatusMap={showBilling ? paymentStatusMap : {}}
+              paymentStatusMap={paymentStatusMap}
             />
           )}
         </div>
+      </div>
+      </div>
+
+      {/* ── Right column: search + sidebar panel, full height ── */}
+      <div className="flex flex-col shrink-0 overflow-hidden">
+        {/* Search — its own little container above the panel */}
+        {todoSidebarOpen && (
+          <div className="mb-2 bg-white border border-gray-300 rounded-xl px-2 py-1.5 shadow-sm">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-secondary)] pointer-events-none" />
+              <input
+                type="text"
+                className="input pl-8 text-sm py-1.5 w-full"
+                placeholder="Search appointments..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+          </div>
+        )}
 
         {/* ── Sidebar panel (collapsible) ── */}
         {(() => {
@@ -969,7 +1026,7 @@ export default function CalendarPage() {
 
           return (
           <div
-            className={`shrink-0 border-l border-[var(--color-border)] bg-white flex flex-col overflow-hidden transition-all duration-200 ease-in-out ${
+            className={`flex-1 min-h-0 shrink-0 rounded-xl border border-gray-300 shadow-sm bg-white flex flex-col overflow-hidden transition-all duration-200 ease-in-out ${
               todoSidebarOpen ? 'w-72' : 'w-11'
             }`}
           >
@@ -1010,8 +1067,19 @@ export default function CalendarPage() {
             {/* ── Expanded: full panel ── */}
             {todoSidebarOpen && (
               <>
-                {/* Tab bar */}
+                {/* Tab bar — collapse control lives on the LEFT edge so it can never
+                    scroll out of view when the window is narrow (it used to hide
+                    off the right edge under the horizontal-scroll layout). */}
                 <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-[var(--color-border)] bg-gray-50/80">
+                  <button
+                    type="button"
+                    className="p-1.5 rounded-md hover:bg-gray-100 text-[var(--color-text-secondary)] hover:text-teal-600 transition-colors flex-shrink-0"
+                    onClick={() => setTodoSidebarOpen(false)}
+                    title="Collapse sidebar"
+                  >
+                    <PanelRightClose size={15} />
+                  </button>
+                  <div className="w-px h-4 bg-[var(--color-border)] mx-0.5 flex-shrink-0" />
                   {sidebarTabs.map((tab) => (
                     <button
                       key={tab.key}
@@ -1027,15 +1095,6 @@ export default function CalendarPage() {
                       <span className="hidden xl:inline">{tab.label}</span>
                     </button>
                   ))}
-                  <div className="flex-1" />
-                  <button
-                    type="button"
-                    className="p-1 rounded hover:bg-gray-100 transition-colors"
-                    onClick={() => setTodoSidebarOpen(false)}
-                    title="Collapse sidebar"
-                  >
-                    <ChevronRight size={14} className="text-[var(--color-text-secondary)]" />
-                  </button>
                 </div>
 
                 {/* ── Tasks Tab ── */}
@@ -1267,38 +1326,39 @@ export default function CalendarPage() {
             onClick: () => { setContextMenu(null); handleNoteClick(appt); },
           },
         ];
-        if (appt.status === 'scheduled') {
-          items.push(
-            {
-              label: 'Mark Attended',
-              icon: <CheckCircle2 size={14} />,
-              className: 'hover:bg-emerald-50 text-emerald-700',
-              dividerBefore: true,
-              onClick: async () => {
-                setContextMenu(null);
-                await window.api.appointments.update(appt.id, { ...appt, status: 'completed' });
-                await loadAppointments();
-              },
-            },
-            {
-              label: 'Late Cancel',
-              icon: <Ban size={14} />,
-              className: 'hover:bg-amber-50 text-amber-700',
-              onClick: () => handleCancelAppointment(appt),
-            },
-            {
-              label: 'No-Show',
-              icon: <AlertTriangle size={14} />,
-              className: 'hover:bg-orange-50 text-orange-700',
-              onClick: () => handleNoShow(appt),
-            },
-          );
+        // Resend reminder — only for client appointments (contractor appts have no client contact)
+        if (appt.client_id && appt.status !== 'cancelled') {
+          const remStatus = (appt as any).reminder_status;
+          items.push({
+            label: !remStatus || remStatus === 'none' ? 'Send Reminder' : 'Resend Reminder',
+            icon: <Send size={14} />,
+            className: 'hover:bg-teal-50 text-teal-700',
+            dividerBefore: true,
+            onClick: () => { setContextMenu(null); handleSendReminder(appt); },
+          });
         }
+        // Status — switch in any direction (e.g. Attended → Scheduled). Current one is marked.
+        const STATUS_OPTIONS: { value: AppointmentStatus; label: string; icon: React.ReactNode; cls: string }[] = [
+          { value: 'scheduled', label: 'Scheduled', icon: <Clock size={14} />, cls: 'hover:bg-blue-50 text-blue-700' },
+          { value: 'completed', label: 'Attended', icon: <CheckCircle2 size={14} />, cls: 'hover:bg-emerald-50 text-emerald-700' },
+          { value: 'no-show', label: 'No-Show', icon: <AlertTriangle size={14} />, cls: 'hover:bg-orange-50 text-orange-700' },
+          { value: 'cancelled', label: 'Cancelled', icon: <Ban size={14} />, cls: 'hover:bg-amber-50 text-amber-700' },
+        ];
+        STATUS_OPTIONS.forEach((opt, i) => {
+          const isCurrent = appt.status === opt.value;
+          items.push({
+            label: isCurrent ? `${opt.label} · current` : opt.label,
+            icon: isCurrent ? <Check size={14} className="text-emerald-600" /> : opt.icon,
+            className: isCurrent ? 'text-[var(--color-text-secondary)] cursor-default' : opt.cls,
+            dividerBefore: i === 0,
+            onClick: isCurrent ? () => setContextMenu(null) : () => handleSetStatus(appt, opt.value),
+          });
+        });
         items.push({
           label: 'Delete',
           icon: <Trash2 size={14} />,
           className: 'hover:bg-red-50 text-red-600',
-          dividerBefore: appt.status !== 'scheduled',
+          dividerBefore: true,
           onClick: () => handleDeleteAppointment(appt),
         });
         return (
@@ -1505,6 +1565,18 @@ export default function CalendarPage() {
               Shortcuts are paused while typing in any field or while a modal is open.
             </p>
           </div>
+        </div>
+      )}
+
+      {/* Reminder send toast */}
+      {toast && (
+        <div
+          className={`fixed bottom-4 right-4 z-[9999] flex items-center gap-2 px-4 py-3 rounded-lg shadow-lg text-sm font-medium text-white animate-fade-in ${
+            toast.kind === 'success' ? 'bg-emerald-600' : 'bg-red-600'
+          }`}
+        >
+          {toast.kind === 'success' ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
+          <span>{toast.msg}</span>
         </div>
       )}
     </div>

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, ChevronDown, Search, ExternalLink, Loader2 } from 'lucide-react';
+import { X, ChevronDown, Search, ExternalLink, Loader2, UserPlus } from 'lucide-react';
 import type { Client } from '../../../shared/types';
 
 interface QuickCreatePopoverProps {
@@ -22,6 +22,12 @@ const POPOVER_WIDTH = 280;
 const POPOVER_MAX_HEIGHT = 360;
 
 const DURATION_PRESETS = [15, 30, 45, 60, 75, 90, 120];
+
+/** "Jane Doe" → { first: "Jane", last: "Doe" }; "Jane" → { first: "Jane", last: "" }. */
+function splitName(raw: string): { first: string; last: string } {
+  const parts = raw.trim().split(/\s+/);
+  return { first: parts[0] || '', last: parts.slice(1).join(' ') };
+}
 
 /** "HH:MM" → "9:00a" / "9:30a" / "12p" / "3:45p" */
 function formatTime12(time24: string): string {
@@ -57,6 +63,7 @@ export default function QuickCreatePopover({
   const [selected, setSelected] = useState<Client | null>(null);
   const [duration, setDuration] = useState(initialDuration);
   const [saving, setSaving] = useState(false);
+  const [creatingClient, setCreatingClient] = useState(false);
   const [highlightedIdx, setHighlightedIdx] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -107,6 +114,25 @@ export default function QuickCreatePopover({
     };
   }, [onClose]);
 
+  // Inline quick-add: create a brand-new client from the typed name, then select them.
+  const handleCreateClient = async () => {
+    const { first, last } = splitName(search);
+    if (!first || creatingClient) return;
+    setCreatingClient(true);
+    try {
+      const newClient = await window.api.clients.create({
+        first_name: first,
+        last_name: last,
+        status: 'active',
+      });
+      setSelected(newClient);
+    } catch (err) {
+      console.error('Quick-create new client failed:', err);
+    } finally {
+      setCreatingClient(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!selected || saving) return;
     setSaving(true);
@@ -120,6 +146,11 @@ export default function QuickCreatePopover({
     }
   };
 
+  // The "＋ New client" row sits after the search results and is arrow-key reachable.
+  const canCreateClient = splitName(search).first.length > 0;
+  const createRowIdx = results.length; // valid only when canCreateClient
+  const maxIdx = canCreateClient ? createRowIdx : results.length - 1;
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -128,7 +159,7 @@ export default function QuickCreatePopover({
     }
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setHighlightedIdx((i) => Math.min(i + 1, results.length - 1));
+      setHighlightedIdx((i) => Math.min(i + 1, Math.max(0, maxIdx)));
       return;
     }
     if (e.key === 'ArrowUp') {
@@ -142,6 +173,8 @@ export default function QuickCreatePopover({
         handleSave();
       } else if (results[highlightedIdx]) {
         setSelected(results[highlightedIdx]);
+      } else if (canCreateClient && highlightedIdx === createRowIdx) {
+        handleCreateClient();
       }
       return;
     }
@@ -217,26 +250,46 @@ export default function QuickCreatePopover({
             <div className="flex items-center justify-center py-4 text-xs text-[var(--color-text-secondary)]">
               <Loader2 size={12} className="animate-spin mr-1.5" /> Searching...
             </div>
-          ) : results.length === 0 ? (
-            <div className="text-center py-3 text-xs text-[var(--color-text-secondary)]">
-              {search.trim() ? 'No matching clients' : 'Start typing to search'}
-            </div>
           ) : (
-            results.map((c, idx) => (
-              <button
-                key={c.id}
-                className={`w-full text-left px-2 py-1.5 text-sm rounded-md transition-colors ${
-                  idx === highlightedIdx ? 'bg-teal-50 text-teal-900' : 'hover:bg-gray-50 text-[var(--color-text)]'
-                }`}
-                onMouseEnter={() => setHighlightedIdx(idx)}
-                onClick={() => setSelected(c)}
-              >
-                <div className="truncate font-medium">{c.first_name} {c.last_name}</div>
-                {c.discipline && (
-                  <div className="text-[10px] text-[var(--color-text-secondary)] uppercase tracking-wide">{c.discipline}</div>
-                )}
-              </button>
-            ))
+            <>
+              {results.length === 0 && !canCreateClient && (
+                <div className="text-center py-3 text-xs text-[var(--color-text-secondary)]">
+                  Start typing to search
+                </div>
+              )}
+              {results.map((c, idx) => (
+                <button
+                  key={c.id}
+                  className={`w-full text-left px-2 py-1.5 text-sm rounded-md transition-colors ${
+                    idx === highlightedIdx ? 'bg-teal-50 text-teal-900' : 'hover:bg-gray-50 text-[var(--color-text)]'
+                  }`}
+                  onMouseEnter={() => setHighlightedIdx(idx)}
+                  onClick={() => setSelected(c)}
+                >
+                  <div className="truncate font-medium">{c.first_name} {c.last_name}</div>
+                  {c.discipline && (
+                    <div className="text-[10px] text-[var(--color-text-secondary)] uppercase tracking-wide">{c.discipline}</div>
+                  )}
+                </button>
+              ))}
+              {canCreateClient && (
+                <button
+                  className={`w-full text-left px-2 py-1.5 text-sm rounded-md transition-colors flex items-center gap-1.5 ${
+                    highlightedIdx === createRowIdx ? 'bg-emerald-50 text-emerald-800' : 'hover:bg-emerald-50/60 text-emerald-700'
+                  }`}
+                  onMouseEnter={() => setHighlightedIdx(createRowIdx)}
+                  onClick={handleCreateClient}
+                  disabled={creatingClient}
+                >
+                  {creatingClient
+                    ? <Loader2 size={13} className="animate-spin flex-shrink-0" />
+                    : <UserPlus size={13} className="flex-shrink-0" />}
+                  <span className="truncate">
+                    New client &ldquo;<span className="font-semibold">{search.trim()}</span>&rdquo;
+                  </span>
+                </button>
+              )}
+            </>
           )}
         </div>
       )}

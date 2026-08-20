@@ -267,10 +267,10 @@ export default function MonthView({
                         if (onBlockContextMenu) onBlockContextMenu(block, e.clientX, e.clientY);
                       }}
                     >
-                      <span className={`font-medium whitespace-nowrap ${isDone ? 'line-through opacity-60' : ''}`}>
+                      <span className={`truncate font-semibold ${isDone ? 'line-through text-slate-400' : 'text-slate-800'}`}>{block.title}</span>
+                      <span className={`whitespace-nowrap text-[10px] ${isDone ? 'line-through text-slate-400' : 'text-slate-500'}`}>
                         {formatTime12(block.scheduled_time)}
                       </span>
-                      <span className={`truncate ${isDone ? 'line-through opacity-60' : ''}`}>{block.title}</span>
                       {/* Hover action buttons */}
                       <div className="absolute right-0 top-0 bottom-0 flex items-center gap-0.5 pr-0.5 opacity-0 group-hover/mblock:opacity-100 transition-opacity bg-gradient-to-l from-slate-50 via-slate-50 to-transparent pl-3">
                         <button

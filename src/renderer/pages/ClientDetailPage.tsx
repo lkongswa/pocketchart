@@ -38,6 +38,7 @@ import {
   Check,
   Inbox,
   MoreHorizontal,
+  Send,
 } from 'lucide-react';
 import type {
   Client,
@@ -71,7 +72,12 @@ import ClientDiscountBadge from '../components/ClientDiscountBadge';
 import CollapsedGoalCard from '../components/CollapsedGoalCard';
 import ExpandedGoalCard from '../components/ExpandedGoalCard';
 import { goalToCardData, generateGoalFingerprint, groupGoalCards } from '../../shared/goal-card-data';
-import type { PatternOverride } from '../../shared/types';
+import type { GoalCardFieldUpdate } from '../../shared/goal-card-data';
+import { composeGoalText as sharedComposeGoalText } from '../../shared/compose-goal-text';
+import { getPatternById, applyOverrides } from '../../shared/goal-patterns';
+import type { GoalPattern } from '../../shared/goal-patterns';
+import { DEFAULT_INSTRUMENTS } from '../../shared/goal-metrics';
+import type { PatternOverride, MeasurementType } from '../../shared/types';
 import ComplianceSection from '../components/ComplianceSection';
 import CommunicationLogSection from '../components/CommunicationLogSection';
 import SectionCard from '../components/SectionCard';
@@ -225,6 +231,10 @@ const ClientDetailPage: React.FC = () => {
   const [deletingEvalId, setDeletingEvalId] = useState<number | null>(null);
 
   // Collapsible sections
+  // Discoverability progression: null = "follow the chart's state" (eval open until signed,
+  // sending-progress closed until an eval is signed); true/false = user override.
+  const [evalSectionOpen, setEvalSectionOpen] = useState<boolean | null>(null);
+  const [recertStepperOpen, setRecertStepperOpen] = useState<boolean | null>(null);
   const [showAllNotes, setShowAllNotes] = useState(false);
   const [showAllGoals, setShowAllGoals] = useState(false);
   const [showActiveGoals, setShowActiveGoals] = useState(false);
@@ -232,6 +242,11 @@ const ClientDetailPage: React.FC = () => {
   const [goalStatusMenuId, setGoalStatusMenuId] = useState<number | null>(null);
   const [expandedGoalIdx, setExpandedGoalIdx] = useState<number | null>(null); // all goals collapsed by default
   const [patternOverrides, setPatternOverrides] = useState<PatternOverride[]>([]);
+  // Goals whose text the user hand-edited this session (chips keep working; text stops re-composing)
+  const [manualTextGoalIds, setManualTextGoalIds] = useState<Set<number>>(new Set());
+  // Debounced inline-goal-edit persistence
+  const goalSaveTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
+  const pendingGoalSaves = useRef<Record<number, Goal>>({});
 
   // Billing state
   const [generatingPaymentLink, setGeneratingPaymentLink] = useState<number | null>(null);
@@ -538,6 +553,126 @@ const ClientDetailPage: React.FC = () => {
   const openAddGoal = () => {
     setGoalBuilderOpen(true);
   };
+
+  // ── Inline goal editing (chips + manual text, mirrors the eval form) ──
+
+  /** Compose goal text from the goal's pattern + components. Falls back to stored text. */
+  const composeGoalFromRecord = useCallback((goal: Goal): string => {
+    if (!goal.pattern_id || goal.pattern_id === 'custom_freeform' || !client) return goal.goal_text || '';
+    let pattern = getPatternById(goal.pattern_id);
+    if (!pattern) return goal.goal_text || '';
+    if (patternOverrides.length > 0) pattern = applyOverrides(pattern, patternOverrides);
+    let components: Record<string, any> = {};
+    try { components = goal.components_json ? JSON.parse(goal.components_json) : {}; } catch { /* empty */ }
+    return sharedComposeGoalText({
+      pattern,
+      discipline: client.discipline,
+      components,
+      measurement_type: goal.measurement_type || 'percentage',
+      baseline_value: goal.baseline_value || `${goal.baseline ?? 0}`,
+      target_value: goal.target_value || `${goal.target ?? 80}`,
+      instrument: goal.instrument || '',
+    });
+  }, [client, patternOverrides]);
+
+  /** A pattern goal whose stored text no longer matches its composed text was hand-edited. */
+  const hasManualText = useCallback((goal: Goal): boolean => {
+    if (!goal.pattern_id || goal.pattern_id === 'custom_freeform') return false;
+    if (manualTextGoalIds.has(goal.id)) return true;
+    if (!goal.goal_text?.trim()) return false;
+    return goal.goal_text !== composeGoalFromRecord(goal);
+  }, [manualTextGoalIds, composeGoalFromRecord]);
+
+  const persistGoalDebounced = useCallback((goal: Goal) => {
+    pendingGoalSaves.current[goal.id] = goal;
+    if (goalSaveTimers.current[goal.id]) clearTimeout(goalSaveTimers.current[goal.id]);
+    goalSaveTimers.current[goal.id] = setTimeout(() => {
+      const g = pendingGoalSaves.current[goal.id];
+      delete pendingGoalSaves.current[goal.id];
+      delete goalSaveTimers.current[goal.id];
+      if (g) window.api.goals.update(g.id, g).catch((err) => console.error('Failed to save goal edit:', err));
+    }, 500);
+  }, []);
+
+  // Flush pending inline-goal saves when leaving the page
+  useEffect(() => () => {
+    Object.values(goalSaveTimers.current).forEach(clearTimeout);
+    Object.values(pendingGoalSaves.current).forEach((g) => {
+      window.api.goals.update(g.id, g).catch(() => {});
+    });
+  }, []);
+
+  const applyGoalUpdate = useCallback((updated: Goal) => {
+    setGoals((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
+    persistGoalDebounced(updated);
+  }, [persistGoalDebounced]);
+
+  const handleGoalCardFieldChange = useCallback((goal: Goal, field: GoalCardFieldUpdate) => {
+    const updated: Goal = { ...goal };
+    if (field.goal_type !== undefined) updated.goal_type = field.goal_type;
+    if (field.category !== undefined) updated.category = field.category;
+    if (field.target_date !== undefined) updated.target_date = field.target_date;
+    if (field.measurement_type !== undefined) updated.measurement_type = field.measurement_type;
+    if (field.baseline !== undefined) updated.baseline = field.baseline;
+    if (field.baseline_value !== undefined) updated.baseline_value = field.baseline_value;
+    if (field.target !== undefined) updated.target = field.target;
+    if (field.target_value !== undefined) updated.target_value = field.target_value;
+    if (field.instrument !== undefined) updated.instrument = field.instrument;
+    if (field.pattern_id !== undefined) updated.pattern_id = field.pattern_id || '';
+    if (field.components !== undefined) updated.components_json = field.components ? JSON.stringify(field.components) : '';
+    if (field.goal_text !== undefined) updated.goal_text = field.goal_text;
+
+    const editedText = field.goal_text !== undefined;
+    if (field.goal_text_manual === false) {
+      // "use pattern" — recompose and drop the manual flag
+      setManualTextGoalIds((prev) => { const n = new Set(prev); n.delete(goal.id); return n; });
+      updated.goal_text = composeGoalFromRecord(updated);
+    } else if (editedText || field.goal_text_manual === true) {
+      // hand-edited — keep text exactly as typed from here on
+      setManualTextGoalIds((prev) => new Set(prev).add(goal.id));
+    } else if (!hasManualText(goal)) {
+      const composed = composeGoalFromRecord(updated);
+      if (composed) updated.goal_text = composed;
+    }
+    applyGoalUpdate(updated);
+  }, [applyGoalUpdate, composeGoalFromRecord, hasManualText]);
+
+  const handleGoalCardComponentChange = useCallback((goal: Goal, key: string, value: any) => {
+    let components: Record<string, any> = {};
+    try { components = goal.components_json ? JSON.parse(goal.components_json) : {}; } catch { /* empty */ }
+    const updated: Goal = { ...goal, components_json: JSON.stringify({ ...components, [key]: value }) };
+    // Chip clicks recompose the narrative unless the user's manual text wins
+    if (!hasManualText(goal)) {
+      const composed = composeGoalFromRecord(updated);
+      if (composed) updated.goal_text = composed;
+    }
+    applyGoalUpdate(updated);
+  }, [applyGoalUpdate, composeGoalFromRecord, hasManualText]);
+
+  const handleGoalCardPatternSelect = useCallback((goal: Goal, pattern: GoalPattern) => {
+    const defaultComponents: Record<string, any> = {};
+    for (const comp of pattern.components) {
+      if (comp.defaultValue !== undefined) defaultComponents[comp.key] = comp.defaultValue;
+    }
+    const mt = (pattern.measurement_type || 'percentage') as MeasurementType;
+    const inst = pattern.instrument || (mt === 'standardized_score' ? (DEFAULT_INSTRUMENTS[pattern.category] || '') : '');
+    const updated: Goal = {
+      ...goal,
+      pattern_id: pattern.id,
+      components_json: JSON.stringify(defaultComponents),
+      category: pattern.category,
+      measurement_type: mt,
+      instrument: inst,
+    };
+    // picking a pattern resets to a freshly composed goal
+    setManualTextGoalIds((prev) => { const n = new Set(prev); n.delete(goal.id); return n; });
+    updated.goal_text = composeGoalFromRecord(updated) || updated.goal_text;
+    applyGoalUpdate(updated);
+  }, [applyGoalUpdate, composeGoalFromRecord]);
+
+  const handleGoalCardPatternClear = useCallback((goal: Goal) => {
+    applyGoalUpdate({ ...goal, pattern_id: '', components_json: '' });
+  }, [applyGoalUpdate]);
 
   const handleExportPdf = async () => {
     if (!client) return;
@@ -935,9 +1070,13 @@ const ClientDetailPage: React.FC = () => {
 
   // Build card data for active goals (established first, then pending)
   const allActiveGoals = [...establishedActive, ...pendingActive];
-  const activeGoalCards = allActiveGoals.map((goal, idx) =>
-    goalToCardData(goal, idx, goalHistories[goal.id] || [], patternOverrides)
-  );
+  const activeGoalCards = allActiveGoals.map((goal, idx) => {
+    const card = goalToCardData(goal, idx, goalHistories[goal.id] || [], patternOverrides);
+    // Manual text + chips coexist: flag pattern goals whose text was hand-edited so the
+    // card shows the textarea and chip clicks stop re-composing over the user's words.
+    if (card.resolvedPattern) card.goal_text_manual = hasManualText(goal);
+    return card;
+  });
 
   // Completeness checks — used by collapsible section badges
   const demographicsComplete = Boolean(client.dob && client.phone && client.gender && client.address);
@@ -949,6 +1088,10 @@ const ClientDetailPage: React.FC = () => {
   // Banner identity + "Finish setup" chips (only the incomplete ones surface)
   const clientAge = ageFromDob(client.dob);
   const hasSignedEval = evaluations.some((e) => e.signed_at);
+  // Progression defaults: eval section is front-and-center until an eval is signed,
+  // then it collapses quiet; the sending-progress stepper is the opposite.
+  const evalOpen = evalSectionOpen ?? !hasSignedEval;
+  const stepperOpen = recertStepperOpen ?? hasSignedEval;
   const setupChips = ([
     { label: 'Demographics', complete: demographicsComplete },
     { label: 'Diagnosis', complete: diagnosisComplete },
@@ -1235,18 +1378,31 @@ const ClientDetailPage: React.FC = () => {
       <div className="grid md:grid-cols-[7fr_3fr] gap-6 items-start">
         {/* LEFT (70%): Treatment plan + Documentation */}
         <div className="space-y-6">
-          <StoryBar title="Treatment plan" stats={treatmentStats}>
+          <StoryBar title="Treatment plan" stats={treatmentStats} color="violet" icon={<ClipboardList size={16} />} defaultExpanded>
             <div className="p-3 space-y-4">
-              {/* eval → MD signature flow — cert ⚙/↺/stepper controls live here */}
-              <ComplianceSection clientId={clientId} card="recert" />
-
-              {/* Evaluations */}
-              <div>
+              {/* Evaluations — front and center until one is signed, then quiet */}
+              <div className={!hasSignedEval ? 'rounded-xl border-2 border-violet-300 bg-violet-50/40 p-3 shadow-sm' : ''}>
                 <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-secondary)] flex items-center gap-1.5">
-                    <ClipboardList size={13} className="text-violet-500" /> Evaluations
-                    <span className="font-normal normal-case text-[var(--color-text-tertiary)]">({evaluations.length})</span>
-                  </h4>
+                  {hasSignedEval ? (
+                    <button
+                      className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors"
+                      onClick={() => setEvalSectionOpen(!evalOpen)}
+                    >
+                      {evalOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                      <ClipboardList size={13} className="text-violet-500" /> Evaluations
+                      <span className="font-normal normal-case text-[var(--color-text-tertiary)]">({evaluations.length})</span>
+                      <span className="flex items-center gap-1 normal-case text-emerald-600 font-medium">
+                        <CheckCircle size={11} /> Signed
+                      </span>
+                    </button>
+                  ) : (
+                    <h4 className="text-sm font-bold text-violet-800 flex items-center gap-1.5">
+                      <ClipboardList size={15} className="text-violet-600" /> Evaluation
+                      <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-violet-200/70 text-violet-800">
+                        {evaluations.length === 0 ? 'Start here' : 'Draft — needs signing'}
+                      </span>
+                    </h4>
+                  )}
                   <div className="flex items-center gap-2">
                     {evaluations.some(e => e.signed_at) && (
                       <button
@@ -1264,6 +1420,7 @@ const ClientDetailPage: React.FC = () => {
                     </button>
                   </div>
                 </div>
+                {evalOpen && (
                 <div className="rounded-lg border border-[var(--color-border)] overflow-hidden">
             {evaluations.length === 0 ? (
               <div className="p-6 text-center text-sm text-[var(--color-text-secondary)]">
@@ -1344,6 +1501,24 @@ const ClientDetailPage: React.FC = () => {
               </div>
             )}
                 </div>
+                )}
+              </div>
+
+              {/* Sending progression (eval → MD signature) — tucked under the eval section,
+                  collapsed until an eval is signed */}
+              <div>
+                <button
+                  className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors mb-2"
+                  onClick={() => setRecertStepperOpen(!stepperOpen)}
+                >
+                  {stepperOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                  <Send size={12} className="text-teal-500" /> Sending progress
+                  <span className="font-normal normal-case text-[var(--color-text-tertiary)]">eval → MD signature</span>
+                </button>
+                {/* keep mounted so ComplianceSection doesn't refetch on every toggle */}
+                <div className={stepperOpen ? '' : 'hidden'}>
+                  <ComplianceSection clientId={clientId} card="recert" />
+                </div>
               </div>
 
               {/* Goals — the substance of the plan */}
@@ -1386,26 +1561,38 @@ const ClientDetailPage: React.FC = () => {
                         return (
                           <div key={`${group.goalType}-${group.category}`} className="space-y-2">
                             {showTypeHeader && (
-                              <div className={`text-xs font-bold uppercase tracking-wide pt-1 ${group.goalType === 'STG' ? 'text-blue-600' : 'text-purple-600'}`}>
-                                {group.goalType === 'STG' ? 'Short-Term Goals' : 'Long-Term Goals'}
+                              <div className="flex items-center gap-3 pt-2">
+                                <div className={`flex-1 h-px ${group.goalType === 'STG' ? 'bg-blue-200' : 'bg-purple-200'}`} />
+                                <div className={`text-sm font-bold uppercase tracking-wider text-center ${group.goalType === 'STG' ? 'text-blue-700' : 'text-purple-700'}`}>
+                                  {group.goalType === 'STG' ? 'Short-Term Goals' : 'Long-Term Goals'}
+                                </div>
+                                <div className={`flex-1 h-px ${group.goalType === 'STG' ? 'bg-blue-200' : 'bg-purple-200'}`} />
                               </div>
                             )}
-                            <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-secondary)] font-semibold pl-0.5">
+                            {/* Skill/category header — shaded band so it reads as a title */}
+                            <div className={`text-[11px] uppercase tracking-wide font-bold px-2.5 py-1 rounded-md ${
+                              group.goalType === 'STG' ? 'bg-blue-50 text-blue-800 border border-blue-100' : 'bg-purple-50 text-purple-800 border border-purple-100'
+                            }`}>
                               {group.category}
                             </div>
+                            <div className="pl-3 space-y-2">
                             {group.items.map(({ card, index: idx }) => {
                               const goal = allActiveGoals[idx];
                               const isEstablished = isEstablishedGoal(goal);
                               return expandedGoalIdx === idx ? (
+                        // Front-and-center emphasis: strong ring + shadow so the eye can re-find
+                        // the open goal after looking away.
+                        <div key={goal.id} className="rounded-xl ring-2 ring-teal-400 ring-offset-2 shadow-lg">
                         <ExpandedGoalCard
-                          key={goal.id}
                           data={card}
                           discipline={client.discipline}
                           patternOverrides={patternOverrides}
                           disabled={isEstablished}
                           onCollapse={() => setExpandedGoalIdx(null)}
-                          onFieldChange={() => {}}
-                          onComponentChange={() => {}}
+                          onFieldChange={(field) => handleGoalCardFieldChange(goal, field)}
+                          onComponentChange={(key, value) => handleGoalCardComponentChange(goal, key, value)}
+                          onPatternSelect={!isEstablished ? (pattern) => handleGoalCardPatternSelect(goal, pattern) : undefined}
+                          onPatternClear={!isEstablished ? () => handleGoalCardPatternClear(goal) : undefined}
                           onDelete={!isEstablished ? async () => {
                             if (!window.confirm('Delete this goal? This action cannot be undone.')) return;
                             try {
@@ -1446,6 +1633,7 @@ const ClientDetailPage: React.FC = () => {
                           }}
                           onEditModal={!isEstablished ? () => openEditGoal(goal) : undefined}
                         />
+                        </div>
                       ) : (
                         <CollapsedGoalCard
                           key={goal.id}
@@ -1455,6 +1643,7 @@ const ClientDetailPage: React.FC = () => {
                         />
                       );
                             })}
+                            </div>
                           </div>
                         );
                       });
@@ -1584,6 +1773,8 @@ const ClientDetailPage: React.FC = () => {
 
           <StoryBar
             title="Documentation"
+            color="emerald"
+            icon={<FileText size={16} />}
             defaultExpanded
             stats={[
               ...(dueCount > 0 ? [{ label: `Due: ${dueCount}`, tone: 'amber' as const }] : []),
@@ -1897,6 +2088,8 @@ const ClientDetailPage: React.FC = () => {
 
       {/* ══════════ DISCOUNTS & PACKAGES ══════════ */}
       <StoryBar
+        color="amber"
+        icon={<Receipt size={16} />}
         title="Discounts & Packages"
         stats={activeDiscounts.length > 0 ? [{ label: `${activeDiscounts.length} active`, tone: 'green' as const }] : []}
         action={
@@ -1989,6 +2182,8 @@ const ClientDetailPage: React.FC = () => {
 
       {/* ══════════ BILLING (money in/out) ══════════ */}
       <StoryBar
+        color="blue"
+        icon={<DollarSign size={16} />}
         title="Billing"
         defaultExpanded
         stats={[
@@ -2058,6 +2253,8 @@ const ClientDetailPage: React.FC = () => {
 
       {/* ══════════ GENERATE & SEND (documents) ══════════ */}
       <StoryBar
+        color="teal"
+        icon={<Send size={16} />}
         title="Generate & send"
         stats={[{ label: claimReadiness.ready && signedNotes.length > 0 ? 'Claim ready' : 'Claim: needs info', tone: claimReadiness.ready && signedNotes.length > 0 ? ('green' as const) : ('amber' as const) }]}
       >

@@ -535,10 +535,32 @@ const api = {
   // ── Entity Documents (Pro) ──
   entityDocuments: {
     list: (entityId: number) => ipcRenderer.invoke('entityDocuments:list', entityId),
-    upload: (data: { entityId: number; category?: string }) => ipcRenderer.invoke('entityDocuments:upload', data),
-    uploadFromPath: (data: { entityId: number; filePath: string; category?: string }) => ipcRenderer.invoke('entityDocuments:uploadFromPath', data),
+    upload: (data: { entityId: number; category?: string; appointmentId?: number }) => ipcRenderer.invoke('entityDocuments:upload', data),
+    uploadFromPath: (data: { entityId: number; filePath: string; category?: string; appointmentId?: number }) => ipcRenderer.invoke('entityDocuments:uploadFromPath', data),
     open: (documentId: number) => ipcRenderer.invoke('entityDocuments:open', documentId),
     delete: (documentId: number) => ipcRenderer.invoke('entityDocuments:delete', documentId),
+    readAsAttachment: (documentId: number) => ipcRenderer.invoke('entityDocuments:readAsAttachment', documentId),
+  },
+
+  // ── Pop-out windows (open an app route in its own window) ──
+  appWindows: {
+    open: (route: string) => ipcRenderer.invoke('appWindows:open', route),
+    onClosed: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('appWindows:closed', handler);
+      return () => { ipcRenderer.removeListener('appWindows:closed', handler); };
+    },
+  },
+
+  // ── UI zoom (top-bar control; ctrl+wheel is handled in the main process) ──
+  zoom: {
+    get: () => ipcRenderer.invoke('zoom:get'),
+    set: (level: number) => ipcRenderer.invoke('zoom:set', level),
+    onChanged: (callback: (level: number) => void) => {
+      const handler = (_event: any, level: number) => callback(level);
+      ipcRenderer.on('zoom:changed', handler);
+      return () => { ipcRenderer.removeListener('zoom:changed', handler); };
+    },
   },
 
   // ── Professional Vault (Pro) ──
@@ -659,6 +681,7 @@ const api = {
   // ── Appointment Reminders (Pro) ──
   reminders: {
     runDue: () => ipcRenderer.invoke('reminders:runDue'),
+    sendForAppointment: (appointmentId: number) => ipcRenderer.invoke('reminders:sendForAppointment', appointmentId),
     getConfig: () => ipcRenderer.invoke('reminders:getConfig'),
     saveConfig: (cfg: { leadHours?: number; smsTemplate?: string; emailSubject?: string; emailBody?: string; defaultMeetingLink?: string }) => ipcRenderer.invoke('reminders:saveConfig', cfg),
   },
@@ -689,6 +712,7 @@ const api = {
     getOverview: () => ipcRenderer.invoke('dashboard:getOverview'),
     getAnalytics: (filters?: { startDate?: string; endDate?: string; monthsBack?: number }) => ipcRenderer.invoke('dashboard:getAnalytics', filters),
     getOutstandingBalance: () => ipcRenderer.invoke('dashboard:getOutstandingBalance'),
+    getOutstandingBreakdown: () => ipcRenderer.invoke('dashboard:getOutstandingBreakdown'),
   },
 
   // ── Data Integrity ──

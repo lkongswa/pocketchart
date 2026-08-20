@@ -136,6 +136,95 @@ export interface SendDueRemindersOptions {
   templates: ReminderTemplates;
 }
 
+export interface SingleReminderResult {
+  success: boolean;
+  status: 'sent' | 'failed' | 'skipped';
+  channel?: 'sms' | 'email';
+  error?: string;
+}
+
+// Send (or RESEND) a reminder for ONE appointment on demand — ignores the lead-time window and
+// the current reminder_status, so the calendar's manual airplane button can fire it any time.
+// Stamps reminder_status afterward just like the batch path.
+export async function sendReminderForAppointment(opts: {
+  db: Database.Database;
+  messagingRouter: MessagingRouter;
+  practiceName: string;
+  templates: ReminderTemplates;
+  appointmentId: number;
+}): Promise<SingleReminderResult> {
+  const { db, messagingRouter, practiceName, templates, appointmentId } = opts;
+
+  const smsConfigured = messagingRouter.isSmsConfigured();
+  const emailConfigured = messagingRouter.isEmailConfigured();
+  if (!smsConfigured && !emailConfigured) {
+    return { success: false, status: 'skipped', error: 'No email or SMS provider is configured.' };
+  }
+
+  const row = db.prepare(`
+    SELECT a.id, a.client_id, a.scheduled_date, a.scheduled_time, a.meeting_link,
+           c.first_name, c.last_name, c.phone, c.email, c.reminder_channel
+    FROM appointments a
+    JOIN clients c ON c.id = a.client_id
+    WHERE a.id = ? AND a.deleted_at IS NULL AND c.deleted_at IS NULL
+  `).get(appointmentId) as DueRow | undefined;
+
+  if (!row) {
+    return { success: false, status: 'skipped', error: 'This appointment has no client to remind.' };
+  }
+
+  const channel = row.reminder_channel || 'sms';
+  const wantSms = channel === 'sms' || channel === 'both';
+  const wantEmail = channel === 'email' || channel === 'both';
+
+  const meetingLink = (row.meeting_link || '').trim() || templates.defaultMeetingLink || '';
+  const fields: Record<string, string> = {
+    first: (row.first_name || '').trim() || 'there',
+    last: (row.last_name || '').trim(),
+    date: formatApptDate(row.scheduled_date),
+    time: formatApptTime(row.scheduled_time),
+    practice: practiceName,
+    meeting_link: meetingLink,
+  };
+
+  let anyAttempt = false;
+  let anySuccess = false;
+  let sid: string | undefined;
+  let usedChannel: 'sms' | 'email' | undefined;
+  let lastError: string | undefined;
+
+  if (wantSms && smsConfigured && row.phone?.trim()) {
+    anyAttempt = true;
+    const body = applyMerge(templates.smsTemplate, fields, true);
+    const r = await messagingRouter.getSmsProvider().sendSms({ to: row.phone.trim(), body });
+    if (r.success) { anySuccess = true; sid = r.messageSid; usedChannel = 'sms'; }
+    else lastError = r.error;
+  }
+
+  if (wantEmail && emailConfigured && row.email?.trim()) {
+    anyAttempt = true;
+    const subject = applyMerge(templates.emailSubject, fields, true);
+    const mergedBody = applyMerge(templates.emailBody, fields, false);
+    const bodyHtml = buildReminderEmailHtml({ practiceName, bodyText: mergedBody, dayDate: fields.date, time: fields.time, meetingLink });
+    const textParts = [mergedBody, '', `${fields.date} at ${fields.time}`];
+    if (meetingLink) textParts.push('', `Join: ${meetingLink}`);
+    const r = await messagingRouter.getEmailProvider().sendEmail({ to: row.email.trim(), subject, bodyText: textParts.join('\n'), bodyHtml, fromName: practiceName });
+    if (r.success) { anySuccess = true; if (!usedChannel) usedChannel = 'email'; }
+    else lastError = r.error;
+  }
+
+  if (!anyAttempt) {
+    return { success: false, status: 'skipped', error: 'No phone or email on file for this client (or that channel is not set up).' };
+  }
+
+  const status = anySuccess ? 'sent' : 'failed';
+  db.prepare(
+    `UPDATE appointments SET reminder_status = ?, reminder_sent_at = ?, reminder_message_sid = ? WHERE id = ?`
+  ).run(status, new Date().toISOString(), sid || null, appointmentId);
+
+  return { success: anySuccess, status, channel: usedChannel, error: anySuccess ? undefined : (lastError || 'Send failed.') };
+}
+
 export async function sendDueReminders(opts: SendDueRemindersOptions): Promise<ReminderRunSummary> {
   const { db, messagingRouter, practiceName, leadHours, templates } = opts;
   const summary: ReminderRunSummary = { sent: 0, failed: 0, skipped: 0, results: [] };

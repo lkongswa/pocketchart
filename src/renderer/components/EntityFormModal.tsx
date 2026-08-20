@@ -34,6 +34,8 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
   const [defaultNoteType, setDefaultNoteType] = useState('soap');
   const [notes, setNotes] = useState('');
   const [requiresNotes, setRequiresNotes] = useState(false);
+  const [baaOnFile, setBaaOnFile] = useState(false);
+  const [baaSignedDate, setBaaSignedDate] = useState('');
   const [billingCycle, setBillingCycle] = useState<BillingCycle>('monthly');
   const [billingDay, setBillingDay] = useState(1);
   const [invoiceCols, setInvoiceCols] = useState<InvoiceColumnKey[]>(ENTITY_INVOICE_DEFAULT_COLUMNS);
@@ -54,6 +56,8 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
       setDefaultNoteType(entity.default_note_type || 'soap');
       setNotes(entity.notes || '');
       setRequiresNotes(Boolean(entity.requires_notes));
+      setBaaOnFile(Boolean(entity.baa_on_file));
+      setBaaSignedDate(entity.baa_signed_date || '');
       setBillingCycle((entity.billing_cycle as BillingCycle) || 'monthly');
       setBillingDay(entity.billing_day || 1);
       setInvoiceCols(parseInvoiceColumns(entity.invoice_columns, ENTITY_INVOICE_DEFAULT_COLUMNS));
@@ -70,6 +74,8 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
       setDefaultNoteType('soap');
       setNotes('');
       setRequiresNotes(false);
+      setBaaOnFile(false);
+      setBaaSignedDate('');
       setBillingCycle('monthly');
       setBillingDay(1);
       setInvoiceCols(ENTITY_INVOICE_DEFAULT_COLUMNS);
@@ -106,6 +112,8 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
         default_note_type: defaultNoteType as ContractedEntity['default_note_type'],
         notes: notes.trim(),
         requires_notes: requiresNotes ? 1 : 0,
+        baa_on_file: baaOnFile ? 1 : 0,
+        baa_signed_date: baaSignedDate || null,
         billing_cycle: billingCycle,
         billing_day: billingDay,
         invoice_columns: JSON.stringify(invoiceCols),
@@ -172,6 +180,34 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
               <input className="input w-full" type="email" value={contactEmail}
                 onChange={(e) => setContactEmail(e.target.value)} placeholder="billing@example.com" />
             </div>
+          </div>
+
+          <div className="border-t border-[var(--color-border)] pt-4">
+            <p className="text-xs font-medium text-[var(--color-text-secondary)] mb-3 uppercase tracking-wide">
+              Compliance
+            </p>
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <div className="text-sm font-medium text-[var(--color-text)]">BAA on file</div>
+                <div className="text-xs text-[var(--color-text-secondary)]">
+                  Business Associate Agreement signed with this agency — required before emailing clinical documentation
+                </div>
+              </div>
+              <button
+                type="button"
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none flex-shrink-0 ${baaOnFile ? 'bg-purple-500' : 'bg-gray-300'}`}
+                onClick={() => setBaaOnFile(!baaOnFile)}
+              >
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${baaOnFile ? 'translate-x-6' : 'translate-x-1'}`} />
+              </button>
+            </div>
+            {baaOnFile && (
+              <div className="mt-3">
+                <label className="label">BAA Signed Date (optional)</label>
+                <input className="input w-full" type="date" value={baaSignedDate}
+                  onChange={(e) => setBaaSignedDate(e.target.value)} />
+              </div>
+            )}
           </div>
 
           <div className="border-t border-[var(--color-border)] pt-4">

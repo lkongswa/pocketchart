@@ -12,6 +12,8 @@ interface AppointmentBlockProps {
   startHour: number;
   onClick: (appt: Appointment) => void;
   onNoteClick?: (appt: Appointment) => void;
+  /** Manual (re)send of an appointment reminder from the calendar airplane icon. */
+  onSendReminder?: (appt: Appointment) => void;
   onContextMenu?: (appt: Appointment, x: number, y: number) => void;
   onTodoDrop?: (todoId: number, date: string, time: string) => void;
   /** Called when the user finishes drag-resizing. Snapped to 15-min increments, min 15 min, no upper bound. */
@@ -95,6 +97,7 @@ export default function AppointmentBlock({
   startHour,
   onClick,
   onNoteClick,
+  onSendReminder,
   onContextMenu,
   onTodoDrop,
   onResize,
@@ -311,6 +314,30 @@ export default function AppointmentBlock({
     </span>
   ) : null;
 
+  // Interactive airplane (day/week view): click to send, click again to resend. Shown for any
+  // client appointment that isn't cancelled — even before a first reminder has gone out.
+  const canRemind = Boolean(appointment.client_id) && appointment.status !== 'cancelled';
+  const reminderColor =
+    reminderStatus === 'confirmed' ? 'text-emerald-600'
+    : reminderStatus === 'failed' ? 'text-amber-500'
+    : reminderStatus === 'sent' ? 'text-slate-400'
+    : 'text-slate-300';
+  const reminderTitle =
+    !reminderStatus || reminderStatus === 'none' ? 'Send appointment reminder'
+    : reminderStatus === 'confirmed' ? 'Confirmed by text — click to resend'
+    : reminderStatus === 'failed' ? 'Reminder failed — click to resend'
+    : 'Reminder sent — click to resend';
+  const reminderControl = onSendReminder && canRemind ? (
+    <button
+      type="button"
+      className={`flex items-center flex-shrink-0 rounded p-0.5 transition-colors hover:bg-white/70 hover:text-teal-600 ${reminderColor}`}
+      title={reminderTitle}
+      onClick={(e) => { e.stopPropagation(); e.preventDefault(); onSendReminder(appointment); }}
+    >
+      <Send className="w-3 h-3" />
+    </button>
+  ) : reminderBadge;
+
   // Compact mode: inline rendering for month view
   if (compact) {
     return (
@@ -368,7 +395,7 @@ export default function AppointmentBlock({
           {sessionBadge}
           {visitBadge}
           {dollarBadge}
-          {reminderBadge}
+          {reminderControl}
         </div>
       </div>
       <div

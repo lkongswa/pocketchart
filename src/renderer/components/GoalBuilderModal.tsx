@@ -184,7 +184,8 @@ const GoalBuilderModal: React.FC<GoalBuilderModalProps> = ({
           target_value: draft.target_value,
           instrument: draft.instrument,
           pattern_id: draft.pattern_id,
-          components_json: draft.isCustom ? '' : JSON.stringify(draft.components),
+          // Components persist even with manual text — chips stay live when the goal is reopened.
+          components_json: draft.pattern_id === 'custom_freeform' ? '' : JSON.stringify(draft.components),
         });
       }
       onGoalsSaved();
@@ -278,8 +279,8 @@ const GoalBuilderModal: React.FC<GoalBuilderModalProps> = ({
           </button>
         </div>
 
-        {/* Pattern component fields OR custom textarea */}
-        {draft.isCustom ? (
+        {/* Custom/manual textarea — chips stay visible below when a pattern exists */}
+        {draft.isCustom && (
           <textarea
             className="textarea text-sm mb-3"
             rows={3}
@@ -287,7 +288,8 @@ const GoalBuilderModal: React.FC<GoalBuilderModalProps> = ({
             value={draft.customText}
             onChange={(e) => updateDraft(draft.id, { customText: e.target.value }, goalType)}
           />
-        ) : draft.pattern.components.length > 0 ? (
+        )}
+        {draft.pattern_id !== 'custom_freeform' && draft.pattern.components.length > 0 && (
           <div className="mb-3">
             <GoalComponentFields
               pattern={draft.pattern}
@@ -300,7 +302,7 @@ const GoalBuilderModal: React.FC<GoalBuilderModalProps> = ({
               excludeKeys={excludeKeys}
             />
           </div>
-        ) : null}
+        )}
 
         {/* Timeframe */}
         <div className="mb-3">
@@ -330,27 +332,35 @@ const GoalBuilderModal: React.FC<GoalBuilderModalProps> = ({
           </div>
         </div>
 
-        {/* Live Preview */}
-        <div className="bg-white/60 rounded-lg p-2.5 border border-[var(--color-border)] mb-3">
-          <p className="text-[10px] uppercase tracking-wide text-[var(--color-text-secondary)] font-semibold mb-1">
-            Goal Preview
-          </p>
-          <p className="text-sm text-[var(--color-text)]">
-            {getGoalText(draft) || <span className="italic text-[var(--color-text-secondary)]">Fill in fields above to preview goal text</span>}
-          </p>
-        </div>
-
-        {/* Switch to custom text editing */}
+        {/* Live Preview (hidden while editing manually — the textarea IS the text) */}
         {!draft.isCustom && (
+          <div className="bg-white/60 rounded-lg p-2.5 border border-[var(--color-border)] mb-3">
+            <p className="text-[10px] uppercase tracking-wide text-[var(--color-text-secondary)] font-semibold mb-1">
+              Goal Preview
+            </p>
+            <p className="text-sm text-[var(--color-text)]">
+              {getGoalText(draft) || <span className="italic text-[var(--color-text-secondary)]">Fill in fields above to preview goal text</span>}
+            </p>
+          </div>
+        )}
+
+        {/* Toggle manual text editing — the pattern (and its chips) is kept either way */}
+        {!draft.isCustom ? (
           <button
             className="text-xs text-[var(--color-primary)] mb-3 hover:underline cursor-pointer"
             onClick={() => updateDraft(draft.id, {
               isCustom: true,
               customText: getGoalText(draft),
-              pattern_id: 'custom_freeform',
             }, goalType)}
           >
             Edit goal text manually
+          </button>
+        ) : draft.pattern_id !== 'custom_freeform' && (
+          <button
+            className="text-xs text-[var(--color-primary)] mb-3 hover:underline cursor-pointer"
+            onClick={() => updateDraft(draft.id, { isCustom: false }, goalType)}
+          >
+            Use pattern text
           </button>
         )}
 

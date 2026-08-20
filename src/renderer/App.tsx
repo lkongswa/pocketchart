@@ -24,6 +24,8 @@ import {
   Send,
   PanelLeftClose,
   PanelLeftOpen,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import FeedbackModal from './components/FeedbackModal';
 import FaxPage from './pages/FaxPage';
@@ -41,6 +43,7 @@ import BillingPage from './pages/BillingPage';
 import ContractedEntitiesPage from './pages/ContractedEntitiesPage';
 import EntityDetailPage from './pages/EntityDetailPage';
 import ContractorNotePage from './pages/ContractorNotePage';
+import CommandPalette from './components/CommandPalette';
 import VaultPage from './pages/VaultPage';
 import MileagePage from './pages/MileagePage';
 import YearEndSummaryPage from './pages/YearEndSummaryPage';
@@ -476,6 +479,48 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
   );
 };
 
+/** Small zoom control (− / % / +) for users who don't know about ctrl+wheel.
+ *  Clicking the percentage resets to the standard level. Stays in sync with
+ *  ctrl+wheel zooming via the zoom:changed event from the main process. */
+const ZoomControl: React.FC = () => {
+  const [level, setLevel] = useState(0);
+  const [defaultLevel, setDefaultLevel] = useState(-2);
+
+  useEffect(() => {
+    window.api.zoom.get()
+      .then(({ level, defaultLevel }) => { setLevel(level); setDefaultLevel(defaultLevel); })
+      .catch(() => {});
+    return window.api.zoom.onChanged(setLevel);
+  }, []);
+
+  const pct = Math.round(Math.pow(1.2, level) * 100);
+  return (
+    <div className="ml-auto flex items-center gap-0.5 text-[var(--color-text-secondary)]">
+      <button
+        className="p-1 rounded hover:bg-gray-100 hover:text-[var(--color-text)] transition-colors"
+        onClick={() => window.api.zoom.set(level - 0.5)}
+        title="Zoom out (or Ctrl + scroll down)"
+      >
+        <ZoomOut size={14} />
+      </button>
+      <button
+        className="text-[11px] w-10 text-center rounded py-0.5 hover:bg-gray-100 hover:text-[var(--color-text)] transition-colors tabular-nums"
+        onClick={() => window.api.zoom.set(defaultLevel)}
+        title="Reset to standard zoom"
+      >
+        {pct}%
+      </button>
+      <button
+        className="p-1 rounded hover:bg-gray-100 hover:text-[var(--color-text)] transition-colors"
+        onClick={() => window.api.zoom.set(level + 0.5)}
+        title="Zoom in (or Ctrl + scroll up)"
+      >
+        <ZoomIn size={14} />
+      </button>
+    </div>
+  );
+};
+
 /** Top bar with colored accent + back/forward navigation */
 const TopNavBar: React.FC = () => {
   const location = useLocation();
@@ -503,6 +548,7 @@ const TopNavBar: React.FC = () => {
         >
           <ChevronRight size={16} />
         </button>
+        <ZoomControl />
       </div>
     </div>
   );
@@ -511,16 +557,22 @@ const TopNavBar: React.FC = () => {
 const AppLayout: React.FC = () => {
   const [collapsed, setCollapsed] = useLocalPreference('sidebar-collapsed', false);
   return (
-    <div className="flex min-h-screen">
+    <div className="flex h-screen overflow-hidden">
+      <CommandPalette />
       <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />
+      {/* The content pane is the scroller: pages lay out at >=768px wide and the
+          pane scrolls (both axes) when the window shrinks below that, instead of
+          the layout crushing. Window minimums are correspondingly small. */}
       <main
-        className={`flex-1 overflow-y-auto min-h-screen flex flex-col transition-[margin] duration-200 ease-in-out ${
+        className={`flex-1 h-screen overflow-auto transition-[margin] duration-200 ease-in-out ${
           collapsed ? 'ml-14' : 'ml-[240px]'
         }`}
       >
-        <TopNavBar />
-        <div className="flex-1">
-          <Outlet />
+        <div className="min-w-[768px] min-h-full flex flex-col">
+          <TopNavBar />
+          <div className="flex-1">
+            <Outlet />
+          </div>
         </div>
       </main>
     </div>
@@ -591,7 +643,10 @@ const App: React.FC = () => {
       const timeout = await window.api.security.getTimeoutMinutes();
       setPinEnabled(enabled);
       setTimeoutMinutes(timeout);
-      if (enabled) {
+      // Pop-out windows are spawned from an already-unlocked session — skip the
+      // initial PIN gate there (idle/suspend locking still applies).
+      const isChildWindow = new URLSearchParams(window.location.search).has('childWindow');
+      if (enabled && !isChildWindow) {
         setIsLocked(true);
       }
     } catch (err) {

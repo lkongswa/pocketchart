@@ -1,15 +1,16 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Building2, Plus, Trash2, DollarSign, FileText, FolderOpen,
   Upload, Eye, Edit, Phone, Mail, MapPin, Calendar, CheckSquare, Square,
   FileCheck, RefreshCw, Receipt, ChevronDown, ChevronLeft, ChevronRight, Download, Send,
-  UserPlus, Pencil,
+  UserPlus, Pencil, Paperclip, ShieldAlert,
 } from 'lucide-react';
 import type { ContractedEntity, EntityFeeSchedule, EntityDocument, EntityDocumentCategory, Appointment, Invoice, InvoiceItem, InvoiceStatus, ContractorPatient } from '@shared/types';
 import EntityFormModal from '../components/EntityFormModal';
 import AppointmentModal from '../components/AppointmentModal';
 import ContractorPatientEditModal from '../components/ContractorPatientEditModal';
+import EmailComposeModal from '../components/EmailComposeModal';
 import { useSectionColor } from '../hooks/useSectionColor';
 
 type Tab = 'overview' | 'appointments' | 'invoices';
@@ -101,6 +102,8 @@ const EntityDetailPage: React.FC = () => {
   const [editInvoiceDate, setEditInvoiceDate] = useState('');
   const [editInvoiceDue, setEditInvoiceDue] = useState('');
   const [editInvoiceNotes, setEditInvoiceNotes] = useState('');
+  const [editPeriodStart, setEditPeriodStart] = useState('');
+  const [editPeriodEnd, setEditPeriodEnd] = useState('');
   const [editInvoiceItems, setEditInvoiceItems] = useState<(InvoiceItem & { _kept: boolean })[]>([]);
   const [deletingInvoiceId, setDeletingInvoiceId] = useState<number | null>(null);
   const [invoiceSaving, setInvoiceSaving] = useState(false);
@@ -128,6 +131,17 @@ const EntityDetailPage: React.FC = () => {
   const [showFeeModal, setShowFeeModal] = useState(false);
   const [showDocsModal, setShowDocsModal] = useState(false);
   const [editingPatient, setEditingPatient] = useState<ContractorPatient | null>(null);
+
+  // Email-note/eval dialog state — noteIds.length === 1 emails a single note PDF,
+  // more than one emails a bulk packet (same backend as the download buttons).
+  const [practiceName, setPracticeName] = useState('');
+  const [docEmailModal, setDocEmailModal] = useState<{
+    noteIds: number[]; apptIds: number[]; heading: string; label: string; to: string; subject: string; body: string;
+  } | null>(null);
+
+  // BAA gate — emailing clinical docs to an agency requires a BAA on file.
+  // Holds the action to run once the user confirms the BAA exists.
+  const [baaPrompt, setBaaPrompt] = useState<{ proceed: () => void } | null>(null);
 
   const loadEntity = useCallback(async () => {
     setLoading(true);
@@ -216,6 +230,7 @@ const EntityDetailPage: React.FC = () => {
     loadFeeSchedule();
     loadDocuments();
     loadOverviewAppts();
+    window.api.practice.get().then((p: any) => setPracticeName(p?.name || '')).catch(() => {});
   }, [loadEntity, loadFeeSchedule, loadDocuments, loadOverviewAppts]);
 
   useEffect(() => {
@@ -361,12 +376,137 @@ const EntityDetailPage: React.FC = () => {
     }
   };
 
+  // --- Route sheets: per-visit uploads (entity_documents with category 'route_sheet') ---
+
+  const routeSheetsByAppt = useMemo(() => {
+    const m = new Map<number, EntityDocument[]>();
+    for (const d of documents) {
+      if (d.category === 'route_sheet' && d.appointment_id) {
+        const list = m.get(d.appointment_id) || [];
+        list.push(d);
+        m.set(d.appointment_id, list);
+      }
+    }
+    return m;
+  }, [documents]);
+
+  const handleUploadRouteSheet = async (appt: Appointment) => {
+    try {
+      const doc = await window.api.entityDocuments.upload({ entityId, category: 'route_sheet', appointmentId: appt.id });
+      if (doc) {
+        setToast(`Route sheet attached to ${appt.scheduled_date}`);
+        loadDocuments();
+      }
+    } catch (err: any) {
+      setToast(err?.message || 'Failed to upload route sheet');
+    }
+  };
+
+  // --- Email-to-entity handlers (note / eval / packet) ---
+  // Same PDFs as the download buttons, sent to the agency contact via the
+  // configured email provider (mirrors ClientDetailPage's email-to-client flow).
+  // Route sheets attached to the visit(s) ride along automatically.
+
+  // Emailing clinical documentation to an agency requires a BAA on file — if the
+  // entity isn't marked, ask for an explicit acknowledgement before composing.
+  const requireBaa = (proceed: () => void) => {
+    if (entity?.baa_on_file) { proceed(); return; }
+    setBaaPrompt({ proceed });
+  };
+
+  const confirmBaaOnFile = async () => {
+    if (!entity || !baaPrompt) return;
+    try {
+      const updated = await window.api.contractedEntities.update(entity.id, { baa_on_file: 1 });
+      setEntity(updated);
+      const go = baaPrompt.proceed;
+      setBaaPrompt(null);
+      go();
+    } catch (err: any) {
+      setToast(err?.message || 'Failed to update BAA status');
+    }
+  };
+
+  const NOTE_TYPE_LABELS: Record<string, string> = {
+    evaluation: 'Evaluation', progress_report: 'Progress report',
+    recertification: 'Recertification', discharge: 'Discharge summary',
+  };
+
+  const emailSignature = () => `Best regards,\n${practiceName}`.trimEnd();
+
+  const openNoteEmail = async (appt: Appointment) => {
+    if (!entity || !appt.note_id) return;
+    let label = 'Session note';
+    try {
+      const note = await window.api.notes.get(appt.note_id);
+      label = NOTE_TYPE_LABELS[note?.note_type || ''] || 'Session note';
+    } catch { /* fall back to generic label */ }
+    const patient = appt.patient_name?.trim() || 'patient';
+    const greeting = entity.contact_name ? `Hi ${entity.contact_name},` : 'Hi,';
+    const sheets = routeSheetsByAppt.get(appt.id) || [];
+    setDocEmailModal({
+      noteIds: [appt.note_id],
+      apptIds: [appt.id],
+      heading: `Email ${label.toLowerCase()} to ${entity.name}`,
+      label: `${label} — ${patient} (${appt.scheduled_date}).pdf${sheets.length ? ` + ${sheets.length} route sheet${sheets.length === 1 ? '' : 's'}` : ''}`,
+      to: entity.contact_email || '',
+      subject: `${label} — ${patient} (${appt.scheduled_date})`,
+      body: `${greeting}\n\nPlease find attached the ${label.toLowerCase()} for ${patient}, dated ${appt.scheduled_date}.${sheets.length ? ' The route sheet for the visit is attached as well.' : ''}\n\n${emailSignature()}`,
+    });
+  };
+
+  const openNotesPacketEmail = () => {
+    if (!entity) return;
+    const selected = appointments.filter(a => selectedApptIds.has(a.id) && a.note_id);
+    if (selected.length === 0) {
+      setToast('Selected appointments have no notes attached');
+      return;
+    }
+    const patientKeys = new Set(selected.map(a => `${(a as any).contractor_patient_id || ''}|${a.client_id || ''}`));
+    if (patientKeys.size > 1) {
+      setToast('Notes packet only works for one patient at a time — narrow your selection');
+      return;
+    }
+    const patient = selected[0].patient_name?.trim() || 'patient';
+    const dates = selected.map(a => a.scheduled_date).sort();
+    const range = dates.length > 1 ? `${dates[0]} – ${dates[dates.length - 1]}` : dates[0];
+    const greeting = entity.contact_name ? `Hi ${entity.contact_name},` : 'Hi,';
+    const sheetCount = selected.reduce((n, a) => n + (routeSheetsByAppt.get(a.id)?.length || 0), 0);
+    setDocEmailModal({
+      noteIds: selected.map(a => a.note_id as number),
+      apptIds: selected.map(a => a.id),
+      heading: `Email notes packet to ${entity.name}`,
+      label: `Notes packet — ${patient} (${selected.length} session${selected.length === 1 ? '' : 's'}).pdf${sheetCount ? ` + ${sheetCount} route sheet${sheetCount === 1 ? '' : 's'}` : ''}`,
+      to: entity.contact_email || '',
+      subject: `Session notes — ${patient} (${range})`,
+      body: `${greeting}\n\nPlease find attached the session notes for ${patient} (${selected.length} session${selected.length === 1 ? '' : 's'}, ${range}).${sheetCount ? ' Route sheets for the visits are attached as well.' : ''}\n\n${emailSignature()}`,
+    });
+  };
+
+  const handleSendDocEmail = async (to: string, subject: string, body: string) => {
+    if (!docEmailModal) return;
+    const gen = docEmailModal.noteIds.length === 1
+      ? await window.api.notes.generatePdf(docEmailModal.noteIds[0])
+      : await window.api.notes.generateBulkPdf(docEmailModal.noteIds);
+    const attachments = [{ fileName: gen.filename, contentBase64: gen.base64Pdf, contentType: 'application/pdf' }];
+    // Attach any route sheets uploaded against the visit(s).
+    for (const apptId of docEmailModal.apptIds) {
+      for (const sheet of routeSheetsByAppt.get(apptId) || []) {
+        attachments.push(await window.api.entityDocuments.readAsAttachment(sheet.id));
+      }
+    }
+    await window.api.email.send({ to, subject, bodyText: body, attachments });
+    setToast(`Emailed to ${to}`);
+  };
+
   const openEditInvoice = async (inv: Invoice) => {
     setEditingInvoice(inv);
     setEditInvoiceStatus(inv.status);
     setEditInvoiceDate(inv.invoice_date || '');
     setEditInvoiceDue((inv as any).due_date || '');
     setEditInvoiceNotes((inv as any).notes || '');
+    setEditPeriodStart((inv as any).service_period_start || '');
+    setEditPeriodEnd((inv as any).service_period_end || '');
     try {
       const full = await window.api.invoices.get(inv.id);
       setEditInvoiceItems((full.items || []).map((it) => ({ ...it, _kept: true })));
@@ -414,6 +554,8 @@ const EntityDetailPage: React.FC = () => {
         invoice_date: editInvoiceDate,
         due_date: editInvoiceDue,
         notes: editInvoiceNotes,
+        service_period_start: editPeriodStart || null,
+        service_period_end: editPeriodEnd || null,
       });
       setEditingInvoice(null);
       loadInvoices();
@@ -599,6 +741,16 @@ const EntityDetailPage: React.FC = () => {
               <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${entity.requires_notes ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
                 {entity.requires_notes ? 'Docs in PocketChart' : 'External docs'}
               </span>
+              <button
+                onClick={() => setEditModalOpen(true)}
+                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${entity.baa_on_file ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-amber-50 text-amber-700 hover:bg-amber-100'}`}
+                title={entity.baa_on_file
+                  ? `Business Associate Agreement on file${entity.baa_signed_date ? ` (signed ${entity.baa_signed_date})` : ''}`
+                  : 'No BAA on file — emailing clinical docs to this agency is gated. Click to edit.'}
+              >
+                <ShieldAlert size={11} />
+                {entity.baa_on_file ? `BAA ✓${entity.baa_signed_date ? ` ${entity.baa_signed_date}` : ''}` : 'No BAA'}
+              </button>
               <button
                 onClick={() => setShowFeeModal(true)}
                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors"
@@ -1064,14 +1216,24 @@ const EntityDetailPage: React.FC = () => {
               return (
               <div className="flex items-center gap-3">
                 {notesInSelection > 0 && (
-                  <button
-                    className="btn-secondary btn-sm gap-1.5"
-                    onClick={handleDownloadNotesPacket}
-                    title="Download a single PDF packet of notes for this patient"
-                  >
-                    <Download size={14} />
-                    Notes Packet ({notesInSelection})
-                  </button>
+                  <>
+                    <button
+                      className="btn-secondary btn-sm gap-1.5"
+                      onClick={handleDownloadNotesPacket}
+                      title="Download a single PDF packet of notes for this patient"
+                    >
+                      <Download size={14} />
+                      Notes Packet ({notesInSelection})
+                    </button>
+                    <button
+                      className="btn-secondary btn-sm gap-1.5"
+                      onClick={() => requireBaa(openNotesPacketEmail)}
+                      title={`Email the notes packet to ${entity?.contact_email || 'the agency contact'}`}
+                    >
+                      <Mail size={14} />
+                      Email Packet
+                    </button>
+                  </>
                 )}
                 <input
                   type="date"
@@ -1123,7 +1285,7 @@ const EntityDetailPage: React.FC = () => {
                     <th className="table-header">Status</th>
                     <th className="table-header text-right">Rate</th>
                     <th className="table-header">Invoice</th>
-                    <th className="table-header w-12 text-center">Note</th>
+                    <th className="table-header w-24 text-center">Docs</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1180,17 +1342,48 @@ const EntityDetailPage: React.FC = () => {
                           )}
                         </td>
                         <td className="table-cell text-center" onClick={(e) => e.stopPropagation()}>
-                          {appt.note_id ? (
-                            <button
-                              className="btn-ghost btn-sm p-1 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
-                              onClick={() => handleDownloadNote(appt.note_id as number)}
-                              title="Download note as PDF"
-                            >
-                              <Download size={13} />
-                            </button>
-                          ) : (
-                            <span className="text-[var(--color-text-secondary)]/40 text-xs">—</span>
-                          )}
+                          <div className="inline-flex items-center">
+                            {appt.note_id ? (
+                              <>
+                                <button
+                                  className="btn-ghost btn-sm p-1 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
+                                  onClick={() => handleDownloadNote(appt.note_id as number)}
+                                  title="Download note as PDF"
+                                >
+                                  <Download size={13} />
+                                </button>
+                                <button
+                                  className="btn-ghost btn-sm p-1 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
+                                  onClick={() => requireBaa(() => { void openNoteEmail(appt); })}
+                                  title={`Email note to ${entity?.contact_email || 'the agency contact'}`}
+                                >
+                                  <Mail size={13} />
+                                </button>
+                              </>
+                            ) : (
+                              <span className="text-[var(--color-text-secondary)]/40 text-xs px-1">—</span>
+                            )}
+                            {(() => {
+                              const sheets = routeSheetsByAppt.get(appt.id) || [];
+                              return sheets.length > 0 ? (
+                                <button
+                                  className="btn-ghost btn-sm p-1 text-teal-600 hover:text-teal-700"
+                                  onClick={() => window.api.entityDocuments.open(sheets[0].id)}
+                                  title={`Route sheet attached (${sheets[0].original_name}) — click to open. It rides along when the note is emailed.`}
+                                >
+                                  <Paperclip size={13} />
+                                </button>
+                              ) : (
+                                <button
+                                  className="btn-ghost btn-sm p-1 text-[var(--color-text-secondary)]/40 hover:text-[var(--color-primary)]"
+                                  onClick={() => handleUploadRouteSheet(appt)}
+                                  title="Attach a route sheet to this visit"
+                                >
+                                  <Paperclip size={13} />
+                                </button>
+                              );
+                            })()}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1361,6 +1554,19 @@ const EntityDetailPage: React.FC = () => {
                 <div>
                   <label className="label">Due Date</label>
                   <input type="date" className="input" value={editInvoiceDue} onChange={e => setEditInvoiceDue(e.target.value)} />
+                </div>
+              </div>
+
+              {/* Service Period — printed on the invoice; defaults to the billed month, editable for off-schedule runs */}
+              <div>
+                <label className="label">
+                  Service Period{' '}
+                  <span className="font-normal text-[var(--color-text-secondary)]">— shown on the invoice; defaults to the billed month</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <input type="date" className="input" value={editPeriodStart} onChange={e => setEditPeriodStart(e.target.value)} />
+                  <span className="text-sm text-[var(--color-text-secondary)]">to</span>
+                  <input type="date" className="input" value={editPeriodEnd} onChange={e => setEditPeriodEnd(e.target.value)} />
                 </div>
               </div>
 
@@ -1712,7 +1918,7 @@ const EntityDetailPage: React.FC = () => {
                         <FileText size={16} className="text-[var(--color-text-secondary)] flex-shrink-0" />
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-[var(--color-text)] truncate">{doc.original_name || doc.filename}</p>
-                          <p className="text-xs text-[var(--color-text-secondary)] capitalize">{doc.category} · {new Date(doc.uploaded_at).toLocaleDateString()}</p>
+                          <p className="text-xs text-[var(--color-text-secondary)] capitalize">{doc.category.replace('_', ' ')} · {new Date(doc.uploaded_at).toLocaleDateString()}</p>
                         </div>
                       </div>
                       <div className="flex gap-1 flex-shrink-0 ml-3">
@@ -1737,6 +1943,47 @@ const EntityDetailPage: React.FC = () => {
         onClose={() => setEditModalOpen(false)}
         onSave={() => { loadEntity(); }}
         entity={entity}
+      />
+
+      {/* BAA acknowledgement gate — shown when emailing clinical docs without a BAA on file. */}
+      {baaPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setBaaPrompt(null)}>
+          <div className="card w-full max-w-md p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-lg bg-amber-100 text-amber-600 flex-shrink-0">
+                <ShieldAlert size={20} />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-[var(--color-text)] mb-1">No BAA on file for {entity?.name}</h3>
+                <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+                  Emailing clinical documentation (notes and evaluations) to an agency requires a signed
+                  Business Associate Agreement. If one is in place, mark it on file to continue — you can
+                  also record the signed date from the entity's edit window.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button className="btn-secondary btn-sm" onClick={() => setBaaPrompt(null)}>Cancel</button>
+              <button className="btn-primary btn-sm gap-1.5" onClick={confirmBaaOnFile}>
+                <FileCheck size={14} />
+                BAA is on file — continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Email note/eval/packet to the agency contact — same PDFs as the download buttons. */}
+      <EmailComposeModal
+        isOpen={!!docEmailModal}
+        onClose={() => setDocEmailModal(null)}
+        heading={docEmailModal?.heading || 'Email to agency'}
+        attachmentLabel={docEmailModal?.label}
+        defaultTo={docEmailModal?.to || ''}
+        defaultSubject={docEmailModal?.subject || ''}
+        defaultBody={docEmailModal?.body || ''}
+        onSend={handleSendDocEmail}
+        onConfigureEmail={() => navigate('/settings?section=email')}
       />
 
       {/* Edit contractor patient modal — pencil icon in Unscheduled Patients launches this. */}

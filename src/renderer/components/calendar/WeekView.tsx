@@ -12,6 +12,7 @@ interface WeekViewProps {
   onSlotClick: (date: string, time: string) => void;
   onAppointmentClick: (appt: Appointment) => void;
   onNoteClick?: (appt: Appointment) => void;
+  onSendReminder?: (appt: Appointment) => void;
   onAppointmentDrop: (apptId: number, newDate: string, newTime: string) => void;
   onBlockDrop?: (blockId: number, newDate: string, newTime: string) => void;
   onTodoDrop?: (todoId: number, date: string, time: string) => void;
@@ -33,6 +34,7 @@ export default function WeekView({
   onSlotClick,
   onAppointmentClick,
   onNoteClick,
+  onSendReminder,
   onAppointmentDrop,
   onBlockDrop,
   onTodoDrop,
@@ -103,6 +105,7 @@ export default function WeekView({
         onSlotClick={onSlotClick}
         onAppointmentClick={onAppointmentClick}
         onNoteClick={onNoteClick}
+        onSendReminder={onSendReminder}
         onAppointmentDrop={onAppointmentDrop}
         onBlockDrop={onBlockDrop}
         onTodoDrop={onTodoDrop}

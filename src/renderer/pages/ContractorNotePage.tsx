@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Save, PenLine, CheckCircle, Clock, User, Building2, ClipboardList, Stethoscope, Download, Target, Unlock, Plus, X } from 'lucide-react';
+import { ArrowLeft, Save, PenLine, CheckCircle, Clock, User, Building2, ClipboardList, Stethoscope, Download, Target, Unlock, Plus, X, Mail, ShieldAlert, FileCheck, Paperclip } from 'lucide-react';
+import type { ContractedEntity, EntityDocument } from '@shared/types';
+import EmailComposeModal from '../components/EmailComposeModal';
 
 /** One LTG or STG entry. `timeframe` is free text but a datalist suggests common values. */
 interface GoalEntry {
@@ -65,6 +67,13 @@ const ContractorNotePage: React.FC = () => {
   const [showSignForm, setShowSignForm] = useState(false);
   const [showUnsignConfirm, setShowUnsignConfirm] = useState(false);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Email-to-agency state (mirrors EntityDetailPage: BAA gate + route sheets attach).
+  const [entity, setEntity] = useState<ContractedEntity | null>(null);
+  const [routeSheets, setRouteSheets] = useState<EntityDocument[]>([]);
+  const [practiceName, setPracticeName] = useState('');
+  const [emailModal, setEmailModal] = useState<{ to: string; subject: string; body: string; label: string } | null>(null);
+  const [showBaaPrompt, setShowBaaPrompt] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -207,6 +216,79 @@ const ContractorNotePage: React.FC = () => {
     } catch (err) {
       console.error('Failed to download note PDF:', err);
     }
+  };
+
+  // ── Email to agency (BAA-gated; route sheets for this visit ride along) ──
+
+  const noteApptId: number | undefined = existingNote?.appointment_id || appt?.id;
+  const noteEntityId: number | undefined = existingNote?.entity_id || appt?.entity_id;
+
+  useEffect(() => {
+    if (!noteEntityId) return;
+    window.api.contractedEntities.get(noteEntityId).then(setEntity).catch(() => setEntity(null));
+    window.api.entityDocuments.list(noteEntityId)
+      .then((docs) => setRouteSheets(docs.filter((d) => d.category === 'route_sheet' && d.appointment_id === noteApptId)))
+      .catch(() => setRouteSheets([]));
+    window.api.practice.get().then((p: any) => setPracticeName(p?.name || '')).catch(() => {});
+  }, [noteEntityId, noteApptId]);
+
+  const composeEmail = () => {
+    if (!entity || !existingNote) return;
+    const label = existingNote.note_type === 'evaluation' ? 'Evaluation' : 'Session note';
+    const patient = (existingNote.patient_name || appt?.patient_name || 'patient').trim();
+    const date = existingNote.date_of_service || appt?.scheduled_date || '';
+    const greeting = entity.contact_name ? `Hi ${entity.contact_name},` : 'Hi,';
+    setEmailModal({
+      to: entity.contact_email || '',
+      subject: `${label} — ${patient} (${date})`,
+      body: `${greeting}\n\nPlease find attached the ${label.toLowerCase()} for ${patient}, dated ${date}.${routeSheets.length ? ' The route sheet for the visit is attached as well.' : ''}\n\nBest regards,\n${practiceName}`.trimEnd(),
+      label: `${label} — ${patient} (${date}).pdf${routeSheets.length ? ` + ${routeSheets.length} route sheet${routeSheets.length === 1 ? '' : 's'}` : ''}`,
+    });
+  };
+
+  const handleEmailClick = () => {
+    if (!entity) return;
+    if (entity.baa_on_file) composeEmail();
+    else setShowBaaPrompt(true);
+  };
+
+  // Attaches to the VISIT (entity_documents.appointment_id), so the sheet also
+  // shows on the entity's appointments table and rides along with note emails.
+  const handleAttachRouteSheet = async () => {
+    if (!noteEntityId || !noteApptId) return;
+    try {
+      const doc = await window.api.entityDocuments.upload({
+        entityId: noteEntityId,
+        category: 'route_sheet',
+        appointmentId: noteApptId,
+      });
+      if (doc) setRouteSheets((prev) => [...prev, doc]);
+    } catch (err) {
+      console.error('Failed to attach route sheet:', err);
+    }
+  };
+
+  const confirmBaaOnFile = async () => {
+    if (!entity) return;
+    try {
+      const updated = await window.api.contractedEntities.update(entity.id, { baa_on_file: 1 });
+      setEntity(updated);
+      setShowBaaPrompt(false);
+      // Compose with the freshly updated entity
+      setTimeout(composeEmail, 0);
+    } catch (err) {
+      console.error('Failed to update BAA status:', err);
+    }
+  };
+
+  const handleSendEmail = async (to: string, subject: string, body: string) => {
+    if (!existingNote?.id) return;
+    const gen = await window.api.notes.generatePdf(existingNote.id);
+    const attachments = [{ fileName: gen.filename, contentBase64: gen.base64Pdf, contentType: 'application/pdf' }];
+    for (const sheet of routeSheets) {
+      attachments.push(await window.api.entityDocuments.readAsAttachment(sheet.id));
+    }
+    await window.api.email.send({ to, subject, bodyText: body, attachments });
   };
 
   if (loading) {
@@ -364,6 +446,43 @@ const ContractorNotePage: React.FC = () => {
                 title="Download note as PDF"
               >
                 <Download size={14} /> PDF
+              </button>
+            )}
+            {entity && noteApptId && (
+              routeSheets.length > 0 ? (
+                <span className="inline-flex items-center">
+                  <button
+                    className="btn-ghost btn-sm gap-1.5 text-teal-600 hover:text-teal-700"
+                    onClick={() => window.api.entityDocuments.open(routeSheets[0].id)}
+                    title={`Route sheet attached (${routeSheets[0].original_name}) — click to open. It rides along when this note is emailed.`}
+                  >
+                    <Paperclip size={14} /> Route sheet{routeSheets.length > 1 ? ` (${routeSheets.length})` : ''}
+                  </button>
+                  <button
+                    className="btn-ghost btn-sm p-1 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
+                    onClick={handleAttachRouteSheet}
+                    title="Attach another route sheet"
+                  >
+                    <Plus size={12} />
+                  </button>
+                </span>
+              ) : (
+                <button
+                  className="btn-ghost btn-sm gap-1.5 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
+                  onClick={handleAttachRouteSheet}
+                  title="Attach a route sheet to this visit — it rides along when the note is emailed"
+                >
+                  <Paperclip size={14} /> Route sheet
+                </button>
+              )
+            )}
+            {existingNote && entity && (
+              <button
+                className="btn-ghost btn-sm gap-1.5 text-[var(--color-text-secondary)] hover:text-[var(--color-primary)]"
+                onClick={handleEmailClick}
+                title={`Email this note to ${entity.name}${entity.contact_email ? ` (${entity.contact_email})` : ''}`}
+              >
+                <Mail size={14} /> Email
               </button>
             )}
             {signed ? (
@@ -563,6 +682,46 @@ const ContractorNotePage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* BAA acknowledgement gate — emailing clinical docs needs a BAA on file */}
+      {showBaaPrompt && entity && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowBaaPrompt(false)}>
+          <div className="card w-full max-w-md p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-lg bg-amber-100 text-amber-600 flex-shrink-0">
+                <ShieldAlert size={20} />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-[var(--color-text)] mb-1">No BAA on file for {entity.name}</h3>
+                <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+                  Emailing clinical documentation to an agency requires a signed Business Associate
+                  Agreement. If one is in place, mark it on file to continue.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button className="btn-secondary btn-sm" onClick={() => setShowBaaPrompt(false)}>Cancel</button>
+              <button className="btn-primary btn-sm gap-1.5" onClick={confirmBaaOnFile}>
+                <FileCheck size={14} />
+                BAA is on file — continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Email-to-agency compose */}
+      <EmailComposeModal
+        isOpen={!!emailModal}
+        onClose={() => setEmailModal(null)}
+        heading={`Email note to ${entity?.name || 'agency'}`}
+        attachmentLabel={emailModal?.label}
+        defaultTo={emailModal?.to || ''}
+        defaultSubject={emailModal?.subject || ''}
+        defaultBody={emailModal?.body || ''}
+        onSend={handleSendEmail}
+        onConfigureEmail={() => navigate('/settings?section=email')}
+      />
     </div>
   );
 };

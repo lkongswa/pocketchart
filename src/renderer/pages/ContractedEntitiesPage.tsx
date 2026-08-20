@@ -2,8 +2,9 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom';
 import {
   Plus, Building2, Search, Pencil, FileUp, CheckCircle,
-  LayoutGrid, CalendarDays, ChevronDown, Send, Mail, RefreshCw,
+  LayoutGrid, ChevronDown, Send, Mail, RefreshCw,
   CheckSquare, Square, FileCheck, X,
+  DollarSign, FileText, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import type { ContractedEntity, Appointment, Invoice, InvoiceStatus } from '@shared/types';
 import EntityFormModal from '../components/EntityFormModal';
@@ -166,7 +167,7 @@ const ContractedEntitiesPage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [editEntity, setEditEntity] = useState<ContractedEntity | null>(null);
-  const [viewMode, setViewMode] = useState<'cards' | 'months'>('cards');
+  const [viewMode, setViewMode] = useState<'revenue' | 'notes' | 'cards'>('revenue');
 
   // Raw per-entity data; month rollups are derived from these via useMemo.
   const [apptsMap, setApptsMap] = useState<Record<number, Appointment[]>>({});
@@ -249,6 +250,49 @@ const ContractedEntitiesPage: React.FC = () => {
         e.contact_name.toLowerCase().includes(search.toLowerCase())
       )
     : entities;
+
+  // ── Notes view: attended visits per patient (rows, grouped by entity) × date (columns) ──
+  const [notesMonth, setNotesMonth] = useState(currentMonthKey);
+
+  const shiftNotesMonth = (delta: number) => {
+    const [y, m] = notesMonth.split('-').map(Number);
+    const d = new Date(y, m - 1 + delta, 1);
+    setNotesMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  };
+
+  const notesData = useMemo(() => {
+    interface NotesRow { key: string; name: string; cells: Record<string, Appointment[]> }
+    const dateSet = new Set<string>();
+    const groups: { entity: ContractedEntity; rows: NotesRow[]; done: number; total: number }[] = [];
+    for (const entity of filtered) {
+      const attended = (apptsMap[entity.id] || []).filter(
+        (a) => a.status === 'completed' && (a.scheduled_date || '').startsWith(notesMonth)
+      );
+      if (!attended.length) continue;
+      const rowMap = new Map<string, NotesRow>();
+      let done = 0;
+      for (const a of attended) {
+        const cpId = (a as any).contractor_patient_id;
+        const key = cpId ? `p${cpId}` : a.client_id ? `c${a.client_id}` : `n${(a.patient_name || '').trim().toLowerCase()}`;
+        let row = rowMap.get(key);
+        if (!row) {
+          row = { key, name: a.patient_name?.trim() || 'Unnamed patient', cells: {} };
+          rowMap.set(key, row);
+        }
+        (row.cells[a.scheduled_date] ||= []).push(a);
+        dateSet.add(a.scheduled_date);
+        if (a.note_id) done++;
+      }
+      const rows = [...rowMap.values()].sort((x, y) => x.name.localeCompare(y.name));
+      groups.push({ entity, rows, done, total: attended.length });
+    }
+    return { groups, dates: [...dateSet].sort() };
+  }, [filtered, apptsMap, notesMonth]);
+
+  const notesMonthLabel = useMemo(() => {
+    const [y, m] = notesMonth.split('-').map(Number);
+    return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  }, [notesMonth]);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -428,18 +472,25 @@ const ContractedEntitiesPage: React.FC = () => {
           </div>
           <div className="inline-flex items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-0.5">
             <button
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === 'revenue' ? 'bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-secondary)]'}`}
+              onClick={() => setViewMode('revenue')}
+            >
+              <DollarSign size={15} />
+              Revenue
+            </button>
+            <button
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === 'notes' ? 'bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-secondary)]'}`}
+              onClick={() => setViewMode('notes')}
+            >
+              <FileText size={15} />
+              Notes
+            </button>
+            <button
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === 'cards' ? 'bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-secondary)]'}`}
               onClick={() => setViewMode('cards')}
             >
               <LayoutGrid size={15} />
               Cards
-            </button>
-            <button
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === 'months' ? 'bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm' : 'text-[var(--color-text-secondary)]'}`}
-              onClick={() => setViewMode('months')}
-            >
-              <CalendarDays size={15} />
-              Months
             </button>
           </div>
         </div>
@@ -501,8 +552,132 @@ const ContractedEntitiesPage: React.FC = () => {
               </button>
             )}
           </div>
-        ) : viewMode === 'months' ? (
-          /* ── MONTH MATRIX ─────────────────────────────────────────── */
+        ) : viewMode === 'notes' ? (
+          /* ── NOTES MATRIX: patients × dates, grouped by entity ────── */
+          <div>
+            <div className="flex items-center gap-3 mb-3">
+              <div className="inline-flex items-center gap-1">
+                <button className="btn-ghost btn-sm p-1" onClick={() => shiftNotesMonth(-1)} title="Previous month">
+                  <ChevronLeft size={16} />
+                </button>
+                <span className="text-sm font-semibold text-[var(--color-text)] w-36 text-center">{notesMonthLabel}</span>
+                <button className="btn-ghost btn-sm p-1" onClick={() => shiftNotesMonth(1)} title="Next month">
+                  <ChevronRight size={16} />
+                </button>
+                {notesMonth !== currentMonthKey && (
+                  <button className="btn-ghost btn-sm text-xs" onClick={() => setNotesMonth(currentMonthKey)}>This month</button>
+                )}
+              </div>
+              <div className="ml-auto flex flex-wrap items-center gap-3 text-[11px] text-[var(--color-text-secondary)]">
+                <span className="inline-flex items-center gap-1"><FileText size={12} className="text-emerald-600" /> Note done</span>
+                <span className="inline-flex items-center gap-1"><FileText size={12} className="text-gray-300" /> Note missing — click to write</span>
+                <span className="inline-flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-gray-300" /> Attended (docs external)</span>
+              </div>
+            </div>
+
+            {notesData.groups.length === 0 ? (
+              <div className="card p-12 text-center">
+                <FileText size={32} className="mx-auto text-[var(--color-text-secondary)] mb-3 opacity-40" />
+                <p className="text-sm text-[var(--color-text-secondary)]">No attended visits in {notesMonthLabel}.</p>
+              </div>
+            ) : (
+              <div className="card overflow-x-auto">
+                <table className="w-full text-sm border-collapse">
+                  <thead>
+                    <tr className="border-b border-[var(--color-border)]">
+                      <th className="sticky left-0 z-10 bg-[var(--color-surface)] text-left px-4 py-3 font-semibold text-[var(--color-text)] min-w-[180px]">
+                        Patient
+                      </th>
+                      {notesData.dates.map((d) => {
+                        const [y, m, day] = d.split('-').map(Number);
+                        const dt = new Date(y, m - 1, day);
+                        return (
+                          <th key={d} className="text-center px-2 py-3 font-semibold text-[var(--color-text-secondary)] min-w-[56px]">
+                            <div className="text-[10px] font-normal">{dt.toLocaleDateString('en-US', { weekday: 'short' })}</div>
+                            <div>{day}</div>
+                          </th>
+                        );
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {notesData.groups.map(({ entity, rows, done, total }) => (
+                      <React.Fragment key={entity.id}>
+                        <tr className="bg-purple-50 border-b border-purple-100">
+                          <td
+                            className="sticky left-0 z-10 bg-purple-50 px-4 py-2 cursor-pointer"
+                            onClick={() => navigate(`/entities/${entity.id}`)}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <Building2 size={14} className="text-purple-500 flex-shrink-0" />
+                              <span className="font-semibold text-[var(--color-text)] truncate">{entity.name}</span>
+                            </div>
+                          </td>
+                          <td colSpan={notesData.dates.length} className="px-3 py-2 text-right">
+                            {entity.requires_notes ? (
+                              <span className={`text-[11px] font-semibold ${done < total ? 'text-amber-600' : 'text-emerald-600'}`}>
+                                {done}/{total} notes{done < total ? ` · ${total - done} missing` : ' ✓'}
+                              </span>
+                            ) : (
+                              <span className="text-[11px] font-medium text-[var(--color-text-secondary)]">External docs</span>
+                            )}
+                          </td>
+                        </tr>
+                        {rows.map((row) => (
+                          <tr key={row.key} className="border-b border-[var(--color-border)] last:border-b-0 hover:bg-[var(--color-bg)]/40">
+                            <td className="sticky left-0 z-10 bg-[var(--color-surface)] px-4 py-2 pl-9 text-[var(--color-text)] truncate max-w-[220px]">
+                              {row.name}
+                            </td>
+                            {notesData.dates.map((d) => {
+                              const appts = row.cells[d];
+                              if (!appts?.length) {
+                                return <td key={d} className="text-center px-2 py-2 text-[var(--color-text-secondary)]/40">·</td>;
+                              }
+                              return (
+                                <td key={d} className="text-center px-2 py-2">
+                                  <div className="inline-flex items-center justify-center gap-0.5">
+                                    {appts.map((a) =>
+                                      !entity.requires_notes ? (
+                                        <span
+                                          key={a.id}
+                                          className="inline-block w-2.5 h-2.5 rounded-full bg-gray-300"
+                                          title="Attended — documentation kept outside PocketChart"
+                                        />
+                                      ) : a.note_id ? (
+                                        <button
+                                          key={a.id}
+                                          className="p-1 rounded hover:bg-emerald-50"
+                                          onClick={() => navigate(`/contractor-note/${a.note_id}?appointmentId=${a.id}`)}
+                                          title="Note done — click to open"
+                                        >
+                                          <FileText size={15} className="text-emerald-600" />
+                                        </button>
+                                      ) : (
+                                        <button
+                                          key={a.id}
+                                          className="p-1 rounded hover:bg-gray-100"
+                                          onClick={() => navigate(`/contractor-note/new?appointmentId=${a.id}`)}
+                                          title="No note yet — click to write one"
+                                        >
+                                          <FileText size={15} className="text-gray-300 hover:text-gray-500" />
+                                        </button>
+                                      )
+                                    )}
+                                  </div>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        ) : viewMode === 'revenue' ? (
+          /* ── REVENUE MATRIX (per-entity months) ───────────────────── */
           <div>
             {/* Legend */}
             <div className="flex flex-wrap items-center gap-3 mb-3 text-[11px] text-[var(--color-text-secondary)]">

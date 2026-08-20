@@ -3307,15 +3307,70 @@ export default function NoteFormPage() {
                 </p>
               ) : (
                 <div className="space-y-2">
-                  {/* Active goals */}
-                  {activeGoals.map((goal) => (
-                    <div
-                      key={goal.id}
-                      className="card p-2.5 text-xs bg-amber-50/60 border-l-4 border-l-amber-400"
-                    >
-                      <p className="text-[var(--color-text)] leading-snug mb-1.5">
-                        {goal.goal_text}
-                      </p>
+                  {/* Active goals — grouped STG/LTG → skill, with the current level up front
+                      so it's easy to scan what to update during the session */}
+                  {(() => {
+                    const sorted = [...activeGoals].sort((a, b) => {
+                      const byType = (a.goal_type === 'LTG' ? 1 : 0) - (b.goal_type === 'LTG' ? 1 : 0);
+                      if (byType !== 0) return byType;
+                      const ca = a.category?.trim() || 'Other';
+                      const cb = b.category?.trim() || 'Other';
+                      if (ca === 'Other' && cb !== 'Other') return 1;
+                      if (cb === 'Other' && ca !== 'Other') return -1;
+                      return ca.localeCompare(cb);
+                    });
+                    let lastType: string | null = null;
+                    let lastCategory: string | null = null;
+                    return sorted.map((goal) => {
+                      const showTypeHeader = goal.goal_type !== lastType;
+                      if (showTypeHeader) { lastType = goal.goal_type; lastCategory = null; }
+                      const category = goal.category?.trim() || 'Other';
+                      const showCategoryHeader = category !== lastCategory;
+                      lastCategory = category;
+                      const isSTG = goal.goal_type === 'STG';
+                      const mt = (goal.measurement_type || 'percentage') as MeasurementType;
+                      const history = goalHistories[goal.id] || [];
+                      const latest = history.length > 0 ? history[history.length - 1] : null;
+                      const currentValue = latest ? latest.value : (goal.baseline_value || (goal.baseline > 0 ? `${goal.baseline}` : ''));
+                      const currentNumeric = latest ? latest.numeric_value : (goal.baseline ?? 0);
+                      const progress = calculateProgress(goal.baseline ?? 0, currentNumeric, goal.target ?? 0, getMetricDirection(mt));
+                      const progressColor = progress >= 67 ? 'bg-emerald-100 text-emerald-700' : progress >= 33 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700';
+                      return (
+                        <React.Fragment key={goal.id}>
+                          {showTypeHeader && (
+                            <div className={`text-[10px] font-bold uppercase tracking-wider text-center pt-1.5 ${isSTG ? 'text-blue-700' : 'text-purple-700'}`}>
+                              {isSTG ? 'Short-Term Goals' : 'Long-Term Goals'}
+                            </div>
+                          )}
+                          {showCategoryHeader && (
+                            <div className={`text-[10px] uppercase tracking-wide font-bold px-2 py-0.5 rounded ${isSTG ? 'bg-blue-50 text-blue-800' : 'bg-purple-50 text-purple-800'}`}>
+                              {category}
+                            </div>
+                          )}
+                          <div
+                            className={`card p-2.5 text-xs ml-1.5 ${isSTG ? 'bg-blue-50/40 border-l-4 border-l-blue-400' : 'bg-purple-50/40 border-l-4 border-l-purple-400'}`}
+                          >
+                            {/* Current level — the number to update this session */}
+                            {currentValue && (
+                              <div className="flex items-center gap-1 mb-1.5">
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${progressColor}`}>
+                                  Now {formatMetricValue(mt, currentValue, goal.instrument)}
+                                </span>
+                                {(goal.target_value || goal.target > 0) && (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold border border-dashed border-blue-300 text-blue-600 bg-blue-50">
+                                    → {formatMetricValue(mt, goal.target_value || `${goal.target}`, goal.instrument)}
+                                  </span>
+                                )}
+                                {latest && (
+                                  <span className="text-[9px] text-[var(--color-text-tertiary)]">
+                                    {formatDate(latest.recorded_date)}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            <p className="text-[var(--color-text)] leading-snug mb-1.5">
+                              {goal.goal_text}
+                            </p>
                       {/* Measurement progress bar */}
                       {(goal.baseline_value || goal.baseline > 0 || goal.target_value || goal.target > 0) && (
                         <GoalProgressBar
@@ -3359,8 +3414,11 @@ export default function NoteFormPage() {
                           </span>
                         )}
                       </div>
-                    </div>
-                  ))}
+                          </div>
+                        </React.Fragment>
+                      );
+                    });
+                  })()}
                   {/* Met / Inactive goals — collapsed */}
                   {goals.filter(g => g.status !== 'active').length > 0 && (
                     <details className="group">

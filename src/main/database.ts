@@ -2551,6 +2551,39 @@ function runMigrations(): void {
         }
       },
     },
+    {
+      version: 71,
+      description: 'Invoices: explicit editable service period (defaults to the invoiced month)',
+      up: () => {
+        // Entity/contract invoices print a "Service Period". Previously derived from the
+        // min/max line-item service dates; now stored explicitly so it can default to the
+        // billed month and be edited for off-schedule runs. NULL → fall back to line-item span.
+        if (!columnExists('invoices', 'service_period_start')) {
+          db.exec('ALTER TABLE invoices ADD COLUMN service_period_start TEXT DEFAULT NULL');
+        }
+        if (!columnExists('invoices', 'service_period_end')) {
+          db.exec('ALTER TABLE invoices ADD COLUMN service_period_end TEXT DEFAULT NULL');
+        }
+      },
+    },
+    {
+      version: 72,
+      description: 'Entity BAA tracking + per-visit route sheets',
+      up: () => {
+        // BAA (Business Associate Agreement) tracking per contracted entity. Emailing
+        // clinical documentation (notes/evals) to an agency is gated on baa_on_file.
+        if (!columnExists('contracted_entities', 'baa_on_file')) {
+          db.prepare('ALTER TABLE contracted_entities ADD COLUMN baa_on_file INTEGER DEFAULT 0').run();
+        }
+        if (!columnExists('contracted_entities', 'baa_signed_date')) {
+          db.prepare('ALTER TABLE contracted_entities ADD COLUMN baa_signed_date TEXT DEFAULT NULL').run();
+        }
+        // Entity documents can now attach to a specific visit (route sheets). NULL = entity-level doc.
+        if (!columnExists('entity_documents', 'appointment_id')) {
+          db.prepare('ALTER TABLE entity_documents ADD COLUMN appointment_id INTEGER DEFAULT NULL').run();
+        }
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
@@ -2809,7 +2842,7 @@ function createTables(): void {
 // ── Backup, Restore & Integrity Functions ──
 
 // Must track the highest migration version above — used by the backup restore-compatibility check.
-const LATEST_SCHEMA_VERSION = 70;
+const LATEST_SCHEMA_VERSION = 72;
 
 /**
  * Run PRAGMA quick_check — a fast consistency check on every launch.

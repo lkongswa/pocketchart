@@ -700,6 +700,8 @@ export interface ContractedEntity {
   billing_cycle: BillingCycle;
   billing_day: number;      // day-of-month (1–28) for monthly; day-of-week (0–6) for weekly
   invoice_columns: string | null;  // JSON array of InvoiceColumnKey; null = use defaults
+  baa_on_file: number;             // 1 = BAA signed with this agency; gates emailing clinical docs
+  baa_signed_date: string | null;  // YYYY-MM-DD, optional
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -791,7 +793,7 @@ export interface EntityFeeSchedule {
   deleted_at: string | null;
 }
 
-export type EntityDocumentCategory = 'contract' | 'credentialing' | 'w9' | 'other';
+export type EntityDocumentCategory = 'contract' | 'credentialing' | 'w9' | 'route_sheet' | 'other';
 
 export interface EntityDocument {
   id: number;
@@ -802,6 +804,7 @@ export interface EntityDocument {
   category: EntityDocumentCategory;
   expiration_date: string | null;
   notes: string;
+  appointment_id: number | null;  // set for per-visit docs (route sheets); NULL = entity-level
   uploaded_at: string;
   deleted_at: string | null;
 }
@@ -1346,6 +1349,8 @@ export interface Invoice {
   stripe_payment_link_url: string;
   emailed_at: string | null;   // ISO timestamp of last successful email send; null if never emailed
   emailed_to: string | null;   // recipient address of last successful email send
+  service_period_start: string | null; // entity invoices: explicit service period start (YYYY-MM-DD); null → line-item span
+  service_period_end: string | null;   // entity invoices: explicit service period end (YYYY-MM-DD)
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -1776,6 +1781,15 @@ export interface SentMessage {
   recipient: string;          // email / phone if known
   context: string;            // e.g. "Appt Sun, Jun 2 · 10:00 AM", "Invoice INV-0042", "2 intake forms"
   error: string | null;
+}
+
+// Breakdown of outstanding money for the dashboard's collapsible balance panel.
+export interface OutstandingBreakdown {
+  total: number;                                  // = contract.amount + individual.amount (all unpaid invoices)
+  contract: { amount: number; count: number };    // unpaid invoices billed to a contracted entity/agency
+  individual: { amount: number; count: number };   // unpaid invoices billed to an individual client
+  overdue: { amount: number; count: number };      // subset of unpaid whose due_date has passed
+  unbilled: { amount: number; count: number };     // signed client sessions not yet on any invoice
 }
 
 // API interface exposed through preload
@@ -2247,10 +2261,22 @@ export interface PocketChartAPI {
   // ── Entity Documents (Pro) ──
   entityDocuments: {
     list: (entityId: number) => Promise<EntityDocument[]>;
-    upload: (data: { entityId: number; category?: EntityDocumentCategory }) => Promise<EntityDocument | null>;
-    uploadFromPath: (data: { entityId: number; filePath: string; category?: EntityDocumentCategory }) => Promise<EntityDocument>;
+    upload: (data: { entityId: number; category?: EntityDocumentCategory; appointmentId?: number }) => Promise<EntityDocument | null>;
+    uploadFromPath: (data: { entityId: number; filePath: string; category?: EntityDocumentCategory; appointmentId?: number }) => Promise<EntityDocument>;
     open: (documentId: number) => Promise<string>;
     delete: (documentId: number) => Promise<boolean>;
+    readAsAttachment: (documentId: number) => Promise<{ fileName: string; contentBase64: string; contentType: string }>;
+  };
+  // ── Pop-out windows ──
+  appWindows: {
+    open: (route: string) => Promise<boolean>;
+    onClosed: (callback: () => void) => () => void;
+  };
+  // ── UI zoom ──
+  zoom: {
+    get: () => Promise<{ level: number; defaultLevel: number }>;
+    set: (level: number) => Promise<number>;
+    onChanged: (callback: (level: number) => void) => () => void;
   };
   // ── Professional Vault (Pro) ──
   vault: {
@@ -2296,6 +2322,7 @@ export interface PocketChartAPI {
     getOverview: () => Promise<DashboardOverview>;
     getAnalytics: (filters?: { startDate?: string; endDate?: string; monthsBack?: number }) => Promise<AnalyticsData>;
     getOutstandingBalance: () => Promise<{ outstanding: number; unpaidCount: number }>;
+    getOutstandingBreakdown: () => Promise<OutstandingBreakdown>;
   };
   // ── Reports (Pro) ──
   reports: {
@@ -2458,6 +2485,7 @@ export interface PocketChartAPI {
   // ── Appointment Reminders (Pro) ──
   reminders: {
     runDue: () => Promise<{ sent: number; failed: number; skipped: number; busy?: boolean }>;
+    sendForAppointment: (appointmentId: number) => Promise<{ success: boolean; status: 'sent' | 'failed' | 'skipped'; channel?: 'sms' | 'email'; error?: string }>;
     getConfig: () => Promise<{ leadHours: number; smsTemplate: string; emailSubject: string; emailBody: string; defaultMeetingLink: string }>;
     saveConfig: (cfg: { leadHours?: number; smsTemplate?: string; emailSubject?: string; emailBody?: string; defaultMeetingLink?: string }) => Promise<{ success: boolean }>;
   };

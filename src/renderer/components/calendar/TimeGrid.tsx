@@ -20,6 +20,7 @@ interface TimeGridProps {
   onSlotClick: (date: string, time: string) => void;
   onAppointmentClick: (appt: Appointment) => void;
   onNoteClick?: (appt: Appointment) => void;
+  onSendReminder?: (appt: Appointment) => void;
   onAppointmentDrop: (apptId: number, newDate: string, newTime: string) => void;
   onBlockDrop?: (blockId: number, newDate: string, newTime: string) => void;
   onTodoDrop?: (todoId: number, date: string, time: string) => void;
@@ -157,6 +158,7 @@ export default function TimeGrid({
   onSlotClick,
   onAppointmentClick,
   onNoteClick,
+  onSendReminder,
   onAppointmentDrop,
   onBlockDrop,
   onTodoDrop,
@@ -295,33 +297,64 @@ export default function TimeGrid({
   const totalHeight = totalSlots * SLOT_HEIGHT;
   const colCount = columns.length;
 
-  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
+  // ── Column-level drag targeting ──
+  // DnD lives on the COLUMN, not the individual slots: dragover/drop bubble up
+  // from whatever is on top (existing appointment/todo blocks included), so the
+  // target slot always highlights — previously a drag hovering over an existing
+  // block never reached the slot underneath and nothing lit up.
+
+  // Where inside the dragged element the user grabbed it (px from its top).
+  // Captured on dragstart (bubbles up from the block); appointments use it so the
+  // highlight/drop reflect where the block's TOP will land, not the pointer.
+  const dragGrabOffsetRef = useRef(0);
+  const handleGridDragStart = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    const el = (e.target as HTMLElement).closest?.('[draggable="true"]') as HTMLElement | null;
+    dragGrabOffsetRef.current = el ? e.clientY - el.getBoundingClientRect().top : 0;
   }, []);
 
-  const handleDragEnter = useCallback(
-    (slotKey: string) => (e: React.DragEvent<HTMLDivElement>) => {
+  // Snap a drag position to the slot it would land in. Appointment drags
+  // ('text/plain') round using the grab offset — same math as the drop — so the
+  // highlighted slot IS the landing slot. Todos/blocks land in the slot under
+  // the pointer (floor), matching their drop behavior.
+  const computeDragTargetMinutes = useCallback(
+    (e: React.DragEvent<HTMLDivElement>, colRect: DOMRect): number => {
+      const types = Array.from(e.dataTransfer.types || []);
+      const isApptDrag = types.includes('text/plain') && !types.includes('application/todo-id') && !types.includes('application/block-id');
+      const pointerMinutes = startHour * 60 + (e.clientY - colRect.top) / PX_PER_MINUTE;
+      const target = isApptDrag
+        ? Math.round((pointerMinutes - dragGrabOffsetRef.current / PX_PER_MINUTE) / SLOT_MINUTES) * SLOT_MINUTES
+        : Math.floor(pointerMinutes / SLOT_MINUTES) * SLOT_MINUTES;
+      return Math.max(startHour * 60, Math.min(endHour * 60 - SLOT_MINUTES, target));
+    },
+    [startHour, endHour]
+  );
+
+  const handleColumnDragOver = useCallback(
+    (dateStr: string) => (e: React.DragEvent<HTMLDivElement>) => {
       e.preventDefault();
-      setDragOverSlot(slotKey);
+      e.dataTransfer.dropEffect = 'move';
+      const minutes = computeDragTargetMinutes(e, (e.currentTarget as HTMLDivElement).getBoundingClientRect());
+      const key = `${dateStr}-${toTimeString(Math.floor(minutes / 60), minutes % 60)}`;
+      setDragOverSlot((prev) => (prev === key ? prev : key));
     },
-    []
+    [computeDragTargetMinutes]
   );
 
-  const handleDragLeave = useCallback(
-    (slotKey: string) => (e: React.DragEvent<HTMLDivElement>) => {
-      if (dragOverSlot === slotKey) {
-        setDragOverSlot(null);
-      }
-    },
-    [dragOverSlot]
-  );
+  const handleColumnDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    // Only clear when truly leaving the column (not when crossing child elements).
+    if (!(e.currentTarget as HTMLDivElement).contains(e.relatedTarget as Node)) {
+      setDragOverSlot(null);
+    }
+  }, []);
 
-  const handleDrop = useCallback(
-    (dateStr: string, timeStr: string) => (e: React.DragEvent<HTMLDivElement>) => {
+  const handleColumnDrop = useCallback(
+    (dateStr: string) => (e: React.DragEvent<HTMLDivElement>) => {
       e.preventDefault();
       setDragOverSlot(null);
       setDraggingBlockId(null);
+      const colRect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+      const minutes = computeDragTargetMinutes(e, colRect);
+      const timeStr = toTimeString(Math.floor(minutes / 60), minutes % 60);
       // Check for todo drop first
       const todoId = e.dataTransfer.getData('application/todo-id');
       if (todoId && onTodoDrop) {
@@ -336,22 +369,10 @@ export default function TimeGrid({
       }
       const apptId = parseInt(e.dataTransfer.getData('text/plain'), 10);
       if (!isNaN(apptId)) {
-        // Compute precise drop time: account for where the user grabbed the block,
-        // then snap to SLOT_MINUTES increments.
-        const grabOffsetY = parseFloat(e.dataTransfer.getData('application/grab-offset-y') || '0');
-        const slotRect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-        const dropYInSlot = e.clientY - slotRect.top;
-        const apptTopInSlot = dropYInSlot - grabOffsetY;
-        const [slotH, slotM] = timeStr.split(':').map(Number);
-        const slotBaseMinutes = slotH * 60 + slotM;
-        const offsetMinutes = apptTopInSlot / PX_PER_MINUTE;
-        const snapped = Math.round((slotBaseMinutes + offsetMinutes) / SLOT_MINUTES) * SLOT_MINUTES;
-        const clamped = Math.max(startHour * 60, Math.min((endHour - 1) * 60 + (60 - SLOT_MINUTES), snapped));
-        const preciseTimeStr = toTimeString(Math.floor(clamped / 60), clamped % 60);
-        onAppointmentDrop(apptId, dateStr, preciseTimeStr);
+        onAppointmentDrop(apptId, dateStr, timeStr);
       }
     },
-    [onAppointmentDrop, onBlockDrop, onTodoDrop, startHour, endHour]
+    [computeDragTargetMinutes, onAppointmentDrop, onBlockDrop, onTodoDrop]
   );
 
   const handleSlotClick = useCallback(
@@ -446,6 +467,10 @@ export default function TimeGrid({
               key={col.dateStr}
               className="relative"
               style={{ height: totalHeight }}
+              onDragStart={handleGridDragStart}
+              onDragOver={handleColumnDragOver(col.dateStr)}
+              onDragLeave={handleColumnDragLeave}
+              onDrop={handleColumnDrop(col.dateStr)}
             >
               {/* Slot backgrounds and click/drop targets — 4 per hour at 15-min granularity.
                   Border style hints at the slot's position in the hour:
@@ -462,7 +487,7 @@ export default function TimeGrid({
                   : slot.minute === 30 ? 'border-t border-dashed border-gray-200'
                   : ''; // :15 and :45 — no gridline, keeps the visual quiet
                 const bgClass = isDragTarget
-                  ? 'bg-blue-100/40'
+                  ? 'bg-teal-200/60 ring-2 ring-inset ring-teal-500 z-20'
                   : isOffPeriod
                     ? 'bg-gray-50/60'
                     : '';
@@ -477,10 +502,6 @@ export default function TimeGrid({
                     }}
                     data-date={col.dateStr}
                     data-time={timeStr}
-                    onDragOver={handleDragOver}
-                    onDragEnter={handleDragEnter(slotKey)}
-                    onDragLeave={handleDragLeave(slotKey)}
-                    onDrop={handleDrop(col.dateStr, timeStr)}
                     onMouseDown={(e) => {
                       // Only left-click starts drag-to-create. Right-click hands off to the context menu.
                       if (e.button !== 0) return;
@@ -503,7 +524,18 @@ export default function TimeGrid({
                       }
                     }}
                     onContextMenu={handleSlotContextMenu(col.dateStr, timeStr)}
-                  />
+                  >
+                    {/* Loud "you are dropping HERE" time chip on the target slot */}
+                    {isDragTarget && (
+                      <span className="absolute left-1 top-1/2 -translate-y-1/2 z-30 px-1.5 py-0.5 rounded bg-teal-600 text-white text-[10px] font-bold leading-none pointer-events-none shadow-sm">
+                        {(() => {
+                          const suffix = slot.hour >= 12 ? 'p' : 'a';
+                          const h12 = slot.hour === 0 ? 12 : slot.hour > 12 ? slot.hour - 12 : slot.hour;
+                          return `${h12}:${slot.minute.toString().padStart(2, '0')}${suffix}`;
+                        })()}
+                      </span>
+                    )}
+                  </div>
                 );
               })}
 
@@ -562,6 +594,7 @@ export default function TimeGrid({
                       startHour={startHour}
                       onClick={onAppointmentClick}
                       onNoteClick={onNoteClick}
+                      onSendReminder={onSendReminder}
                       onContextMenu={onAppointmentContextMenu}
                       onTodoDrop={onTodoDrop}
                       onResize={onAppointmentResize}
@@ -648,12 +681,13 @@ export default function TimeGrid({
                       if (onBlockContextMenu) onBlockContextMenu(block, e.clientX, e.clientY);
                     }}
                   >
-                    <div className={`text-[10px] font-medium truncate pr-10 ${isDone ? 'line-through opacity-60' : ''} ${isResizingThis ? 'text-slate-700' : ''}`}>{timeLabel}</div>
+                    {/* Title first — it's what the user needs to read at a glance */}
+                    <div className={`text-xs font-semibold truncate ${isDone ? 'line-through text-slate-400' : 'text-slate-800'}`}>{block.title}</div>
                     {heightPx >= 36 && (
-                      <div className={`text-[11px] truncate pr-10 ${isDone ? 'line-through opacity-60' : ''}`}>{block.title}</div>
+                      <div className={`text-[10px] truncate ${isDone ? 'line-through text-slate-400' : 'text-slate-500'} ${isResizingThis ? 'text-slate-700' : ''}`}>{timeLabel}</div>
                     )}
-                    {/* Hover action buttons */}
-                    <div className="absolute top-0.5 right-0.5 flex items-center gap-0.5 opacity-0 group-hover/block:opacity-100 transition-opacity">
+                    {/* Hover action buttons — solid backdrop so they don't need permanent text padding */}
+                    <div className="absolute top-0.5 right-0.5 flex items-center gap-0.5 opacity-0 group-hover/block:opacity-100 transition-opacity bg-white/85 rounded p-px">
                       <button
                         className={`w-5 h-5 rounded flex items-center justify-center transition-colors ${
                           isDone

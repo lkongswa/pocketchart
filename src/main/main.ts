@@ -1,5 +1,5 @@
 import './bootstrap'; // MUST be first — sets userData path before any DB / electron-store import
-import { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, powerMonitor } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, powerMonitor, Tray, Menu, screen } from 'electron';
 import path from 'path';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -27,7 +27,7 @@ import { buildNotePdf, buildEvalPdf, buildBulkNotesPdf } from './notePdfGenerato
 import type { NoteRow, EvalRow, PatientInfo, EntityInfo, GoalInfo } from './notePdfGenerator';
 import { DEFAULT_INTAKE_TEMPLATES } from '../shared/intakeTemplates';
 import { FaxRouter, matchFaxToClient, normalizeFaxNumber, type FaxProviderType } from './fax';
-import { MessagingRouter, sendDueReminders, DEFAULT_REMINDER_TEMPLATES, DEFAULT_INVOICE_EMAIL_TEMPLATE, mergeInvoiceTemplate, buildInvoiceEmailHtml, DEFAULT_INTAKE_EMAIL_TEMPLATE, mergeIntakeTemplate, buildIntakeEmailHtml, buildDocumentsEmailHtml, type EmailProviderType, type SmsProviderType } from './messaging';
+import { MessagingRouter, sendDueReminders, sendReminderForAppointment, DEFAULT_REMINDER_TEMPLATES, DEFAULT_INVOICE_EMAIL_TEMPLATE, mergeInvoiceTemplate, buildInvoiceEmailHtml, DEFAULT_INTAKE_EMAIL_TEMPLATE, mergeIntakeTemplate, buildIntakeEmailHtml, buildDocumentsEmailHtml, type EmailProviderType, type SmsProviderType } from './messaging';
 import { NOTE_FORMAT_SECTIONS, DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS, INVOICE_COLUMNS, ENTITY_INVOICE_DEFAULT_COLUMNS, CLIENT_INVOICE_DEFAULT_COLUMNS, parseInvoiceColumns } from '../shared/types';
 import type { InvoiceColumnKey } from '../shared/types';
 import { ClearinghouseRouter, type ClearinghouseProviderType } from './clearinghouse';
@@ -80,6 +80,39 @@ function maskSecret(secret: string): string {
 
 let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
+let isQuitting = false;
+
+// ── Tiny non-PHI UI prefs, readable before the encrypted DB unlocks ──
+// (settings in the DB aren't available until the passphrase is entered, but the
+// tray is created at app startup — so its prefs live in a plain JSON sidecar.)
+function uiPrefsPath() {
+  return path.join(app.getPath('userData'), 'ui-prefs.json');
+}
+// The standard PocketChart zoom: slightly zoomed out (~69%) so more of the chart
+// fits on screen — per Lyda's preferred density. Users can change it any time
+// (ctrl+wheel or the top-bar control); their choice persists in ui-prefs.json.
+const DEFAULT_ZOOM_LEVEL = -2;
+
+interface UiPrefs {
+  closeToTray?: boolean;
+  zoomLevel?: number;
+  windowBounds?: { x: number; y: number; width: number; height: number };
+  windowMaximized?: boolean;
+  openAtLogin?: boolean;
+}
+function readUiPrefs(): UiPrefs {
+  try {
+    return JSON.parse(fs.readFileSync(uiPrefsPath(), 'utf8'));
+  } catch {
+    return {};
+  }
+}
+function writeUiPrefs(prefs: UiPrefs) {
+  try {
+    fs.writeFileSync(uiPrefsPath(), JSON.stringify(prefs));
+  } catch { /* non-critical */ }
+}
 
 const isDev = process.env.NODE_ENV === 'development';
 const FORCE_PRO = false;
@@ -248,25 +281,95 @@ function createSplashWindow() {
   });
 }
 
+// Right-click context menu: spellcheck suggestions + standard clipboard actions.
+// Electron shows NO context menu by default, so without this there's no
+// right-click cut/copy/paste anywhere and no way to accept a spelling fix.
+function wireContextMenu(win: BrowserWindow) {
+  win.webContents.session.setSpellCheckerLanguages(['en-US']);
+  win.webContents.on('context-menu', (_event, params) => {
+    const template: Electron.MenuItemConstructorOptions[] = [];
+    for (const suggestion of (params.dictionarySuggestions || []).slice(0, 5)) {
+      template.push({ label: suggestion, click: () => win.webContents.replaceMisspelling(suggestion) });
+    }
+    if (params.misspelledWord) {
+      template.push({
+        label: `Add "${params.misspelledWord}" to dictionary`,
+        click: () => win.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+      });
+      template.push({ type: 'separator' });
+    }
+    if (params.isEditable) {
+      template.push(
+        { role: 'cut', enabled: params.selectionText.length > 0 },
+        { role: 'copy', enabled: params.selectionText.length > 0 },
+        { role: 'paste' },
+        { type: 'separator' },
+        { role: 'selectAll' },
+      );
+    } else if (params.selectionText) {
+      template.push({ role: 'copy' });
+    }
+    if (template.length) Menu.buildFromTemplate(template).popup({ window: win });
+  });
+}
+
 function createWindow() {
   const iconPath = app.isPackaged
     ? path.join(path.dirname(app.getPath('exe')), 'icon.ico')
     : path.join(__dirname, '../../build/icon.ico');
 
+  // Restore the last window size/position if it still lands on a connected display.
+  const savedBounds = readUiPrefs().windowBounds;
+  const boundsVisible = savedBounds && screen.getAllDisplays().some((d) =>
+    savedBounds.x < d.workArea.x + d.workArea.width &&
+    savedBounds.x + savedBounds.width > d.workArea.x &&
+    savedBounds.y < d.workArea.y + d.workArea.height &&
+    savedBounds.y + savedBounds.height > d.workArea.y
+  );
+
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 1024,
-    minHeight: 700,
+    width: boundsVisible ? savedBounds!.width : 1400,
+    height: boundsVisible ? savedBounds!.height : 900,
+    ...(boundsVisible ? { x: savedBounds!.x, y: savedBounds!.y } : {}),
+    // Small minimums on purpose: below ~1024px of content width the layout keeps
+    // its shape and the content pane scrolls (see AppLayout) rather than crushing.
+    minWidth: 480,
+    minHeight: 360,
     icon: iconPath,
     title: isDev ? 'PocketChart [DEV] — test data only' : 'PocketChart',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      spellcheck: true,
     },
     show: false,
   });
+  if (readUiPrefs().windowMaximized) mainWindow.maximize();
+
+  // Persist bounds (debounced) so the next launch reopens where this one left off.
+  let boundsSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  const saveWindowState = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const maximized = mainWindow.isMaximized();
+    writeUiPrefs({
+      ...readUiPrefs(),
+      windowMaximized: maximized,
+      // getNormalBounds = the un-maximized rect, so restoring maximized→unmaximize behaves.
+      windowBounds: mainWindow.getNormalBounds(),
+    });
+  };
+  const scheduleSaveWindowState = () => {
+    if (boundsSaveTimer) clearTimeout(boundsSaveTimer);
+    boundsSaveTimer = setTimeout(saveWindowState, 500);
+  };
+  mainWindow.on('resize', scheduleSaveWindowState);
+  mainWindow.on('move', scheduleSaveWindowState);
+  mainWindow.on('maximize', scheduleSaveWindowState);
+  mainWindow.on('unmaximize', scheduleSaveWindowState);
+
+  // Right-click context menu + spellcheck (shared with pop-out note windows).
+  wireContextMenu(mainWindow);
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:3000');
@@ -275,14 +378,16 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
 
+  // Launched at login (tray option): stay hidden in the tray instead of popping the window.
+  const startMinimized = process.argv.includes('--start-minimized');
   mainWindow.once('ready-to-show', () => {
     // Brief delay so the splash feels intentional, not flickery
     setTimeout(() => {
       if (splashWindow && !splashWindow.isDestroyed()) {
         splashWindow.close();
       }
-      mainWindow?.show();
-    }, 800);
+      if (!startMinimized) mainWindow?.show();
+    }, startMinimized ? 0 : 800);
   });
 
   // Intercept all navigation attempts and open external URLs in system browser
@@ -305,10 +410,162 @@ function createWindow() {
     }
   });
 
+  // Ctrl + mouse wheel zooms the whole UI; the level persists across launches
+  // and starts at the standard DEFAULT_ZOOM_LEVEL for fresh installs.
+  const savedZoom = readUiPrefs().zoomLevel ?? DEFAULT_ZOOM_LEVEL;
+  if (savedZoom !== 0) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      mainWindow?.webContents.setZoomLevel(savedZoom);
+    });
+  }
+  mainWindow.webContents.on('zoom-changed', (_event, direction) => {
+    const wc = mainWindow?.webContents;
+    if (!wc) return;
+    const next = Math.max(-3, Math.min(4, wc.getZoomLevel() + (direction === 'in' ? 0.5 : -0.5)));
+    wc.setZoomLevel(next);
+    writeUiPrefs({ ...readUiPrefs(), zoomLevel: next });
+    wc.send('zoom:changed', next); // keep the top-bar zoom control in sync
+  });
+
+  // Close-to-tray (default on, toggleable from the tray menu): hide instead of
+  // quitting so the app stays one click away in the notification area.
+  mainWindow.on('close', (e) => {
+    if (!isQuitting && tray && readUiPrefs().closeToTray !== false) {
+      e.preventDefault();
+      mainWindow?.hide();
+    }
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
 }
+
+function showMainWindow() {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  } else {
+    createWindow();
+  }
+}
+
+function createTray() {
+  const iconPath = app.isPackaged
+    ? path.join(path.dirname(app.getPath('exe')), 'icon.ico')
+    : path.join(__dirname, '../../build/icon.ico');
+  try {
+    tray = new Tray(iconPath);
+  } catch {
+    return; // missing icon shouldn't break startup
+  }
+  tray.setToolTip(isDev ? 'PocketChart [DEV]' : 'PocketChart');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Open PocketChart', click: showMainWindow },
+    { type: 'separator' },
+    {
+      label: 'Keep running in tray when window closes',
+      type: 'checkbox',
+      checked: readUiPrefs().closeToTray !== false,
+      click: (item) => writeUiPrefs({ ...readUiPrefs(), closeToTray: item.checked }),
+    },
+    {
+      label: 'Start with Windows (in tray)',
+      type: 'checkbox',
+      checked: app.getLoginItemSettings().openAtLogin,
+      enabled: app.isPackaged, // meaningless in dev — it would register electron.exe
+      click: (item) => {
+        app.setLoginItemSettings({ openAtLogin: item.checked, args: ['--start-minimized'] });
+        writeUiPrefs({ ...readUiPrefs(), openAtLogin: item.checked });
+      },
+    },
+    { type: 'separator' },
+    { label: 'Close App', click: () => { isQuitting = true; app.quit(); } },
+  ]));
+  tray.on('click', showMainWindow);
+  tray.on('double-click', showMainWindow);
+}
+
+// Single instance: launching the shortcut while the app is hidden in the tray
+// should surface the existing window, never start a second process on the DB.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+app.on('second-instance', () => {
+  showMainWindow();
+});
+
+// Any quit path (tray menu, auto-updater install, OS shutdown) must bypass close-to-tray.
+app.on('before-quit', () => {
+  isQuitting = true;
+});
+
+// ── UI zoom control (top-bar buttons; ctrl+wheel handled in createWindow) ──
+ipcMain.handle('zoom:get', () => ({
+  level: mainWindow?.webContents.getZoomLevel() ?? readUiPrefs().zoomLevel ?? DEFAULT_ZOOM_LEVEL,
+  defaultLevel: DEFAULT_ZOOM_LEVEL,
+}));
+ipcMain.handle('zoom:set', (_event, level: number) => {
+  const clamped = Math.max(-3, Math.min(4, level));
+  mainWindow?.webContents.setZoomLevel(clamped);
+  writeUiPrefs({ ...readUiPrefs(), zoomLevel: clamped });
+  mainWindow?.webContents.send('zoom:changed', clamped);
+  return clamped;
+});
+
+// ── Pop-out windows (bulk note "bang out" flow) ──
+// Opens an app route in its own smaller window: same preload/session, DB stays in
+// the main process, so the child renders straight into the requested page.
+const childWindows = new Set<BrowserWindow>();
+ipcMain.handle('appWindows:open', (_event, route: string) => {
+  if (typeof route !== 'string' || !route.startsWith('/')) throw new Error('Invalid route');
+  const iconPath = app.isPackaged
+    ? path.join(path.dirname(app.getPath('exe')), 'icon.ico')
+    : path.join(__dirname, '../../build/icon.ico');
+  const offset = (childWindows.size % 8) * 28; // cascade so stacked windows stay grabbable
+  const win = new BrowserWindow({
+    width: 1000,
+    height: 760,
+    x: 80 + offset,
+    y: 50 + offset,
+    minWidth: 480,
+    minHeight: 360,
+    icon: iconPath,
+    title: 'PocketChart',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      spellcheck: true,
+    },
+  });
+  // ?childWindow=1 → the renderer skips the initial PIN gate (spawned from an
+  // already-unlocked session) — idle/suspend locking still applies.
+  if (isDev) {
+    win.loadURL(`http://localhost:3000/?childWindow=1#${route}`);
+  } else {
+    win.loadFile(path.join(__dirname, '../renderer/index.html'), { hash: route, query: { childWindow: '1' } });
+  }
+  win.webContents.once('did-finish-load', () => {
+    // The one-shot db:ready broadcast happened at startup — replay it for late windows.
+    if (dbStartupComplete) win.webContents.send('db:ready');
+    const z = readUiPrefs().zoomLevel ?? DEFAULT_ZOOM_LEVEL;
+    if (z !== 0) win.webContents.setZoomLevel(z);
+  });
+  wireContextMenu(win);
+  childWindows.add(win);
+  win.on('closed', () => {
+    childWindows.delete(win);
+    // Nudge the main window so dashboards/queues refresh their counts —
+    // the user likely just finished (or signed) a note in the pop-out.
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('appWindows:closed');
+    }
+  });
+  return true;
+});
 
 app.whenReady().then(() => {
   createSplashWindow();
@@ -324,6 +581,7 @@ app.whenReady().then(() => {
   // Once the passphrase is provided via IPC, completeDbStartup() is called
   // which inits the DB and registers all data IPC handlers.
   createWindow();
+  createTray();
 
   // Check for updates after a short delay (don't block startup)
   if (!isDev) {
@@ -4823,9 +5081,11 @@ function registerIpcHandlers() {
         total_amount = COALESCE(?, total_amount),
         status = COALESCE(?, status),
         notes = COALESCE(?, notes),
+        service_period_start = COALESCE(?, service_period_start),
+        service_period_end = COALESCE(?, service_period_end),
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND deleted_at IS NULL
-    `).run(data.invoice_date, data.due_date, data.subtotal, data.discount_amount, data.total_amount, data.status, data.notes, id);
+    `).run(data.invoice_date, data.due_date, data.subtotal, data.discount_amount, data.total_amount, data.status, data.notes, data.service_period_start ?? null, data.service_period_end ?? null, id);
     return db.prepare('SELECT * FROM invoices WHERE id = ?').get(id);
   });
 
@@ -6869,15 +7129,17 @@ function registerIpcHandlers() {
     const result = db.prepare(`
       INSERT INTO contracted_entities (name, contact_name, contact_last_name, contact_email, contact_phone,
         billing_address_street, billing_address_city, billing_address_state, billing_address_zip,
-        default_note_type, notes, requires_notes, billing_cycle, billing_day, invoice_columns)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        default_note_type, notes, requires_notes, billing_cycle, billing_day, invoice_columns,
+        baa_on_file, baa_signed_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.name, data.contact_name || '', data.contact_last_name || '', data.contact_email || '', data.contact_phone || '',
       data.billing_address_street || '', data.billing_address_city || '',
       data.billing_address_state || '', data.billing_address_zip || '',
       data.default_note_type || 'soap', data.notes || '',
       data.requires_notes ? 1 : 0, data.billing_cycle || 'monthly', data.billing_day || 1,
-      data.invoice_columns ?? null
+      data.invoice_columns ?? null,
+      data.baa_on_file ? 1 : 0, data.baa_signed_date ?? null
     );
     return db.prepare('SELECT * FROM contracted_entities WHERE id = ?').get(result.lastInsertRowid);
   });
@@ -6888,11 +7150,12 @@ function registerIpcHandlers() {
     const values: any[] = [];
     const allowed = ['name', 'contact_name', 'contact_last_name', 'contact_email', 'contact_phone',
       'billing_address_street', 'billing_address_city', 'billing_address_state', 'billing_address_zip',
-      'default_note_type', 'notes', 'requires_notes', 'billing_cycle', 'billing_day', 'invoice_columns'];
+      'default_note_type', 'notes', 'requires_notes', 'billing_cycle', 'billing_day', 'invoice_columns',
+      'baa_on_file', 'baa_signed_date'];
     for (const key of allowed) {
       if (data[key] !== undefined) {
         fields.push(`${key} = ?`);
-        values.push(key === 'requires_notes' ? (data[key] ? 1 : 0) : data[key]);
+        values.push(key === 'requires_notes' || key === 'baa_on_file' ? (data[key] ? 1 : 0) : data[key]);
       }
     }
     if (fields.length === 0) throw new Error('No fields to update');
@@ -7014,10 +7277,27 @@ function registerIpcHandlers() {
       invoiceNumber = `${prefix}${String(nextNum).padStart(4, '0')}`;
     }
 
+    // Default the service period to the calendar month(s) the sessions fall in. Whole-month
+    // bounds (1st → last day) so a typical monthly batch reads "May 2026"; editable afterward.
+    const svcDates = appts.map((a: any) => a.scheduled_date).filter(Boolean).sort();
+    let periodStart: string | null = null;
+    let periodEnd: string | null = null;
+    if (svcDates.length) {
+      const monthStart = (d: string) => `${d.slice(0, 7)}-01`;
+      const monthEnd = (d: string) => {
+        const y = parseInt(d.slice(0, 4), 10);
+        const mo = parseInt(d.slice(5, 7), 10);
+        const lastDay = new Date(y, mo, 0).getDate(); // day 0 of next month = last day of this one
+        return `${d.slice(0, 7)}-${String(lastDay).padStart(2, '0')}`;
+      };
+      periodStart = monthStart(svcDates[0]);
+      periodEnd = monthEnd(svcDates[svcDates.length - 1]);
+    }
+
     const result = db.prepare(`
-      INSERT INTO invoices (entity_id, invoice_number, invoice_date, due_date, subtotal, discount_amount, total_amount, status, notes)
-      VALUES (?, ?, ?, ?, ?, 0, ?, 'draft', '')
-    `).run(entityId, invoiceNumber, invoiceDate, dueDate || null, total, total);
+      INSERT INTO invoices (entity_id, invoice_number, invoice_date, due_date, subtotal, discount_amount, total_amount, status, notes, service_period_start, service_period_end)
+      VALUES (?, ?, ?, ?, ?, 0, ?, 'draft', '', ?, ?)
+    `).run(entityId, invoiceNumber, invoiceDate, dueDate || null, total, total, periodStart, periodEnd);
     const invoiceId = result.lastInsertRowid;
 
     const insertItem = db.prepare(`
@@ -7205,10 +7485,10 @@ function registerIpcHandlers() {
     return db.prepare('SELECT * FROM entity_documents WHERE entity_id = ? AND deleted_at IS NULL ORDER BY uploaded_at DESC').all(entityId);
   });
 
-  safeHandle('entityDocuments:upload', async (_event, data: { entityId: number; category?: string }) => {
+  safeHandle('entityDocuments:upload', async (_event, data: { entityId: number; category?: string; appointmentId?: number }) => {
     requireTier('pro');
     const { canceled, filePaths } = await dialog.showOpenDialog({
-      title: 'Upload Entity Document',
+      title: data.category === 'route_sheet' ? 'Upload Route Sheet' : 'Upload Entity Document',
       properties: ['openFile'],
       filters: [
         { name: 'Documents', extensions: ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'txt'] },
@@ -7226,13 +7506,13 @@ function registerIpcHandlers() {
     fs.copyFileSync(sourcePath, destPath);
 
     const result = db.prepare(`
-      INSERT INTO entity_documents (entity_id, filename, original_name, file_path, category, notes)
-      VALUES (?, ?, ?, ?, ?, '')
-    `).run(data.entityId, filename, originalName, destPath, data.category || 'other');
+      INSERT INTO entity_documents (entity_id, filename, original_name, file_path, category, notes, appointment_id)
+      VALUES (?, ?, ?, ?, ?, '', ?)
+    `).run(data.entityId, filename, originalName, destPath, data.category || 'other', data.appointmentId ?? null);
     return db.prepare('SELECT * FROM entity_documents WHERE id = ?').get(result.lastInsertRowid);
   });
 
-  safeHandle('entityDocuments:uploadFromPath', (_event, data: { entityId: number; filePath: string; category?: string }) => {
+  safeHandle('entityDocuments:uploadFromPath', (_event, data: { entityId: number; filePath: string; category?: string; appointmentId?: number }) => {
     requireTier('pro');
     if (!data.filePath || !fs.existsSync(data.filePath)) throw new Error('File not found');
     const sourcePath = data.filePath;
@@ -7245,10 +7525,30 @@ function registerIpcHandlers() {
     fs.copyFileSync(sourcePath, destPath);
 
     const result = db.prepare(`
-      INSERT INTO entity_documents (entity_id, filename, original_name, file_path, category, notes)
-      VALUES (?, ?, ?, ?, ?, '')
-    `).run(data.entityId, filename, originalName, destPath, data.category || 'other');
+      INSERT INTO entity_documents (entity_id, filename, original_name, file_path, category, notes, appointment_id)
+      VALUES (?, ?, ?, ?, ?, '', ?)
+    `).run(data.entityId, filename, originalName, destPath, data.category || 'other', data.appointmentId ?? null);
     return db.prepare('SELECT * FROM entity_documents WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  // Read an entity document as a base64 attachment (used to attach route sheets to note emails).
+  safeHandle('entityDocuments:readAsAttachment', (_event, documentId: number) => {
+    requireTier('pro');
+    const doc = db.prepare('SELECT * FROM entity_documents WHERE id = ? AND deleted_at IS NULL').get(documentId) as any;
+    if (!doc) throw new Error('Document not found');
+    if (!fs.existsSync(doc.file_path)) throw new Error(`File missing on disk: ${doc.original_name || doc.filename}`);
+    const ext = path.extname(doc.file_path).toLowerCase();
+    const mime: Record<string, string> = {
+      '.pdf': 'application/pdf', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+      '.doc': 'application/msword',
+      '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      '.txt': 'text/plain',
+    };
+    return {
+      fileName: doc.original_name || doc.filename,
+      contentBase64: fs.readFileSync(doc.file_path).toString('base64'),
+      contentType: mime[ext] || 'application/octet-stream',
+    };
   });
 
   safeHandle('entityDocuments:open', (_event, documentId: number) => {
@@ -7748,6 +8048,48 @@ function registerIpcHandlers() {
     `).get() as any).cnt;
 
     return { outstanding, unpaidCount };
+  });
+
+  // Breakdown of where outstanding money sits: agency/contract invoices vs individual-client
+  // invoices, how much is overdue, plus signed client sessions not yet on any invoice (money
+  // earned but never billed). Powers the collapsible Outstanding Balance panel on the dashboard.
+  safeHandle('dashboard:getOutstandingBreakdown', () => {
+    const sumRow = (sql: string): { amount: number; count: number } => {
+      const r = db.prepare(sql).get() as any;
+      return { amount: r?.amount || 0, count: r?.count || 0 };
+    };
+
+    // Unpaid = any non-paid, non-void invoice (matches getOutstandingBalance's total).
+    const UNPAID = "status NOT IN ('paid', 'void') AND deleted_at IS NULL";
+
+    const contract = sumRow(`
+      SELECT COALESCE(SUM(total_amount), 0) AS amount, COUNT(*) AS count
+      FROM invoices WHERE ${UNPAID} AND entity_id IS NOT NULL
+    `);
+    const individual = sumRow(`
+      SELECT COALESCE(SUM(total_amount), 0) AS amount, COUNT(*) AS count
+      FROM invoices WHERE ${UNPAID} AND entity_id IS NULL
+    `);
+    const overdue = sumRow(`
+      SELECT COALESCE(SUM(total_amount), 0) AS amount, COUNT(*) AS count
+      FROM invoices WHERE ${UNPAID} AND due_date IS NOT NULL AND due_date < date('now')
+    `);
+
+    // Signed individual-client sessions (notes) not attached to any live invoice — earned but unbilled.
+    const unbilled = sumRow(`
+      SELECT COUNT(*) AS count, COALESCE(SUM(charge_amount), 0) AS amount
+      FROM notes n
+      WHERE n.deleted_at IS NULL AND n.signed_at IS NOT NULL AND n.client_id IS NOT NULL
+        AND n.id NOT IN (
+          SELECT ii.note_id FROM invoice_items ii
+          JOIN invoices i ON i.id = ii.invoice_id
+          WHERE i.deleted_at IS NULL AND i.status != 'void' AND ii.note_id IS NOT NULL
+        )
+    `);
+
+    // entity_id IS NULL / NOT NULL partitions every unpaid invoice, so the two sum to the total.
+    const total = contract.amount + individual.amount;
+    return { total, contract, individual, overdue, unbilled };
   });
 
   safeHandle('dashboard:getAnalytics', (_event, filters?: { startDate?: string; endDate?: string; monthsBack?: number }) => {
@@ -8892,6 +9234,23 @@ function registerIpcHandlers() {
     } finally {
       reminderRunInFlight = false;
     }
+  });
+
+  // Manual send/resend of a reminder for a single appointment (calendar airplane button).
+  safeHandle('reminders:sendForAppointment', async (_event, appointmentId: number) => {
+    const practiceRow = db.prepare('SELECT name FROM practice LIMIT 1').get() as any;
+    const practiceName = (practiceRow?.name || 'your provider').toString();
+    const { templates } = loadReminderConfig();
+    const result = await sendReminderForAppointment({ db, messagingRouter, practiceName, templates, appointmentId });
+    if (result.status !== 'skipped') {
+      auditLog({
+        actionType: result.success ? 'reminder_sent' : 'reminder_failed',
+        entityType: 'appointment',
+        entityId: appointmentId,
+        detail: { manual: true, channel: result.channel, error: result.error || undefined },
+      });
+    }
+    return result;
   });
 
   safeHandle('reminders:getConfig', () => {
@@ -10331,12 +10690,40 @@ function buildInvoicePdf(invoice: any, items: any[], client: any, practice: any,
   }
 
   // ── Service Period (entity invoices) ──
+  // Prefer the invoice's explicit (editable) period; fall back to the min/max line-item dates
+  // for legacy invoices that predate the stored field. Collapse a whole calendar month to
+  // "May 2026", and format loose ranges like "May 16 – May 24, 2026".
   if (isEntityInvoice && items.length > 0) {
-    const dates = items.map((i: any) => i.service_date).filter(Boolean).sort();
-    if (dates.length > 0) {
-      const periodText = dates[0] === dates[dates.length - 1]
-        ? `Service Date: ${dates[0]}`
-        : `Service Period: ${dates[0]} – ${dates[dates.length - 1]}`;
+    let start: string | null = invoice.service_period_start || null;
+    let end: string | null = invoice.service_period_end || null;
+    if (!start || !end) {
+      const dates = items.map((i: any) => i.service_date).filter(Boolean).sort();
+      if (dates.length > 0) {
+        start = start || dates[0];
+        end = end || dates[dates.length - 1];
+      }
+    }
+    if (start && end) {
+      const fmtLong = (d: string) => {
+        try { return new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
+        catch { return d; }
+      };
+      const isFullMonth = (s: string, e: string) => {
+        if (s.slice(0, 7) !== e.slice(0, 7) || !s.endsWith('-01')) return false;
+        const y = parseInt(e.slice(0, 4), 10);
+        const mo = parseInt(e.slice(5, 7), 10);
+        const lastDay = new Date(y, mo, 0).getDate();
+        return e.endsWith(`-${String(lastDay).padStart(2, '0')}`);
+      };
+      let periodText: string;
+      if (start === end) {
+        periodText = `Service Date: ${fmtLong(start)}`;
+      } else if (isFullMonth(start, end)) {
+        try { periodText = `Service Period: ${new Date(start + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`; }
+        catch { periodText = `Service Period: ${fmtLong(start)} – ${fmtLong(end)}`; }
+      } else {
+        periodText = `Service Period: ${fmtLong(start)} – ${fmtLong(end)}`;
+      }
       doc.setFontSize(8.5);
       doc.setTextColor(PDF_COLORS.label[0], PDF_COLORS.label[1], PDF_COLORS.label[2]);
       doc.text(periodText, marginLeft, y);
@@ -10471,27 +10858,12 @@ function buildInvoicePdf(invoice: any, items: any[], client: any, practice: any,
   doc.text(formatCurrency(invoice.total_amount || 0), amountX, y, { align: 'right' });
   y += 30;
 
-  // ── Status Badge ──
-  const statusColors: Record<string, { bg: [number, number, number]; text: [number, number, number] }> = {
-    draft: { bg: [229, 231, 235], text: [55, 65, 81] },
-    sent: { bg: [219, 234, 254], text: [29, 78, 216] },
-    paid: { bg: [209, 250, 229], text: [21, 128, 61] },
-    partial: { bg: [254, 243, 199], text: [180, 83, 9] },
-    overdue: { bg: [254, 226, 226], text: [185, 28, 28] },
-    void: { bg: [254, 226, 226], text: [185, 28, 28] },
-  };
-  const statusColor = statusColors[invoice.status] || statusColors.draft;
-
-  doc.setFillColor(statusColor.bg[0], statusColor.bg[1], statusColor.bg[2]);
-  doc.roundedRect(marginLeft, y, 80, 22, 4, 4, 'F');
-  doc.setFontSize(10);
-  doc.setTextColor(statusColor.text[0], statusColor.text[1], statusColor.text[2]);
-  doc.text(invoice.status.toUpperCase(), marginLeft + 40, y + 15, { align: 'center' });
-  doc.setTextColor(0, 0, 0);
+  // (Internal workflow status — draft/sent/paid — is intentionally NOT printed on the
+  // invoice PDF; it only leaks internal state onto a document handed to the client/agency.)
 
   // ── Notes ──
   if (invoice.notes) {
-    y += 40;
+    y += 10;
     doc.setFontSize(10);
     doc.setFont('helvetica', 'bold');
     doc.text('Notes:', marginLeft, y);

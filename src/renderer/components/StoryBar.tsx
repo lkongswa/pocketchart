@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { ChevronRight } from 'lucide-react';
+import { sectionColorMap } from '../utils/sectionColors';
+import type { SectionColor } from '../utils/sectionColors';
 
 /**
  * StoryBar — the quiet "story bar" primitive for the redesigned client chart.
@@ -38,6 +40,10 @@ interface StoryBarProps {
   stats?: StoryStat[];
   /** right-aligned action (e.g. "+ Note") — clicking it does NOT toggle the bar */
   action?: React.ReactNode;
+  /** section identity color — colored left border + tinted, icon-tinted title row */
+  color?: SectionColor;
+  /** Lucide icon shown before the title (tinted with `color`) */
+  icon?: React.ReactNode;
   /** uncontrolled initial state (default collapsed) */
   defaultExpanded?: boolean;
   /** controlled open state */
@@ -50,6 +56,8 @@ export default function StoryBar({
   title,
   stats,
   action,
+  color,
+  icon,
   defaultExpanded = false,
   expanded: controlled,
   onToggle,
@@ -64,9 +72,11 @@ export default function StoryBar({
     onToggle?.(next);
   };
 
+  const scheme = color ? sectionColorMap[color] : null;
+
   return (
-    <div className="card overflow-hidden">
-      <div className="w-full flex items-center gap-2.5 px-4 py-3">
+    <div className={`card overflow-hidden ${scheme ? `border-l-4 ${scheme.border}` : ''}`}>
+      <div className={`w-full flex items-center gap-2.5 px-4 py-3 ${scheme ? scheme.bg : ''}`}>
         <button
           type="button"
           className="flex items-center gap-2.5 flex-1 min-w-0 text-left"
@@ -77,6 +87,7 @@ export default function StoryBar({
             size={15}
             className={`shrink-0 text-[var(--color-text-secondary)] transition-transform duration-150 ${open ? 'rotate-90' : ''}`}
           />
+          {icon && <span className={`shrink-0 ${scheme ? scheme.icon : 'text-[var(--color-text-secondary)]'}`}>{icon}</span>}
           <span className="font-semibold text-[var(--color-text)] shrink-0">{title}</span>
           {stats && stats.length > 0 && (
             <span className="flex items-center gap-1.5 flex-wrap min-w-0">
