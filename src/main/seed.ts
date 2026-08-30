@@ -156,7 +156,13 @@ export function seedDefaultData(db: BetterSqlite3.Database): void {
 export function seedDefaultQuickChips(db: BetterSqlite3.Database): void {
   const defaultChips = [
     { discipline: 'ALL', section: 'S', category: 'general', phrase: 'Pt was ready for therapy.' },
+    { discipline: 'ALL', section: 'O', category: 'general', phrase: 'Pt participated in ___ min of goal-directed treatment.' },
+    { discipline: 'ALL', section: 'O', category: 'general', phrase: 'Pt completed ___ trials of ___ with ___% accuracy.' },
+    { discipline: 'ALL', section: 'O', category: 'general', phrase: 'Pt required ___ cues for ___.' },
     { discipline: 'ALL', section: 'A', category: 'response', phrase: 'Pt responded well to tx.' },
+    { discipline: 'ALL', section: 'A', category: 'skilled_necessity', phrase: 'Skilled intervention was required to grade task complexity and provide a cueing hierarchy in response to pt performance.' },
+    { discipline: 'ALL', section: 'A', category: 'skilled_necessity', phrase: 'Pt continues to benefit from skilled services to progress toward established goals; deficits persist without clinician support.' },
+    { discipline: 'ALL', section: 'A', category: 'skilled_necessity', phrase: 'Clinician analyzed pt performance and modified treatment approach within the session to maximize accuracy and carryover.' },
     { discipline: 'ALL', section: 'P', category: 'next_session', phrase: 'Continue current POC.' },
   ];
 

@@ -73,7 +73,9 @@ function EvalOutlineNav({
                 key={section.id}
                 type="button"
                 className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-colors ${
-                  isActive ? 'bg-gray-100' : 'hover:bg-gray-50'
+                  isActive
+                    ? 'bg-violet-100 ring-1 ring-violet-300 border-l-2 border-l-violet-500'
+                    : 'hover:bg-gray-50'
                 }`}
                 onClick={() => onSectionClick(section.id)}
               >

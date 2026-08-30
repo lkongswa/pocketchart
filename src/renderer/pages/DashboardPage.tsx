@@ -891,8 +891,8 @@ const DashboardPage: React.FC = () => {
                         <ReminderIndicator appt={appt} onSend={handleSendReminder} />
                         {showNoteButton && (
                           <button
-                            className="btn-ghost p-1.5 opacity-0 group-hover:opacity-100 transition-opacity"
-                            title="Write Note"
+                            className="flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium text-teal-700 bg-teal-50 border border-teal-200 hover:bg-teal-100 transition-colors flex-shrink-0"
+                            title={isContractor && appt.note_id ? 'Open note' : 'Start a note for this visit'}
                             onClick={(e) => {
                               e.stopPropagation();
                               if (isContractor) {
@@ -913,7 +913,8 @@ const DashboardPage: React.FC = () => {
                               });
                             }}
                           >
-                            <PenLine size={14} className="text-teal-600" />
+                            <PenLine size={12} className="text-teal-600" />
+                            {isContractor && appt.note_id ? 'Note' : '+ Note'}
                           </button>
                         )}
                       </div>

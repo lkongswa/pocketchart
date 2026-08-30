@@ -3,6 +3,7 @@ import { X, Calendar, Clock, User, Building2, Repeat } from 'lucide-react';
 import { addDays, addWeeks, addMonths, format } from 'date-fns';
 import type { Appointment, AppointmentStatus, Client, ContractedEntity, ContractorPatient, EntityFeeSchedule, VisitType, SessionType } from '../../shared/types';
 import { VISIT_TYPE_LABELS, SESSION_TYPE_LABELS, APPOINTMENT_SERVICE_MODALITIES } from '../../shared/types';
+import FancySelect from './FancySelect';
 
 // Unified search result item
 type SearchItem =
@@ -683,21 +684,18 @@ export default function AppointmentModal({
                 <label className="label">
                   Service Modality <span className="text-[11px] text-[var(--color-text-secondary)] font-normal">(optional — shows on invoice)</span>
                 </label>
-                <select
-                  className="select"
+                <FancySelect
                   value={modalityChoice}
-                  onChange={(e) => {
-                    const v = e.target.value;
+                  onChange={(v) => {
                     setModalityChoice(v);
                     if (v !== '__custom__') setModalityCustom('');
                   }}
-                >
-                  <option value="">—</option>
-                  {APPOINTMENT_SERVICE_MODALITIES.map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                  <option value="__custom__">Other…</option>
-                </select>
+                  options={[
+                    { value: '', label: '—' },
+                    ...APPOINTMENT_SERVICE_MODALITIES.map((m) => ({ value: m, label: m })),
+                    { value: '__custom__', label: 'Other…' },
+                  ]}
+                />
                 {modalityChoice === '__custom__' && (
                   <input
                     type="text"
@@ -750,43 +748,37 @@ export default function AppointmentModal({
           {/* Duration */}
           <div>
             <label className="label">Duration</label>
-            <select
-              className="select"
-              value={formData.duration_minutes}
-              onChange={(e) =>
+            <FancySelect
+              value={String(formData.duration_minutes)}
+              onChange={(v) =>
                 setFormData((prev) => ({
                   ...prev,
-                  duration_minutes: parseInt(e.target.value, 10),
+                  duration_minutes: parseInt(v, 10),
                 }))
               }
-            >
-              {DURATION_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+              options={DURATION_OPTIONS.map((opt) => ({
+                value: String(opt.value),
+                label: opt.label,
+              }))}
+            />
           </div>
 
           {/* Status */}
           <div>
             <label className="label">Status</label>
-            <select
-              className="select"
+            <FancySelect
               value={formData.status}
-              onChange={(e) =>
+              onChange={(v) =>
                 setFormData((prev) => ({
                   ...prev,
-                  status: e.target.value as AppointmentStatus,
+                  status: v as AppointmentStatus,
                 }))
               }
-            >
-              {STATUS_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+              options={STATUS_OPTIONS.map((opt) => ({
+                value: opt.value,
+                label: opt.label,
+              }))}
+            />
           </div>
 
           {/* Visit Type */}

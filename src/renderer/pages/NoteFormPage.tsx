@@ -70,7 +70,7 @@ const MODIFIER_OPTIONS = [
 import NoteBankPopover from '../components/NoteBankPopover';
 import SmartTextarea from '../components/SmartTextarea';
 
-import QuickChips from '../components/QuickChips';
+import QuickChips, { type ExtraChip } from '../components/QuickChips';
 import { useTier } from '../hooks/useTier';
 
 // ── Helpers ──
@@ -273,6 +273,32 @@ export default function NoteFormPage() {
     }
     return combined;
   }, [addressedCategories, contextCategories]);
+
+  // Goal-derived Objective chips: one per active goal. Clicking inserts a
+  // skilled-language, goal-directed scaffold and marks the goal as addressed.
+  const goalObjectiveChips = useMemo<ExtraChip[]>(() => {
+    const disc = client?.discipline;
+    const providerLabel = disc === 'MFT' ? 'Clinician' : (disc || 'Clinician');
+    const subject = disc === 'MFT' ? 'Client' : 'Pt';
+    return goals
+      .filter((g) => g.status === 'active')
+      .map((g) => {
+        const core = g.goal_text
+          .replace(/^(Patient|Client|Pt)\s+will\s+/i, '')
+          .replace(/\.\s*$/, '');
+        const coreLc = core.charAt(0).toLowerCase() + core.slice(1);
+        const blank = goalPerformanceBlank(g.measurement_type, g.instrument);
+        const target = g.target_value
+          ? ` (target: ${formatMetricValue(g.measurement_type, g.target_value, g.instrument)})`
+          : '';
+        return {
+          key: g.id,
+          label: core,
+          phrase: `${providerLabel} trained ${subject} to ${coreLc}, and ${subject} completed with ${blank}${target}.`,
+          title: `Insert goal-directed text + mark this goal as addressed:\n${g.goal_text}`,
+        };
+      });
+  }, [goals, client?.discipline]);
 
   // Discharge state
   const [dischargeData, setDischargeData] = useState<DischargeData>({
@@ -797,6 +823,15 @@ export default function NoteFormPage() {
   const noteBankInsertO = useCallback((phrase: string) => insertAtCursor(objectiveRef, setObjective, phrase), [insertAtCursor]);
   const noteBankInsertA = useCallback((phrase: string) => insertAtCursor(assessmentRef, setAssessment, phrase), [insertAtCursor]);
   const noteBankInsertP = useCallback((phrase: string) => insertAtCursor(planRef, setPlan, phrase), [insertAtCursor]);
+
+  // Goal chip click: insert the scaffold into Objective AND mark the goal as addressed
+  const handleGoalChipInsert = useCallback((chip: ExtraChip) => {
+    insertAtCursor(objectiveRef, setObjective, chip.phrase);
+    const goalId = Number(chip.key);
+    if (!Number.isNaN(goalId)) {
+      setGoalsAddressed((prev) => (prev.includes(goalId) ? prev : [...prev, goalId]));
+    }
+  }, [insertAtCursor]);
 
   const getNoteBankInsertHandler = (section: SOAPSection) => {
     switch (section) {
@@ -2414,6 +2449,8 @@ export default function NoteFormPage() {
           placeholder={NOTE_FORMAT_SECTIONS[noteFormat][1].placeholder}
           disabled={!!existingSignedAt}
           priorityCategories={combinedPriority}
+          extraChips={existingSignedAt ? undefined : goalObjectiveChips}
+          onExtraChipInsert={handleGoalChipInsert}
         />
 
         {/* ── Goal Progress (Progress Report only) ── */}
@@ -3703,6 +3740,24 @@ export default function NoteFormPage() {
 
 // ── SOAP Section Card sub-component ──
 
+/** Blank scaffold for documenting this session's performance, shaped by the goal's metric. */
+function goalPerformanceBlank(type: MeasurementType, instrument?: string): string {
+  switch (type) {
+    case 'percentage': return '___% accuracy';
+    case 'assist_level': return '___ assist';
+    case 'cue_level': return '___ cues';
+    case 'pain_scale': return '___/10';
+    case 'mmt_grade': return '___/5';
+    case 'rom_degrees': return '___° AROM';
+    case 'timed_seconds': return '___ seconds';
+    case 'standardized_score': return instrument ? `${instrument} score of ___` : 'score of ___';
+    case 'frequency': return '___ per week';
+    case 'severity': return '___ severity';
+    case 'fim_score': return 'FIM ___/7';
+    default: return '___';
+  }
+}
+
 interface SOAPSectionCardProps {
   title: string;
   sectionCode: SOAPSection;
@@ -3718,6 +3773,8 @@ interface SOAPSectionCardProps {
   placeholder?: string;
   disabled?: boolean;
   priorityCategories?: string[];
+  extraChips?: ExtraChip[];
+  onExtraChipInsert?: (chip: ExtraChip) => void;
 }
 
 const soapSectionTint: Record<SOAPSection, string> = {
@@ -3742,6 +3799,8 @@ function SOAPSectionCard({
   placeholder: customPlaceholder,
   disabled,
   priorityCategories = [],
+  extraChips,
+  onExtraChipInsert,
 }: SOAPSectionCardProps) {
   return (
     <div className={`card p-6 mb-6 ${soapSectionTint[sectionCode]}`}>
@@ -3779,6 +3838,8 @@ function SOAPSectionCard({
           maxChips={6}
           onOpenFullBank={() => setNoteBankOpen(sectionCode)}
           priorityCategories={priorityCategories}
+          extraChips={extraChips}
+          onExtraChipInsert={onExtraChipInsert}
         />
       </div>
 

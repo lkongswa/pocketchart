@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { FileText, Send } from 'lucide-react';
+import { FilePlus2, FileText, Send } from 'lucide-react';
 import type { Appointment, AppointmentStatus, VisitType, SessionType } from '../../../shared/types';
 import { VISIT_TYPE_LABELS, SESSION_TYPE_LABELS } from '../../../shared/types';
 import AppointmentHoverCard from './AppointmentHoverCard';
@@ -342,7 +342,7 @@ export default function AppointmentBlock({
   if (compact) {
     return (
       <div
-        className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-xs truncate cursor-pointer ${statusClasses[appointment.status]}`}
+        className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-xs truncate cursor-pointer border border-slate-400/50 ${statusClasses[appointment.status]}`}
         draggable={true}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
@@ -369,7 +369,7 @@ export default function AppointmentBlock({
   return (
     <div
       ref={blockRef}
-      className={`absolute left-0.5 right-0.5 rounded-md px-1.5 py-1 overflow-hidden cursor-pointer transition-shadow hover:shadow-md z-10 pointer-events-auto ${statusClasses[appointment.status]} ${isResizing ? 'ring-2 ring-blue-400' : ''}`}
+      className={`absolute left-0.5 right-0.5 rounded-md px-1.5 py-1 overflow-hidden cursor-pointer transition-shadow hover:shadow-md z-10 pointer-events-auto border border-slate-400/50 ${statusClasses[appointment.status]} ${isResizing ? 'ring-2 ring-blue-400' : ''}`}
       style={{ top: topPx, height: heightPx }}
       draggable={!isResizing}
       onDragStart={handleDragStart}
@@ -426,10 +426,10 @@ export default function AppointmentBlock({
       {/* Note shortcut icon — show for client appts; for contractor appts only when entity requires notes in PocketChart */}
       {onNoteClick && (appointment.client_id || (appointment.entity_id && appointment.entity_requires_notes)) && appointment.status !== 'cancelled' && heightPx >= 40 && (
         <button
-          className={`absolute bottom-1 right-1 w-5 h-5 flex items-center justify-center rounded transition-all ${
+          className={`absolute bottom-0.5 right-0.5 w-6 h-6 flex items-center justify-center rounded-md transition-all ${
             (appointment as any).note_id || (appointment as any).evaluation_id
-              ? 'opacity-60 hover:opacity-100 hover:bg-white/60'
-              : 'opacity-40 hover:opacity-100 hover:bg-white/60'
+              ? 'opacity-70 hover:opacity-100 bg-white/50 hover:bg-white/80'
+              : 'opacity-80 hover:opacity-100 text-teal-700 bg-white/60 hover:bg-white/90 shadow-sm'
           }`}
           title={(appointment as any).note_id ? 'View note' : 'Write note'}
           onClick={(e) => {
@@ -438,7 +438,9 @@ export default function AppointmentBlock({
             onNoteClick(appointment);
           }}
         >
-          <FileText size={14} className="text-current" />
+          {(appointment as any).note_id || (appointment as any).evaluation_id
+            ? <FileText size={16} className="text-current" />
+            : <FilePlus2 size={16} className="text-current" />}
         </button>
       )}
       {/* Resize handle — bottom edge, drag downward to lengthen the appt */}

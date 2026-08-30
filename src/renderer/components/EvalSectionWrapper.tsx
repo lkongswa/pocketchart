@@ -12,6 +12,8 @@ interface EvalSectionWrapperProps {
   children: React.ReactNode;
   sectionRef?: (el: HTMLDivElement | null) => void;
   badge?: React.ReactNode;
+  /** True when this section is the one the user is currently in (scroll/focus) — mirrors the outline nav highlight. */
+  isActive?: boolean;
 }
 
 const STATUS_DOT: Record<SectionStatus, string> = {
@@ -36,12 +38,17 @@ const EvalSectionWrapper = React.memo(function EvalSectionWrapper({
   children,
   sectionRef,
   badge,
+  isActive,
 }: EvalSectionWrapperProps) {
   return (
     <div
       ref={sectionRef}
       data-section-id={id}
-      className={`card mb-6 transition-all ${!isExpanded ? COLLAPSED_BORDER[status] : ''}`}
+      className={`card mb-6 transition-all ${
+        isActive
+          ? 'border-violet-300 ring-2 ring-violet-400/60 shadow-md bg-violet-50/20'
+          : !isExpanded ? COLLAPSED_BORDER[status] : ''
+      }`}
     >
       {/* Clickable header */}
       <div

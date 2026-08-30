@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+﻿import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate, useLocation, useBlocker, useSearchParams } from 'react-router-dom';
 import { useSectionColor } from '../hooks/useSectionColor';
 import {
@@ -54,7 +54,7 @@ import { useEvalSections } from '../hooks/useEvalSections';
 import { getGoalCategoriesFromPlan } from '../../shared/intervention-goal-map';
 import { getPatternsForCategory } from '../../shared/goal-patterns';
 
-// ── Types ──
+// â”€â”€ Types â”€â”€
 
 interface PTObjectiveAssessment {
   rom: string;
@@ -137,7 +137,7 @@ const CATEGORY_OPTIONS: Record<Discipline, string[]> = {
   MFT: ['Depression', 'Anxiety', 'Trauma', 'Relationship', 'Family Systems', 'Coping Skills', 'Self-Esteem', 'Grief', 'Behavioral', 'Communication'],
 };
 
-// ── Treatment Plan Quick Chips by Discipline ──
+// â”€â”€ Treatment Plan Quick Chips by Discipline â”€â”€
 
 const TREATMENT_PLAN_CHIPS: Record<Discipline, string[]> = {
   PT: [
@@ -215,7 +215,7 @@ const SOAP_SECTION_TINT: Record<SOAPSection, string> = {
   P: 'bg-rose-50/50',
 };
 
-// ── Helpers ──
+// â”€â”€ Helpers â”€â”€
 
 function todayISO(): string {
   const d = new Date();
@@ -349,7 +349,7 @@ function getObjectiveFields(discipline: Discipline): ObjectiveFieldDef[] {
   }
 }
 
-/** Pain scale component — 0-10 colored buttons + optional notes */
+/** Pain scale component â€” 0-10 colored buttons + optional notes */
 function PainScaleInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   // Parse existing value: "6/10 - some notes" or just "6/10" or free text
   const match = value.match(/^(\d+)\/10(?:\s*-\s*(.*))?$/s);
@@ -410,7 +410,7 @@ const DISCIPLINE_LABELS: Record<Discipline, string> = {
   MFT: 'Marriage & Family Therapy',
 };
 
-// ── Rehab Potential Section ──
+// â”€â”€ Rehab Potential Section â”€â”€
 
 const REHAB_RATINGS = ['Good', 'Fair', 'Poor'] as const;
 type RehabRating = typeof REHAB_RATINGS[number];
@@ -478,7 +478,7 @@ const RehabPotentialSection = React.memo(function RehabPotentialSection({
   const [editText, setEditText] = useState('');
   const editInputRef = useRef<HTMLInputElement>(null);
 
-  // Inline add state — which category group is adding
+  // Inline add state â€” which category group is adding
   const [addingCategory, setAddingCategory] = useState<RehabChipCategory | null>(null);
   const [addText, setAddText] = useState('');
   const addInputRef = useRef<HTMLInputElement>(null);
@@ -664,7 +664,7 @@ const RehabPotentialSection = React.memo(function RehabPotentialSection({
                 }`}
                 onClick={() => toggleReasonChip(chip.phrase, category)}
                 onContextMenu={(e) => handleChipRightClick(e, chip)}
-                title="Click to toggle · Right-click to edit/delete"
+                title="Click to toggle Â· Right-click to edit/delete"
               >
                 {displayLabel}
               </button>
@@ -783,7 +783,7 @@ const RehabPotentialSection = React.memo(function RehabPotentialSection({
   );
 });
 
-// ── Component ──
+// â”€â”€ Component â”€â”€
 
 export default function EvalFormPage() {
   const { id: clientId, evalId } = useParams<{ id: string; evalId?: string }>();
@@ -870,7 +870,7 @@ export default function EvalFormPage() {
   const lastClientCheckRef = useRef<number>(0);
   const evalPhysicianIdAtLoad = useRef<number | null | undefined>(undefined); // tracks physician ID from when eval was loaded
 
-  // ── Section collapsing & outline nav ──
+  // â”€â”€ Section collapsing & outline nav â”€â”€
   const {
     sections: evalSections,
     expandedSections,
@@ -896,7 +896,7 @@ export default function EvalFormPage() {
   // Helper to get section status by id
   const getSectionStatus = (id: string) => evalSections.find(s => s.id === id)?.status ?? 'optional-empty';
 
-  // ── Data Loading ──
+  // â”€â”€ Data Loading â”€â”€
 
   const loadData = useCallback(async () => {
     if (!clientId) return;
@@ -1071,7 +1071,7 @@ export default function EvalFormPage() {
             }
           }
 
-          // ── Client → Eval physician sync check (for unsigned drafts) ──
+          // â”€â”€ Client â†’ Eval physician sync check (for unsigned drafts) â”€â”€
           evalPhysicianIdAtLoad.current = parsed.referral_physician_id ?? null;
           if (!evaluation.signed_at) {
             const clientMD = clientData.referring_physician?.trim() || '';
@@ -1080,7 +1080,7 @@ export default function EvalFormPage() {
             const evalMDId = parsed.referral_physician_id;
 
             if (clientMD && (clientMDId !== evalMDId || clientMD !== evalMD)) {
-              // Client has a (different) physician — offer to update eval
+              // Client has a (different) physician â€” offer to update eval
               setPhysicianSyncBanner({
                 name: clientMD,
                 id: clientMDId ?? undefined,
@@ -1088,7 +1088,7 @@ export default function EvalFormPage() {
                 fax: clientData.referring_fax || undefined,
               });
             } else if (!clientMD && evalMD && evalMDId) {
-              // Client physician was cleared — offer to clear eval too
+              // Client physician was cleared â€” offer to clear eval too
               setPhysicianSyncBanner({
                 name: '',
                 cleared: true,
@@ -1101,7 +1101,7 @@ export default function EvalFormPage() {
           setContent(emptyContent(discipline));
         }
       } else if (isReassessment) {
-        // ── Pre-populate from prior signed eval ──
+        // â”€â”€ Pre-populate from prior signed eval â”€â”€
         // Performance: collect all async data first, then batch setState calls
         try {
           const prior = await window.api.evaluations.createReassessment(cid);
@@ -1112,13 +1112,13 @@ export default function EvalFormPage() {
             const base = emptyContent(discipline);
             const prePopulated: EvalContent = {
               ...base,
-              referral_source: parsed.referral_source || (clientData.referring_physician_id && clientData.referring_physician ? clientData.referring_physician : [clientData.referring_physician, clientData.referral_source].filter(Boolean).join(' — ') || ''),
+              referral_source: parsed.referral_source || (clientData.referring_physician_id && clientData.referring_physician ? clientData.referring_physician : [clientData.referring_physician, clientData.referral_source].filter(Boolean).join(' â€” ') || ''),
               referral_physician_id: parsed.referral_physician_id ?? clientData.referring_physician_id ?? null,
               referral_physician_npi: parsed.referral_physician_npi || clientData.referring_npi || '',
               medical_history: parsed.medical_history || '',
-              prior_level_of_function: '', // blank — user fills new CLOF
-              current_complaints: '', // blank — user fills new complaints
-              objective_assessment: base.objective_assessment, // blank — new objective needed
+              prior_level_of_function: '', // blank â€” user fills new CLOF
+              current_complaints: '', // blank â€” user fills new complaints
+              objective_assessment: base.objective_assessment, // blank â€” new objective needed
               clinical_impression: parsed.clinical_impression || '',
               rehabilitation_potential: parsed.rehabilitation_potential || '',
               precautions: parsed.precautions || '',
@@ -1184,7 +1184,7 @@ export default function EvalFormPage() {
               prePopulated.carried_over_count = entries.length;
             }
 
-            // ── BATCH: all setState calls in one synchronous block ──
+            // â”€â”€ BATCH: all setState calls in one synchronous block â”€â”€
             setContent(prePopulated);
             setPriorFieldKeys(prefilled);
             if (parsedFreq !== null) setFreqValue(parsedFreq);
@@ -1194,19 +1194,19 @@ export default function EvalFormPage() {
             if (linkedIds.length > 0) setGoalsAlreadyCreated(true);
 
             isDirty.current = true; // Mark dirty so autosave persists pre-populated data
-            setToast('Pre-populated from prior evaluation — review and update fields');
+            setToast('Pre-populated from prior evaluation â€” review and update fields');
           } else {
             const freshContent = emptyContent(discipline);
             if (clientData.referring_physician_id && clientData.referring_physician) {
               freshContent.referral_source = clientData.referring_physician;
             } else {
               const refParts = [clientData.referring_physician, clientData.referral_source].filter(Boolean);
-              if (refParts.length > 0) freshContent.referral_source = refParts.join(' — ');
+              if (refParts.length > 0) freshContent.referral_source = refParts.join(' â€” ');
             }
             freshContent.referral_physician_id = clientData.referring_physician_id ?? null;
             freshContent.referral_physician_npi = clientData.referring_npi || '';
             setContent(freshContent);
-            setToast('No prior signed evaluation found — starting fresh');
+            setToast('No prior signed evaluation found â€” starting fresh');
           }
         } catch (err) {
           console.error('Failed to load prior eval for reassessment:', err);
@@ -1215,7 +1215,7 @@ export default function EvalFormPage() {
             fallbackContent.referral_source = clientData.referring_physician;
           } else {
             const refParts2 = [clientData.referring_physician, clientData.referral_source].filter(Boolean);
-            if (refParts2.length > 0) fallbackContent.referral_source = refParts2.join(' — ');
+            if (refParts2.length > 0) fallbackContent.referral_source = refParts2.join(' â€” ');
           }
           fallbackContent.referral_physician_id = clientData.referring_physician_id ?? null;
           fallbackContent.referral_physician_npi = clientData.referring_npi || '';
@@ -1234,11 +1234,11 @@ export default function EvalFormPage() {
         const newContent = emptyContent(discipline);
         // Auto-populate referral source from client record
         if (clientData.referring_physician_id && clientData.referring_physician) {
-          // Physician from directory — use just the name so combobox can match
+          // Physician from directory â€” use just the name so combobox can match
           newContent.referral_source = clientData.referring_physician;
         } else {
           const refParts = [clientData.referring_physician, clientData.referral_source].filter(Boolean);
-          if (refParts.length > 0) newContent.referral_source = refParts.join(' — ');
+          if (refParts.length > 0) newContent.referral_source = refParts.join(' â€” ');
         }
         newContent.referral_physician_id = clientData.referring_physician_id ?? null;
         newContent.referral_physician_npi = clientData.referring_npi || '';
@@ -1281,7 +1281,7 @@ export default function EvalFormPage() {
           newContent.carried_over_count = entries.length;
         }
 
-        // ── BATCH: all setState calls in one synchronous block ──
+        // â”€â”€ BATCH: all setState calls in one synchronous block â”€â”€
         setContent(newContent);
         if (completedGoalsList.length > 0) setCompletedGoals(completedGoalsList);
         if (entries.length > 0) setGoalEntries(entries);
@@ -1308,7 +1308,7 @@ export default function EvalFormPage() {
     loadData();
   }, [loadData]);
 
-  // ── Client → Eval physician sync (detect changes when window regains focus) ──
+  // â”€â”€ Client â†’ Eval physician sync (detect changes when window regains focus) â”€â”€
   useEffect(() => {
     if (!clientId || existingSignedAt) return; // Skip for signed evals
 
@@ -1369,7 +1369,7 @@ export default function EvalFormPage() {
     }
   }, [toast]);
 
-  // ── Reload goals bank when category changes ──
+  // â”€â”€ Reload goals bank when category changes â”€â”€
 
   // Track which categories have been used in current goal entries
   const usedCategories = useMemo(() => {
@@ -1386,7 +1386,7 @@ export default function EvalFormPage() {
     [goalEntries, content?.created_goal_ids, goalHistories, patternOverrides, customGoalPatterns]
   );
 
-  // ── Auto-Save (ref-based to avoid re-render cascade) ──
+  // â”€â”€ Auto-Save (ref-based to avoid re-render cascade) â”€â”€
 
   // Store all auto-save inputs as refs so performAutoSave is stable
   const autoSaveDataRef = useRef({
@@ -1422,7 +1422,7 @@ export default function EvalFormPage() {
         updatedGoalIds = updatedGoalIds.slice(0, d.goalEntries.length);
       }
 
-      // Parallel goal sync — fire all updates/creates concurrently
+      // Parallel goal sync â€” fire all updates/creates concurrently
       const goalPromises = d.goalEntries.map(async (entry, i) => {
         if (!entry.goal_text.trim()) return;
         const existingId = i < updatedGoalIds.length ? updatedGoalIds[i] : null;
@@ -1499,7 +1499,7 @@ export default function EvalFormPage() {
     } catch (err) {
       console.error('Auto-save failed:', err);
     }
-  }, []); // Stable — reads from ref
+  }, []); // Stable â€” reads from ref
 
   // Debounced auto-save: triggers 5 seconds after any user change
   useEffect(() => {
@@ -1546,7 +1546,7 @@ export default function EvalFormPage() {
     return () => window.removeEventListener('beforeunload', handler);
   }, [content, goalEntries]);
 
-  // ── Field update helpers ──
+  // â”€â”€ Field update helpers â”€â”€
 
   const updateField = (field: keyof Omit<EvalContent, 'objective_assessment'>, value: string) => {
     isDirty.current = true;
@@ -1567,7 +1567,7 @@ export default function EvalFormPage() {
     });
   };
 
-  // ── Frequency & Duration helpers ──
+  // â”€â”€ Frequency & Duration helpers â”€â”€
 
   const updateFreqDuration = (freq: number, dur: number) => {
     setFreqValue(freq);
@@ -1581,7 +1581,7 @@ export default function EvalFormPage() {
     }
   };
 
-  // ── Treatment Plan chip toggle ──
+  // â”€â”€ Treatment Plan chip toggle â”€â”€
 
   const toggleTreatmentChip = (chip: string) => {
     isDirty.current = true;
@@ -1624,7 +1624,7 @@ export default function EvalFormPage() {
         baseline_value: entry.baseline_value || `${entry.baseline ?? 0}`,
         target_value: entry.target_value || `${entry.target ?? 80}`,
         instrument: entry.instrument || '',
-        // target_date intentionally omitted — date chip is sufficient, no need in goal narrative
+        // target_date intentionally omitted â€” date chip is sufficient, no need in goal narrative
       });
     }
     // Custom/legacy: return existing text as-is (user writes it manually)
@@ -1651,8 +1651,8 @@ export default function EvalFormPage() {
           }
         }
         // Manual-text override handling:
-        // - A direct goal_text edit (or goal_text_manual:true) pins the entry to manual text — no re-compose.
-        // - goal_text_manual:false means the user switched back to the pattern — re-compose now.
+        // - A direct goal_text edit (or goal_text_manual:true) pins the entry to manual text â€” no re-compose.
+        // - goal_text_manual:false means the user switched back to the pattern â€” re-compose now.
         // - Otherwise, only auto-compose when the text is NOT manually overridden.
         const editedText = field.goal_text !== undefined;
         if (field.goal_text_manual === false) {
@@ -1687,7 +1687,7 @@ export default function EvalFormPage() {
       if (!entry) return prev;
       const updatedComps = { ...(entry.components || {}), [key]: value };
       const updated = { ...entry, components: updatedComps };
-      // Recompose goal text so the narrative reflects the new component choice —
+      // Recompose goal text so the narrative reflects the new component choice â€”
       // unless the user has hand-edited the text (manual override wins).
       if (!updated.goal_text_manual && updated.pattern_id && updated.pattern_id !== 'custom_freeform') {
         updated.goal_text = composeGoalText(updated);
@@ -1740,7 +1740,7 @@ export default function EvalFormPage() {
     updateGoalField(idx, { pattern_id: 'custom_freeform', components: undefined });
   }, [updateGoalField]);
 
-  // ── Generate Goals from Treatment Plan ──
+  // â”€â”€ Generate Goals from Treatment Plan â”€â”€
 
   const generateGoalsFromPlan = useCallback(() => {
     if (!content) return;
@@ -1805,7 +1805,7 @@ export default function EvalFormPage() {
     setToast(`Added ${newEntries.length} goal${newEntries.length > 1 ? 's' : ''} from treatment plan`);
   }, [content, goalEntries, patternOverridesRef]);
 
-  // ── Session Note SOAP helpers ──
+  // â”€â”€ Session Note SOAP helpers â”€â”€
 
   const snInsertAtCursor = useCallback((
     textareaRef: React.RefObject<HTMLTextAreaElement | null>,
@@ -1864,9 +1864,9 @@ export default function EvalFormPage() {
     }
   };
 
-  // ── Save ──
+  // â”€â”€ Save â”€â”€
 
-  /** Pre-sign validation for evaluations — returns structured ValidationIssue[] for Fix-It dialog */
+  /** Pre-sign validation for evaluations â€” returns structured ValidationIssue[] for Fix-It dialog */
   const runSignValidation = (): ValidationIssue[] => {
     const issues: ValidationIssue[] = [];
 
@@ -1875,7 +1875,7 @@ export default function EvalFormPage() {
       return issues;
     }
 
-    // ── Non-fixable goal issues ──
+    // â”€â”€ Non-fixable goal issues â”€â”€
 
     if (goalEntries.length === 0 && !content.goals?.trim()) {
       issues.push({ id: 'eval_no_goals', message: 'At least one goal is required before signing', severity: 'error', fixable: false, fieldType: 'none', target: 'document', guidance: 'Go back and add goals in the Goals section.' });
@@ -1898,7 +1898,7 @@ export default function EvalFormPage() {
       issues.push({ id: 'eval_goal_blanks', message: 'Goals have unfilled template blanks (___)', severity: 'error', fixable: false, fieldType: 'none', target: 'document', guidance: 'Complete all ___ placeholders in your goals.' });
     }
 
-    // ── Fixable document fields ──
+    // â”€â”€ Fixable document fields â”€â”€
 
     if (!content.rehabilitation_potential?.trim()) {
       issues.push({
@@ -1919,7 +1919,7 @@ export default function EvalFormPage() {
           { value: 'cognitive deficits may slow progress', label: 'Cognitive deficits' },
           { value: 'multiple comorbidities present', label: 'Multiple comorbidities' },
         ],
-        hint: 'Select a rating and tap reasons — PocketChart will compose the narrative.',
+        hint: 'Select a rating and tap reasons â€” PocketChart will compose the narrative.',
       });
     }
 
@@ -1954,7 +1954,7 @@ export default function EvalFormPage() {
       });
     }
 
-    // ── Client-level fixes ──
+    // â”€â”€ Client-level fixes â”€â”€
 
     if (!client?.primary_dx_code) {
       issues.push({
@@ -1963,7 +1963,7 @@ export default function EvalFormPage() {
       });
     }
 
-    // ── Non-blocking warnings ──
+    // â”€â”€ Non-blocking warnings â”€â”€
 
     if (!content.medical_history?.trim()) {
       issues.push({
@@ -1995,7 +1995,7 @@ export default function EvalFormPage() {
       });
     }
 
-    // ── Future date prevention ──
+    // â”€â”€ Future date prevention â”€â”€
     if (evalDate) {
       const evalDateObj = new Date(evalDate + 'T00:00:00');
       const today = new Date();
@@ -2008,7 +2008,7 @@ export default function EvalFormPage() {
       }
     }
 
-    // ── Backdated note warning ──
+    // â”€â”€ Backdated note warning â”€â”€
     if (evalDate) {
       const evalDateObj = new Date(evalDate + 'T00:00:00');
       const today = new Date();
@@ -2023,7 +2023,7 @@ export default function EvalFormPage() {
       }
     }
 
-    // ── 8-Minute Rule validation on session note (PT, OT, ST only) ──
+    // â”€â”€ 8-Minute Rule validation on session note (PT, OT, ST only) â”€â”€
     if (sessionNote.time_in && sessionNote.time_out && client?.discipline && eightMinRuleApplies(client.discipline)) {
       const totalMin = calculateTreatmentMinutes(sessionNote.time_in, sessionNote.time_out);
       if (totalMin > 0) {
@@ -2046,13 +2046,13 @@ export default function EvalFormPage() {
             fixable: false,
             fieldType: 'none',
             target: 'document',
-            guidance: 'Review your units — you may be leaving reimbursement on the table.',
+            guidance: 'Review your units â€” you may be leaving reimbursement on the table.',
           });
         }
       }
     }
 
-    // ── Discipline / CPT mismatch on session note ──
+    // â”€â”€ Discipline / CPT mismatch on session note â”€â”€
     if (client?.discipline && sessionNote.cpt_codes.some(l => l.code?.trim())) {
       const codes = sessionNote.cpt_codes.map(l => l.code).filter(c => c?.trim());
       const mismatches = checkDisciplineCptMismatch(codes, client.discipline);
@@ -2069,7 +2069,7 @@ export default function EvalFormPage() {
       }
     }
 
-    // ── Modifier 59 documentation warning on session note ──
+    // â”€â”€ Modifier 59 documentation warning on session note â”€â”€
     if (snModifiers.includes('59')) {
       issues.push({
         id: 'modifier_59_warning',
@@ -2082,7 +2082,7 @@ export default function EvalFormPage() {
       });
     }
 
-    // ── NPI warning ──
+    // â”€â”€ NPI warning â”€â”€
     if (!practiceInfo?.npi?.trim()) {
       issues.push({
         id: 'provider_npi', message: 'Practice NPI is not set', severity: 'warning', fixable: false,
@@ -2118,7 +2118,7 @@ export default function EvalFormPage() {
     setTimeout(() => handleSave(true, docFixes, goalFixes), 50);
   };
 
-  /** Save fixes from the Sign dialog WITHOUT signing — stay on page for continued editing */
+  /** Save fixes from the Sign dialog WITHOUT signing â€” stay on page for continued editing */
   const handleSaveFixesOnly = (fixes: ValidationFixes) => {
     // Apply document fixes to eval content state (for UI display)
     if (Object.keys(fixes.documentFixes).length > 0) {
@@ -2140,14 +2140,14 @@ export default function EvalFormPage() {
   const handleClientUpdate = async (updates: Record<string, any>) => {
     if (!client) return;
     // clients:update is a full-object replace (binds every column), and better-sqlite3
-    // throws on `undefined` binds — so merge the fixes into the full client object
-    // rather than passing a partial (which left first_name/etc. undefined → error → no save).
+    // throws on `undefined` binds â€” so merge the fixes into the full client object
+    // rather than passing a partial (which left first_name/etc. undefined â†’ error â†’ no save).
     await window.api.clients.update(client.id, { ...client, ...updates });
     const updated = await window.api.clients.get(client.id);
     setClient(updated);
   };
 
-  // ── Eval → Client physician sync ──
+  // â”€â”€ Eval â†’ Client physician sync â”€â”€
   const syncPhysicianToClient = useCallback(async (physician: Physician) => {
     if (!client) return;
     // Already the same physician on client?
@@ -2173,7 +2173,7 @@ export default function EvalFormPage() {
       });
       const updated = await window.api.clients.get(client.id);
       setClient(updated);
-      setToast(`Client chart updated — referring physician set to ${physician.name}`);
+      setToast(`Client chart updated â€” referring physician set to ${physician.name}`);
     } catch (err) {
       console.error('Failed to sync physician to client:', err);
     }
@@ -2363,7 +2363,7 @@ export default function EvalFormPage() {
       }
 
       // If signed but no session note was auto-created, the eval itself is still
-      // a billable visit — explicitly increment the compliance counter.
+      // a billable visit â€” explicitly increment the compliance counter.
       if (sign && !autoNoteCreated) {
         try {
           await window.api.compliance.incrementVisit(cid);
@@ -2376,7 +2376,7 @@ export default function EvalFormPage() {
         setExistingSignedAt(new Date().toISOString());
       }
       if (stayOnPage) {
-        setToast('Fixes applied — continue editing or try signing again');
+        setToast('Fixes applied â€” continue editing or try signing again');
       } else if (sign && savedEvalId && client?.referring_fax?.trim()) {
         setToast('Evaluation signed and saved');
         setShowFaxPrompt(true);
@@ -2410,7 +2410,7 @@ export default function EvalFormPage() {
     }
   };
 
-  // ── Render ──
+  // â”€â”€ Render â”€â”€
 
   const discipline = (client?.discipline || 'PT') as Discipline;
   const objectiveFields = useMemo(() => getObjectiveFields(discipline), [discipline]);
@@ -2485,7 +2485,7 @@ export default function EvalFormPage() {
                 )}
                 {(client.primary_dx_code || client.primary_dx_description) && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-50 text-violet-600 font-medium">
-                    {[client.primary_dx_code, client.primary_dx_description].filter(Boolean).join(' — ')}
+                    {[client.primary_dx_code, client.primary_dx_description].filter(Boolean).join(' â€” ')}
                   </span>
                 )}
                 {content?.frequency_duration?.trim() && (
@@ -2493,7 +2493,7 @@ export default function EvalFormPage() {
                 )}
                 {content?.treatment_plan?.trim() && (
                   <span className="text-[10px] text-[var(--color-text-tertiary)] truncate max-w-xs" title={content.treatment_plan}>
-                    Tx: {content.treatment_plan.length > 50 ? content.treatment_plan.slice(0, 50) + '…' : content.treatment_plan}
+                    Tx: {content.treatment_plan.length > 50 ? content.treatment_plan.slice(0, 50) + 'â€¦' : content.treatment_plan}
                   </span>
                 )}
               </div>
@@ -2534,7 +2534,7 @@ export default function EvalFormPage() {
           status={getSectionStatus('evalDate')}
           isExpanded={expandedSections['evalDate'] ?? true}
           onToggle={() => toggleSection('evalDate')}
-          sectionRef={(el) => { sectionRefs.current['evalDate'] = el; }}
+          sectionRef={(el) => { sectionRefs.current['evalDate'] = el; }} isActive={activeSectionId === 'evalDate'}
         >
           <div className="max-w-xs">
             <input
@@ -2554,7 +2554,7 @@ export default function EvalFormPage() {
           status={getSectionStatus('referralSource')}
           isExpanded={expandedSections['referralSource'] ?? true}
           onToggle={() => toggleSection('referralSource')}
-          sectionRef={(el) => { sectionRefs.current['referralSource'] = el; }}
+          sectionRef={(el) => { sectionRefs.current['referralSource'] = el; }} isActive={activeSectionId === 'referralSource'}
         >
           {/* Amber sync banner: client chart physician differs from eval */}
           {physicianSyncBanner && (
@@ -2608,7 +2608,7 @@ export default function EvalFormPage() {
             onChange={(physician, name) => {
               isDirty.current = true;
               if (physician) {
-                // Selected a physician from dropdown — store metadata + sync to client
+                // Selected a physician from dropdown â€” store metadata + sync to client
                 evalPhysicianIdAtLoad.current = physician.id;
                 setContent(prev => prev ? {
                   ...prev,
@@ -2619,7 +2619,7 @@ export default function EvalFormPage() {
                 setPhysicianSyncBanner(null); // Dismiss banner if present
                 syncPhysicianToClient(physician);
               } else {
-                // Free-text typing — update name, clear physician metadata
+                // Free-text typing â€” update name, clear physician metadata
                 setContent(prev => prev ? {
                   ...prev,
                   referral_source: name,
@@ -2649,7 +2649,7 @@ export default function EvalFormPage() {
           status={getSectionStatus('medicalHistory')}
           isExpanded={expandedSections['medicalHistory'] ?? true}
           onToggle={() => toggleSection('medicalHistory')}
-          sectionRef={(el) => { sectionRefs.current['medicalHistory'] = el; }}
+          sectionRef={(el) => { sectionRefs.current['medicalHistory'] = el; }} isActive={activeSectionId === 'medicalHistory'}
           badge={priorFieldKeys.has('medical_history') ? (
             <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-700">
               UPDATE
@@ -2672,7 +2672,7 @@ export default function EvalFormPage() {
           status={getSectionStatus('currentComplaints')}
           isExpanded={expandedSections['currentComplaints'] ?? true}
           onToggle={() => toggleSection('currentComplaints')}
-          sectionRef={(el) => { sectionRefs.current['currentComplaints'] = el; }}
+          sectionRef={(el) => { sectionRefs.current['currentComplaints'] = el; }} isActive={activeSectionId === 'currentComplaints'}
         >
           <textarea
             className="textarea"
@@ -2691,7 +2691,7 @@ export default function EvalFormPage() {
           status={getSectionStatus('objectiveAssessment')}
           isExpanded={expandedSections['objectiveAssessment'] ?? true}
           onToggle={() => toggleSection('objectiveAssessment')}
-          sectionRef={(el) => { sectionRefs.current['objectiveAssessment'] = el; }}
+          sectionRef={(el) => { sectionRefs.current['objectiveAssessment'] = el; }} isActive={activeSectionId === 'objectiveAssessment'}
           badge={<span className={`badge badge-${discipline.toLowerCase()} ml-1`}>{discipline}</span>}
         >
           <div className="space-y-3">
@@ -2771,7 +2771,7 @@ export default function EvalFormPage() {
           status={getSectionStatus('priorLevelOfFunction')}
           isExpanded={expandedSections['priorLevelOfFunction'] ?? true}
           onToggle={() => toggleSection('priorLevelOfFunction')}
-          sectionRef={(el) => { sectionRefs.current['priorLevelOfFunction'] = el; }}
+          sectionRef={(el) => { sectionRefs.current['priorLevelOfFunction'] = el; }} isActive={activeSectionId === 'priorLevelOfFunction'}
         >
           <textarea
             className="textarea"
@@ -2793,7 +2793,7 @@ export default function EvalFormPage() {
           status={getSectionStatus('clinicalImpression')}
           isExpanded={expandedSections['clinicalImpression'] ?? true}
           onToggle={() => toggleSection('clinicalImpression')}
-          sectionRef={(el) => { sectionRefs.current['clinicalImpression'] = el; }}
+          sectionRef={(el) => { sectionRefs.current['clinicalImpression'] = el; }} isActive={activeSectionId === 'clinicalImpression'}
           badge={priorFieldKeys.has('clinical_impression') ? (
             <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-700">
               UPDATE
@@ -2818,7 +2818,7 @@ export default function EvalFormPage() {
           status={getSectionStatus('rehabPotential')}
           isExpanded={expandedSections['rehabPotential'] ?? true}
           onToggle={() => toggleSection('rehabPotential')}
-          sectionRef={(el) => { sectionRefs.current['rehabPotential'] = el; }}
+          sectionRef={(el) => { sectionRefs.current['rehabPotential'] = el; }} isActive={activeSectionId === 'rehabPotential'}
         >
           <RehabPotentialSection
             value={content.rehabilitation_potential}
@@ -2836,7 +2836,7 @@ export default function EvalFormPage() {
           status={getSectionStatus('treatmentPlan')}
           isExpanded={expandedSections['treatmentPlan'] ?? true}
           onToggle={() => toggleSection('treatmentPlan')}
-          sectionRef={(el) => { sectionRefs.current['treatmentPlan'] = el; }}
+          sectionRef={(el) => { sectionRefs.current['treatmentPlan'] = el; }} isActive={activeSectionId === 'treatmentPlan'}
           badge={priorFieldKeys.has('treatment_plan') ? (
             <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-700">
               UPDATE
@@ -2881,7 +2881,7 @@ export default function EvalFormPage() {
           status={getSectionStatus('goals')}
           isExpanded={expandedSections['goals'] ?? true}
           onToggle={() => toggleSection('goals')}
-          sectionRef={(el) => { sectionRefs.current['goals'] = el; }}
+          sectionRef={(el) => { sectionRefs.current['goals'] = el; }} isActive={activeSectionId === 'goals'}
           badge={!existingSignedAt ? (
             <div className="flex items-center gap-1 ml-auto">
               {content.treatment_plan?.trim() && (
@@ -2948,7 +2948,7 @@ export default function EvalFormPage() {
           ) : (
             <div className="space-y-3">
               {(() => {
-                // Nested grouping: Short-Term / Long-Term → skill (category).
+                // Nested grouping: Short-Term / Long-Term â†’ skill (category).
                 // Original array index is preserved so handlers stay index-based.
                 let lastType: GoalType | null = null;
                 return groupGoalCards(goalCards).map((group) => {
@@ -3026,7 +3026,7 @@ export default function EvalFormPage() {
             status="complete"
             isExpanded={expandedSections['goalsMet'] ?? true}
             onToggle={() => toggleSection('goalsMet')}
-            sectionRef={(el) => { sectionRefs.current['goalsMet'] = el; }}
+            sectionRef={(el) => { sectionRefs.current['goalsMet'] = el; }} isActive={activeSectionId === 'goalsMet'}
             badge={<span className="text-xs font-normal text-[var(--color-text-secondary)]">({completedGoals.length})</span>}
           >
             <div className="space-y-1.5">
@@ -3035,7 +3035,7 @@ export default function EvalFormPage() {
                   <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
                     goal.status === 'met' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
                   }`}>
-                    {goal.status === 'met' ? '✓ Met' : "DC'd"}
+                    {goal.status === 'met' ? 'âœ“ Met' : "DC'd"}
                   </span>
                   <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${goal.goal_type === 'STG' ? 'bg-blue-50 text-blue-600' : 'bg-purple-50 text-purple-600'}`}>
                     {goal.goal_type}
@@ -3062,7 +3062,7 @@ export default function EvalFormPage() {
           status={getSectionStatus('frequencyDuration')}
           isExpanded={expandedSections['frequencyDuration'] ?? true}
           onToggle={() => toggleSection('frequencyDuration')}
-          sectionRef={(el) => { sectionRefs.current['frequencyDuration'] = el; }}
+          sectionRef={(el) => { sectionRefs.current['frequencyDuration'] = el; }} isActive={activeSectionId === 'frequencyDuration'}
           badge={priorFieldKeys.has('frequency_duration') ? (
             <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-700">
               UPDATE
@@ -3158,7 +3158,7 @@ export default function EvalFormPage() {
           status={getSectionStatus('precautions')}
           isExpanded={expandedSections['precautions'] ?? true}
           onToggle={() => toggleSection('precautions')}
-          sectionRef={(el) => { sectionRefs.current['precautions'] = el; }}
+          sectionRef={(el) => { sectionRefs.current['precautions'] = el; }} isActive={activeSectionId === 'precautions'}
         >
           <textarea
             className="textarea"
@@ -3177,10 +3177,10 @@ export default function EvalFormPage() {
           status={getSectionStatus('sessionNote')}
           isExpanded={expandedSections['sessionNote'] ?? true}
           onToggle={() => toggleSection('sessionNote')}
-          sectionRef={(el) => { sectionRefs.current['sessionNote'] = el; }}
+          sectionRef={(el) => { sectionRefs.current['sessionNote'] = el; }} isActive={activeSectionId === 'sessionNote'}
         >
           <p className="text-xs text-[var(--color-text-secondary)] mb-4 italic">
-            Optional — fill this in to auto-create a billable session note when you sign the eval.
+            Optional â€” fill this in to auto-create a billable session note when you sign the eval.
           </p>
 
           {/* Date / Time row */}
@@ -3411,7 +3411,7 @@ export default function EvalFormPage() {
           status={getSectionStatus('signature')}
           isExpanded={expandedSections['signature'] ?? true}
           onToggle={() => toggleSection('signature')}
-          sectionRef={(el) => { sectionRefs.current['signature'] = el; }}
+          sectionRef={(el) => { sectionRefs.current['signature'] = el; }} isActive={activeSectionId === 'signature'}
         >
           {/* Typed Signature */}
           <div className="mb-4">

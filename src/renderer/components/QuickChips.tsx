@@ -1,7 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Plus, Settings, Star, X } from 'lucide-react';
+import { Plus, Settings, Star, Target, X } from 'lucide-react';
 import { useTier } from '../hooks/useTier';
 import type { Discipline, SOAPSection, NoteBankEntry } from '../../shared/types';
+
+/** An ephemeral chip supplied by the parent (e.g. derived from the client's goals) — not stored in the note bank. */
+export interface ExtraChip {
+  key: string | number;
+  label: string;
+  phrase: string;
+  title?: string;
+}
 
 interface QuickChipsProps {
   discipline: Discipline;
@@ -10,6 +18,8 @@ interface QuickChipsProps {
   maxChips?: number;
   onOpenFullBank?: () => void;
   priorityCategories?: string[];
+  extraChips?: ExtraChip[];
+  onExtraChipInsert?: (chip: ExtraChip) => void;
 }
 
 const EMPTY_CATEGORIES: string[] = [];
@@ -27,6 +37,8 @@ export default function QuickChips({
   maxChips = 8,
   onOpenFullBank,
   priorityCategories = EMPTY_CATEGORIES,
+  extraChips,
+  onExtraChipInsert,
 }: QuickChipsProps) {
   const { isPro } = useTier();
   const [chips, setChips] = useState<NoteBankEntry[]>([]);
@@ -157,7 +169,25 @@ export default function QuickChips({
     <div className="relative">
       {/* Chips Row */}
       <div className="flex items-center gap-1.5 flex-wrap">
-        {chips.length === 0 ? (
+        {/* Goal-derived chips (ephemeral, supplied by parent) */}
+        {extraChips?.map((chip) => (
+          <button
+            key={`extra-${chip.key}`}
+            type="button"
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium
+              bg-teal-50 text-teal-700
+              hover:bg-teal-100
+              active:bg-teal-200
+              transition-colors cursor-pointer border border-teal-300/60"
+            onClick={() => (onExtraChipInsert ? onExtraChipInsert(chip) : onInsert(chip.phrase))}
+            title={chip.title || chip.phrase}
+          >
+            <Target className="w-3 h-3 flex-shrink-0" />
+            {truncatePhrase(chip.label, 40)}
+          </button>
+        ))}
+
+        {chips.length === 0 && !extraChips?.length ? (
           <span className="text-xs text-[var(--color-text-tertiary)] italic">
             No quick chips set - star phrases to add them here
           </span>
