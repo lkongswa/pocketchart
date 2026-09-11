@@ -1092,7 +1092,9 @@ export default function CalendarPage() {
                       title={tab.label}
                     >
                       {tab.icon}
-                      <span className="hidden xl:inline">{tab.label}</span>
+                      {/* Active tab always shows its label; inactive tabs go icon-only unless
+                          the window is very wide — keeps all 4 tabs inside the 288px panel. */}
+                      <span className={sidebarTab === tab.key ? 'inline' : 'hidden 2xl:inline'}>{tab.label}</span>
                     </button>
                   ))}
                 </div>

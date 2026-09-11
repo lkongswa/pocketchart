@@ -10,6 +10,9 @@ interface RecertStepperProps {
   onClearEvalGate: () => void;
   onResetRecert: () => void;
   onEditSettings: () => void;
+  /** Opens the fax review modal for the current eval. When provided, the Send step
+   *  faxes to the MD instead of only marking-as-sent manually. */
+  onFax?: () => void;
 }
 
 type StepKey = 'eval' | 'not_sent' | 'sent' | 'received';
@@ -85,7 +88,7 @@ const URGENCY_TEXT: Record<string, string> = {
 };
 
 export default function RecertStepper({
-  compliance, hasEval, compact, onAdvanceStatus, onClearEvalGate, onResetRecert, onEditSettings,
+  compliance, hasEval, compact, onAdvanceStatus, onClearEvalGate, onResetRecert, onEditSettings, onFax,
 }: RecertStepperProps) {
   const signatureStatus = compliance.recert_md_signature_status || 'not_sent';
   const evalCleared = !!compliance.recert_eval_cleared;
@@ -105,12 +108,16 @@ export default function RecertStepper({
       ? 'bg-amber-50/30'
       : 'bg-teal-50/30';
 
-  // Determine action button
+  // Can the Send step trigger a real fax? Only when a fax handler is wired in.
+  const canFax = currentIdx === 1 && !!onFax;
+
+  // Determine action button (used for the "received" step and the no-fax fallback)
   let actionLabel = '';
   let actionHandler: (() => void) | null = null;
   if (currentIdx === 0) {
     // Eval step — no primary action (user must create eval or skip)
-  } else if (currentIdx === 1) {
+  } else if (currentIdx === 1 && !onFax) {
+    // Fallback when fax isn't wired: manual mark-as-sent only
     actionLabel = 'Mark as Sent';
     actionHandler = () => onAdvanceStatus('sent');
   } else if (currentIdx === 2) {
@@ -149,7 +156,9 @@ export default function RecertStepper({
                 }`} />
               )}
               <div className="flex flex-col items-center gap-0.5">
-                <div className={`
+                {(() => {
+                  const clickable = canFax && step.key === 'not_sent';
+                  const circleClass = `
                   w-6 h-6 rounded-full flex items-center justify-center transition-colors duration-200
                   ${state === 'completed'
                     ? 'bg-green-500 text-white'
@@ -157,12 +166,17 @@ export default function RecertStepper({
                       ? 'bg-teal-500 text-white ring-2 ring-teal-200'
                       : 'border-2 border-dashed border-gray-300 text-gray-400'
                   }
-                `}>
-                  {state === 'completed'
-                    ? <CheckCircle2 size={12} />
-                    : step.icon
-                  }
-                </div>
+                  ${clickable ? 'cursor-pointer hover:ring-2 hover:ring-teal-300 hover:scale-105' : ''}
+                `;
+                  const inner = state === 'completed' ? <CheckCircle2 size={12} /> : step.icon;
+                  return clickable ? (
+                    <button type="button" className={circleClass} onClick={onFax} title="Fax this eval to the MD">
+                      {inner}
+                    </button>
+                  ) : (
+                    <div className={circleClass}>{inner}</div>
+                  );
+                })()}
                 <span className={`text-[10px] leading-tight text-center ${
                   state === 'current'
                     ? 'text-teal-700 font-semibold'
@@ -220,7 +234,26 @@ export default function RecertStepper({
         </div>
       )}
 
-      {/* Action button */}
+      {/* Send step with fax wired in: primary "Fax to MD" + manual fallback link */}
+      {canFax && (
+        <div className="space-y-1.5">
+          <button
+            className="btn-primary btn-sm text-xs w-full flex items-center justify-center gap-1.5"
+            onClick={onFax}
+          >
+            <Send size={12} /> Fax to MD
+          </button>
+          <button
+            className="text-[10px] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:underline w-full text-center"
+            onClick={() => onAdvanceStatus('sent')}
+            title="Record that you sent it another way, without faxing"
+          >
+            Mark as sent manually
+          </button>
+        </div>
+      )}
+
+      {/* Action button (received step, or no-fax fallback for send) */}
       {actionLabel && actionHandler && (
         <button
           className="btn-secondary btn-sm text-xs w-full"

@@ -28,16 +28,19 @@ export default function FaxPrompt({
 }: FaxPromptProps) {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       setSending(false);
       setSent(false);
+      setError(null);
     }
   }, [isOpen]);
 
   const handleFaxNow = async () => {
     setSending(true);
+    setError(null);
     try {
       await window.api.fax.send({
         documentId,
@@ -52,6 +55,10 @@ export default function FaxPrompt({
       setTimeout(onClose, 1500);
     } catch (err) {
       console.error('Failed to fax:', err);
+      const raw = err instanceof Error ? err.message : String(err);
+      // IPC wraps main-process errors as "Error invoking remote method 'fax:send': Error: <msg>"
+      const msg = raw.replace(/^Error invoking remote method '[^']*':\s*(Error:\s*)?/, '');
+      setError(msg || 'Fax failed. Check Settings > Fax and try again.');
       setSending(false);
     }
   };
@@ -85,6 +92,11 @@ export default function FaxPrompt({
               Send to <span className="font-medium text-[var(--color-text)]">{physicianName}</span> at{' '}
               <span className="font-mono text-xs">{faxNumber}</span>?
             </p>
+            {error && (
+              <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+                {error}
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <button
                 type="button"

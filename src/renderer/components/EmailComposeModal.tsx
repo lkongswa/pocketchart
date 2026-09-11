@@ -12,9 +12,10 @@ interface EmailComposeModalProps {
   heading: string;
   attachmentLabel?: string;
   defaultTo: string;
+  defaultCc?: string;
   defaultSubject: string;
   defaultBody: string;
-  onSend: (to: string, subject: string, body: string) => Promise<void>;
+  onSend: (to: string, subject: string, body: string, cc?: string) => Promise<void>;
   /** deep-link to Settings → Email when the provider isn't configured */
   onConfigureEmail?: () => void;
 }
@@ -25,12 +26,14 @@ export default function EmailComposeModal({
   heading,
   attachmentLabel,
   defaultTo,
+  defaultCc = '',
   defaultSubject,
   defaultBody,
   onSend,
   onConfigureEmail,
 }: EmailComposeModalProps) {
   const [to, setTo] = useState(defaultTo);
+  const [cc, setCc] = useState(defaultCc);
   const [subject, setSubject] = useState(defaultSubject);
   const [body, setBody] = useState(defaultBody);
   const [sending, setSending] = useState(false);
@@ -39,12 +42,13 @@ export default function EmailComposeModal({
   useEffect(() => {
     if (isOpen) {
       setTo(defaultTo);
+      setCc(defaultCc);
       setSubject(defaultSubject);
       setBody(defaultBody);
       setError(null);
       setSending(false);
     }
-  }, [isOpen, defaultTo, defaultSubject, defaultBody]);
+  }, [isOpen, defaultTo, defaultCc, defaultSubject, defaultBody]);
 
   if (!isOpen) return null;
 
@@ -58,7 +62,7 @@ export default function EmailComposeModal({
     setSending(true);
     setError(null);
     try {
-      await onSend(to.trim(), subject, body);
+      await onSend(to.trim(), subject, body, cc.trim() || undefined);
       onClose();
     } catch (e: any) {
       setError(e?.message || 'Failed to send email.');
@@ -86,6 +90,10 @@ export default function EmailComposeModal({
         <div>
           <label className="label">To</label>
           <input className="input w-full" type="email" value={to} onChange={(e) => setTo(e.target.value)} placeholder="client@example.com" />
+        </div>
+        <div>
+          <label className="label">CC <span className="text-[11px] text-[var(--color-text-secondary)] font-normal">(optional — separate multiple with commas)</span></label>
+          <input className="input w-full" value={cc} onChange={(e) => setCc(e.target.value)} placeholder="family@example.com, spouse@example.com" />
         </div>
         <div>
           <label className="label">Subject</label>

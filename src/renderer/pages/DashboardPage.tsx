@@ -847,9 +847,10 @@ const DashboardPage: React.FC = () => {
                   const isContractor = appt.entity_id != null;
                   const patientName = isContractor
                     ? (appt.contractor_patient_name?.trim() || appt.patient_name?.trim() || 'Unnamed patient')
-                    : `${appt.first_name || ''} ${appt.last_name || ''}`.trim() || 'Unnamed';
+                    : `${appt.first_name || ''} ${appt.last_name || ''}`.trim() || appt.patient_name?.trim() || 'Unnamed';
                   const entityRequiresNotes = appt.entity_requires_notes !== 0;
-                  const showNoteButton = isContractor ? entityRequiresNotes : true;
+                  // Consults booked from the waitlist have no chart — nothing to write a note against.
+                  const showNoteButton = isContractor ? entityRequiresNotes : !!appt.client_id;
                   return (
                     <div
                       key={appt.id}

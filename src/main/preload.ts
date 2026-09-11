@@ -643,7 +643,7 @@ const api = {
 
   // ── Fax ──
   fax: {
-    send: (data: { documentId?: number; docType?: 'eval' | 'note' | 'document'; documents?: Array<{ id: number; type: 'eval' | 'note' | 'document' }>; physicianId?: number; faxNumber: string; clientId?: number; requestSignature?: boolean }) => ipcRenderer.invoke('fax:send', data),
+    send: (data: { documentId?: number; docType?: 'eval' | 'note' | 'document'; documents?: Array<{ id: number; type: 'eval' | 'note' | 'document' }>; physicianId?: number; faxNumber: string; clientId?: number; requestSignature?: boolean; recipientName?: string }) => ipcRenderer.invoke('fax:send', data),
     getStatus: (faxLogId: number) => ipcRenderer.invoke('fax:getStatus', faxLogId),
     listInbox: () => ipcRenderer.invoke('fax:listInbox'),
     listOutbox: () => ipcRenderer.invoke('fax:listOutbox'),
@@ -662,7 +662,7 @@ const api = {
 
   // ── Email (Pro) ──
   email: {
-    send: (params: { to: string; subject: string; bodyText: string; bodyHtml?: string; attachments?: Array<{ fileName: string; contentBase64: string; contentType?: string }>; replyTo?: string; clientId?: number }) => ipcRenderer.invoke('email:send', params),
+    send: (params: { to: string; cc?: string; subject: string; bodyText: string; bodyHtml?: string; attachments?: Array<{ fileName: string; contentBase64: string; contentType?: string }>; replyTo?: string; clientId?: number }) => ipcRenderer.invoke('email:send', params),
     setProvider: (type: string, credentials: Record<string, string>) => ipcRenderer.invoke('email:setProvider', type, credentials),
     getProviderStatus: () => ipcRenderer.invoke('email:getProviderStatus'),
     testProvider: () => ipcRenderer.invoke('email:testProvider'),

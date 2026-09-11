@@ -1,6 +1,16 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Star, Search, ChevronLeft, Trash2, ArrowRight, Phone, Mail, Clock, Building2, MessageSquare, PhoneOff } from 'lucide-react';
+import { Plus, Star, Search, ChevronLeft, Trash2, ArrowRight, Phone, Mail, Clock, Building2, MessageSquare, PhoneOff, CalendarPlus, Video } from 'lucide-react';
 import type { WaitlistEntry, WaitlistStatus, ContractedEntity, WaitlistContactLogEntry } from '../../shared/types';
+import EmailComposeModal from './EmailComposeModal';
+
+/** "2026-09-03" + "10:00" → "Wednesday, September 3 at 10:00 AM" for the invite email. */
+function formatConsultWhen(date: string, time: string): string {
+  const d = new Date(`${date}T${time || '09:00'}`);
+  if (isNaN(d.getTime())) return `${date} ${time}`;
+  const day = d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  const t = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return `${day} at ${t}`;
+}
 
 const STATUS_LABELS: Record<WaitlistStatus, string> = {
   waiting: 'Waiting',
@@ -43,7 +53,30 @@ export default function WaitlistPanel({ compact = false }: WaitlistPanelProps) {
   // Per-entry contact log (call/voicemail history)
   const [contactLog, setContactLog] = useState<WaitlistContactLogEntry[]>([]);
 
+  // Consult booking + invite email
+  const [consultDate, setConsultDate] = useState('');
+  const [consultTime, setConsultTime] = useState('10:00');
+  const [bookingConsult, setBookingConsult] = useState(false);
+  const [consultBooked, setConsultBooked] = useState<{ date: string; time: string } | null>(null);
+  const [videoLink, setVideoLink] = useState('');
+  const [consultEmailOpen, setConsultEmailOpen] = useState(false);
+  const [practiceName, setPracticeName] = useState('');
+
   const nameRef = useRef<HTMLInputElement>(null);
+
+  // Video link + practice name for the consult invite (persisted app-wide)
+  useEffect(() => {
+    (async () => {
+      try {
+        const v = await window.api.settings.get('consult_video_link');
+        if (v) setVideoLink(v);
+      } catch { /* ignore */ }
+      try {
+        const p = await window.api.practice.get();
+        if (p?.name) setPracticeName(p.name);
+      } catch { /* ignore */ }
+    })();
+  }, []);
 
   const loadEntries = useCallback(async () => {
     try {
@@ -153,8 +186,86 @@ export default function WaitlistPanel({ compact = false }: WaitlistPanelProps) {
     nameRef.current?.focus();
   };
 
+  const handleBookConsult = async () => {
+    if (selectedId == null || !consultDate) return;
+    const fullName = `${editForm.first_name || ''} ${editForm.last_name || ''}`.trim();
+    if (!fullName) return;
+    setBookingConsult(true);
+    try {
+      await window.api.appointments.create({
+        // no client_id — a consult has no chart; patient_name carries the identity
+        patient_name: fullName,
+        scheduled_date: consultDate,
+        scheduled_time: consultTime,
+        duration_minutes: 30,
+        status: 'scheduled',
+        visit_type: 'T',
+        session_type: 'consult',
+      });
+      await window.api.waitlist.update(selectedId, { status: 'scheduled_intake' });
+      await window.api.waitlist.contactLog.create({
+        waitlist_id: selectedId,
+        note: `Booked consult — ${formatConsultWhen(consultDate, consultTime)}`,
+      });
+      setEditForm((f) => ({ ...f, status: 'scheduled_intake' }));
+      setConsultBooked({ date: consultDate, time: consultTime });
+      await loadContactLog(selectedId);
+      await loadEntries();
+    } catch (err) {
+      console.error('Failed to book consult:', err);
+    } finally {
+      setBookingConsult(false);
+    }
+  };
+
+  const handleSaveVideoLink = async (value: string) => {
+    setVideoLink(value);
+    try {
+      await window.api.settings.set('consult_video_link', value.trim());
+    } catch { /* ignore */ }
+  };
+
+  const consultInviteBody = (): string => {
+    const first = (editForm.first_name || '').trim() || 'there';
+    const whenLine = consultBooked
+      ? `Our consultation is scheduled for ${formatConsultWhen(consultBooked.date, consultBooked.time)} (about 30 minutes).\n\n`
+      : '';
+    const linkLine = `Join by video: ${videoLink.trim() || '[paste your video link]'}\n\n`;
+    const signoff = practiceName ? `Warmly,\n${practiceName}` : 'Warmly';
+    return (
+      `Hi ${first},\n\n` +
+      `Thank you for reaching out! I'd love to invite you to a free consultation call so we can talk about your goals and how therapy can help.\n\n` +
+      whenLine +
+      linkLine +
+      `Family members are welcome to join. If you have any questions before then — or if the time doesn't work — just reply to this email and we'll find one that does.\n\n` +
+      `Looking forward to meeting you!\n${signoff}\n`
+    );
+  };
+
+  const handleSendConsultInvite = async (to: string, subject: string, body: string, cc?: string) => {
+    await window.api.email.send({ to, cc, subject, bodyText: body });
+    if (selectedId != null) {
+      await window.api.waitlist.contactLog.create({
+        waitlist_id: selectedId,
+        note: `Emailed consult invite${cc ? ` (cc: ${cc})` : ''}`,
+      });
+      // Persist any email typed in the compose dialog back onto the entry.
+      const patch: Partial<WaitlistEntry> = { last_contacted: new Date().toISOString() };
+      if (to && to !== (editForm.email || '')) patch.email = to;
+      if ((editForm.status || 'waiting') === 'waiting') patch.status = 'contacted';
+      await window.api.waitlist.update(selectedId, patch);
+      setEditForm((f) => ({ ...f, ...patch }));
+      await loadContactLog(selectedId);
+      await loadEntries();
+    }
+  };
+
   const selectEntry = (entry: WaitlistEntry) => {
     setSelectedId(entry.id);
+    setConsultDate('');
+    setConsultTime('10:00');
+    setConsultBooked(null);
+    setConsultEmailOpen(false);
     setEditForm({
       first_name: entry.first_name,
       last_name: entry.last_name,
@@ -480,6 +591,51 @@ export default function WaitlistPanel({ compact = false }: WaitlistPanelProps) {
             <Phone size={11} /> Mark as contacted
           </button>
 
+          {/* ── Consult ── */}
+          <div className="border-t border-[var(--color-border)] pt-2 space-y-1.5">
+            <label className="text-[10px] text-[var(--color-text-secondary)] uppercase tracking-wide block">Consult</label>
+            <div className="flex gap-1">
+              <input
+                type="date"
+                className="flex-1 min-w-0 text-xs border border-[var(--color-border)] rounded px-1.5 py-1.5 focus:outline-none focus:border-sky-400"
+                value={consultDate}
+                onChange={(e) => setConsultDate(e.target.value)}
+              />
+              <input
+                type="time"
+                step={900}
+                className="w-20 text-xs border border-[var(--color-border)] rounded px-1.5 py-1.5 focus:outline-none focus:border-sky-400"
+                value={consultTime}
+                onChange={(e) => setConsultTime(e.target.value)}
+              />
+            </div>
+            <button
+              className="w-full text-xs bg-sky-50 text-sky-700 border border-sky-200 rounded py-1.5 hover:bg-sky-100 transition-colors font-medium flex items-center justify-center gap-1 disabled:opacity-40"
+              onClick={handleBookConsult}
+              disabled={!consultDate || bookingConsult}
+              title="Books a 30-min consult on the calendar (no chart created) and marks this entry Scheduled"
+            >
+              <CalendarPlus size={12} /> {bookingConsult ? 'Booking…' : consultBooked ? 'Consult booked ✓ — book another' : 'Book consult on calendar'}
+            </button>
+            <div className="flex items-center gap-1">
+              <Video size={11} className="text-[var(--color-text-secondary)] flex-shrink-0" />
+              <input
+                className="flex-1 min-w-0 text-[11px] border border-[var(--color-border)] rounded px-1.5 py-1 focus:outline-none focus:border-sky-400"
+                placeholder="Your video link (saved for all invites)"
+                value={videoLink}
+                onChange={(e) => setVideoLink(e.target.value)}
+                onBlur={(e) => handleSaveVideoLink(e.target.value)}
+                title="Zoom/Meet link included in consult invite emails — remembered across entries"
+              />
+            </div>
+            <button
+              className="w-full text-xs bg-sky-500 text-white rounded py-1.5 hover:bg-sky-600 transition-colors font-medium flex items-center justify-center gap-1"
+              onClick={() => setConsultEmailOpen(true)}
+            >
+              <Mail size={12} /> Email consult invite
+            </button>
+          </div>
+
           {/* Save changes */}
           <button
             className="w-full text-xs bg-teal-500 text-white rounded py-1.5 hover:bg-teal-600 transition-colors font-medium"
@@ -531,6 +687,17 @@ export default function WaitlistPanel({ compact = false }: WaitlistPanelProps) {
             )}
           </div>
         </div>
+
+        {/* Consult invite email */}
+        <EmailComposeModal
+          isOpen={consultEmailOpen}
+          onClose={() => setConsultEmailOpen(false)}
+          heading="Consult Invite"
+          defaultTo={editForm.email || ''}
+          defaultSubject={`Consultation invitation${practiceName ? ` — ${practiceName}` : ''}`}
+          defaultBody={consultInviteBody()}
+          onSend={handleSendConsultInvite}
+        />
       </div>
     );
   }

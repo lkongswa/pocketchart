@@ -56,6 +56,7 @@ export class GmailSmtpProvider implements EmailProvider {
         // rather than the Gmail account's own profile name. nodemailer quotes/encodes it.
         from: params.fromName ? { name: params.fromName, address: this.fromAddress } : this.fromAddress,
         to: params.to,
+        cc: params.cc || undefined,
         replyTo: params.replyTo,
         subject: params.subject,
         text: params.bodyText,

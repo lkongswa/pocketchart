@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Shield, AlertTriangle, CheckCircle, RotateCcw, Settings } from 'lucide-react';
 import type { ComplianceTracking, CompliancePreset, RecertSignatureStatus } from '@shared/types';
 import RecertStepper from './RecertStepper';
+import FaxSendModal from './FaxSendModal';
 
 interface ComplianceSectionProps {
   clientId: number;
@@ -21,6 +22,13 @@ export default function ComplianceSection({ clientId, card }: ComplianceSectionP
   const [editing, setEditing] = useState(false);
   const [hasEval, setHasEval] = useState(false);
 
+  // Fax-to-MD wiring for the Send step of the recert stepper
+  const [latestEvalId, setLatestEvalId] = useState<number | null>(null);
+  const [referringPhysicianId, setReferringPhysicianId] = useState<number | null>(null);
+  const [referringPhysicianName, setReferringPhysicianName] = useState<string>('');
+  const [referringFax, setReferringFax] = useState<string>('');
+  const [faxModalOpen, setFaxModalOpen] = useState(false);
+
   // Edit form state
   const [preset, setPreset] = useState<CompliancePreset>('none');
   const [progressVisits, setProgressVisits] = useState(10);
@@ -28,15 +36,27 @@ export default function ComplianceSection({ clientId, card }: ComplianceSectionP
   const [recertDays, setRecertDays] = useState(90);
   const [physicianOrderRequired, setPhysicianOrderRequired] = useState(false);
 
-  const loadCompliance = useCallback(async () => {
+  const loadCompliance = useCallback(async (opts?: { background?: boolean }) => {
     try {
-      setLoading(true);
-      const [data, evals] = await Promise.all([
+      // A background refresh (e.g. right after a fax queues) must NOT flip `loading`,
+      // or the whole section unmounts to the "Loading…" div and tears down the open
+      // FaxSendModal before its success screen can show.
+      if (!opts?.background) setLoading(true);
+      const [data, evals, client] = await Promise.all([
         window.api.compliance.getByClient(clientId),
         window.api.evaluations.listByClient(clientId),
+        window.api.clients.get(clientId).catch(() => null),
       ]);
       setCompliance(data);
-      setHasEval(Array.isArray(evals) && evals.length > 0);
+      const evalList = Array.isArray(evals) ? evals : [];
+      setHasEval(evalList.length > 0);
+      // Evals come back ordered by eval_date DESC — [0] is the most recent, the one to fax.
+      setLatestEvalId(evalList.length > 0 ? (evalList[0] as any).id ?? null : null);
+      if (client) {
+        setReferringPhysicianId((client as any).referring_physician_id ?? null);
+        setReferringPhysicianName((client as any).referring_physician || '');
+        setReferringFax((client as any).referring_fax || '');
+      }
       if (data) {
         setPreset(data.compliance_preset);
         setProgressVisits(data.progress_visit_threshold);
@@ -141,6 +161,25 @@ export default function ComplianceSection({ clientId, card }: ComplianceSectionP
     } catch (err) {
       console.error('Failed to update signature status:', err);
     }
+  };
+
+  const handleOpenFax = () => {
+    if (!latestEvalId) {
+      window.alert('No evaluation found to fax. Create and sign an eval first.');
+      return;
+    }
+    setFaxModalOpen(true);
+  };
+
+  const handleFaxSent = async () => {
+    // A fax was queued — advance the tracker from "Send" to "Awaiting".
+    try {
+      await window.api.compliance.updateSignatureStatus(clientId, 'sent');
+    } catch (err) {
+      console.error('Failed to advance signature status after fax:', err);
+    }
+    // Background refresh so the FaxSendModal stays mounted and shows its "Fax queued!" screen.
+    loadCompliance({ background: true });
   };
 
   const handleClearEvalGate = async () => {
@@ -308,15 +347,29 @@ export default function ComplianceSection({ clientId, card }: ComplianceSectionP
 
   if (card === 'recert') {
     return (
-      <RecertStepper
-        compliance={compliance}
-        hasEval={hasEval}
-        compact
-        onAdvanceStatus={handleUpdateSignatureStatus}
-        onClearEvalGate={handleClearEvalGate}
-        onResetRecert={handleResetRecertCounter}
-        onEditSettings={() => setEditing(true)}
-      />
+      <>
+        <RecertStepper
+          compliance={compliance}
+          hasEval={hasEval}
+          compact
+          onAdvanceStatus={handleUpdateSignatureStatus}
+          onClearEvalGate={handleClearEvalGate}
+          onResetRecert={handleResetRecertCounter}
+          onEditSettings={() => setEditing(true)}
+          onFax={handleOpenFax}
+        />
+        <FaxSendModal
+          isOpen={faxModalOpen}
+          onClose={() => setFaxModalOpen(false)}
+          clientId={clientId}
+          documentId={latestEvalId ?? undefined}
+          docType="eval"
+          referringPhysicianId={referringPhysicianId}
+          referringPhysicianName={referringPhysicianName}
+          referringFax={referringFax}
+          onSent={handleFaxSent}
+        />
+      </>
     );
   }
 
@@ -379,8 +432,21 @@ export default function ComplianceSection({ clientId, card }: ComplianceSectionP
           onClearEvalGate={handleClearEvalGate}
           onResetRecert={handleResetRecertCounter}
           onEditSettings={() => setEditing(true)}
+          onFax={handleOpenFax}
         />
       </div>
+
+      <FaxSendModal
+        isOpen={faxModalOpen}
+        onClose={() => setFaxModalOpen(false)}
+        clientId={clientId}
+        documentId={latestEvalId ?? undefined}
+        docType="eval"
+        referringPhysicianId={referringPhysicianId}
+        referringPhysicianName={referringPhysicianName}
+        referringFax={referringFax}
+        onSent={handleFaxSent}
+      />
 
       {/* Info bar */}
       <div className="flex items-center justify-between">

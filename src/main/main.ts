@@ -8741,6 +8741,7 @@ function registerIpcHandlers() {
     faxNumber: string;
     clientId?: number;
     requestSignature?: boolean;
+    recipientName?: string;
   }) => {
     const provider = faxRouter.getProvider(); // Throws if not configured
 
@@ -8750,8 +8751,10 @@ function registerIpcHandlers() {
     const pdfBuffers: Buffer[] = [];
     let fileName = 'document.pdf';
 
-    // Look up physician name for cover page
-    let recipientName = '';
+    // Look up physician name for cover page. Prefer the directory record; fall back to
+    // the free-text recipient name the sender saw in the dialog (e.g. a referring MD
+    // that isn't in the Physician Directory) so the cover sheet still names a recipient.
+    let recipientName = (data.recipientName || '').trim();
     if (data.physicianId) {
       const phys = db.prepare('SELECT name FROM physicians WHERE id = ?').get(data.physicianId) as any;
       if (phys) recipientName = phys.name;
@@ -9146,7 +9149,7 @@ function registerIpcHandlers() {
     return true;
   });
 
-  safeHandle('email:send', async (_event, params: { to: string; subject: string; bodyText: string; bodyHtml?: string; attachments?: Array<{ fileName: string; contentBase64: string; contentType?: string }>; replyTo?: string; clientId?: number; fromName?: string }) => {
+  safeHandle('email:send', async (_event, params: { to: string; cc?: string; subject: string; bodyText: string; bodyHtml?: string; attachments?: Array<{ fileName: string; contentBase64: string; contentType?: string }>; replyTo?: string; clientId?: number; fromName?: string }) => {
     requireTier('pro');
     const provider = messagingRouter.getEmailProvider(); // throws if not configured
     // Default the From display name to the practice name so recipients see the practice,

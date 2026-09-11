@@ -221,7 +221,9 @@ export default function MonthView({
                   const isContractorAppt = Boolean(appt.entity_id);
                   const clientName = isContractorAppt
                     ? (appt.patient_name?.trim() || appt.entity_name || 'Unknown patient')
-                    : `${appt.first_name || 'Unknown'} ${appt.last_name ? appt.last_name.charAt(0) + '.' : ''}`;
+                    : appt.first_name
+                    ? `${appt.first_name} ${appt.last_name ? appt.last_name.charAt(0) + '.' : ''}`
+                    : (appt.patient_name?.trim() || 'Unknown');
 
                   return (
                     <div

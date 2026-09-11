@@ -25,6 +25,7 @@ interface FaxSendModalProps {
 
 export default function FaxSendModal({ isOpen, onClose, clientId, documentId, docType, referringPhysicianId, referringPhysicianName, referringFax, onSent }: FaxSendModalProps) {
   const [selectedPhysician, setSelectedPhysician] = useState<Physician | null>(null);
+  const [recipientName, setRecipientName] = useState('');
   const [manualFax, setManualFax] = useState('');
   const [documents, setDocuments] = useState<ClientDocument[]>([]);
   const [selectedDocId, setSelectedDocId] = useState<number | undefined>(documentId);
@@ -45,6 +46,7 @@ export default function FaxSendModal({ isOpen, onClose, clientId, documentId, do
       setError(null);
     } else {
       setSelectedPhysician(null);
+      setRecipientName('');
       setManualFax('');
       setRequestSignature(false);
       setError(null);
@@ -60,19 +62,19 @@ export default function FaxSendModal({ isOpen, onClose, clientId, documentId, do
       // Try exact ID match first
       if (referringPhysicianId) {
         const match = physicians.find(p => p.id === referringPhysicianId);
-        if (match) { setSelectedPhysician(match); return; }
+        if (match) { setSelectedPhysician(match); setRecipientName(match.name); return; }
       }
       // Fallback: match by name
       if (referringPhysicianName) {
         const nameMatch = physicians.find(p =>
           p.name.toLowerCase() === referringPhysicianName.toLowerCase()
         );
-        if (nameMatch) { setSelectedPhysician(nameMatch); return; }
+        if (nameMatch) { setSelectedPhysician(nameMatch); setRecipientName(nameMatch.name); return; }
       }
-      // Fallback: just pre-fill the manual fax number from the client record
-      if (referringFax) {
-        setManualFax(referringFax);
-      }
+      // Fallback: no directory record — still seed the recipient name AND fax from the
+      // chart's free-text referring fields so the practitioner sees who it's going to.
+      if (referringPhysicianName) setRecipientName(referringPhysicianName);
+      if (referringFax) setManualFax(referringFax);
     });
   }, [isOpen, referringPhysicianId, referringPhysicianName, referringFax]);
 
@@ -99,6 +101,7 @@ export default function FaxSendModal({ isOpen, onClose, clientId, documentId, do
         faxNumber,
         clientId,
         requestSignature,
+        recipientName: recipientName.trim() || undefined,
       });
       setSent(true);
       onSent?.();
@@ -153,10 +156,11 @@ export default function FaxSendModal({ isOpen, onClose, clientId, documentId, do
               <div>
                 <label className="label">Recipient</label>
                 <PhysicianCombobox
-                  value={selectedPhysician?.name || ''}
+                  value={recipientName}
                   physicianId={selectedPhysician?.id}
-                  onChange={(physician) => {
+                  onChange={(physician, name) => {
                     setSelectedPhysician(physician);
+                    setRecipientName(physician ? physician.name : name);
                     if (physician?.fax_number) setManualFax('');
                   }}
                   placeholder="Search physician or enter fax number..."

@@ -48,6 +48,13 @@ const RECERT_STATUS_CLASSES: Record<AppointmentStatus, string> = {
   'no-show': 'border-l-4 border-l-red-500 bg-red-50',
 };
 
+const CONSULT_STATUS_CLASSES: Record<AppointmentStatus, string> = {
+  scheduled: 'border-l-4 border-l-sky-500 bg-sky-50',
+  completed: 'border-l-4 border-l-emerald-500 bg-emerald-50',
+  cancelled: 'border-l-4 border-l-gray-400 bg-gray-50 opacity-60',
+  'no-show': 'border-l-4 border-l-red-500 bg-red-50',
+};
+
 // Override colors for contractor appointments
 const CONTRACTOR_STATUS_CLASSES: Record<AppointmentStatus, string> = {
   scheduled: 'border-l-4 border-l-purple-500 bg-purple-50',
@@ -166,7 +173,10 @@ export default function AppointmentBlock({
     ? (appointment.patient_name && appointment.patient_name.trim()
         ? appointment.patient_name
         : (appointment.entity_name || 'Unknown patient'))
-    : `${appointment.first_name || 'Unknown'} ${appointment.last_name ? appointment.last_name.charAt(0) + '.' : ''}`;
+    : appointment.first_name
+    ? `${appointment.first_name} ${appointment.last_name ? appointment.last_name.charAt(0) + '.' : ''}`
+    // No linked chart (e.g. a consult booked from the waitlist) — patient_name carries the identity.
+    : (appointment.patient_name?.trim() || 'Unknown');
   // Secondary line under the primary name — only relevant for contractor appts that actually have both patient and entity.
   const secondaryLabel = isContractorAppt && appointment.patient_name && appointment.patient_name.trim() && appointment.entity_name
     ? appointment.entity_name
@@ -180,17 +190,23 @@ export default function AppointmentBlock({
     ? EVAL_STATUS_CLASSES
     : sessionType === 'recert'
     ? RECERT_STATUS_CLASSES
+    : sessionType === 'consult'
+    ? CONSULT_STATUS_CLASSES
     : STATUS_CLASSES;
 
   // Session type badge
   const sessionBadge = sessionType !== 'visit' ? (
     <span
       className={`inline-flex items-center justify-center px-1.5 py-0 rounded text-[9px] font-bold flex-shrink-0 ${
-        sessionType === 'eval' ? 'bg-violet-200 text-violet-700' : 'bg-amber-200 text-amber-700'
+        sessionType === 'eval'
+          ? 'bg-violet-200 text-violet-700'
+          : sessionType === 'consult'
+          ? 'bg-sky-200 text-sky-700'
+          : 'bg-amber-200 text-amber-700'
       }`}
       title={SESSION_TYPE_LABELS[sessionType]}
     >
-      {sessionType === 'eval' ? 'E' : 'RC'}
+      {sessionType === 'eval' ? 'E' : sessionType === 'consult' ? 'CN' : 'RC'}
     </span>
   ) : null;
 

@@ -6,7 +6,7 @@ export type AppointmentStatus = 'scheduled' | 'completed' | 'cancelled' | 'no-sh
 export type ReminderChannel = 'sms' | 'email' | 'both';
 export type ReminderStatus = 'none' | 'sent' | 'confirmed' | 'cancelled' | 'failed';
 export type VisitType = 'T' | 'H' | 'O' | 'C';
-export type SessionType = 'visit' | 'eval' | 'recert';
+export type SessionType = 'visit' | 'eval' | 'recert' | 'consult';
 export type WaitlistStatus = 'waiting' | 'contacted' | 'scheduled_intake' | 'converted' | 'declined';
 export type StagedGoalStatus = 'staged' | 'promoted' | 'dismissed';
 export type ProgressReportGoalStatus = 'progressing' | 'met' | 'regressed' | 'plateau' | 'discontinued' | 'modified';
@@ -51,6 +51,7 @@ export const SESSION_TYPE_LABELS: Record<SessionType, string> = {
   visit: 'Visit',
   eval: 'Evaluation',
   recert: 'Recertification',
+  consult: 'Consultation',
 };
 
 export const PROGRESS_REPORT_GOAL_STATUS_LABELS: Record<ProgressReportGoalStatus, string> = {
@@ -2450,7 +2451,7 @@ export interface PocketChartAPI {
   };
   // ── Fax ──
   fax: {
-    send: (data: { documentId?: number; docType?: 'eval' | 'note' | 'document'; documents?: Array<{ id: number; type: 'eval' | 'note' | 'document' }>; physicianId?: number; faxNumber: string; clientId?: number; requestSignature?: boolean }) => Promise<FaxLogEntry>;
+    send: (data: { documentId?: number; docType?: 'eval' | 'note' | 'document'; documents?: Array<{ id: number; type: 'eval' | 'note' | 'document' }>; physicianId?: number; faxNumber: string; clientId?: number; requestSignature?: boolean; recipientName?: string }) => Promise<FaxLogEntry>;
     getStatus: (faxLogId: number) => Promise<FaxLogEntry>;
     listInbox: () => Promise<FaxLogEntry[]>;
     listOutbox: () => Promise<FaxLogEntry[]>;
@@ -2468,7 +2469,7 @@ export interface PocketChartAPI {
   };
   // ── Email (Pro) ──
   email: {
-    send: (params: { to: string; subject: string; bodyText: string; bodyHtml?: string; attachments?: Array<{ fileName: string; contentBase64: string; contentType?: string }>; replyTo?: string; clientId?: number }) => Promise<{ success: boolean; messageId: string; error?: string }>;
+    send: (params: { to: string; cc?: string; subject: string; bodyText: string; bodyHtml?: string; attachments?: Array<{ fileName: string; contentBase64: string; contentType?: string }>; replyTo?: string; clientId?: number }) => Promise<{ success: boolean; messageId: string; error?: string }>;
     setProvider: (type: string, credentials: Record<string, string>) => Promise<boolean>;
     getProviderStatus: () => Promise<{ configured: boolean; provider: string | null; fromAddress?: string }>;
     testProvider: () => Promise<{ success: boolean; message: string; fromAddress?: string }>;

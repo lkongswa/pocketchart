@@ -17,6 +17,7 @@ export interface EmailAttachment {
 
 export interface SendEmailParams {
   to: string;
+  cc?: string;               // Optional CC list, comma-separated (e.g. family members on a consult invite)
   subject: string;
   bodyText: string;          // Plain-text body (always required)
   bodyHtml?: string;         // Optional HTML body

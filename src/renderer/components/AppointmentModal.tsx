@@ -145,6 +145,10 @@ export default function AppointmentModal({
           // We'll set selectedItem once entities load
         } else if (appointment.first_name && appointment.last_name) {
           setSearchQuery(`${appointment.first_name} ${appointment.last_name}`);
+        } else if (!appointment.client_id && appointment.patient_name) {
+          // Chartless appointment (consult booked from the waitlist) — the free-text
+          // patient_name is the identity; show it so the modal doesn't look empty.
+          setSearchQuery(appointment.patient_name);
         }
         setEntityRate(appointment.entity_rate ?? null);
         setPatientQuery(appointment.contractor_patient_name || appointment.patient_name || '');
@@ -349,9 +353,13 @@ export default function AppointmentModal({
     ? generateRecurringDates(formData.scheduled_date, repeatFrequency, effectiveEndDate).length
     : 0;
 
+  // A chartless appointment (consult booked from the waitlist): no client, no entity,
+  // identity lives in patient_name. Editable without forcing a client selection.
+  const isChartlessAppt = !!appointment && !appointment.client_id && !appointment.entity_id && !!(appointment.patient_name || '').trim();
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedItem) return;
+    if (!selectedItem && !isChartlessAppt) return;
 
     try {
       setSaving(true);
@@ -364,7 +372,7 @@ export default function AppointmentModal({
       // Unscheduled Patients list.
       let resolvedPatient: ContractorPatient | null = selectedPatient;
       const typedMrn = patientMrn.trim();
-      if (selectedItem.type === 'contract' && !resolvedPatient && patientQuery.trim()) {
+      if (selectedItem?.type === 'contract' && !resolvedPatient && patientQuery.trim()) {
         const typed = patientQuery.trim();
         const existing = contractorPatients.find(
           (p) => p.name.toLowerCase() === typed.toLowerCase()
@@ -384,7 +392,7 @@ export default function AppointmentModal({
         }
       }
       // If the user edited the MRN on an existing contractor patient, sync it back.
-      if (selectedItem.type === 'contract' && resolvedPatient && typedMrn !== (resolvedPatient.mrn || '').trim()) {
+      if (selectedItem?.type === 'contract' && resolvedPatient && typedMrn !== (resolvedPatient.mrn || '').trim()) {
         try {
           const updated = await window.api.contractorPatients.update(resolvedPatient.id, { mrn: typedMrn });
           resolvedPatient = updated;
@@ -393,17 +401,20 @@ export default function AppointmentModal({
         }
       }
 
-      const resolvedModality = selectedItem.type === 'contract'
+      const resolvedModality = selectedItem?.type === 'contract'
         ? (modalityChoice === '__custom__' ? modalityCustom.trim() : modalityChoice)
         : '';
 
       const baseData: Partial<Appointment> = {
         ...formData,
-        client_id: selectedItem.type === 'client' ? selectedItem.id : 0,
-        entity_id: selectedItem.type === 'contract' ? selectedItem.id : undefined,
-        entity_rate: selectedItem.type === 'contract' ? entityRate ?? undefined : undefined,
-        patient_name: selectedItem.type === 'contract' ? (resolvedPatient?.name || patientQuery) : '',
-        contractor_patient_id: selectedItem.type === 'contract' ? (resolvedPatient?.id ?? null) : null,
+        client_id: selectedItem?.type === 'client' ? selectedItem.id : 0,
+        entity_id: selectedItem?.type === 'contract' ? selectedItem.id : undefined,
+        entity_rate: selectedItem?.type === 'contract' ? entityRate ?? undefined : undefined,
+        patient_name: selectedItem?.type === 'contract'
+          ? (resolvedPatient?.name || patientQuery)
+          // Chartless consult being edited with no new selection: keep the identity.
+          : (!selectedItem && isChartlessAppt ? (appointment!.patient_name || '') : ''),
+        contractor_patient_id: selectedItem?.type === 'contract' ? (resolvedPatient?.id ?? null) : null,
         service_modality: resolvedModality,
       };
 
@@ -485,6 +496,14 @@ export default function AppointmentModal({
               onFocus={() => setShowDropdown(true)}
               onBlur={() => setTimeout(() => setShowDropdown(false), 150)}
             />
+            {/* Chartless consult badge — no client/entity linked */}
+            {!selectedItem && isChartlessAppt && (
+              <div className="mt-1.5">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-sky-100 text-sky-700">
+                  <User className="w-3 h-3" /> Consult — not yet a client
+                </span>
+              </div>
+            )}
             {/* Selected badge */}
             {selectedItem && (
               <div className="mt-1.5 flex items-center gap-2">
@@ -802,16 +821,17 @@ export default function AppointmentModal({
             </div>
           </div>
 
-          {/* Session Type (only for client appointments) */}
-          {selectedItem?.type === 'client' && (
+          {/* Session Type (client appointments + chartless consults) */}
+          {(selectedItem?.type === 'client' || (!selectedItem && isChartlessAppt)) && (
             <div>
               <label className="label">Session Type</label>
               <div className="flex gap-1">
-                {(['visit', 'eval', 'recert'] as SessionType[]).map((st) => {
+                {(['visit', 'eval', 'recert', 'consult'] as SessionType[]).map((st) => {
                   const colors: Record<SessionType, string> = {
                     visit: formData.session_type === st ? 'bg-teal-500 text-white' : 'bg-teal-50 text-teal-700 hover:bg-teal-100',
                     eval: formData.session_type === st ? 'bg-violet-500 text-white' : 'bg-violet-50 text-violet-700 hover:bg-violet-100',
                     recert: formData.session_type === st ? 'bg-amber-500 text-white' : 'bg-amber-50 text-amber-700 hover:bg-amber-100',
+                    consult: formData.session_type === st ? 'bg-sky-500 text-white' : 'bg-sky-50 text-sky-700 hover:bg-sky-100',
                   };
                   return (
                     <button
@@ -1003,7 +1023,7 @@ export default function AppointmentModal({
             <button
               type="submit"
               className="btn-primary"
-              disabled={saving || !selectedItem}
+              disabled={saving || (!selectedItem && !isChartlessAppt)}
             >
               {saving
                 ? 'Saving...'
