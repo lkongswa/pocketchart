@@ -38,6 +38,9 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
   const [baaSignedDate, setBaaSignedDate] = useState('');
   const [billingCycle, setBillingCycle] = useState<BillingCycle>('monthly');
   const [billingDay, setBillingDay] = useState(1);
+  // Flat fees for cancelled / no-show visits ('' = not billable → $0).
+  const [cancellationFee, setCancellationFee] = useState('');
+  const [noShowFee, setNoShowFee] = useState('');
   const [invoiceCols, setInvoiceCols] = useState<InvoiceColumnKey[]>(ENTITY_INVOICE_DEFAULT_COLUMNS);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -60,6 +63,8 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
       setBaaSignedDate(entity.baa_signed_date || '');
       setBillingCycle((entity.billing_cycle as BillingCycle) || 'monthly');
       setBillingDay(entity.billing_day || 1);
+      setCancellationFee(entity.cancellation_fee != null ? String(entity.cancellation_fee) : '');
+      setNoShowFee(entity.no_show_fee != null ? String(entity.no_show_fee) : '');
       setInvoiceCols(parseInvoiceColumns(entity.invoice_columns, ENTITY_INVOICE_DEFAULT_COLUMNS));
     } else {
       setName('');
@@ -78,6 +83,8 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
       setBaaSignedDate('');
       setBillingCycle('monthly');
       setBillingDay(1);
+      setCancellationFee('');
+      setNoShowFee('');
       setInvoiceCols(ENTITY_INVOICE_DEFAULT_COLUMNS);
     }
     setError('');
@@ -116,6 +123,8 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
         baa_signed_date: baaSignedDate || null,
         billing_cycle: billingCycle,
         billing_day: billingDay,
+        cancellation_fee: cancellationFee.trim() === '' ? null : (parseFloat(cancellationFee) || 0),
+        no_show_fee: noShowFee.trim() === '' ? null : (parseFloat(noShowFee) || 0),
         invoice_columns: JSON.stringify(invoiceCols),
       };
 
@@ -294,6 +303,29 @@ export default function EntityFormModal({ isOpen, onClose, onSave, entity }: Ent
                     </select>
                   </div>
                 )}
+              </div>
+
+              {/* Cancellation / no-show fees — blank means those visits bill $0 */}
+              <div className="grid grid-cols-2 gap-3 mt-3">
+                <div>
+                  <label className="label">Cancellation Fee</label>
+                  <div className="relative">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-[var(--color-text-secondary)]">$</span>
+                    <input className="input w-full pl-6" type="number" min={0} step="0.01" placeholder="0.00"
+                      value={cancellationFee} onChange={(e) => setCancellationFee(e.target.value)} />
+                  </div>
+                </div>
+                <div>
+                  <label className="label">No-Show Fee</label>
+                  <div className="relative">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-[var(--color-text-secondary)]">$</span>
+                    <input className="input w-full pl-6" type="number" min={0} step="0.01" placeholder="0.00"
+                      value={noShowFee} onChange={(e) => setNoShowFee(e.target.value)} />
+                  </div>
+                </div>
+                <p className="col-span-2 text-[11px] text-[var(--color-text-secondary)] -mt-1">
+                  Leave blank to bill nothing for cancelled / no-show visits.
+                </p>
               </div>
             </div>
           </div>

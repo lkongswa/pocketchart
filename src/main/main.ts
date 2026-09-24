@@ -28,7 +28,7 @@ import type { NoteRow, EvalRow, PatientInfo, EntityInfo, GoalInfo } from './note
 import { DEFAULT_INTAKE_TEMPLATES } from '../shared/intakeTemplates';
 import { FaxRouter, matchFaxToClient, normalizeFaxNumber, type FaxProviderType } from './fax';
 import { MessagingRouter, sendDueReminders, sendReminderForAppointment, DEFAULT_REMINDER_TEMPLATES, DEFAULT_INVOICE_EMAIL_TEMPLATE, mergeInvoiceTemplate, buildInvoiceEmailHtml, DEFAULT_INTAKE_EMAIL_TEMPLATE, mergeIntakeTemplate, buildIntakeEmailHtml, buildDocumentsEmailHtml, type EmailProviderType, type SmsProviderType } from './messaging';
-import { NOTE_FORMAT_SECTIONS, DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS, INVOICE_COLUMNS, ENTITY_INVOICE_DEFAULT_COLUMNS, CLIENT_INVOICE_DEFAULT_COLUMNS, parseInvoiceColumns } from '../shared/types';
+import { NOTE_FORMAT_SECTIONS, DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS, INVOICE_COLUMNS, ENTITY_INVOICE_DEFAULT_COLUMNS, CLIENT_INVOICE_DEFAULT_COLUMNS, parseInvoiceColumns, clientCcList } from '../shared/types';
 import type { InvoiceColumnKey } from '../shared/types';
 import { ClearinghouseRouter, type ClearinghouseProviderType } from './clearinghouse';
 import { generate837P, assemble837PInput } from './edi837Generator';
@@ -1214,8 +1214,8 @@ function registerIpcHandlers() {
         other_accident, claim_accept_assignment, patient_signature_source, insured_signature_source,
         prior_auth_number, additional_claim_info, service_facility_name, service_facility_npi,
         status, discipline,
-        send_appointment_reminders, reminder_channel, sms_consent_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        send_appointment_reminders, reminder_channel, sms_consent_at, additional_emails)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.first_name, data.last_name, data.dob, data.phone, data.email, data.address,
       data.city || '', data.state || '', data.zip || '', data.gender || '', data.mrn || '',
@@ -1235,7 +1235,8 @@ function registerIpcHandlers() {
       data.prior_auth_number || '', data.additional_claim_info || '',
       data.service_facility_name || '', data.service_facility_npi || '',
       data.status || 'active', data.discipline,
-      data.send_appointment_reminders ? 1 : 0, data.reminder_channel || 'sms', data.sms_consent_at || null
+      data.send_appointment_reminders ? 1 : 0, data.reminder_channel || 'sms', data.sms_consent_at || null,
+      data.additional_emails || ''
     );
     const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(result.lastInsertRowid) as any;
     auditLog({ actionType: 'client_created', entityType: 'client', entityId: client.id, clientId: client.id });
@@ -1271,7 +1272,7 @@ function registerIpcHandlers() {
         other_accident=?, claim_accept_assignment=?, patient_signature_source=?, insured_signature_source=?,
         prior_auth_number=?, additional_claim_info=?, service_facility_name=?, service_facility_npi=?,
         status=?, discipline=?,
-        send_appointment_reminders=?, reminder_channel=?, sms_consent_at=?,
+        send_appointment_reminders=?, reminder_channel=?, sms_consent_at=?, additional_emails=?,
         updated_at=CURRENT_TIMESTAMP
       WHERE id=? AND deleted_at IS NULL
     `).run(
@@ -1294,6 +1295,7 @@ function registerIpcHandlers() {
       data.service_facility_name || '', data.service_facility_npi || '',
       data.status, data.discipline,
       data.send_appointment_reminders ? 1 : 0, data.reminder_channel || 'sms', data.sms_consent_at || null,
+      data.additional_emails ?? before?.additional_emails ?? '',
       id
     );
 
@@ -3950,7 +3952,7 @@ function registerIpcHandlers() {
 
   // ── Superbill ──
 
-  function buildSuperbillPdf(client: any, notesData: any[], practice: any): { base64Pdf: string; filename: string } {
+  function buildSuperbillPdf(client: any, notesData: any[], practice: any, paymentTotal: number = 0): { base64Pdf: string; filename: string } {
     const doc = new jsPDF({ unit: 'pt', format: 'letter' });
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
@@ -4131,11 +4133,13 @@ function registerIpcHandlers() {
     doc.text('Services Rendered', marginLeft, y);
     y += 16;
 
+    const colRight = pageWidth - marginRight; // right edge for right-aligned Charge column
     const colDate = marginLeft;
-    const colCpt = marginLeft + 120;
-    const colUnits = marginLeft + 230;
-    const colDx = marginLeft + 290;
-    const colTimeIn = marginLeft + 410;
+    const colCpt = marginLeft + 105;
+    const colUnits = marginLeft + 200;
+    const colDx = marginLeft + 250;
+    const colTimeIn = marginLeft + 355;
+    const money = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n || 0);
 
     doc.setFontSize(8);
     doc.setFont('helvetica', 'bold');
@@ -4146,6 +4150,7 @@ function registerIpcHandlers() {
     doc.text('Units', colUnits, y);
     doc.text('Diagnosis Ptr', colDx, y);
     doc.text('Time', colTimeIn, y);
+    doc.text('Charge', colRight, y, { align: 'right' });
     y += 16;
 
     doc.setFont('helvetica', 'normal');
@@ -4174,8 +4179,17 @@ function registerIpcHandlers() {
       const timeStr = (note.time_in && note.time_out) ? `${note.time_in}-${note.time_out}` : '--';
       doc.text(timeStr, colTimeIn, y);
 
+      const charge = (note.charge_amount != null && note.charge_amount !== 0)
+        ? note.charge_amount
+        : (client.charge_amount || 0);
+      doc.text(money(charge), colRight, y, { align: 'right' });
+
       y += 16;
     }
+
+    const totalCharged = sortedNotes.reduce((sum: number, n: any) =>
+      sum + ((n.charge_amount != null && n.charge_amount !== 0) ? n.charge_amount : (client.charge_amount || 0)), 0);
+    const balance = totalCharged - (paymentTotal || 0);
 
     y += 4;
     doc.setLineWidth(0.5);
@@ -4187,6 +4201,14 @@ function registerIpcHandlers() {
 
     const totalUnits = sortedNotes.reduce((sum: number, n: any) => sum + (n.units || 1), 0);
     doc.text(`Total Units: ${totalUnits}`, colCpt, y);
+    doc.text(`Total Charged: ${money(totalCharged)}`, colRight, y, { align: 'right' });
+    y += 14;
+    // Payments received + balance (payments passed in from the caller for the same period)
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Total Paid: ${money(paymentTotal || 0)}`, colRight, y, { align: 'right' });
+    y += 13;
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Balance: ${money(balance)}`, colRight, y, { align: 'right' });
     y += 24;
 
     // ── Referring Physician ──
@@ -4281,6 +4303,172 @@ function registerIpcHandlers() {
     return { base64Pdf, filename };
   }
 
+  // ── Client Account Statement ──
+  // Account-level: lists charges (sessions) and payments over a period with a running balance.
+  function buildStatementPdf(
+    client: any, practice: any,
+    charges: Array<{ date: string; cpt: string; amount: number }>,
+    payments: Array<{ date: string; method: string; reference: string; amount: number }>,
+    startDate: string, endDate: string,
+  ): { base64Pdf: string; filename: string } {
+    const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const marginLeft = 40;
+    const marginRight = 40;
+    const maxWidth = pageWidth - marginLeft - marginRight;
+    const colRight = pageWidth - marginRight;
+    const money = (n: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n || 0);
+    let y = 40;
+    const checkPageBreak = (needed: number) => { if (y + needed > pageHeight - 50) { doc.addPage(); y = 40; } };
+
+    // Header: practice + logo
+    let textStartX = marginLeft;
+    const logoData = getLogoBase64();
+    if (logoData) {
+      try {
+        doc.addImage(logoData, logoData.includes('image/png') ? 'PNG' : 'JPEG', marginLeft, y - 6, 48, 48);
+        textStartX = marginLeft + 56;
+      } catch { /* skip logo */ }
+    }
+    doc.setFontSize(14); doc.setFont('helvetica', 'bold');
+    doc.setTextColor(PDF_COLORS.heading[0], PDF_COLORS.heading[1], PDF_COLORS.heading[2]);
+    doc.text(practice?.name || 'Practice Name', textStartX, y); y += 14;
+    doc.setFontSize(8.5); doc.setFont('helvetica', 'normal');
+    doc.setTextColor(PDF_COLORS.label[0], PDF_COLORS.label[1], PDF_COLORS.label[2]);
+    if (practice?.address) { doc.text([practice.address, practice.city, practice.state, practice.zip].filter(Boolean).join(', '), textStartX, y); y += 11; }
+    if (practice?.phone) { doc.text(`Phone: ${practice.phone}`, textStartX, y); y += 11; }
+    const idParts: string[] = [];
+    if (practice?.npi) idParts.push(`NPI: ${practice.npi}`);
+    if (practice?.tax_id) idParts.push(`Tax ID: ${practice.tax_id}`);
+    if (idParts.length) { doc.text(idParts.join('  |  '), textStartX, y); y += 11; }
+    if (logoData) y = Math.max(y, 90);
+    y += 4;
+    doc.setLineWidth(1.5);
+    doc.setDrawColor(PDF_COLORS.accent[0], PDF_COLORS.accent[1], PDF_COLORS.accent[2]);
+    doc.line(marginLeft, y, pageWidth - marginRight, y);
+    doc.setDrawColor(0, 0, 0);
+    doc.setTextColor(PDF_COLORS.body[0], PDF_COLORS.body[1], PDF_COLORS.body[2]);
+    y += 16;
+
+    doc.setFontSize(14); doc.setFont('helvetica', 'bold');
+    doc.text('STATEMENT OF ACCOUNT', marginLeft, y); y += 16;
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+    doc.text(`Statement Period: ${startDate} to ${endDate}`, marginLeft, y); y += 12;
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Patient: ${client.first_name} ${client.last_name}`, marginLeft, y);
+    if (client.dob) doc.text(`DOB: ${client.dob}`, pageWidth / 2 + 20, y);
+    y += 22;
+
+    // Charges
+    const charged = charges.reduce((s, c) => s + (c.amount || 0), 0);
+    doc.setFontSize(10); doc.setFont('helvetica', 'bold');
+    doc.text('Charges', marginLeft, y); y += 14;
+    doc.setFontSize(8); doc.setFillColor(240, 240, 240);
+    doc.rect(marginLeft, y - 10, maxWidth, 14, 'F');
+    doc.text('Date', marginLeft, y); doc.text('CPT', marginLeft + 120, y); doc.text('Amount', colRight, y, { align: 'right' });
+    y += 15;
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+    if (charges.length === 0) { doc.text('No charges in this period.', marginLeft, y); y += 14; }
+    charges.forEach((c, i) => {
+      checkPageBreak(16);
+      if (i % 2 === 0) { doc.setFillColor(250, 250, 250); doc.rect(marginLeft, y - 10, maxWidth, 14, 'F'); }
+      doc.text(c.date || '--', marginLeft, y);
+      doc.text(c.cpt || '--', marginLeft + 120, y);
+      doc.text(money(c.amount), colRight, y, { align: 'right' });
+      y += 15;
+    });
+    y += 2; doc.setFont('helvetica', 'bold');
+    doc.text(`Total Charges: ${money(charged)}`, colRight, y, { align: 'right' }); y += 22;
+
+    // Payments
+    const paid = payments.reduce((s, p) => s + (p.amount || 0), 0);
+    checkPageBreak(60);
+    doc.setFontSize(10); doc.setFont('helvetica', 'bold');
+    doc.text('Payments', marginLeft, y); y += 14;
+    doc.setFontSize(8); doc.setFillColor(240, 240, 240);
+    doc.rect(marginLeft, y - 10, maxWidth, 14, 'F');
+    doc.text('Date', marginLeft, y); doc.text('Method', marginLeft + 120, y); doc.text('Reference', marginLeft + 250, y); doc.text('Amount', colRight, y, { align: 'right' });
+    y += 15;
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+    if (payments.length === 0) { doc.text('No payments in this period.', marginLeft, y); y += 14; }
+    payments.forEach((p, i) => {
+      checkPageBreak(16);
+      if (i % 2 === 0) { doc.setFillColor(250, 250, 250); doc.rect(marginLeft, y - 10, maxWidth, 14, 'F'); }
+      doc.text(p.date || '--', marginLeft, y);
+      doc.text(p.method || '--', marginLeft + 120, y);
+      doc.text((p.reference || '--').slice(0, 24), marginLeft + 250, y);
+      doc.text(money(p.amount), colRight, y, { align: 'right' });
+      y += 15;
+    });
+    y += 2; doc.setFont('helvetica', 'bold');
+    doc.text(`Total Payments: ${money(paid)}`, colRight, y, { align: 'right' }); y += 20;
+
+    // Balance summary
+    checkPageBreak(40);
+    doc.setLineWidth(0.5);
+    doc.line(marginLeft, y, pageWidth - marginRight, y); y += 16;
+    doc.setFontSize(11); doc.setFont('helvetica', 'bold');
+    doc.text('Balance Due', marginLeft, y);
+    doc.text(money(charged - paid), colRight, y, { align: 'right' });
+
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const filename = `Statement_${client.last_name}_${client.first_name}_${dateStr}.pdf`;
+    const pdfOutput = doc.output('arraybuffer');
+    return { base64Pdf: Buffer.from(pdfOutput).toString('base64'), filename };
+  }
+
+  // Gather a client's charges (sessions w/ charge_amount) + payments for a statement.
+  const gatherStatementData = (clientId: number, startDate: string, endDate: string) => {
+    const client = db.prepare('SELECT * FROM clients WHERE id = ? AND deleted_at IS NULL').get(clientId) as any;
+    const noteRows = db.prepare(
+      `SELECT date_of_service, cpt_code, charge_amount FROM notes
+       WHERE client_id = ? AND date_of_service >= ? AND date_of_service <= ? AND deleted_at IS NULL
+       ORDER BY date_of_service`
+    ).all(clientId, startDate, endDate) as any[];
+    const charges = noteRows.map((n) => ({
+      date: n.date_of_service,
+      cpt: n.cpt_code || (client?.default_cpt_code || ''),
+      amount: (n.charge_amount != null && n.charge_amount !== 0) ? n.charge_amount : (client?.charge_amount || 0),
+    }));
+    const payRows = db.prepare(
+      `SELECT payment_date, amount, payment_method, reference_number FROM payments
+       WHERE client_id = ? AND deleted_at IS NULL AND payment_date >= ? AND payment_date <= ?
+       ORDER BY payment_date`
+    ).all(clientId, startDate, endDate) as any[];
+    const payments = payRows.map((p) => ({
+      date: p.payment_date, method: p.payment_method || '', reference: p.reference_number || '', amount: p.amount || 0,
+    }));
+    return { client, charges, payments };
+  };
+
+  safeHandle('statement:generate', (_event, data: { clientId: number; startDate: string; endDate: string }) => {
+    const practice = db.prepare('SELECT * FROM practice WHERE id = 1').get() || {};
+    const { client, charges, payments } = gatherStatementData(data.clientId, data.startDate, data.endDate);
+    if (!client) throw new Error('Client not found');
+    return buildStatementPdf(client, practice, charges, payments, data.startDate, data.endDate);
+  });
+
+  safeHandle('statement:save', async (_event, data: { base64Pdf: string; filename: string }) => {
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      title: 'Save Statement PDF',
+      defaultPath: data.filename,
+      filters: [{ name: 'PDF Document', extensions: ['pdf'] }],
+    });
+    if (canceled || !filePath) return false;
+    fs.writeFileSync(filePath, Buffer.from(data.base64Pdf, 'base64'));
+    return true;
+  });
+
+  // Sum a client's payments within a date range (for superbill/statement Paid + Balance).
+  const sumClientPayments = (clientId: number, start: string, end: string): number => {
+    if (!start || !end) return 0;
+    const rows = db.prepare(
+      'SELECT amount FROM payments WHERE client_id = ? AND deleted_at IS NULL AND payment_date >= ? AND payment_date <= ?'
+    ).all(clientId, start, end) as any[];
+    return rows.reduce((s, r) => s + (r.amount || 0), 0);
+  };
+
   safeHandle('superbill:generate', (_event, data: { clientId: number; noteIds: number[]; practiceInfo?: any }) => {
     const client = db.prepare('SELECT * FROM clients WHERE id = ? AND deleted_at IS NULL').get(data.clientId) as any;
     if (!client) throw new Error('Client not found');
@@ -4295,7 +4483,9 @@ function registerIpcHandlers() {
       `SELECT * FROM notes WHERE id IN (${placeholders}) AND client_id = ? AND deleted_at IS NULL ORDER BY date_of_service`
     ).all(...data.noteIds, data.clientId) as any[];
 
-    return buildSuperbillPdf(client, notesData, practice);
+    const dates = notesData.map((n) => n.date_of_service).filter(Boolean).sort();
+    const paymentTotal = dates.length ? sumClientPayments(data.clientId, dates[0], dates[dates.length - 1]) : 0;
+    return buildSuperbillPdf(client, notesData, practice, paymentTotal);
   });
 
   safeHandle('superbill:save', async (_event, data: { base64Pdf: string; filename: string }) => {
@@ -4324,7 +4514,8 @@ function registerIpcHandlers() {
       throw new Error('No notes found in the specified date range');
     }
 
-    return buildSuperbillPdf(client, notesData, practice);
+    const paymentTotal = sumClientPayments(data.clientId, data.startDate, data.endDate);
+    return buildSuperbillPdf(client, notesData, practice, paymentTotal);
   });
 
   // ── CMS-1500 Claim Form ──
@@ -5239,6 +5430,8 @@ function registerIpcHandlers() {
       contactName = (client.first_name || '').trim() || 'there';
       billToName = `${client.first_name || ''} ${client.last_name || ''}`.trim();
     }
+    // CC any client emails flagged as receipt recipients (entities have no additional_emails).
+    const ccReceipts = client ? clientCcList(client.additional_emails, 'receipts') : '';
 
     const total = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(invoice.total_amount || 0);
     const fields: Record<string, string> = {
@@ -5255,6 +5448,7 @@ function registerIpcHandlers() {
       emailConfigured: messagingRouter.isEmailConfigured(),
       fromAddress: messagingRouter.getEmailFromAddress(),
       to: recipient,
+      cc: ccReceipts,
       billToName,
       subject: mergeInvoiceTemplate(tplSubject, fields, true),
       bodyText: mergeInvoiceTemplate(tplBody, fields, false),
@@ -5269,7 +5463,7 @@ function registerIpcHandlers() {
   // Send: build the PDF, wrap the (possibly edited) body in the styled HTML shell, attach
   // the PDF, send via the user's own email provider, then stamp emailed_at/_to and promote
   // a draft invoice to 'sent'.
-  safeHandle('invoices:email', async (_event, args: { invoiceId: number; to: string; subject: string; bodyText: string }) => {
+  safeHandle('invoices:email', async (_event, args: { invoiceId: number; to: string; cc?: string; subject: string; bodyText: string }) => {
     requireTier('pro');
     const provider = messagingRouter.getEmailProvider(); // throws if not configured
     const to = (args.to || '').trim();
@@ -5291,6 +5485,7 @@ function registerIpcHandlers() {
 
     const result = await provider.sendEmail({
       to,
+      cc: (args.cc || '').trim() || undefined,
       fromName: practiceName,
       subject: (args.subject || '').trim() || `Invoice ${invoice.invoice_number}`,
       bodyText: args.bodyText || '',
@@ -7130,8 +7325,8 @@ function registerIpcHandlers() {
       INSERT INTO contracted_entities (name, contact_name, contact_last_name, contact_email, contact_phone,
         billing_address_street, billing_address_city, billing_address_state, billing_address_zip,
         default_note_type, notes, requires_notes, billing_cycle, billing_day, invoice_columns,
-        baa_on_file, baa_signed_date)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        baa_on_file, baa_signed_date, cancellation_fee, no_show_fee)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.name, data.contact_name || '', data.contact_last_name || '', data.contact_email || '', data.contact_phone || '',
       data.billing_address_street || '', data.billing_address_city || '',
@@ -7139,7 +7334,8 @@ function registerIpcHandlers() {
       data.default_note_type || 'soap', data.notes || '',
       data.requires_notes ? 1 : 0, data.billing_cycle || 'monthly', data.billing_day || 1,
       data.invoice_columns ?? null,
-      data.baa_on_file ? 1 : 0, data.baa_signed_date ?? null
+      data.baa_on_file ? 1 : 0, data.baa_signed_date ?? null,
+      data.cancellation_fee ?? null, data.no_show_fee ?? null
     );
     return db.prepare('SELECT * FROM contracted_entities WHERE id = ?').get(result.lastInsertRowid);
   });
@@ -7151,7 +7347,7 @@ function registerIpcHandlers() {
     const allowed = ['name', 'contact_name', 'contact_last_name', 'contact_email', 'contact_phone',
       'billing_address_street', 'billing_address_city', 'billing_address_state', 'billing_address_zip',
       'default_note_type', 'notes', 'requires_notes', 'billing_cycle', 'billing_day', 'invoice_columns',
-      'baa_on_file', 'baa_signed_date'];
+      'baa_on_file', 'baa_signed_date', 'cancellation_fee', 'no_show_fee'];
     for (const key of allowed) {
       if (data[key] !== undefined) {
         fields.push(`${key} = ?`);
@@ -7252,7 +7448,14 @@ function registerIpcHandlers() {
 
     if (!appts.length) throw new Error('No valid appointments found');
 
-    const total = appts.reduce((sum: number, a: any) => sum + (a.entity_rate || 0), 0);
+    // Cancelled / no-show visits bill the contract's flat fee (or $0), not the service rate.
+    const entityRow = db.prepare('SELECT cancellation_fee, no_show_fee FROM contracted_entities WHERE id = ?').get(entityId) as any;
+    const effRate = (a: any): number =>
+      a.status === 'cancelled' ? (entityRow?.cancellation_fee ?? 0)
+      : a.status === 'no-show' ? (entityRow?.no_show_fee ?? 0)
+      : (a.entity_rate || 0);
+
+    const total = appts.reduce((sum: number, a: any) => sum + effRate(a), 0);
 
     // Generate a unique contractor invoice number: PC-<year>-<seq>.
     // Base the sequence on the highest existing PC-<year>-* number — NOT on the
@@ -7307,7 +7510,7 @@ function registerIpcHandlers() {
 
     for (const appt of appts) {
       const patientLabel = appt.patient_name?.trim() || '';
-      const rate = appt.entity_rate || 0;
+      const rate = effRate(appt);
       insertItem.run(invoiceId, appt.id, patientLabel, appt.scheduled_date, rate, rate);
     }
 
@@ -7433,13 +7636,13 @@ function registerIpcHandlers() {
 
   safeHandle('contractorNotes:create', (_event, data: any) => {
     requireTier('pro');
-    const noteType = data.note_type === 'evaluation' ? 'evaluation' : 'soap';
+    const noteType = ['evaluation', 'discharge'].includes(data.note_type) ? data.note_type : 'soap';
     const result = db.prepare(`
       INSERT INTO notes (contractor_patient_id, entity_id, patient_name, date_of_service, time_in, time_out,
         subjective, objective, assessment, plan, medical_history, interventions_provided,
         long_term_goals, short_term_goals,
-        note_type, signed_at, signature_typed)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        note_type, discharge_data, signed_at, signature_typed)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.contractor_patient_id || null,
       data.entity_id || null,
@@ -7456,6 +7659,7 @@ function registerIpcHandlers() {
       data.long_term_goals || '',
       data.short_term_goals || '',
       noteType,
+      data.discharge_data || '',
       data.signed_at || null,
       data.signature_typed || ''
     );
@@ -7468,12 +7672,38 @@ function registerIpcHandlers() {
 
   safeHandle('contractorNotes:update', (_event, id: number, data: any) => {
     requireTier('pro');
-    const allowed = ['subjective', 'objective', 'assessment', 'plan', 'time_in', 'time_out', 'signed_at', 'signature_typed', 'patient_name', 'medical_history', 'interventions_provided', 'long_term_goals', 'short_term_goals', 'note_type'];
+    const allowed = ['subjective', 'objective', 'assessment', 'plan', 'time_in', 'time_out', 'signed_at', 'signature_typed', 'patient_name', 'medical_history', 'interventions_provided', 'long_term_goals', 'short_term_goals', 'note_type', 'discharge_data'];
     const fields = Object.keys(data).filter(k => allowed.includes(k));
     if (!fields.length) throw new Error('No valid fields to update');
     const set = fields.map(f => `${f} = ?`).join(', ') + ', updated_at = CURRENT_TIMESTAMP';
     db.prepare(`UPDATE notes SET ${set} WHERE id = ?`).run(...fields.map(f => data[f]), id);
     return db.prepare('SELECT * FROM notes WHERE id = ?').get(id);
+  });
+
+  // Compute episode-summary defaults for a contractor discharge from existing history:
+  // attended (completed) visit count, first visit / last visit dates, and discipline.
+  safeHandle('contractorNotes:dischargeDefaults', (_event, contractorPatientId: number) => {
+    requireTier('pro');
+    if (!contractorPatientId) return { total_visits: 0, start_of_care: '', last_visit: '', discipline: '' };
+    const completed = db.prepare(
+      "SELECT scheduled_date AS d FROM appointments WHERE contractor_patient_id = ? AND status = 'completed' AND scheduled_date IS NOT NULL"
+    ).all(contractorPatientId) as Array<{ d: string }>;
+    // Documented visits (notes) as a fallback source of dates / count when appts aren't marked completed.
+    const noteRows = db.prepare(
+      "SELECT date_of_service AS d FROM notes WHERE contractor_patient_id = ? AND deleted_at IS NULL AND note_type != 'discharge' AND date_of_service IS NOT NULL"
+    ).all(contractorPatientId) as Array<{ d: string }>;
+
+    const apptDates = completed.map(r => r.d).filter(Boolean).sort();
+    const noteDates = noteRows.map(r => r.d).filter(Boolean).sort();
+    const allDates = [...apptDates, ...noteDates].sort();
+
+    // Prefer completed-appointment count as the true attended-visit tally; fall back to note count.
+    const total_visits = apptDates.length > 0 ? apptDates.length : noteDates.length;
+    const start_of_care = allDates[0] || '';
+    const last_visit = allDates.length ? allDates[allDates.length - 1] : '';
+
+    const practice = db.prepare('SELECT discipline FROM practice WHERE id = 1').get() as any;
+    return { total_visits, start_of_care, last_visit, discipline: practice?.discipline || '' };
   });
 
   // ══════════════════════════════════════════════════════════════════════
@@ -9470,6 +9700,7 @@ function registerIpcHandlers() {
       | { kind: 'intake'; templateIds: number[]; fillable?: boolean }
       | { kind: 'invoice'; invoiceId: number }
       | { kind: 'superbill'; startDate: string; endDate: string }
+      | { kind: 'statement'; startDate: string; endDate: string }
     >;
   }) => {
     requireTier('pro');
@@ -9523,7 +9754,14 @@ function registerIpcHandlers() {
             `SELECT * FROM notes WHERE client_id = ? AND date_of_service >= ? AND date_of_service <= ? AND deleted_at IS NULL ORDER BY date_of_service`
           ).all(args.clientId, spec.startDate, spec.endDate) as any[];
           if (notesData.length === 0) { skipped.push({ label: 'Superbill', reason: 'no notes in range' }); continue; }
-          const { base64Pdf, filename } = buildSuperbillPdf(client, notesData, practice);
+          const paymentTotal = sumClientPayments(args.clientId, spec.startDate, spec.endDate);
+          const { base64Pdf, filename } = buildSuperbillPdf(client, notesData, practice, paymentTotal);
+          attachments.push({ fileName: filename, contentBase64: base64Pdf, contentType: 'application/pdf' });
+          labels.push(filename);
+        } else if (spec.kind === 'statement') {
+          const { charges, payments: pmts } = gatherStatementData(args.clientId, spec.startDate, spec.endDate);
+          if (charges.length === 0 && pmts.length === 0) { skipped.push({ label: 'Statement', reason: 'no activity in range' }); continue; }
+          const { base64Pdf, filename } = buildStatementPdf(client, practice, charges, pmts, spec.startDate, spec.endDate);
           attachments.push({ fileName: filename, contentBase64: base64Pdf, contentType: 'application/pdf' });
           labels.push(filename);
         }

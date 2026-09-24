@@ -275,6 +275,24 @@ const ClientDetailPage: React.FC = () => {
   const [generatingCMS1500, setGeneratingCMS1500] = useState(false);
   const [showCsvImportForClient, setShowCsvImportForClient] = useState(false);
   const [showGfeModal, setShowGfeModal] = useState(false);
+  // Account statement (charges + payments + balance for a date range)
+  const [showStatementModal, setShowStatementModal] = useState(false);
+  const [stmtStart, setStmtStart] = useState(() => { const d = new Date(); d.setMonth(d.getMonth() - 12); return d.toISOString().slice(0, 10); });
+  const [stmtEnd, setStmtEnd] = useState(() => new Date().toISOString().slice(0, 10));
+  const [stmtBusy, setStmtBusy] = useState(false);
+  const handleGenerateStatement = async () => {
+    if (!client) return;
+    setStmtBusy(true);
+    try {
+      const res = await window.api.statement.generate({ clientId: client.id, startDate: stmtStart, endDate: stmtEnd });
+      const saved = await window.api.statement.save(res);
+      if (saved) { setShowStatementModal(false); setBillingToast('Statement saved'); }
+    } catch (err: any) {
+      setBillingToast(err?.message || 'Failed to generate statement');
+    } finally {
+      setStmtBusy(false);
+    }
+  };
   const [showSendDocs, setShowSendDocs] = useState(false);
   // Fax modal state
   const [showFaxModal, setShowFaxModal] = useState(false);
@@ -282,7 +300,7 @@ const ClientDetailPage: React.FC = () => {
   const [faxDocType, setFaxDocType] = useState<'eval' | 'note' | 'document' | undefined>(undefined);
   const [faxTracking, setFaxTracking] = useState<FaxTrackingEntry[]>([]);
   // Email-compose modal (note / eval / invoice → client)
-  const [emailModal, setEmailModal] = useState<{ kind: 'note' | 'eval' | 'invoice'; id: number; to: string; subject: string; body: string; label: string } | null>(null);
+  const [emailModal, setEmailModal] = useState<{ kind: 'note' | 'eval' | 'invoice'; id: number; to: string; cc?: string; subject: string; body: string; label: string } | null>(null);
   // Inline record-payment modal (Billing pipeline)
   const [recordPaymentInvoiceId, setRecordPaymentInvoiceId] = useState<number | null>(null);
   // Appointment modal — opened from the heatmap quick-add's "More options" (full form, recurring/eval/etc.)
@@ -988,6 +1006,7 @@ const ClientDetailPage: React.FC = () => {
       setEmailModal({
         kind: 'invoice', id: invoiceId,
         to: prep.to || client?.email || '',
+        cc: (prep as any).cc || '',
         subject: prep.subject || '',
         body: prep.bodyText || '',
         label: prep.filename || 'Invoice.pdf',
@@ -998,10 +1017,10 @@ const ClientDetailPage: React.FC = () => {
     }
   };
 
-  const handleSendEmail = async (to: string, subject: string, body: string) => {
+  const handleSendEmail = async (to: string, subject: string, body: string, cc?: string) => {
     if (!emailModal) return;
     if (emailModal.kind === 'invoice') {
-      await window.api.invoices.email({ invoiceId: emailModal.id, to, subject, bodyText: body });
+      await window.api.invoices.email({ invoiceId: emailModal.id, to, cc, subject, bodyText: body });
       const invoicesData = await window.api.invoices.list({ clientId });
       setInvoices(invoicesData);
     } else {
@@ -2272,6 +2291,17 @@ const ClientDetailPage: React.FC = () => {
           </button>
           <button
             className="w-full flex items-center gap-3 px-2 py-2.5 hover:bg-gray-50 rounded-lg text-left transition-colors"
+            onClick={() => { if (guardAction()) setShowStatementModal(true); }}
+          >
+            <Receipt size={16} className="text-emerald-600 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-[var(--color-text)]">Account Statement</div>
+              <div className="text-xs text-[var(--color-text-secondary)]">Charges &amp; payments with running balance for a date range</div>
+            </div>
+            <ChevronRight size={15} className="text-[var(--color-text-tertiary)] shrink-0" />
+          </button>
+          <button
+            className="w-full flex items-center gap-3 px-2 py-2.5 hover:bg-gray-50 rounded-lg text-left transition-colors"
             onClick={() => { if (guardAction()) setShowGfeModal(true); }}
           >
             <Shield size={16} className="text-emerald-600 shrink-0" />
@@ -2675,6 +2705,35 @@ const ClientDetailPage: React.FC = () => {
         />
       )}
 
+      {/* Account Statement — pick a date range, generate the charges/payments/balance PDF */}
+      {showStatementModal && client && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setShowStatementModal(false)} />
+          <div className="relative bg-white rounded-xl shadow-xl w-full max-w-sm mx-4 p-5">
+            <h3 className="text-lg font-semibold text-[var(--color-text)] mb-1">Account Statement</h3>
+            <p className="text-sm text-[var(--color-text-secondary)] mb-4">
+              Lists charges (sessions) and payments with a running balance for the period.
+            </p>
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div>
+                <label className="label text-xs">From</label>
+                <input type="date" className="input w-full" value={stmtStart} onChange={(e) => setStmtStart(e.target.value)} />
+              </div>
+              <div>
+                <label className="label text-xs">To</label>
+                <input type="date" className="input w-full" value={stmtEnd} onChange={(e) => setStmtEnd(e.target.value)} />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button className="btn-secondary" onClick={() => setShowStatementModal(false)}>Cancel</button>
+              <button className="btn-primary gap-1.5" onClick={handleGenerateStatement} disabled={stmtBusy}>
+                <Receipt size={14} /> {stmtBusy ? 'Generating…' : 'Generate PDF'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Send Documents (bulk email to client) */}
       {client && (
         <SendDocumentsModal
@@ -2742,6 +2801,7 @@ const ClientDetailPage: React.FC = () => {
         heading={emailModal?.kind === 'invoice' ? 'Email invoice to client' : emailModal?.kind === 'eval' ? 'Email evaluation to client' : 'Email note to client'}
         attachmentLabel={emailModal?.label}
         defaultTo={emailModal?.to || ''}
+        defaultCc={emailModal?.cc || ''}
         defaultSubject={emailModal?.subject || ''}
         defaultBody={emailModal?.body || ''}
         onSend={handleSendEmail}

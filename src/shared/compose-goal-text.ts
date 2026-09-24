@@ -558,6 +558,33 @@ export function isAutoComposedGoalText(text: string): boolean {
 }
 
 /**
+ * Trim redundant performance/condition clauses off the END of a goal's action text so a
+ * skilled-language line ("[disc] trained Pt to <core>. Pt completed with __%…") doesn't
+ * double up on accuracy/independence/cues that the goal statement already carries.
+ * Only strips trailing measurement clauses — the functional action + context is kept.
+ */
+export function stripGoalConditionTail(core: string): string {
+  let s = (core || '').trim().replace(/[.\s]+$/, '');
+  // Apply repeatedly so stacked tails ("…with 80% accuracy, independently") all come off.
+  const tails: RegExp[] = [
+    /[,;]?\s*(?:with|at|to)\s+\d+\s*%\s*(?:accuracy|accurately|correct(?:ly)?|of the time|success)?\s*$/i,
+    /[,;]?\s*(?:with\s+)?independen(?:t|tly|ce)\s*$/i,
+    /[,;]?\s*(?:with|using|given|requiring)\s+(?:min(?:imal|imum)?|mod(?:erate)?|max(?:imal|imum)?|no|occasional|intermittent|verbal|visual|tactile|gestural|physical)[\w\s/-]*?(?:cue|cuing|cueing|assist(?:ance)?|support|prompt|facilitation)s?\s*$/i,
+    /[,;]?\s*in\s+\d+\s*(?:of|out of|\/)\s*\d+\s*(?:trials?|opportunities|attempts|sessions?|repetitions?|reps?)\s*$/i,
+    /[,;]?\s*(?:for|across|over)\s+\d+\s*(?:consecutive\s+)?(?:trials?|sessions?|opportunities|days?|weeks?)\s*$/i,
+  ];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const re of tails) {
+      const next = s.replace(re, '').replace(/[,;\s]+$/, '');
+      if (next !== s) { s = next; changed = true; }
+    }
+  }
+  return s.trim();
+}
+
+/**
  * Look up the numeric value for a given metric option.
  */
 export function metricValueToNumeric(type: MeasurementType, value: string): number {

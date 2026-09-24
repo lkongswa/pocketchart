@@ -5,6 +5,37 @@ export type GoalStatus = 'active' | 'met' | 'discontinued' | 'modified';
 export type AppointmentStatus = 'scheduled' | 'completed' | 'cancelled' | 'no-show';
 export type ReminderChannel = 'sms' | 'email' | 'both';
 export type ReminderStatus = 'none' | 'sent' | 'confirmed' | 'cancelled' | 'failed';
+
+/** An extra CC email on a client, tagged with what it should receive. Stored as a
+ *  JSON array in clients.additional_emails. */
+export interface ClientEmail {
+  email: string;
+  reminders: boolean;   // CC on appointment-reminder emails
+  receipts: boolean;    // CC on receipt / invoice emails
+}
+
+/** Parse clients.additional_emails (JSON) into a clean ClientEmail[] (defensive against bad data). */
+export function parseClientEmails(raw: string | null | undefined): ClientEmail[] {
+  if (!raw || !raw.trim()) return [];
+  try {
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .map((e: any) => ({
+        email: String(e?.email ?? '').trim(),
+        reminders: !!e?.reminders,
+        receipts: !!e?.receipts,
+      }))
+      .filter((e: ClientEmail) => e.email);
+  } catch {
+    return [];
+  }
+}
+
+/** Comma-separated list of emails from a client's additional_emails filtered by purpose. */
+export function clientCcList(raw: string | null | undefined, purpose: 'reminders' | 'receipts'): string {
+  return parseClientEmails(raw).filter(e => e[purpose]).map(e => e.email).join(', ');
+}
 export type VisitType = 'T' | 'H' | 'O' | 'C';
 export type SessionType = 'visit' | 'eval' | 'recert' | 'consult';
 export type WaitlistStatus = 'waiting' | 'contacted' | 'scheduled_intake' | 'converted' | 'declined';
@@ -258,6 +289,7 @@ export interface Client {
   dob: string;
   phone: string;
   email: string;
+  additional_emails: string;                 // JSON array of ClientEmail — extra CC addresses for reminders/receipts
   address: string;
   city: string;                              // V2/V3: EDI-ready
   state: string;                             // V2/V3: EDI-ready
@@ -703,6 +735,8 @@ export interface ContractedEntity {
   invoice_columns: string | null;  // JSON array of InvoiceColumnKey; null = use defaults
   baa_on_file: number;             // 1 = BAA signed with this agency; gates emailing clinical docs
   baa_signed_date: string | null;  // YYYY-MM-DD, optional
+  cancellation_fee: number | null; // flat $ billed for a cancelled visit; null = $0 / not billable
+  no_show_fee: number | null;      // flat $ billed for a no-show visit; null = $0 / not billable
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -1020,6 +1054,37 @@ export interface DischargeData {
   equipment_details: string;
   additional_recommendations: string;
   is_standalone: boolean;
+}
+
+/** Final status for a single goal on a contract discharge. Contract patients have no
+ *  cross-session chart goals, so the status attaches to the free-text LTG/STG entries
+ *  typed on the note itself (matched by text + type). */
+export interface ContractDischargeGoalStatus {
+  text: string;
+  goal_type: 'LTG' | 'STG';
+  status: DischargeGoalStatus;
+}
+
+/** Discharge summary payload for a CONTRACTOR note (stored in notes.discharge_data as JSON).
+ *  A self-contained variant of DischargeData: no chart-goal machinery, plus a narrative and
+ *  per-goal statuses scored against the note's own LTG/STG list. */
+export interface ContractDischargeData {
+  discharge_reason: DischargeReason;
+  discharge_reason_detail: string;
+  start_of_care: string;
+  discharge_date: string;
+  total_visits: number;
+  frequency_per_week: number | null;
+  duration_weeks: number | null;
+  primary_dx: string;
+  discipline: string;
+  discharge_summary: string;
+  goal_statuses: ContractDischargeGoalStatus[];
+  recommendations: DischargeRecommendation[];
+  referral_to: string;
+  return_to_therapy_if: string;
+  equipment_details: string;
+  additional_recommendations: string;
 }
 
 export interface EpisodeSummary {
@@ -1769,7 +1834,8 @@ export type ClientDocumentEmailSpec =
   | { kind: 'document'; documentId: number }
   | { kind: 'intake'; templateIds: number[]; fillable?: boolean }
   | { kind: 'invoice'; invoiceId: number }
-  | { kind: 'superbill'; startDate: string; endDate: string };
+  | { kind: 'superbill'; startDate: string; endDate: string }
+  | { kind: 'statement'; startDate: string; endDate: string };
 export type SentMessageChannel = 'sms' | 'email';
 export type SentMessageStatus = 'sent' | 'failed' | 'confirmed' | 'cancelled';
 export interface SentMessage {
@@ -1904,6 +1970,10 @@ export interface PocketChartAPI {
     save: (data: SuperbillSaveRequest) => Promise<boolean>;
     generateBulk: (data: SuperbillBulkRequest) => Promise<SuperbillResult>;
   };
+  statement: {
+    generate: (data: { clientId: number; startDate: string; endDate: string }) => Promise<{ base64Pdf: string; filename: string }>;
+    save: (data: { base64Pdf: string; filename: string }) => Promise<boolean>;
+  };
   backup: {
     exportManual: () => Promise<string | null>;
     getDbPath: () => Promise<string>;
@@ -2022,6 +2092,7 @@ export interface PocketChartAPI {
       emailConfigured: boolean;
       fromAddress: string;
       to: string;
+      cc: string;
       billToName: string;
       subject: string;
       bodyText: string;
@@ -2031,7 +2102,7 @@ export interface PocketChartAPI {
       alreadyEmailedAt: string | null;
       alreadyEmailedTo: string | null;
     }>;
-    email: (data: { invoiceId: number; to: string; subject: string; bodyText: string }) => Promise<{
+    email: (data: { invoiceId: number; to: string; cc?: string; subject: string; bodyText: string }) => Promise<{
       success: boolean;
       error?: string;
       status: InvoiceStatus;
@@ -2258,6 +2329,7 @@ export interface PocketChartAPI {
     get: (id: number) => Promise<any>;
     create: (data: any) => Promise<any>;
     update: (id: number, data: any) => Promise<any>;
+    dischargeDefaults: (contractorPatientId: number) => Promise<{ total_visits: number; start_of_care: string; last_visit: string; discipline: string }>;
   };
   // ── Entity Documents (Pro) ──
   entityDocuments: {

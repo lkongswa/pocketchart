@@ -33,7 +33,7 @@ import {
 import type { Client, Note, Goal, GoalStatus, Discipline, SOAPSection, NoteFormat, CptLine, PlaceOfService, ContractedEntity, EntityFeeSchedule, StagedGoal, ProgressReportGoalStatus, ProgressReportData, ComplianceTracking, VisitType, Evaluation, NoteMode, DischargeData, DischargeGoalStatus, DischargeReason, DischargeRecommendation, EpisodeSummary, MeasurementType } from '../../shared/types';
 import { getPatternCategories } from '../../shared/goal-patterns';
 import { NOTE_FORMAT_SECTIONS, PROGRESS_REPORT_GOAL_STATUS_LABELS, DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS, MEASUREMENT_TYPE_LABELS } from '../../shared/types';
-import { formatMetricValue } from '../../shared/compose-goal-text';
+import { formatMetricValue, stripGoalConditionTail } from '../../shared/compose-goal-text';
 import MeasurementChips from '../components/MeasurementChips';
 import GoalProgressBar from '../components/GoalProgressBar';
 import GoalProgressTimeline from '../components/GoalProgressTimeline';
@@ -162,6 +162,10 @@ export default function NoteFormPage() {
   // Per-session goal performance (the value addressed this visit), keyed by goal id.
   // Persisted on the note as goal_progress JSON; committed to goal_progress_history on sign.
   const [sessionProgress, setSessionProgress] = useState<import('../../shared/types').SessionGoalProgressMap>({});
+  // Which goal rows have their progress-bar/trend detail expanded (compact list = collapsed by default).
+  const [expandedGoalRows, setExpandedGoalRows] = useState<number[]>([]);
+  const toggleGoalRowExpand = (goalId: number) =>
+    setExpandedGoalRows((prev) => prev.includes(goalId) ? prev.filter(id => id !== goalId) : [...prev, goalId]);
   const [signatureImage, setSignatureImage] = useState('');
   const [signatureTyped, setSignatureTyped] = useState('');
   const [existingSignedAt, setExistingSignedAt] = useState('');
@@ -283,9 +287,11 @@ export default function NoteFormPage() {
     return goals
       .filter((g) => g.status === 'active')
       .map((g) => {
-        const core = g.goal_text
+        const rawCore = g.goal_text
           .replace(/^(Patient|Client|Pt)\s+will\s+/i, '')
           .replace(/\.\s*$/, '');
+        // Drop the goal's own accuracy/independence/cue tail so it isn't repeated below.
+        const core = stripGoalConditionTail(rawCore) || rawCore;
         const coreLc = core.charAt(0).toLowerCase() + core.slice(1);
         const blank = goalPerformanceBlank(g.measurement_type, g.instrument);
         const target = g.target_value
@@ -294,7 +300,7 @@ export default function NoteFormPage() {
         return {
           key: g.id,
           label: core,
-          phrase: `${providerLabel} trained ${subject} to ${coreLc}, and ${subject} completed with ${blank}${target}.`,
+          phrase: `${providerLabel} trained ${subject} to ${coreLc}. ${subject} completed with ${blank}${target}.`,
           title: `Insert goal-directed text + mark this goal as addressed:\n${g.goal_text}`,
         };
       });
@@ -2453,6 +2459,123 @@ export default function NoteFormPage() {
           onExtraChipInsert={handleGoalChipInsert}
         />
 
+        {/* Goals Addressed — sits right under Objective for quick in-session % logging */}
+        {!isDischarge && activeGoals.length > 0 && (
+          <div className="card p-4 mb-4">
+            <h3 className="text-sm font-semibold text-[var(--color-text)] mb-1 flex items-center gap-2">
+              <Target className="w-4 h-4 text-[var(--color-primary)]" />
+              Goals Addressed
+            </h3>
+            <p className="text-[11px] text-[var(--color-text-secondary)] mb-2">
+              Pick this session's performance to log it — that also marks the goal addressed.
+            </p>
+            <div className="space-y-1">
+              {activeGoals.map((goal) => {
+                const isAddressed = goalsAddressed.includes(goal.id);
+                const mt = (goal.measurement_type || 'percentage') as MeasurementType;
+                const sp = sessionProgress[goal.id];
+                const opts = METRIC_OPTIONS[mt];
+                const expanded = expandedGoalRows.includes(goal.id);
+                const hasDetail = !!(goal.baseline_value || goal.baseline > 0 || goal.target_value || goal.target > 0 || (goalHistories[goal.id]?.length ?? 0) >= 2);
+                const setVal = (val: string, num: number) => {
+                  setSessionProgress((prev) => {
+                    const next = { ...prev };
+                    if (!val) { delete next[goal.id]; }
+                    else { next[goal.id] = { value: val, numeric: num, measurement_type: mt }; }
+                    return next;
+                  });
+                  if (val && !isAddressed) toggleGoalAddressed(goal.id);
+                };
+                return (
+                  <div
+                    key={goal.id}
+                    className={`rounded-lg border transition-colors ${isAddressed ? 'border-[var(--color-primary)]/30 bg-[var(--color-primary)]/5' : 'border-transparent hover:bg-gray-50'}`}
+                  >
+                    <div className="flex items-center gap-2 px-2 py-1.5">
+                      <input
+                        type="checkbox"
+                        checked={isAddressed}
+                        onChange={() => toggleGoalAddressed(goal.id)}
+                        className="w-4 h-4 rounded border-gray-300 text-[var(--color-primary)] accent-[var(--color-primary)] flex-shrink-0"
+                      />
+                      <span className={`badge text-[10px] flex-shrink-0 ${goal.goal_type === 'STG' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
+                        {goal.goal_type}
+                      </span>
+                      <span className="text-sm text-[var(--color-text)] flex-1 min-w-0 truncate" title={goal.goal_text}>
+                        {goal.goal_text}
+                      </span>
+                      {mt !== 'custom_text' && (
+                        opts ? (
+                          <select
+                            className="select text-xs py-1 w-[5.5rem] flex-shrink-0"
+                            value={sp?.value || ''}
+                            disabled={!!existingSignedAt}
+                            onChange={(e) => {
+                              const o = opts.find(x => x.value === e.target.value);
+                              setVal(o ? o.value : '', o ? o.numeric : 0);
+                            }}
+                            title="This session"
+                          >
+                            <option value="">—</option>
+                            {opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
+                        ) : (
+                          <input
+                            type="number"
+                            className="input text-xs w-16 px-2 py-1 flex-shrink-0"
+                            placeholder="val"
+                            value={sp?.value || ''}
+                            disabled={!!existingSignedAt}
+                            onChange={(e) => { const v = e.target.value; setVal(v, parseInt(v, 10) || 0); }}
+                            title="This session"
+                          />
+                        )
+                      )}
+                      {hasDetail ? (
+                        <button
+                          type="button"
+                          className="p-0.5 text-gray-400 hover:text-gray-600 flex-shrink-0"
+                          onClick={() => toggleGoalRowExpand(goal.id)}
+                          title="Show progress toward target + trend"
+                        >
+                          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                        </button>
+                      ) : <span className="w-[18px] flex-shrink-0" />}
+                    </div>
+                    {expanded && hasDetail && (
+                      <div className="pl-8 pr-3 pb-2 space-y-2">
+                        {(goal.baseline_value || goal.baseline > 0 || goal.target_value || goal.target > 0) && (
+                          <GoalProgressBar
+                            measurement_type={mt}
+                            baseline_value={goal.baseline_value || `${goal.baseline}`}
+                            baseline_numeric={goal.baseline ?? 0}
+                            current_value={sp?.value || undefined}
+                            current_numeric={sp?.numeric ?? undefined}
+                            target_value={goal.target_value || `${goal.target}`}
+                            target_numeric={goal.target ?? 0}
+                            compact
+                          />
+                        )}
+                        {goalHistories[goal.id]?.length >= 2 && (
+                          <GoalProgressTimeline
+                            history={goalHistories[goal.id]}
+                            measurement_type={mt}
+                            target_value={goal.target_value || `${goal.target}`}
+                            target_numeric={goal.target ?? 0}
+                            baseline_numeric={goal.baseline ?? 0}
+                            instrument={goal.instrument}
+                            compact
+                          />
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* ── Goal Progress (Progress Report only) ── */}
         {isProgressReport && (
           <div className="card p-5 mb-4 bg-teal-50/30 border-l-4 border-l-teal-400">
@@ -2694,104 +2817,6 @@ export default function NoteFormPage() {
             section="A"
             disabled={!!existingSignedAt}
           />
-
-          {/* Goals Addressed */}
-          {activeGoals.length > 0 && (
-            <div className="mt-4 pt-4 border-t border-[var(--color-border)]">
-              <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3 flex items-center gap-2">
-                <Target className="w-4 h-4 text-[var(--color-primary)]" />
-                Goals Addressed
-              </h3>
-              <div className="space-y-2">
-                {activeGoals.map((goal) => {
-                  const isAddressed = goalsAddressed.includes(goal.id);
-                  const mt = (goal.measurement_type || 'percentage') as MeasurementType;
-                  const sp = sessionProgress[goal.id];
-                  return (
-                    <div
-                      key={goal.id}
-                      className={`rounded-lg transition-colors ${isAddressed ? 'bg-[var(--color-primary)]/5 border border-[var(--color-primary)]/20' : 'hover:bg-gray-50'}`}
-                    >
-                      <label className="flex items-start gap-3 p-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={isAddressed}
-                          onChange={() => toggleGoalAddressed(goal.id)}
-                          className="mt-0.5 w-4 h-4 rounded border-gray-300 text-[var(--color-primary)] accent-[var(--color-primary)]"
-                        />
-                        <div className="flex-1 min-w-0">
-                          <span className="text-sm text-[var(--color-text)] leading-snug">
-                            {goal.goal_text}
-                          </span>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <span className={`badge text-[10px] ${goal.goal_type === 'STG' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
-                              {goal.goal_type}
-                            </span>
-                            {goal.category && (
-                              <span className="text-[10px] text-[var(--color-text-secondary)]">
-                                {goal.category}
-                              </span>
-                            )}
-                            {!isAddressed && sp?.value && (
-                              <span className="text-[10px] text-[var(--color-text-secondary)] italic">
-                                last entered {formatMetricValue(mt, sp.value, goal.instrument)}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </label>
-                      {/* Per-session performance — captured only for goals addressed this visit */}
-                      {isAddressed && (
-                        <div className="pl-9 pr-3 pb-3 space-y-2">
-                          {mt !== 'custom_text' && (
-                            <MeasurementChips
-                              measurement_type={mt}
-                              label="This session"
-                              value={sp?.value || ''}
-                              numericValue={sp?.numeric ?? 0}
-                              colorScheme="target"
-                              disabled={!!existingSignedAt}
-                              onSelect={(val, num) => setSessionProgress((prev) => {
-                                const next = { ...prev };
-                                if (!val) { delete next[goal.id]; }
-                                else { next[goal.id] = { value: val, numeric: num, measurement_type: mt }; }
-                                return next;
-                              })}
-                            />
-                          )}
-                          {/* Reference: where this goal is headed */}
-                          {(goal.baseline_value || goal.baseline > 0 || goal.target_value || goal.target > 0) && (
-                            <GoalProgressBar
-                              measurement_type={mt}
-                              baseline_value={goal.baseline_value || `${goal.baseline}`}
-                              baseline_numeric={goal.baseline ?? 0}
-                              current_value={sp?.value || undefined}
-                              current_numeric={sp?.numeric ?? undefined}
-                              target_value={goal.target_value || `${goal.target}`}
-                              target_numeric={goal.target ?? 0}
-                              compact
-                            />
-                          )}
-                          {/* Trend across prior sessions */}
-                          {goalHistories[goal.id]?.length >= 2 && (
-                            <GoalProgressTimeline
-                              history={goalHistories[goal.id]}
-                              measurement_type={mt}
-                              target_value={goal.target_value || `${goal.target}`}
-                              target_numeric={goal.target ?? 0}
-                              baseline_numeric={goal.baseline ?? 0}
-                              instrument={goal.instrument}
-                              compact
-                            />
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
         </div>
 
         {/* ── Clinical Summary (Progress Report only) ── */}

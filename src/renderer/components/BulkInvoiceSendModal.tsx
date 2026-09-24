@@ -41,6 +41,7 @@ const BulkInvoiceSendModal: React.FC<Props> = ({ invoices, onClose, onSent }) =>
     alreadyEmailedTo: string | null;
   } | null>(null);
   const [to, setTo] = useState('');
+  const [cc, setCc] = useState('');
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
@@ -55,6 +56,7 @@ const BulkInvoiceSendModal: React.FC<Props> = ({ invoices, onClose, onSent }) =>
     setError(null);
     setPrep(null);
     setTo('');
+    setCc('');
     setSubject('');
     setBody('');
     try {
@@ -67,6 +69,7 @@ const BulkInvoiceSendModal: React.FC<Props> = ({ invoices, onClose, onSent }) =>
         alreadyEmailedTo: p.alreadyEmailedTo,
       });
       setTo(p.to || '');
+      setCc(p.cc || '');
       setSubject(p.subject || '');
       setBody(p.bodyText || '');
     } catch (err: any) {
@@ -113,6 +116,7 @@ const BulkInvoiceSendModal: React.FC<Props> = ({ invoices, onClose, onSent }) =>
       const res = await window.api.invoices.email({
         invoiceId: current.id,
         to: recipient,
+        cc: cc.trim() || undefined,
         subject,
         bodyText: body,
       });
@@ -220,6 +224,17 @@ const BulkInvoiceSendModal: React.FC<Props> = ({ invoices, onClose, onSent }) =>
                 {prep.fromAddress && (
                   <p className="text-xs text-[var(--color-text-secondary)] mt-1">Sending from {prep.fromAddress}</p>
                 )}
+              </div>
+
+              <div>
+                <label className="label">Cc <span className="text-xs text-[var(--color-text-secondary)] font-normal">(receipt recipients)</span></label>
+                <input
+                  type="text"
+                  className="input w-full"
+                  value={cc}
+                  onChange={(e) => setCc(e.target.value)}
+                  placeholder="family@example.com, spouse@example.com"
+                />
               </div>
 
               <div>

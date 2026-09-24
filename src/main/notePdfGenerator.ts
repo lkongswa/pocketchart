@@ -12,6 +12,8 @@
  */
 
 import { jsPDF } from 'jspdf';
+import { DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS } from '../shared/types';
+import type { ContractDischargeData, DischargeReason, DischargeGoalStatus, DischargeRecommendation } from '../shared/types';
 
 // ── Colors (kept local; mirrors PDF_COLORS in main.ts) ──
 const COLORS = {
@@ -59,6 +61,7 @@ export interface NoteRow {
   patient_name?: string;
   entity_name?: string;
   note_type?: string;
+  discharge_data?: string; // JSON ContractDischargeData (contractor discharge notes)
 }
 
 export interface EvalRow {
@@ -482,21 +485,65 @@ function formatStoredGoals(entries: Array<{ text: string; timeframe: string }>):
     .join('\n\n');
 }
 
+/** Render the discharge-specific sections for a contractor discharge note. */
+function renderDischargeBody(L: Layout, note: NoteRow): void {
+  let dc: ContractDischargeData | null = null;
+  try { dc = note.discharge_data ? JSON.parse(note.discharge_data) as ContractDischargeData : null; } catch { dc = null; }
+  if (!dc) return;
+
+  // Discharge details
+  const detail: string[] = [];
+  detail.push(`Reason: ${DISCHARGE_REASON_LABELS[dc.discharge_reason as DischargeReason] || dc.discharge_reason}${dc.discharge_reason_detail ? ` — ${dc.discharge_reason_detail}` : ''}`);
+  if (dc.start_of_care) detail.push(`Start of care: ${dc.start_of_care}`);
+  if (dc.discharge_date) detail.push(`Discharge date: ${dc.discharge_date}`);
+  if (dc.total_visits) detail.push(`Total visits: ${dc.total_visits}`);
+  const freq = [dc.frequency_per_week ? `${dc.frequency_per_week}x/week` : '', dc.duration_weeks ? `${dc.duration_weeks} weeks` : ''].filter(Boolean).join(' × ');
+  if (freq) detail.push(`Frequency: ${freq}`);
+  if (dc.discipline) detail.push(`Discipline: ${dc.discipline}`);
+  if (dc.primary_dx) detail.push(`Primary Dx: ${dc.primary_dx}`);
+  drawSection(L, 'Discharge Details', detail.join('\n'));
+
+  // Final goal status
+  if (dc.goal_statuses && dc.goal_statuses.length > 0) {
+    const body = dc.goal_statuses
+      .map(g => `[${g.goal_type}] ${g.text} — ${DISCHARGE_GOAL_STATUS_LABELS[g.status as DischargeGoalStatus] || g.status}`)
+      .join('\n\n');
+    drawSection(L, 'Final Goal Status', body);
+  }
+
+  if (dc.discharge_summary) drawSection(L, 'Discharge Summary', dc.discharge_summary);
+
+  // Recommendations
+  const recs: string[] = [];
+  for (const r of (dc.recommendations || [])) {
+    recs.push(`• ${DISCHARGE_RECOMMENDATION_LABELS[r as DischargeRecommendation] || r}`);
+  }
+  if (dc.referral_to) recs.push(`Referral to: ${dc.referral_to}`);
+  if (dc.return_to_therapy_if) recs.push(`Return to therapy if: ${dc.return_to_therapy_if}`);
+  if (dc.equipment_details) recs.push(`Equipment: ${dc.equipment_details}`);
+  if (dc.additional_recommendations) recs.push(dc.additional_recommendations);
+  if (recs.length > 0) drawSection(L, 'Recommendations', recs.join('\n'));
+}
+
 function renderNoteBody(L: Layout, note: NoteRow, goals: GoalInfo[] | undefined): void {
-  // Eval-only extras (when this note is a contractor eval)
-  if (note.medical_history) {
-    drawSection(L, 'Background / Medical History', note.medical_history);
-  }
-  if (note.interventions_provided) {
-    drawSection(L, 'What Was Completed', note.interventions_provided);
-  }
-  const ltgList = parseStoredGoals(note.long_term_goals);
-  if (ltgList.length > 0) {
-    drawSection(L, 'Long-Term Goals', formatStoredGoals(ltgList));
-  }
-  const stgList = parseStoredGoals(note.short_term_goals);
-  if (stgList.length > 0) {
-    drawSection(L, 'Short-Term Goals', formatStoredGoals(stgList));
+  if (note.note_type === 'discharge') {
+    renderDischargeBody(L, note);
+  } else {
+    // Eval-only extras (when this note is a contractor eval)
+    if (note.medical_history) {
+      drawSection(L, 'Background / Medical History', note.medical_history);
+    }
+    if (note.interventions_provided) {
+      drawSection(L, 'What Was Completed', note.interventions_provided);
+    }
+    const ltgList = parseStoredGoals(note.long_term_goals);
+    if (ltgList.length > 0) {
+      drawSection(L, 'Long-Term Goals', formatStoredGoals(ltgList));
+    }
+    const stgList = parseStoredGoals(note.short_term_goals);
+    if (stgList.length > 0) {
+      drawSection(L, 'Short-Term Goals', formatStoredGoals(stgList));
+    }
   }
 
   drawSection(L, 'Subjective', note.subjective || '', COLORS.soapS);
@@ -558,7 +605,7 @@ export function buildNotePdf(args: BuildNotePdfArgs): { base64Pdf: string; filen
   const isContractor = Boolean(entity?.name);
   const isEval = note.note_type === 'evaluation';
   // Top-right tag for client mode only (contractor mode shows the kind in the subtitle instead).
-  const tag = isEval ? 'EVALUATION' : note.note_type === 'progress_report' ? 'PROGRESS REPORT' : 'SESSION NOTE';
+  const tag = isEval ? 'EVALUATION' : note.note_type === 'progress_report' ? 'PROGRESS REPORT' : note.note_type === 'discharge' ? 'DISCHARGE SUMMARY' : 'SESSION NOTE';
   const subtitle = isContractor
     ? `${disciplineLabel(practice?.discipline)} ${noteKindLabel(note.note_type)}`.trim()
     : undefined;
@@ -593,7 +640,7 @@ function buildNoteFilename(note: NoteRow, patient: PatientInfo | null): string {
   const last = sanitizeFilename(patient?.last_name || (note.contractor_patient_name || note.patient_name || '').split(' ').slice(-1)[0] || 'Patient');
   const first = sanitizeFilename(patient?.first_name || (note.contractor_patient_name || note.patient_name || '').split(' ')[0] || '');
   const date = note.date_of_service || new Date().toISOString().slice(0, 10);
-  const kind = note.note_type === 'evaluation' ? 'Eval' : 'Note';
+  const kind = note.note_type === 'evaluation' ? 'Eval' : note.note_type === 'discharge' ? 'Discharge' : 'Note';
   return `${kind}_${last}${first ? '_' + first : ''}_${date}.pdf`;
 }
 
@@ -792,7 +839,7 @@ export function buildBulkNotesPdf(args: BuildBulkPdfArgs): { base64Pdf: string; 
   L.doc.setTextColor(...COLORS.body);
   sorted.forEach((n, i) => {
     checkPageBreak(L, 14);
-    const kind = n.note_type === 'evaluation' ? 'Evaluation' : 'Session note';
+    const kind = n.note_type === 'evaluation' ? 'Evaluation' : n.note_type === 'discharge' ? 'Discharge summary' : 'Session note';
     const status = n.signed_at ? '✓' : '(draft)';
     L.doc.text(`${i + 1}.  ${formatDate(n.date_of_service)}  —  ${kind}  ${status}`, L.marginLeft + 10, L.y);
     L.y += 12;
@@ -802,7 +849,7 @@ export function buildBulkNotesPdf(args: BuildBulkPdfArgs): { base64Pdf: string; 
   for (const n of sorted) {
     L.doc.addPage();
     L.y = 40;
-    const tag = n.note_type === 'evaluation' ? 'EVALUATION' : n.note_type === 'progress_report' ? 'PROGRESS REPORT' : 'SESSION NOTE';
+    const tag = n.note_type === 'evaluation' ? 'EVALUATION' : n.note_type === 'progress_report' ? 'PROGRESS REPORT' : n.note_type === 'discharge' ? 'DISCHARGE SUMMARY' : 'SESSION NOTE';
     const subtitle = isContractor ? `${disciplineLabel(practice?.discipline)} ${noteKindLabel(n.note_type)}`.trim() : undefined;
     drawPracticeHeader(L, {
       practice,

@@ -53,6 +53,9 @@ export default function SendDocumentsModal(props: SendDocumentsModalProps) {
   const [includeSuperbill, setIncludeSuperbill] = useState(false);
   const [sbStart, setSbStart] = useState('');
   const [sbEnd, setSbEnd] = useState('');
+  const [includeStatement, setIncludeStatement] = useState(false);
+  const [stStart, setStStart] = useState('');
+  const [stEnd, setStEnd] = useState('');
   const [selectedInvoices, setSelectedInvoices] = useState<Set<number>>(new Set());
   const [selectedDocs, setSelectedDocs] = useState<Set<number>>(new Set());
 
@@ -69,6 +72,7 @@ export default function SendDocumentsModal(props: SendDocumentsModalProps) {
     // Reset selections + compose
     setIncludeIntake(false);
     setIncludeSuperbill(false);
+    setIncludeStatement(false);
     setSelectedInvoices(new Set());
     setSelectedDocs(new Set());
     setTo(clientEmail || '');
@@ -106,6 +110,7 @@ export default function SendDocumentsModal(props: SendDocumentsModalProps) {
   const selectedCount =
     (includeIntake ? 1 : 0) +
     (includeSuperbill ? 1 : 0) +
+    (includeStatement ? 1 : 0) +
     selectedInvoices.size +
     selectedDocs.size;
 
@@ -113,6 +118,7 @@ export default function SendDocumentsModal(props: SendDocumentsModalProps) {
     const specs: ClientDocumentEmailSpec[] = [];
     if (includeIntake && activeTemplateIds.length) specs.push({ kind: 'intake', templateIds: activeTemplateIds, fillable: true });
     if (includeSuperbill) specs.push({ kind: 'superbill', startDate: sbStart, endDate: sbEnd });
+    if (includeStatement) specs.push({ kind: 'statement', startDate: stStart, endDate: stEnd });
     selectedInvoices.forEach((invoiceId) => specs.push({ kind: 'invoice', invoiceId }));
     selectedDocs.forEach((documentId) => specs.push({ kind: 'document', documentId }));
     return specs;
@@ -204,6 +210,18 @@ export default function SendDocumentsModal(props: SendDocumentsModalProps) {
                           <input type="date" className="input text-sm" value={sbStart} onChange={(e) => setSbStart(e.target.value)} />
                           <span className="text-xs text-[var(--color-text-secondary)]">to</span>
                           <input type="date" className="input text-sm" value={sbEnd} onChange={(e) => setSbEnd(e.target.value)} />
+                        </div>
+                      )}
+                      <label className="flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer hover:bg-gray-50 border border-transparent">
+                        <input type="checkbox" className="rounded border-gray-300 text-teal-600" checked={includeStatement} onChange={(e) => setIncludeStatement(e.target.checked)} />
+                        <Receipt size={15} className="text-teal-600 shrink-0" />
+                        <span className="text-sm flex-1">Account statement <span className="text-xs text-[var(--color-text-secondary)]">(date range)</span></span>
+                      </label>
+                      {includeStatement && (
+                        <div className="flex items-center gap-2 pl-10 pb-1">
+                          <input type="date" className="input text-sm" value={stStart} onChange={(e) => setStStart(e.target.value)} />
+                          <span className="text-xs text-[var(--color-text-secondary)]">to</span>
+                          <input type="date" className="input text-sm" value={stEnd} onChange={(e) => setStEnd(e.target.value)} />
                         </div>
                       )}
                     </div>

@@ -1,8 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Save, PenLine, CheckCircle, Clock, User, Building2, ClipboardList, Stethoscope, Download, Target, Unlock, Plus, X, Mail, ShieldAlert, FileCheck, Paperclip } from 'lucide-react';
-import type { ContractedEntity, EntityDocument } from '@shared/types';
+import { ArrowLeft, Save, PenLine, CheckCircle, Clock, User, Building2, ClipboardList, Stethoscope, Download, Target, Unlock, Plus, X, Mail, ShieldAlert, FileCheck, Paperclip, LogOut, FileText } from 'lucide-react';
+import type { ContractedEntity, EntityDocument, ContractDischargeData, ContractDischargeGoalStatus, DischargeReason, DischargeGoalStatus, DischargeRecommendation } from '@shared/types';
+import { DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS } from '@shared/types';
+import { METRIC_OPTIONS } from '@shared/goal-metrics';
+import { stripGoalConditionTail } from '@shared/compose-goal-text';
 import EmailComposeModal from '../components/EmailComposeModal';
+
+const PERCENT_OPTIONS = METRIC_OPTIONS.percentage || [];
 
 /** One LTG or STG entry. `timeframe` is free text but a datalist suggests common values. */
 interface GoalEntry {
@@ -24,6 +29,34 @@ interface NoteState {
 }
 
 const EMPTY_NOTE: NoteState = { subjective: '', objective: '', assessment: '', plan: '', time_in: '', time_out: '', medical_history: '', interventions_provided: '', long_term_goals: [], short_term_goals: [] };
+
+type ContractNoteType = 'soap' | 'evaluation' | 'discharge';
+
+const EMPTY_DISCHARGE: ContractDischargeData = {
+  discharge_reason: 'goals_met',
+  discharge_reason_detail: '',
+  start_of_care: '',
+  discharge_date: '',
+  total_visits: 0,
+  frequency_per_week: null,
+  duration_weeks: null,
+  primary_dx: '',
+  discipline: '',
+  discharge_summary: '',
+  goal_statuses: [],
+  recommendations: [],
+  referral_to: '',
+  return_to_therapy_if: '',
+  equipment_details: '',
+  additional_recommendations: '',
+};
+
+const DISCHARGE_REASONS = Object.keys(DISCHARGE_REASON_LABELS) as DischargeReason[];
+const DISCHARGE_GOAL_STATUSES = Object.keys(DISCHARGE_GOAL_STATUS_LABELS) as DischargeGoalStatus[];
+const DISCHARGE_RECOMMENDATIONS = Object.keys(DISCHARGE_RECOMMENDATION_LABELS) as DischargeRecommendation[];
+
+/** Stable key matching a goal-status entry to a free-text goal on the note. */
+const goalStatusKey = (goalType: 'LTG' | 'STG', text: string) => `${goalType}::${text.trim()}`;
 
 /** Datalist options for the timeframe input — clinically common LTG/STG horizons. */
 const TIMEFRAME_OPTIONS = ['1 week', '2 weeks', '4 weeks', '6 weeks', '8 weeks', '12 weeks', '6 months', '1 year'];
@@ -68,12 +101,40 @@ const ContractorNotePage: React.FC = () => {
   const [showUnsignConfirm, setShowUnsignConfirm] = useState(false);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Note type + discharge summary. note_type is persisted on the note; discharge_data holds
+  // the discharge payload (JSON) when noteType === 'discharge'. Refs mirror the latest values
+  // so the debounced save always writes fresh note_type/discharge_data.
+  const [noteType, setNoteType] = useState<ContractNoteType>('soap');
+  const [dischargeData, setDischargeData] = useState<ContractDischargeData>(EMPTY_DISCHARGE);
+  const noteTypeRef = useRef<ContractNoteType>(noteType);
+  const dischargeRef = useRef<ContractDischargeData>(dischargeData);
+  useEffect(() => { noteTypeRef.current = noteType; }, [noteType]);
+  useEffect(() => { dischargeRef.current = dischargeData; }, [dischargeData]);
+
+  // "Goals this session" for a contract SESSION note — pulled from the patient's most recent
+  // eval note so % + skilled-language can be documented quickly. Keyed by "TYPE::text".
+  const [sessionGoals, setSessionGoals] = useState<{ goalType: 'LTG' | 'STG'; text: string }[]>([]);
+  const [sessionGoalPct, setSessionGoalPct] = useState<Record<string, string>>({});
+  const [discipline, setDiscipline] = useState('');
+
   // Email-to-agency state (mirrors EntityDetailPage: BAA gate + route sheets attach).
   const [entity, setEntity] = useState<ContractedEntity | null>(null);
   const [routeSheets, setRouteSheets] = useState<EntityDocument[]>([]);
   const [practiceName, setPracticeName] = useState('');
   const [emailModal, setEmailModal] = useState<{ to: string; subject: string; body: string; label: string } | null>(null);
   const [showBaaPrompt, setShowBaaPrompt] = useState(false);
+
+  // Set note-type + discharge payload from a loaded note row.
+  const hydrateType = useCallback((n: any) => {
+    const t: ContractNoteType = n.note_type === 'evaluation' ? 'evaluation' : n.note_type === 'discharge' ? 'discharge' : 'soap';
+    setNoteType(t);
+    if (n.discharge_data) {
+      try { setDischargeData({ ...EMPTY_DISCHARGE, ...JSON.parse(n.discharge_data) }); }
+      catch { setDischargeData(EMPTY_DISCHARGE); }
+    } else {
+      setDischargeData(EMPTY_DISCHARGE);
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -85,6 +146,7 @@ const ContractorNotePage: React.FC = () => {
           setNote({ subjective: n.subjective || '', objective: n.objective || '', assessment: n.assessment || '', plan: n.plan || '', time_in: n.time_in || '', time_out: n.time_out || '', medical_history: n.medical_history || '', interventions_provided: n.interventions_provided || '', long_term_goals: parseGoalList(n.long_term_goals), short_term_goals: parseGoalList(n.short_term_goals) });
           setSigned(Boolean(n.signed_at));
           if (n.signed_at) setSignatureName(n.signature_typed || '');
+          hydrateType(n);
         }
         if (appointmentId) {
           const appts = await window.api.appointments.list({}).catch(() => []);
@@ -96,6 +158,8 @@ const ContractorNotePage: React.FC = () => {
         const a = (appts as any[]).find((a: any) => a.id === parseInt(appointmentId));
         if (a) {
           setAppt(a);
+          // Brand-new note: seed the type from the appointment (eval vs session).
+          if (!a.note_id) setNoteType(a.session_type === 'eval' ? 'evaluation' : 'soap');
           // If a note already exists for this appointment, load it
           if (a.note_id) {
             const n = await window.api.contractorNotes.get(a.note_id).catch(() => null);
@@ -104,6 +168,7 @@ const ContractorNotePage: React.FC = () => {
               setNote({ subjective: n.subjective || '', objective: n.objective || '', assessment: n.assessment || '', plan: n.plan || '', time_in: n.time_in || '', time_out: n.time_out || '', medical_history: n.medical_history || '', interventions_provided: n.interventions_provided || '', long_term_goals: parseGoalList(n.long_term_goals), short_term_goals: parseGoalList(n.short_term_goals) });
               setSigned(Boolean(n.signed_at));
               if (n.signed_at) setSignatureName(n.signature_typed || '');
+              hydrateType(n);
             }
           }
           // Pre-fill time_in from appointment
@@ -117,7 +182,7 @@ const ContractorNotePage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [noteId, appointmentId, isNew]);
+  }, [noteId, appointmentId, isNew, hydrateType]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -133,8 +198,13 @@ const ContractorNotePage: React.FC = () => {
     setSaving(true);
     try {
       const payload = serializeForSave(noteData);
+      // Read note_type/discharge_data from refs so a debounced save writes the latest values.
+      const typeAndDischarge = {
+        note_type: noteTypeRef.current,
+        discharge_data: noteTypeRef.current === 'discharge' ? JSON.stringify(dischargeRef.current) : '',
+      };
       if (existingNote) {
-        const updated = await window.api.contractorNotes.update(existingNote.id, { ...payload, ...sig });
+        const updated = await window.api.contractorNotes.update(existingNote.id, { ...payload, ...typeAndDischarge, ...sig });
         setExistingNote(updated);
         setSaved(true);
         setTimeout(() => setSaved(false), 2000);
@@ -142,13 +212,13 @@ const ContractorNotePage: React.FC = () => {
       } else {
         const created = await window.api.contractorNotes.create({
           ...payload,
+          ...typeAndDischarge,
           ...sig,
           contractor_patient_id: appt.contractor_patient_id || null,
           entity_id: appt.entity_id || null,
           patient_name: appt.contractor_patient_name || appt.patient_name || '',
           date_of_service: appt.scheduled_date,
           appointment_id: appt.id,
-          note_type: appt.session_type === 'eval' ? 'evaluation' : 'soap',
         });
         setExistingNote(created);
         setSaved(true);
@@ -189,6 +259,122 @@ const ContractorNotePage: React.FC = () => {
 
   const removeGoal = (kind: GoalListKey, idx: number) => {
     queueSave({ ...note, [kind]: note[kind].filter((_, i) => i !== idx) });
+  };
+
+  // ── Note-type + discharge mutations ──
+  // Refs are synced immediately (not just via useEffect) so the save we schedule here
+  // reads the new value even before the next render.
+  const changeNoteType = (t: ContractNoteType) => {
+    setNoteType(t);
+    noteTypeRef.current = t;
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => doSave(note), 600);
+  };
+
+  const updateDischarge = (patch: Partial<ContractDischargeData>) => {
+    const next = { ...dischargeRef.current, ...patch };
+    setDischargeData(next);
+    dischargeRef.current = next;
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => doSave(note), 1500);
+  };
+
+  const toggleRecommendation = (rec: DischargeRecommendation) => {
+    const cur = dischargeRef.current.recommendations;
+    updateDischarge({ recommendations: cur.includes(rec) ? cur.filter(r => r !== rec) : [...cur, rec] });
+  };
+
+  const setGoalStatus = (goalType: 'LTG' | 'STG', text: string, status: DischargeGoalStatus) => {
+    const key = goalStatusKey(goalType, text);
+    const kept = dischargeRef.current.goal_statuses.filter(g => goalStatusKey(g.goal_type, g.text) !== key);
+    updateDischarge({ goal_statuses: [...kept, { goal_type: goalType, text: text.trim(), status }] });
+  };
+
+  const getGoalStatus = (goalType: 'LTG' | 'STG', text: string): DischargeGoalStatus | '' => {
+    const key = goalStatusKey(goalType, text);
+    return dischargeRef.current.goal_statuses.find(g => goalStatusKey(g.goal_type, g.text) === key)?.status ?? '';
+  };
+
+  // Pull episode-summary defaults from the patient's existing history (attended visits,
+  // first visit = start of care, discipline). `force` overwrites current values; otherwise
+  // only fills fields the user hasn't set, so edits are never clobbered.
+  const applyDischargeDefaults = async (force: boolean) => {
+    const cpId: number | undefined = appt?.contractor_patient_id ?? existingNote?.contractor_patient_id ?? undefined;
+    if (!cpId) return;
+    try {
+      const d = await window.api.contractorNotes.dischargeDefaults(cpId);
+      const cur = dischargeRef.current;
+      const today = new Date().toISOString().slice(0, 10);
+      const dos = existingNote?.date_of_service || appt?.scheduled_date || today;
+
+      // Derive frequency/duration from the visit span when we have both ends.
+      let duration_weeks = cur.duration_weeks;
+      let frequency_per_week = cur.frequency_per_week;
+      if (d.start_of_care && d.last_visit) {
+        const days = Math.max(0, (new Date(d.last_visit).getTime() - new Date(d.start_of_care).getTime()) / 86400000);
+        const weeks = Math.max(1, Math.round(days / 7));
+        if (force || cur.duration_weeks == null) duration_weeks = weeks;
+        if ((force || cur.frequency_per_week == null) && d.total_visits > 0) {
+          frequency_per_week = Math.max(1, Math.round(d.total_visits / weeks));
+        }
+      }
+
+      updateDischarge({
+        start_of_care: force || !cur.start_of_care ? (d.start_of_care || cur.start_of_care) : cur.start_of_care,
+        discharge_date: cur.discharge_date || dos,
+        total_visits: force || !cur.total_visits ? (d.total_visits || cur.total_visits) : cur.total_visits,
+        discipline: force || !cur.discipline ? (d.discipline || cur.discipline) : cur.discipline,
+        duration_weeks,
+        frequency_per_week,
+      });
+    } catch (err) {
+      console.error('Failed to load discharge defaults:', err);
+    }
+  };
+
+  // Auto-prefill once when a note first becomes a discharge with empty episode data.
+  const dischargePrefilled = useRef(false);
+  useEffect(() => {
+    if (noteType !== 'discharge' || dischargePrefilled.current) return;
+    const cur = dischargeRef.current;
+    if (!cur.start_of_care && !cur.total_visits) {
+      dischargePrefilled.current = true;
+      applyDischargeDefaults(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noteType, appt, existingNote]);
+
+  // Discipline (for skilled-language phrasing) from the practice record.
+  useEffect(() => {
+    window.api.practice.get().then((p: any) => setDiscipline(p?.discipline || '')).catch(() => {});
+  }, []);
+
+  // Load the patient's goals from their most recent eval note — powers "Goals this session"
+  // on a contract SESSION note.
+  useEffect(() => {
+    const cpId: number | undefined = appt?.contractor_patient_id ?? existingNote?.contractor_patient_id ?? undefined;
+    if (!cpId || noteType !== 'soap') { setSessionGoals([]); return; }
+    window.api.contractorNotes.list(cpId).then((notes) => {
+      const ev = (notes as any[]).find(n => n.note_type === 'evaluation'); // list is date DESC → most recent eval
+      if (!ev) { setSessionGoals([]); return; }
+      const ltg = parseGoalList(ev.long_term_goals).filter(g => g.text.trim()).map(g => ({ goalType: 'LTG' as const, text: g.text }));
+      const stg = parseGoalList(ev.short_term_goals).filter(g => g.text.trim()).map(g => ({ goalType: 'STG' as const, text: g.text }));
+      setSessionGoals([...ltg, ...stg]);
+    }).catch(() => setSessionGoals([]));
+  }, [appt, existingNote, noteType]);
+
+  // Append a skilled-language line for a goal (with the chosen %) into the Objective field.
+  const insertGoalToObjective = (goalType: 'LTG' | 'STG', text: string) => {
+    const key = `${goalType}::${text}`;
+    const pct = sessionGoalPct[key];
+    const provider = discipline || 'Clinician';
+    const rawCore = text.replace(/^(Patient|Client|Pt)\s+will\s+/i, '').replace(/\.\s*$/, '');
+    const core = stripGoalConditionTail(rawCore) || rawCore;
+    const coreLc = core.charAt(0).toLowerCase() + core.slice(1);
+    const perf = pct ? `${pct}% accuracy` : '___% accuracy';
+    const line = `${provider} trained Pt to ${coreLc}. Pt completed with ${perf}.`;
+    const next = note.objective.trim() ? `${note.objective.replace(/\s*$/, '')}\n${line}` : line;
+    queueSave({ ...note, objective: next });
   };
 
   const handleSign = async () => {
@@ -234,7 +420,9 @@ const ContractorNotePage: React.FC = () => {
 
   const composeEmail = () => {
     if (!entity || !existingNote) return;
-    const label = existingNote.note_type === 'evaluation' ? 'Evaluation' : 'Session note';
+    const label = existingNote.note_type === 'evaluation' ? 'Evaluation'
+      : existingNote.note_type === 'discharge' ? 'Discharge summary'
+      : 'Session note';
     const patient = (existingNote.patient_name || appt?.patient_name || 'patient').trim();
     const date = existingNote.date_of_service || appt?.scheduled_date || '';
     const greeting = entity.contact_name ? `Hi ${entity.contact_name},` : 'Hi,';
@@ -401,7 +589,13 @@ const ContractorNotePage: React.FC = () => {
   const patientName = existingNote?.contractor_patient_name || appt?.contractor_patient_name || appt?.patient_name || 'Unknown patient';
   const entityName = existingNote?.entity_name || appt?.entity_name || '';
   const dateOfService = existingNote?.date_of_service || appt?.scheduled_date || '';
-  const isEval = existingNote ? existingNote.note_type === 'evaluation' : appt?.session_type === 'eval';
+  const isEval = noteType === 'evaluation';
+  const isDischarge = noteType === 'discharge';
+  // Goals entered on this note, flattened for the discharge Final Goal Status card.
+  const dischargeGoalRows: { goalType: 'LTG' | 'STG'; text: string }[] = [
+    ...note.long_term_goals.filter(g => g.text.trim()).map(g => ({ goalType: 'LTG' as const, text: g.text })),
+    ...note.short_term_goals.filter(g => g.text.trim()).map(g => ({ goalType: 'STG' as const, text: g.text })),
+  ];
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
@@ -429,7 +623,27 @@ const ContractorNotePage: React.FC = () => {
                 {isEval && (
                   <span className="px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 font-medium">Eval</span>
                 )}
+                {isDischarge && (
+                  <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium flex items-center gap-1">
+                    <LogOut size={11} /> Discharge Summary
+                  </span>
+                )}
               </div>
+              {/* Note Type — lets a session be turned into a discharge summary. Locked once signed. */}
+              {!signed && (
+                <div className="flex items-center gap-2 mt-2">
+                  <label className="text-xs font-medium text-[var(--color-text-secondary)]">Note Type:</label>
+                  <select
+                    className="select text-xs py-1"
+                    value={noteType}
+                    onChange={(e) => changeNoteType(e.target.value as ContractNoteType)}
+                  >
+                    <option value="soap">Session Note</option>
+                    <option value="evaluation">Evaluation</option>
+                    <option value="discharge">Discharge Summary</option>
+                  </select>
+                </div>
+              )}
             </div>
           </div>
 
@@ -581,10 +795,229 @@ const ContractorNotePage: React.FC = () => {
         </div>
       )}
 
-      {/* SOAP fields */}
+      {/* ── Discharge Summary section ── */}
+      {isDischarge && (
+        <div className="space-y-4 mb-4">
+          {/* Reason + Episode Summary */}
+          <div className="card p-4 border-l-4 border-l-amber-400 bg-amber-50/30">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center text-amber-600">
+                  <LogOut size={13} />
+                </span>
+                <h3 className="text-sm font-semibold text-[var(--color-text)]">Discharge Details</h3>
+              </div>
+              {!signed && (
+                <button
+                  type="button"
+                  className="text-xs font-medium text-amber-700 hover:text-amber-800 hover:underline"
+                  onClick={() => applyDischargeDefaults(true)}
+                  title="Re-pull start of care, visit count, and discipline from this patient's history"
+                >
+                  Pull from chart
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="label text-xs">Reason for Discharge</label>
+                <select
+                  className="select text-sm w-full"
+                  value={dischargeData.discharge_reason}
+                  disabled={signed}
+                  onChange={(e) => updateDischarge({ discharge_reason: e.target.value as DischargeReason })}
+                >
+                  {DISCHARGE_REASONS.map(r => <option key={r} value={r}>{DISCHARGE_REASON_LABELS[r]}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label text-xs">Reason Detail (optional)</label>
+                <input className="input text-sm w-full" disabled={signed}
+                  placeholder="Any specifics…"
+                  value={dischargeData.discharge_reason_detail}
+                  onChange={(e) => updateDischarge({ discharge_reason_detail: e.target.value })} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-3">
+              <div>
+                <label className="label text-xs">Start of Care</label>
+                <input type="date" className="input text-sm w-full" disabled={signed}
+                  value={dischargeData.start_of_care}
+                  onChange={(e) => updateDischarge({ start_of_care: e.target.value })} />
+              </div>
+              <div>
+                <label className="label text-xs">Discharge Date</label>
+                <input type="date" className="input text-sm w-full" disabled={signed}
+                  value={dischargeData.discharge_date || dateOfService}
+                  onChange={(e) => updateDischarge({ discharge_date: e.target.value })} />
+              </div>
+              <div>
+                <label className="label text-xs">Total Visits</label>
+                <input type="number" min={0} className="input text-sm w-full" disabled={signed}
+                  value={dischargeData.total_visits}
+                  onChange={(e) => updateDischarge({ total_visits: parseInt(e.target.value) || 0 })} />
+              </div>
+              <div>
+                <label className="label text-xs">Frequency (/week)</label>
+                <input type="number" min={1} max={7} className="input text-sm w-full" disabled={signed}
+                  value={dischargeData.frequency_per_week ?? ''}
+                  onChange={(e) => updateDischarge({ frequency_per_week: parseInt(e.target.value) || null })} />
+              </div>
+              <div>
+                <label className="label text-xs">Duration (weeks)</label>
+                <input type="number" min={1} className="input text-sm w-full" disabled={signed}
+                  value={dischargeData.duration_weeks ?? ''}
+                  onChange={(e) => updateDischarge({ duration_weeks: parseInt(e.target.value) || null })} />
+              </div>
+              <div>
+                <label className="label text-xs">Discipline</label>
+                <input className="input text-sm w-full" disabled={signed}
+                  placeholder="PT / OT / SLP…"
+                  value={dischargeData.discipline}
+                  onChange={(e) => updateDischarge({ discipline: e.target.value })} />
+              </div>
+            </div>
+            <div className="mt-3">
+              <label className="label text-xs">Primary Diagnosis</label>
+              <input className="input text-sm w-full" disabled={signed}
+                value={dischargeData.primary_dx}
+                onChange={(e) => updateDischarge({ primary_dx: e.target.value })} />
+            </div>
+          </div>
+
+          {/* Goals to close out — enter them here, then set a final status below */}
+          {renderGoalListCard({
+            kind: 'long_term_goals',
+            title: 'Long-Term Goals',
+            shortLabel: 'LTG',
+            placeholder: 'Functional outcome targeted this episode…',
+            entries: note.long_term_goals,
+            disabled: signed,
+            onAdd: () => addGoal('long_term_goals'),
+            onUpdate: (idx, field, value) => updateGoalField('long_term_goals', idx, field, value),
+            onRemove: (idx) => removeGoal('long_term_goals', idx),
+          })}
+          {renderGoalListCard({
+            kind: 'short_term_goals',
+            title: 'Short-Term Goals',
+            shortLabel: 'STG',
+            placeholder: 'Measurable benchmark…',
+            entries: note.short_term_goals,
+            disabled: signed,
+            onAdd: () => addGoal('short_term_goals'),
+            onUpdate: (idx, field, value) => updateGoalField('short_term_goals', idx, field, value),
+            onRemove: (idx) => removeGoal('short_term_goals', idx),
+          })}
+
+          {/* Final Goal Status — one status per goal entered above */}
+          <div className="card p-4 border-l-4 border-l-amber-400 bg-amber-50/30">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center text-amber-600">
+                <Target size={13} />
+              </span>
+              <h3 className="text-sm font-semibold text-[var(--color-text)]">Final Goal Status</h3>
+            </div>
+            {dischargeGoalRows.length === 0 ? (
+              <p className="text-xs text-[var(--color-text-secondary)]/70 italic">
+                Add long- or short-term goals above to set a final status for each.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {dischargeGoalRows.map((g) => (
+                  <div key={`${g.goalType}-${g.text}`} className="flex items-center gap-3 p-2.5 rounded-lg bg-white border border-[var(--color-border)]">
+                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded flex-shrink-0 self-start mt-0.5 ${g.goalType === 'LTG' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                      {g.goalType}
+                    </span>
+                    <p className="text-sm text-[var(--color-text)] flex-1 min-w-0 leading-snug">{g.text}</p>
+                    <select
+                      className="select text-xs py-1 w-40 flex-shrink-0"
+                      value={getGoalStatus(g.goalType, g.text)}
+                      disabled={signed}
+                      onChange={(e) => setGoalStatus(g.goalType, g.text, e.target.value as DischargeGoalStatus)}
+                    >
+                      <option value="">— status —</option>
+                      {DISCHARGE_GOAL_STATUSES.map(s => <option key={s} value={s}>{DISCHARGE_GOAL_STATUS_LABELS[s]}</option>)}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Discharge narrative */}
+          <div className="card p-4 border-l-4 border-l-amber-400 bg-amber-50/30">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center text-amber-600">
+                <FileText size={13} />
+              </span>
+              <h3 className="text-sm font-semibold text-[var(--color-text)]">Discharge Summary</h3>
+            </div>
+            <textarea
+              className="w-full min-h-[100px] text-sm text-[var(--color-text)] bg-transparent resize-y focus:outline-none placeholder:text-[var(--color-text-secondary)]/50"
+              placeholder="Course of care, response to treatment, current level of function, and status at discharge…"
+              value={dischargeData.discharge_summary}
+              disabled={signed}
+              onChange={(e) => updateDischarge({ discharge_summary: e.target.value })}
+            />
+          </div>
+
+          {/* Recommendations */}
+          <div className="card p-4 border-l-4 border-l-amber-400 bg-amber-50/30">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center text-amber-600">
+                <ClipboardList size={13} />
+              </span>
+              <h3 className="text-sm font-semibold text-[var(--color-text)]">Recommendations</h3>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
+              {DISCHARGE_RECOMMENDATIONS.map(rec => (
+                <label key={rec} className={`flex items-center gap-2 text-sm ${signed ? '' : 'cursor-pointer'}`}>
+                  <input
+                    type="checkbox"
+                    className="rounded border-gray-300 accent-amber-500"
+                    checked={dischargeData.recommendations.includes(rec)}
+                    disabled={signed}
+                    onChange={() => toggleRecommendation(rec)}
+                  />
+                  <span className="text-[var(--color-text)]">{DISCHARGE_RECOMMENDATION_LABELS[rec]}</span>
+                </label>
+              ))}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="label text-xs">Referral To (if any)</label>
+                <input className="input text-sm w-full" disabled={signed}
+                  value={dischargeData.referral_to}
+                  onChange={(e) => updateDischarge({ referral_to: e.target.value })} />
+              </div>
+              <div>
+                <label className="label text-xs">Return to Therapy If…</label>
+                <input className="input text-sm w-full" disabled={signed}
+                  value={dischargeData.return_to_therapy_if}
+                  onChange={(e) => updateDischarge({ return_to_therapy_if: e.target.value })} />
+              </div>
+              <div>
+                <label className="label text-xs">Equipment Details</label>
+                <input className="input text-sm w-full" disabled={signed}
+                  value={dischargeData.equipment_details}
+                  onChange={(e) => updateDischarge({ equipment_details: e.target.value })} />
+              </div>
+              <div>
+                <label className="label text-xs">Additional Recommendations</label>
+                <input className="input text-sm w-full" disabled={signed}
+                  value={dischargeData.additional_recommendations}
+                  onChange={(e) => updateDischarge({ additional_recommendations: e.target.value })} />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SOAP fields — the "Goals This Session" card is injected right under Objective */}
       <div className="space-y-4">
         {(['subjective', 'objective', 'assessment', 'plan'] as const).map((field) => (
-          <div key={field} className="card p-4">
+          <React.Fragment key={field}>
+          <div className="card p-4">
             <div className="flex items-center gap-2 mb-2">
               <span className="w-6 h-6 rounded-full bg-[var(--color-primary)]/10 flex items-center justify-center text-[11px] font-bold text-[var(--color-primary)]">
                 {field[0].toUpperCase()}
@@ -604,6 +1037,53 @@ const ContractorNotePage: React.FC = () => {
               onChange={e => handleChange(field, e.target.value)}
             />
           </div>
+          {/* Goals This Session — sits directly under Objective */}
+          {field === 'objective' && noteType === 'soap' && sessionGoals.length > 0 && (
+            <div className="card p-4">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="w-6 h-6 rounded-full bg-violet-100 flex items-center justify-center text-violet-600">
+                  <Target size={13} />
+                </span>
+                <h3 className="text-sm font-semibold text-[var(--color-text)]">Goals This Session</h3>
+              </div>
+              <p className="text-[11px] text-[var(--color-text-secondary)] mb-2">
+                Check off what you worked on — pick a % and drop skilled-language into Objective.
+              </p>
+              <div className="space-y-1.5">
+                {sessionGoals.map((g) => {
+                  const key = `${g.goalType}::${g.text}`;
+                  return (
+                    <div key={key} className="flex items-center gap-2">
+                      <span className={`badge text-[10px] flex-shrink-0 ${g.goalType === 'LTG' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                        {g.goalType}
+                      </span>
+                      <span className="text-sm text-[var(--color-text)] flex-1 min-w-0 truncate" title={g.text}>{g.text}</span>
+                      <select
+                        className="select text-xs py-1 w-[5rem] flex-shrink-0"
+                        value={sessionGoalPct[key] || ''}
+                        disabled={signed}
+                        onChange={(e) => setSessionGoalPct(prev => ({ ...prev, [key]: e.target.value }))}
+                        title="This session %"
+                      >
+                        <option value="">—%</option>
+                        {PERCENT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                      <button
+                        type="button"
+                        className="btn-secondary btn-sm text-xs flex-shrink-0"
+                        disabled={signed}
+                        onClick={() => insertGoalToObjective(g.goalType, g.text)}
+                        title="Insert skilled-language line into Objective"
+                      >
+                        <Plus size={12} /> Obj
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          </React.Fragment>
         ))}
       </div>
 

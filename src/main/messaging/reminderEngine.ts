@@ -9,6 +9,7 @@
 
 import type Database from 'better-sqlite3';
 import type { MessagingRouter } from './MessagingRouter';
+import { clientCcList } from '../../shared/types';
 
 export interface ReminderTemplates {
   smsTemplate: string;
@@ -53,6 +54,7 @@ interface DueRow {
   phone: string;
   email: string;
   reminder_channel: 'sms' | 'email' | 'both';
+  additional_emails: string | null;
 }
 
 function formatApptDate(dateStr: string): string {
@@ -163,7 +165,7 @@ export async function sendReminderForAppointment(opts: {
 
   const row = db.prepare(`
     SELECT a.id, a.client_id, a.scheduled_date, a.scheduled_time, a.meeting_link,
-           c.first_name, c.last_name, c.phone, c.email, c.reminder_channel
+           c.first_name, c.last_name, c.phone, c.email, c.reminder_channel, c.additional_emails
     FROM appointments a
     JOIN clients c ON c.id = a.client_id
     WHERE a.id = ? AND a.deleted_at IS NULL AND c.deleted_at IS NULL
@@ -208,7 +210,8 @@ export async function sendReminderForAppointment(opts: {
     const bodyHtml = buildReminderEmailHtml({ practiceName, bodyText: mergedBody, dayDate: fields.date, time: fields.time, meetingLink });
     const textParts = [mergedBody, '', `${fields.date} at ${fields.time}`];
     if (meetingLink) textParts.push('', `Join: ${meetingLink}`);
-    const r = await messagingRouter.getEmailProvider().sendEmail({ to: row.email.trim(), subject, bodyText: textParts.join('\n'), bodyHtml, fromName: practiceName });
+    const cc = clientCcList(row.additional_emails, 'reminders') || undefined;
+    const r = await messagingRouter.getEmailProvider().sendEmail({ to: row.email.trim(), cc, subject, bodyText: textParts.join('\n'), bodyHtml, fromName: practiceName });
     if (r.success) { anySuccess = true; if (!usedChannel) usedChannel = 'email'; }
     else lastError = r.error;
   }
@@ -236,7 +239,7 @@ export async function sendDueReminders(opts: SendDueRemindersOptions): Promise<R
   const bufferDays = Math.ceil(leadHours / 24) + 1;
   const rows = db.prepare(`
     SELECT a.id, a.client_id, a.scheduled_date, a.scheduled_time, a.meeting_link,
-           c.first_name, c.last_name, c.phone, c.email, c.reminder_channel
+           c.first_name, c.last_name, c.phone, c.email, c.reminder_channel, c.additional_emails
     FROM appointments a
     JOIN clients c ON c.id = a.client_id
     WHERE a.status = 'scheduled'
@@ -291,7 +294,8 @@ export async function sendDueReminders(opts: SendDueRemindersOptions): Promise<R
         const bodyHtml = buildReminderEmailHtml({ practiceName, bodyText: mergedBody, dayDate: fields.date, time: fields.time, meetingLink });
         const textParts = [mergedBody, '', `${fields.date} at ${fields.time}`];
         if (meetingLink) textParts.push('', `Join: ${meetingLink}`);
-        const r = await messagingRouter.getEmailProvider().sendEmail({ to: row.email.trim(), subject, bodyText: textParts.join('\n'), bodyHtml, fromName: practiceName });
+        const cc = clientCcList(row.additional_emails, 'reminders') || undefined;
+    const r = await messagingRouter.getEmailProvider().sendEmail({ to: row.email.trim(), cc, subject, bodyText: textParts.join('\n'), bodyHtml, fromName: practiceName });
         summary.results.push({ appointmentId: row.id, clientId: row.client_id, channel: 'email', success: r.success, error: r.error });
         if (r.success) anySuccess = true;
       }

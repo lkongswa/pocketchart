@@ -174,6 +174,12 @@ const api = {
     generateBulk: (data: any) => ipcRenderer.invoke('superbill:generateBulk', data),
   },
 
+  // Client account statement (charges + payments + balance for a date range)
+  statement: {
+    generate: (data: { clientId: number; startDate: string; endDate: string }) => ipcRenderer.invoke('statement:generate', data),
+    save: (data: { base64Pdf: string; filename: string }) => ipcRenderer.invoke('statement:save', data),
+  },
+
   // CMS-1500 Claim Form
   cms1500: {
     generate: (data: { clientId: number; noteIds: number[]; printMode?: 'full' | 'data-only' }) => ipcRenderer.invoke('cms1500:generate', data),
@@ -324,7 +330,7 @@ const api = {
     noteStatuses: () => ipcRenderer.invoke('invoices:noteStatuses'),
     createFeeInvoice: (data: { client_id?: number; entity_id?: number; description: string; amount: number; service_date: string }) => ipcRenderer.invoke('invoices:createFeeInvoice', data),
     prepareEmail: (invoiceId: number) => ipcRenderer.invoke('invoices:prepareEmail', invoiceId),
-    email: (data: { invoiceId: number; to: string; subject: string; bodyText: string }) => ipcRenderer.invoke('invoices:email', data),
+    email: (data: { invoiceId: number; to: string; cc?: string; subject: string; bodyText: string }) => ipcRenderer.invoke('invoices:email', data),
   },
 
   // ── Invoice Email template (Pro) ──
@@ -530,6 +536,7 @@ const api = {
     get: (id: number) => ipcRenderer.invoke('contractorNotes:get', id),
     create: (data: any) => ipcRenderer.invoke('contractorNotes:create', data),
     update: (id: number, data: any) => ipcRenderer.invoke('contractorNotes:update', id, data),
+    dischargeDefaults: (contractorPatientId: number) => ipcRenderer.invoke('contractorNotes:dischargeDefaults', contractorPatientId),
   },
 
   // ── Entity Documents (Pro) ──

@@ -6,7 +6,7 @@ import {
   FileCheck, RefreshCw, Receipt, ChevronDown, ChevronLeft, ChevronRight, Download, Send,
   UserPlus, Pencil, Paperclip, ShieldAlert,
 } from 'lucide-react';
-import type { ContractedEntity, EntityFeeSchedule, EntityDocument, EntityDocumentCategory, Appointment, Invoice, InvoiceItem, InvoiceStatus, ContractorPatient } from '@shared/types';
+import type { ContractedEntity, EntityFeeSchedule, EntityDocument, EntityDocumentCategory, Appointment, AppointmentStatus, Invoice, InvoiceItem, InvoiceStatus, ContractorPatient } from '@shared/types';
 import EntityFormModal from '../components/EntityFormModal';
 import AppointmentModal from '../components/AppointmentModal';
 import ContractorPatientEditModal from '../components/ContractorPatientEditModal';
@@ -82,6 +82,8 @@ const EntityDetailPage: React.FC = () => {
   const [apptLoading, setApptLoading] = useState(false);
   const [contractorPatients, setContractorPatients] = useState<ContractorPatient[]>([]);
   const [selectedApptIds, setSelectedApptIds] = useState<Set<number>>(new Set());
+  const [bulkStatus, setBulkStatus] = useState<AppointmentStatus | ''>('');
+  const [applyingBulk, setApplyingBulk] = useState(false);
   const [apptFilter, setApptFilter] = useState<'unbilled' | 'all' | 'invoiced'>('unbilled');
   const [apptTimeFilter, setApptTimeFilter] = useState<ApptTimeFilter>('all');
   const [apptRangeStart, setApptRangeStart] = useState('');
@@ -329,6 +331,32 @@ const EntityDetailPage: React.FC = () => {
       setSelectedApptIds(new Set());
     } else {
       setSelectedApptIds(new Set(uninvoiced.map((a) => a.id)));
+    }
+  };
+
+  // Apply a status to every selected appointment in one shot.
+  const handleBulkApplyStatus = async () => {
+    if (!bulkStatus || selectedApptIds.size === 0) return;
+    setApplyingBulk(true);
+    try {
+      const byId = new Map(appointments.map((a) => [a.id, a]));
+      let changed = 0;
+      for (const id of selectedApptIds) {
+        const appt = byId.get(id);
+        if (appt && appt.status !== bulkStatus) {
+          await window.api.appointments.update(id, { ...appt, status: bulkStatus });
+          changed++;
+        }
+      }
+      setToast(`Updated ${changed} appointment${changed === 1 ? '' : 's'} → ${bulkStatus}`);
+      setBulkStatus('');
+      await loadAppointments();
+      loadOverviewAppts();
+    } catch (err) {
+      console.error('Bulk status update failed:', err);
+      setToast('Failed to apply status to some appointments');
+    } finally {
+      setApplyingBulk(false);
     }
   };
 
@@ -704,11 +732,18 @@ const EntityDetailPage: React.FC = () => {
     { key: 'invoices',     label: 'Invoices',      icon: Receipt },
   ];
 
+  // Billable rate for an appt: cancelled/no-show bill $0 unless the contract sets a flat fee.
+  const effectiveRate = (a: Appointment): number => {
+    if (a.status === 'cancelled') return entity?.cancellation_fee ?? 0;
+    if (a.status === 'no-show') return entity?.no_show_fee ?? 0;
+    return a.entity_rate || 0;
+  };
+
   const visibleAppointments = filterApptsByTime(appointments, apptTimeFilter, apptRangeStart, apptRangeEnd);
   const uninvoicedAppts = visibleAppointments.filter((a) => !a.contract_invoice_id);
   const selectedTotal = visibleAppointments
     .filter((a) => selectedApptIds.has(a.id))
-    .reduce((sum, a) => sum + (a.entity_rate || 0), 0);
+    .reduce((sum, a) => sum + effectiveRate(a), 0);
 
   return (
     <div className="p-6">
@@ -1235,6 +1270,29 @@ const EntityDetailPage: React.FC = () => {
                     </button>
                   </>
                 )}
+                {/* Bulk status update for the selected rows */}
+                <div className="inline-flex items-center gap-1.5 pr-1">
+                  <span className="text-xs text-[var(--color-text-secondary)] whitespace-nowrap">{selectedApptIds.size} selected</span>
+                  <select
+                    className="select text-xs py-1"
+                    value={bulkStatus}
+                    onChange={(e) => setBulkStatus(e.target.value as AppointmentStatus | '')}
+                    title="Set a status for the selected appointments"
+                  >
+                    <option value="">Set status…</option>
+                    <option value="scheduled">Scheduled</option>
+                    <option value="completed">Completed</option>
+                    <option value="cancelled">Cancelled</option>
+                    <option value="no-show">No-Show</option>
+                  </select>
+                  <button
+                    className="btn-secondary btn-sm"
+                    disabled={!bulkStatus || applyingBulk}
+                    onClick={handleBulkApplyStatus}
+                  >
+                    {applyingBulk ? 'Applying…' : 'Apply'}
+                  </button>
+                </div>
                 <input
                   type="date"
                   className="input text-sm"
@@ -1332,7 +1390,19 @@ const EntityDetailPage: React.FC = () => {
                           </span>
                         </td>
                         <td className="table-cell text-right font-medium">
-                          {appt.entity_rate ? formatCurrency(appt.entity_rate) : '—'}
+                          {(() => {
+                            const eff = effectiveRate(appt);
+                            const zeroedByStatus = (appt.status === 'cancelled' || appt.status === 'no-show') && eff === 0;
+                            if (zeroedByStatus) {
+                              return (
+                                <span className="text-[var(--color-text-secondary)]" title="Cancelled/no-show — not billable (no fee set on this contract)">
+                                  {appt.entity_rate ? <span className="line-through opacity-50 mr-1">{formatCurrency(appt.entity_rate)}</span> : null}
+                                  $0
+                                </span>
+                              );
+                            }
+                            return eff ? formatCurrency(eff) : '—';
+                          })()}
                         </td>
                         <td className="table-cell">
                           {isInvoiced ? (

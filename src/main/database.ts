@@ -2584,6 +2584,31 @@ function runMigrations(): void {
         }
       },
     },
+    {
+      version: 73,
+      description: 'Entity cancellation / no-show flat fees',
+      up: () => {
+        // Optional flat fees billed for a cancelled / no-show visit. NULL = not billable
+        // (revenue rollups treat cancelled/no-show as $0 unless a fee is set here).
+        if (!columnExists('contracted_entities', 'cancellation_fee')) {
+          db.prepare('ALTER TABLE contracted_entities ADD COLUMN cancellation_fee REAL DEFAULT NULL').run();
+        }
+        if (!columnExists('contracted_entities', 'no_show_fee')) {
+          db.prepare('ALTER TABLE contracted_entities ADD COLUMN no_show_fee REAL DEFAULT NULL').run();
+        }
+      },
+    },
+    {
+      version: 74,
+      description: 'Client additional CC emails (reminders / receipts)',
+      up: () => {
+        // JSON array of { email, reminders, receipts } — extra addresses CC'd on reminder
+        // and/or receipt (invoice) emails alongside the primary client.email.
+        if (!columnExists('clients', 'additional_emails')) {
+          db.prepare("ALTER TABLE clients ADD COLUMN additional_emails TEXT DEFAULT ''").run();
+        }
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
@@ -2842,7 +2867,7 @@ function createTables(): void {
 // ── Backup, Restore & Integrity Functions ──
 
 // Must track the highest migration version above — used by the backup restore-compatibility check.
-const LATEST_SCHEMA_VERSION = 72;
+const LATEST_SCHEMA_VERSION = 74;
 
 /**
  * Run PRAGMA quick_check — a fast consistency check on every launch.

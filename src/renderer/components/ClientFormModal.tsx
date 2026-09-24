@@ -11,11 +11,13 @@ import type {
   SignatureSource,
   ReferringQualifier,
   ReminderChannel,
+  ClientEmail,
 } from '../../shared/types';
 import {
   ONSET_QUALIFIER_LABELS,
   SIGNATURE_SOURCE_LABELS,
   REFERRING_QUALIFIER_LABELS,
+  parseClientEmails,
 } from '../../shared/types';
 import { searchICD10, lookupICD10, type ICD10Entry } from '../../shared/icd10Data';
 import CptCombobox from './CptCombobox';
@@ -102,6 +104,7 @@ interface FormData {
   dob: string;
   phone: string;
   email: string;
+  additional_emails: ClientEmail[];
   address: string;
   city: string;
   state: string;
@@ -154,6 +157,7 @@ const emptyForm: FormData = {
   dob: '',
   phone: '',
   email: '',
+  additional_emails: [],
   address: '',
   city: '',
   state: '',
@@ -244,6 +248,7 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
         dob: client.dob,
         phone: client.phone,
         email: client.email,
+        additional_emails: parseClientEmails(client.additional_emails),
         address: client.address,
         city: client.city || '',
         state: client.state || '',
@@ -458,14 +463,19 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
     setSaving(true);
     try {
       const secondaryDxArr = form.secondary_dx_entries.filter(e => e.code.trim());
-      const { secondary_dx_entries, ...rest } = form;
+      const { secondary_dx_entries, additional_emails, ...rest } = form;
       // Stamp TCPA consent the first time reminders are enabled; preserve the date thereafter.
       const sms_consent_at = form.send_appointment_reminders
         ? (form.sms_consent_at || new Date().toISOString())
         : form.sms_consent_at;
+      // Drop blank rows and serialize the CC emails to JSON for storage.
+      const cleanedEmails = additional_emails
+        .map(e => ({ email: e.email.trim(), reminders: !!e.reminders, receipts: !!e.receipts }))
+        .filter(e => e.email);
       const submitData = {
         ...rest,
         secondary_dx: JSON.stringify(secondaryDxArr),
+        additional_emails: JSON.stringify(cleanedEmails),
         sms_consent_at,
       };
       let saved: Client;
@@ -599,7 +609,7 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
                 />
               </div>
               <div>
-                <label className="label" htmlFor="email">Email</label>
+                <label className="label" htmlFor="email">Email <span className="text-xs text-[var(--color-text-secondary)] font-normal">(primary)</span></label>
                 <input
                   id="email"
                   name="email"
@@ -609,6 +619,43 @@ const ClientFormModal: React.FC<ClientFormModalProps> = ({
                   onChange={handleChange}
                   placeholder="email@example.com"
                 />
+              </div>
+              <div className="col-span-2">
+                <label className="label">Additional emails (CC)</label>
+                <p className="text-xs text-[var(--color-text-secondary)] -mt-1 mb-2">
+                  Extra addresses to copy on appointment reminders and/or receipts (e.g. a spouse or parent). Check what each should receive.
+                </p>
+                <div className="space-y-2">
+                  {form.additional_emails.map((row, idx) => (
+                    <div key={idx} className="flex items-center gap-2 flex-wrap">
+                      <input
+                        type="email"
+                        className="input flex-1 min-w-[180px]"
+                        placeholder="email@example.com"
+                        value={row.email}
+                        onChange={(e) => setForm(prev => ({ ...prev, additional_emails: prev.additional_emails.map((r, i) => i === idx ? { ...r, email: e.target.value } : r) }))}
+                      />
+                      <label className="flex items-center gap-1.5 text-sm whitespace-nowrap cursor-pointer">
+                        <input type="checkbox" className="rounded border-gray-300 accent-[var(--color-primary)]" checked={row.reminders}
+                          onChange={(e) => setForm(prev => ({ ...prev, additional_emails: prev.additional_emails.map((r, i) => i === idx ? { ...r, reminders: e.target.checked } : r) }))} />
+                        Reminders
+                      </label>
+                      <label className="flex items-center gap-1.5 text-sm whitespace-nowrap cursor-pointer">
+                        <input type="checkbox" className="rounded border-gray-300 accent-[var(--color-primary)]" checked={row.receipts}
+                          onChange={(e) => setForm(prev => ({ ...prev, additional_emails: prev.additional_emails.map((r, i) => i === idx ? { ...r, receipts: e.target.checked } : r) }))} />
+                        Receipts
+                      </label>
+                      <button type="button" className="p-1.5 text-gray-400 hover:text-red-600" title="Remove"
+                        onClick={() => setForm(prev => ({ ...prev, additional_emails: prev.additional_emails.filter((_, i) => i !== idx) }))}>
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <button type="button" className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-[var(--color-primary)] hover:opacity-80"
+                  onClick={() => setForm(prev => ({ ...prev, additional_emails: [...prev.additional_emails, { email: '', reminders: true, receipts: false }] }))}>
+                  <Plus size={14} /> Add email
+                </button>
               </div>
               <div className="col-span-2">
                 <label className="label" htmlFor="mrn">MRN <span className="text-xs text-[var(--color-text-secondary)] font-normal">(optional, for agency invoices)</span></label>
