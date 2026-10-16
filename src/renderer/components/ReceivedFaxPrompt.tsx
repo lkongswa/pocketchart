@@ -39,6 +39,8 @@ export default function ReceivedFaxPrompt({ suggestion, remaining, onFiled, onNo
   const [selectedId, setSelectedId] = useState<number>(suggestion.candidates[0]?.outboundFaxId ?? 0);
   const [busy, setBusy] = useState<'preview' | 'file' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Caller ID is spoofable: filing a signed plan of care requires the user to have looked at the pages first. */
+  const [previewed, setPreviewed] = useState(false);
 
   const chosen: InboundFaxCandidate | undefined = suggestion.candidates.find(c => c.outboundFaxId === selectedId) || suggestion.candidates[0];
   const from = suggestion.physicianName || suggestion.fromFaxNumber || 'an unknown number';
@@ -50,6 +52,7 @@ export default function ReceivedFaxPrompt({ suggestion, remaining, onFiled, onNo
       setError(null);
       const result = await window.api.fax.retrieveFax(suggestion.providerFaxId);
       await window.api.cms1500.openPreview({ base64Pdf: result.base64Pdf, filename: result.filename || `fax_${suggestion.providerFaxId}.pdf` });
+      setPreviewed(true);
     } catch (err: any) {
       setError(cleanIpcError(err, 'Could not download the fax for preview.'));
     } finally {
@@ -58,7 +61,7 @@ export default function ReceivedFaxPrompt({ suggestion, remaining, onFiled, onNo
   };
 
   const file = async () => {
-    if (!chosen) return;
+    if (!chosen || !previewed) return;
     try {
       setBusy('file');
       setError(null);
@@ -107,8 +110,11 @@ export default function ReceivedFaxPrompt({ suggestion, remaining, onFiled, onNo
           )}
 
           <p className="text-sm text-[var(--color-text)]">
-            This number matches a document you faxed that is still waiting on a physician signature.
-            {suggestion.candidates.length > 1 ? ' Which one is this the signed copy of?' : ' Is this the signed copy?'}
+            The caller ID matches a number you faxed a document to that is still waiting on a physician signature.
+            {suggestion.candidates.length > 1 ? ' Which one might this be the signed copy of?' : ' It may be the signed copy.'}
+          </p>
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            Caller ID is not verified. Preview the fax and confirm it is the signed document before filing it to the chart.
           </p>
 
           <div className="space-y-2">
@@ -149,9 +155,15 @@ export default function ReceivedFaxPrompt({ suggestion, remaining, onFiled, onNo
             <button type="button" className="text-sm px-3 py-1.5 rounded-lg border border-[var(--color-border)] hover:bg-gray-50" onClick={onNotThis} disabled={busy !== null} title="Keep it in the Fax Center inbox for manual filing">
               Not this one
             </button>
-            <button type="button" className="btn-primary inline-flex items-center gap-2" onClick={file} disabled={busy !== null || !chosen}>
+            <button
+              type="button"
+              className="btn-primary inline-flex items-center gap-2"
+              onClick={file}
+              disabled={busy !== null || !chosen || !previewed}
+              title={previewed ? 'File this fax to the chart as the signed copy' : 'Preview the fax first'}
+            >
               {busy === 'file' ? <Loader2 size={14} className="animate-spin" /> : <FolderInput size={14} />}
-              File to chart
+              {previewed ? 'Confirm & file to chart' : 'Preview to enable filing'}
             </button>
           </div>
         </div>
