@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSectionColor } from '../hooks/useSectionColor';
+import FaxSendModal from '../components/FaxSendModal';
+import SignatureLogModal from '../components/SignatureLogModal';
 import {
   ClipboardList,
   ArrowLeft,
@@ -10,7 +12,14 @@ import {
   Filter,
   AlertTriangle,
   RefreshCw,
+  Send,
+  CheckCheck,
+  XCircle,
+  Loader2,
+  History,
 } from 'lucide-react';
+
+type ToastKind = 'success' | 'error';
 
 interface EvalWithClient {
   id: number;
@@ -25,6 +34,85 @@ interface EvalWithClient {
   first_name: string;
   last_name: string;
   client_discipline: string;
+  /** Latest outbound fax for this eval (null = never faxed). */
+  fax_status?: string | null;
+  fax_sent_at?: string | null;
+  /** >0 when an inbound fax (signed copy) was linked back to the outbound send. */
+  fax_received_back?: number;
+  /** Number of non-failed outbound sends, and their dates (YYYY-MM-DD, newest first, comma-joined). */
+  fax_count?: number;
+  fax_sent_dates?: string | null;
+  // Client's referring MD — prefills the fax modal
+  referring_physician_id?: number | null;
+  referring_physician?: string;
+  referring_fax?: string;
+}
+
+/** Short date for a fax_log sent_at ("2026-09-24 14:03:00" or "2026-09-24" → "Sep 24"). */
+function formatFaxDate(raw?: string | null): string {
+  if (!raw) return '';
+  const iso = raw.length === 10 ? `${raw}T12:00:00` : raw.replace(' ', 'T');
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+/** All send dates for the eval, newest first, e.g. ["Sep 2", "Aug 14"]. */
+function faxDateList(item: EvalWithClient): string[] {
+  const raw = (item.fax_sent_dates || '').split(',').map(s => s.trim()).filter(Boolean);
+  const out = raw.map(formatFaxDate).filter(Boolean);
+  if (out.length === 0 && item.fax_sent_at) {
+    const one = formatFaxDate(item.fax_sent_at);
+    if (one) out.push(one);
+  }
+  return out;
+}
+
+/** Fax column badge: Received (signed copy back) › Failed › Sending › Faxed › not faxed. */
+function FaxBadge({ item }: { item: EvalWithClient }) {
+  const base = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap';
+  if ((item.fax_received_back ?? 0) > 0) {
+    return (
+      <span className={`${base} bg-emerald-100 text-emerald-700`} title="Signed copy received back">
+        <CheckCheck size={12} /> Received
+      </span>
+    );
+  }
+  const status = item.fax_status;
+  if (!status) {
+    return <span className="text-xs text-[var(--color-text-secondary)]/60">Not faxed</span>;
+  }
+  if (status === 'failed') {
+    return (
+      <span className={`${base} bg-red-100 text-red-700`} title="Last fax attempt failed">
+        <XCircle size={12} /> Failed
+      </span>
+    );
+  }
+  if (status === 'queued' || status === 'sending') {
+    return (
+      <span className={`${base} bg-amber-100 text-amber-700`} title="Fax in progress">
+        <Loader2 size={12} className="animate-spin" /> Sending
+      </span>
+    );
+  }
+  const dates = faxDateList(item);
+  const count = item.fax_count || dates.length || 1;
+  const title = dates.length > 1
+    ? `Faxed ${count} times (${dates.join(', ')}) · awaiting signed copy`
+    : `Faxed${dates[0] ? ' ' + dates[0] : ''} · awaiting signed copy`;
+  return (
+    <span className="inline-flex flex-col items-start gap-0.5 min-w-0" title={title}>
+      <span className={`${base} bg-sky-100 text-sky-700`}>
+        <Send size={12} /> Faxed{count > 1 ? ` ×${count}` : dates[0] ? ` ${dates[0]}` : ''}
+      </span>
+      {count > 1 && dates.length > 0 && (
+        <span className="text-[10px] leading-tight text-[var(--color-text-secondary)] pl-1">
+          {dates.join(' · ')}
+        </span>
+      )}
+    </span>
+  );
 }
 
 type TabFilter = 'incomplete' | 'recerts' | 'all';
@@ -63,14 +151,25 @@ export default function EvalsQueuePage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [tab, setTab] = useState<TabFilter>('incomplete');
+  /** Signed eval currently being faxed from the list (opens FaxSendModal prefilled). */
+  const [faxTarget, setFaxTarget] = useState<EvalWithClient | null>(null);
+  /** Signed eval whose physician-signature log is open. */
+  const [logTarget, setLogTarget] = useState<EvalWithClient | null>(null);
+  const [toast, setToast] = useState<{ msg: string; kind: ToastKind } | null>(null);
+
+  const showToast = (msg: string, kind: ToastKind = 'success') => {
+    setToast({ msg, kind });
+    window.setTimeout(() => setToast(null), kind === 'error' ? 7000 : 4000);
+  };
 
   useEffect(() => {
     loadData();
   }, []);
 
-  const loadData = async () => {
+  /** `silent` refreshes in place without the full-page loading state (which would unmount any open modal). */
+  const loadData = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const [incomplete, all] = await Promise.all([
         window.api.evaluations.listIncomplete(),
         window.api.evaluations.listAll(),
@@ -79,8 +178,9 @@ export default function EvalsQueuePage() {
       setAllEvals(all);
     } catch (err) {
       console.error('Failed to load evals:', err);
+      showToast('Could not refresh the evaluation list.', 'error');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -229,12 +329,13 @@ export default function EvalsQueuePage() {
       {/* Evals List */}
       <div className="card overflow-hidden">
         {/* Table Header */}
-        <div className="grid grid-cols-[1fr_140px_100px_100px_80px] gap-4 px-5 py-3 bg-gray-50 border-b border-[var(--color-border)] text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">
+        <div className="grid grid-cols-[1fr_110px_80px_90px_80px_250px] gap-4 px-5 py-3 bg-gray-50 border-b border-[var(--color-border)] text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">
           <span>Client</span>
           <span>Eval Date</span>
           <span>Discipline</span>
           <span>Type</span>
           <span>Status</span>
+          <span>Fax</span>
         </div>
 
         {/* Rows */}
@@ -255,7 +356,7 @@ export default function EvalsQueuePage() {
               return (
                 <div
                   key={evalItem.id}
-                  className={`grid grid-cols-[1fr_140px_100px_100px_80px] gap-4 px-5 py-3 hover:bg-gray-50 cursor-pointer transition-colors items-center ${isOverdue ? 'bg-red-50/30' : ''}`}
+                  className={`grid grid-cols-[1fr_110px_80px_90px_80px_250px] gap-4 px-5 py-3 hover:bg-gray-50 cursor-pointer transition-colors items-center ${isOverdue ? 'bg-red-50/30' : ''}`}
                   onClick={() =>
                     navigate(`/clients/${evalItem.client_id}/eval/${evalItem.id}`)
                   }
@@ -314,12 +415,77 @@ export default function EvalsQueuePage() {
                       </span>
                     )}
                   </div>
+                  <div className="flex items-center gap-2 min-w-0">
+                    {isSigned ? (
+                      <>
+                        <FaxBadge item={evalItem} />
+                        <button
+                          type="button"
+                          className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border)] bg-white text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)] transition-colors"
+                          title={evalItem.fax_status ? 'Fax this eval again' : 'Fax this eval to the referring MD'}
+                          onClick={(e) => { e.stopPropagation(); setFaxTarget(evalItem); }}
+                        >
+                          <Send size={11} />
+                          {evalItem.fax_status ? 'Re-fax' : 'Fax'}
+                        </button>
+                        <button
+                          type="button"
+                          className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border)] bg-white text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] hover:border-[var(--color-primary)] transition-colors"
+                          title="Signature log: fax attempts + follow-up calls (exportable for audits)"
+                          onClick={(e) => { e.stopPropagation(); setLogTarget(evalItem); }}
+                        >
+                          <History size={11} />
+                          Log
+                        </button>
+                      </>
+                    ) : (
+                      <span className="text-xs text-[var(--color-text-secondary)]/40">—</span>
+                    )}
+                  </div>
                 </div>
               );
             })
           )}
         </div>
       </div>
+
+      {faxTarget && (
+        <FaxSendModal
+          isOpen
+          onClose={() => setFaxTarget(null)}
+          clientId={faxTarget.client_id}
+          documentId={faxTarget.id}
+          docType="eval"
+          referringPhysicianId={faxTarget.referring_physician_id ?? null}
+          referringPhysicianName={faxTarget.referring_physician || ''}
+          referringFax={faxTarget.referring_fax || ''}
+          onSent={(info) => {
+            loadData(true);
+            const who = info.recipientName || info.faxNumber || 'physician';
+            showToast(`Fax queued to ${who}. Status will update once the fax service confirms delivery.`);
+          }}
+        />
+      )}
+
+      {logTarget && (
+        <SignatureLogModal
+          evalId={logTarget.id}
+          onClose={() => setLogTarget(null)}
+          onChanged={() => loadData(true)}
+        />
+      )}
+
+      {toast && (
+        <div
+          role="status"
+          className={`fixed bottom-6 right-6 z-[60] max-w-md flex items-start gap-2 px-4 py-3 rounded-lg shadow-lg text-sm text-white ${
+            toast.kind === 'error' ? 'bg-red-600' : 'bg-emerald-600'
+          }`}
+        >
+          {toast.kind === 'error' ? <AlertTriangle size={16} className="mt-0.5 shrink-0" /> : <CheckCircle size={16} className="mt-0.5 shrink-0" />}
+          <span>{toast.msg}</span>
+        </div>
+      )}
     </div>
   );
 }

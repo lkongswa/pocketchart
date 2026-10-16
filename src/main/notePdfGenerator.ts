@@ -13,7 +13,7 @@
 
 import { jsPDF } from 'jspdf';
 import { DISCHARGE_REASON_LABELS, DISCHARGE_GOAL_STATUS_LABELS, DISCHARGE_RECOMMENDATION_LABELS } from '../shared/types';
-import type { ContractDischargeData, DischargeReason, DischargeGoalStatus, DischargeRecommendation } from '../shared/types';
+import type { ContractDischargeData, DischargeReason, DischargeGoalStatus, DischargeRecommendation, SignatureLog } from '../shared/types';
 
 // ── Colors (kept local; mirrors PDF_COLORS in main.ts) ──
 const COLORS = {
@@ -434,6 +434,155 @@ function drawSignatureBlock(
   doc.setTextColor(...COLORS.body);
 }
 
+/** Human-readable goal value with its unit (e.g. "80%"), falling back to the raw value. */
+function formatGoalValue(value: unknown, measurementType?: string): string {
+  if (value === null || value === undefined || value === '') return '';
+  const v = String(value).trim();
+  if (!v) return '';
+  if (measurementType === 'percentage' && !v.endsWith('%')) return `${v}%`;
+  return v;
+}
+
+/** Eval goals: numbered [STG]/[LTG] goal text, each with a muted detail line
+ *  (domain · baseline → target · instrument · target date). Long goal text wraps. */
+function drawEvalGoals(L: Layout, entries: any[]): void {
+  const { doc, marginLeft, maxWidth } = L;
+  const stgs = entries.filter((g) => String(g?.goal_type || '').toUpperCase() !== 'LTG');
+  const ltgs = entries.filter((g) => String(g?.goal_type || '').toUpperCase() === 'LTG');
+  // Long-term goals first (the overarching outcome), then the short-term steps toward it.
+  const ordered = [...ltgs, ...stgs];
+  if (ordered.length === 0) return;
+
+  checkPageBreak(L, 40);
+  doc.setFontSize(10.5);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...COLORS.heading);
+  doc.text('Goals', marginLeft, L.y);
+  L.y += 14;
+
+  const indent = 36;
+  ordered.forEach((g: any, i: number) => {
+    const type = String(g?.goal_type || '').toUpperCase();
+    const target = formatGoalValue(g?.target_value ?? g?.target, g?.measurement_type);
+    const baseline = formatGoalValue(g?.baseline_value ?? g?.baseline, g?.measurement_type);
+    const text = String(g?.goal_text || g?.composed_text || g?.text || '').trim()
+      || [g?.category, target ? `target ${target}` : ''].filter(Boolean).join(' — ')
+      || 'Goal';
+
+    const meta: string[] = [];
+    if (g?.category) meta.push(String(g.category));
+    // Plain ASCII only here: jsPDF's built-in Helvetica has no glyph for arrows and
+    // silently mangles the whole line's spacing when it meets one.
+    if (baseline || target) meta.push(`Baseline ${baseline || 'n/a'} to target ${target || 'n/a'}`);
+    if (g?.instrument) meta.push(String(g.instrument));
+    if (g?.target_date) meta.push(`Target date ${formatDate(String(g.target_date))}`);
+    if (g?.is_carried_over) meta.push('Carried over');
+
+    doc.setFontSize(9.5);
+    const bodyLines: string[] = doc.splitTextToSize(text, maxWidth - indent);
+    doc.setFontSize(8.5);
+    const metaLines: string[] = meta.length ? doc.splitTextToSize(meta.join('   ·   '), maxWidth - indent) : [];
+    const blockHeight = bodyLines.length * 12 + metaLines.length * 11 + 8;
+    checkPageBreak(L, blockHeight);
+
+    // Number + type tag in the gutter
+    doc.setFontSize(9.5);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...COLORS.accent);
+    doc.text(`${i + 1}.`, marginLeft, L.y);
+    if (type) {
+      doc.setFontSize(7);
+      doc.text(type, marginLeft + 13, L.y - 0.5);
+    }
+
+    doc.setFontSize(9.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...COLORS.body);
+    doc.text(bodyLines, marginLeft + indent, L.y);
+    L.y += bodyLines.length * 12;
+
+    if (metaLines.length) {
+      doc.setFontSize(8.5);
+      doc.setTextColor(...COLORS.label);
+      doc.text(metaLines, marginLeft + indent, L.y - 1);
+      L.y += metaLines.length * 11;
+    }
+    L.y += 8;
+  });
+  L.y += 4;
+  doc.setTextColor(...COLORS.body);
+}
+
+/** Physician certification — blank signature/date lines for the referring MD to sign
+ *  the plan of care on paper (or via fax-back). Name + NPI pre-filled when known. */
+function drawPhysicianCertification(
+  L: Layout,
+  physician: PhysicianInfo | null,
+  frequencyDuration?: string,
+): void {
+  const { doc, marginLeft, pageWidth, marginRight, maxWidth } = L;
+  checkPageBreak(L, 130);
+
+  L.y += 10;
+  doc.setDrawColor(...COLORS.divider);
+  doc.line(marginLeft, L.y, pageWidth - marginRight, L.y);
+  doc.setDrawColor(0, 0, 0);
+  L.y += 18;
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...COLORS.heading);
+  doc.text('PHYSICIAN CERTIFICATION', marginLeft, L.y);
+  L.y += 14;
+
+  const freq = frequencyDuration?.trim() ? ` (${frequencyDuration.trim()})` : '';
+  const statement =
+    `I have reviewed this evaluation and the plan of care above${freq}. I certify that the patient is under my care ` +
+    `and that the services outlined are medically necessary.`;
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...COLORS.body);
+  const stmtLines: string[] = doc.splitTextToSize(statement, maxWidth);
+  doc.text(stmtLines, marginLeft, L.y);
+  L.y += stmtLines.length * 11 + 22;
+
+  const sigW = 250;
+  const dateX = marginLeft + 300;
+  const dateW = 120;
+
+  // Signature + date lines
+  doc.setDrawColor(...COLORS.label);
+  doc.setLineWidth(0.6);
+  doc.line(marginLeft, L.y, marginLeft + sigW, L.y);
+  doc.line(dateX, L.y, dateX + dateW, L.y);
+  L.y += 11;
+  doc.setFontSize(8);
+  doc.setTextColor(...COLORS.label);
+  doc.text('Physician Signature', marginLeft, L.y);
+  doc.text('Date', dateX, L.y);
+  L.y += 24;
+
+  // Printed name + NPI lines (pre-filled when we know the referring MD)
+  const name = physician?.name?.trim() || '';
+  const npi = physician?.npi?.trim() || '';
+  doc.setFontSize(9.5);
+  doc.setTextColor(...COLORS.body);
+  if (name) doc.text(name, marginLeft, L.y - 3);
+  if (npi) doc.text(npi, dateX, L.y - 3);
+  doc.line(marginLeft, L.y, marginLeft + sigW, L.y);
+  doc.line(dateX, L.y, dateX + dateW, L.y);
+  doc.setLineWidth(0.3);
+  doc.setDrawColor(0, 0, 0);
+  L.y += 11;
+  doc.setFontSize(8);
+  doc.setTextColor(...COLORS.label);
+  doc.text('Physician Name (Print)', marginLeft, L.y);
+  doc.text('NPI', dateX, L.y);
+  L.y += 12;
+  doc.setTextColor(...COLORS.body);
+  doc.setFont('helvetica', 'normal');
+}
+
 /** Footer on every page (confidentiality + page numbers). */
 function addFooters(L: Layout): void {
   const { doc, pageWidth, pageHeight } = L;
@@ -644,18 +793,197 @@ function buildNoteFilename(note: NoteRow, patient: PatientInfo | null): string {
   return `${kind}_${last}${first ? '_' + first : ''}_${date}.pdf`;
 }
 
+// ── Physician signature log (audit trail for one eval) ──
+
+export interface BuildSignatureLogPdfArgs {
+  log: SignatureLog;
+  practice: PracticeInfo | null;
+  logoBase64?: string | null;
+}
+
+function fmtLogDateTime(raw?: string | null): string {
+  if (!raw) return '';
+  const d = new Date(raw.includes('T') ? raw : raw.replace(' ', 'T'));
+  if (isNaN(d.getTime())) return raw;
+  return d.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+/** Dated audit trail of everything done to obtain the physician's signature on a plan of care:
+ *  each outbound fax attempt with its provider result, whether the signed copy came back, and
+ *  every logged follow-up contact. Meant to answer "why don't you have a signature?" */
+export function buildSignatureLogPdf(args: BuildSignatureLogPdfArgs): { base64Pdf: string; filename: string } {
+  const { log, practice, logoBase64 } = args;
+  const L = createLayout();
+  const { doc, marginLeft, maxWidth } = L;
+
+  drawPracticeHeader(L, { practice, logoBase64: logoBase64 ?? null, title: 'PHYSICIAN SIGNATURE LOG' });
+
+  const evalKind = log.eval.eval_type === 'reassessment' ? 'Recertification' : log.eval.eval_type === 'discharge' ? 'Discharge' : 'Initial';
+  const [first, ...rest] = log.eval.client_name.split(' ');
+  drawPatientBlock(
+    L,
+    { first_name: first, last_name: rest.join(' ') },
+    log.eval.client_name,
+    null,
+    log.eval.eval_date,
+    [
+      { label: 'Document:', value: `${evalKind} evaluation / plan of care` },
+      { label: 'Signed:', value: log.eval.signed_at ? formatDate(log.eval.signed_at.slice(0, 10)) : 'Unsigned' },
+    ],
+  );
+
+  // Physician
+  const physLines: string[] = [];
+  if (log.physician) {
+    physLines.push(log.physician.name);
+    if (log.physician.npi) physLines.push(`NPI: ${log.physician.npi}`);
+    if (log.physician.fax) physLines.push(`Fax: ${log.physician.fax}`);
+  } else {
+    physLines.push('No referring physician on file');
+  }
+  drawSection(L, 'Referring / Certifying Physician', physLines.join('\n'));
+
+  // Overall status
+  const received = log.faxAttempts.find(a => a.received_back_at);
+  const statusText = received
+    ? `Signed copy received ${fmtLogDateTime(received.received_back_at)}.`
+    : log.faxAttempts.length > 0
+      ? 'Plan of care transmitted to physician; signed copy not yet received as of the date of this log.'
+      : 'Plan of care has not yet been transmitted to the physician.';
+  drawSection(L, 'Signature Status', statusText);
+
+  // Fax attempts table
+  checkPageBreak(L, 40);
+  doc.setFontSize(10.5);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...COLORS.heading);
+  doc.text(`Fax Attempts (${log.faxAttempts.length})`, marginLeft, L.y);
+  L.y += 14;
+
+  if (log.faxAttempts.length === 0) {
+    doc.setFontSize(9.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...COLORS.body);
+    doc.text('No fax attempts recorded.', marginLeft, L.y);
+    L.y += 18;
+  } else {
+    const colX = [marginLeft, marginLeft + 120, marginLeft + 290, marginLeft + 440];
+    const colW = [115, 165, 145, maxWidth - 440];
+    const drawHeader = () => {
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(...COLORS.label);
+      doc.text('SENT', colX[0], L.y);
+      doc.text('TO', colX[1], L.y);
+      doc.text('RESULT', colX[2], L.y);
+      doc.text('PAGES', colX[3], L.y);
+      L.y += 6;
+      doc.setDrawColor(...COLORS.divider);
+      doc.line(marginLeft, L.y, marginLeft + maxWidth, L.y);
+      doc.setDrawColor(0, 0, 0);
+      L.y += 11;
+    };
+    drawHeader();
+    for (const a of log.faxAttempts) {
+      const resultLabel = a.received_back_at
+        ? `Delivered; signed copy received ${fmtLogDateTime(a.received_back_at)}`
+        : a.status === 'failed' ? `FAILED${a.error_message ? ': ' + a.error_message : ''}`
+        : (a.status === 'queued' || a.status === 'sending') ? 'In progress (not confirmed)'
+        : 'Delivered (confirmed by fax provider)';
+      const toText = [a.physician_name || '', a.fax_number, a.fax_provider ? `via ${a.fax_provider}` : ''].filter(Boolean).join('\n');
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      const c0: string[] = doc.splitTextToSize(fmtLogDateTime(a.sent_at || a.created_at), colW[0]);
+      const c1: string[] = doc.splitTextToSize(toText, colW[1]);
+      const c2: string[] = doc.splitTextToSize(resultLabel, colW[2]);
+      const rows = Math.max(c0.length, c1.length, c2.length);
+      const h = rows * 11 + 6;
+      if (L.y + h > L.pageHeight - 50) { doc.addPage(); L.y = 40; drawHeader(); }
+      doc.setTextColor(...COLORS.body);
+      doc.text(c0, colX[0], L.y);
+      doc.text(c1, colX[1], L.y);
+      if (a.status === 'failed') doc.setTextColor(...COLORS.confidential);
+      else if (a.received_back_at) doc.setTextColor(...COLORS.signedGreen);
+      doc.text(c2, colX[2], L.y);
+      doc.setTextColor(...COLORS.body);
+      doc.text(a.pages ? String(a.pages) : '—', colX[3], L.y);
+      L.y += h;
+    }
+    L.y += 6;
+  }
+
+  // Follow-up contacts
+  checkPageBreak(L, 40);
+  doc.setFontSize(10.5);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...COLORS.heading);
+  doc.text(`Follow-up Contacts (${log.followups.length})`, marginLeft, L.y);
+  L.y += 14;
+  if (log.followups.length === 0) {
+    doc.setFontSize(9.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...COLORS.body);
+    doc.text('No follow-up contacts logged.', marginLeft, L.y);
+    L.y += 18;
+  } else {
+    const typeLabel: Record<string, string> = { phone: 'Phone call', email: 'Email', fax: 'Fax', in_person: 'In person', other: 'Other' };
+    for (const f of log.followups) {
+      const head = `${fmtLogDateTime(f.communication_date)}  ·  ${typeLabel[f.type] || f.type}${f.contact_name ? `  ·  ${f.contact_name}` : ''}`;
+      doc.setFontSize(9);
+      const body: string[] = doc.splitTextToSize(f.summary || '', maxWidth - 12);
+      const h = 12 + body.length * 11 + 8;
+      checkPageBreak(L, h);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(...COLORS.label);
+      doc.text(head, marginLeft, L.y);
+      L.y += 12;
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(...COLORS.body);
+      doc.text(body, marginLeft + 12, L.y);
+      L.y += body.length * 11 + 8;
+    }
+  }
+
+  // Attestation line
+  checkPageBreak(L, 40);
+  L.y += 8;
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'italic');
+  doc.setTextColor(...COLORS.label);
+  const note: string[] = doc.splitTextToSize(
+    `Generated ${fmtLogDateTime(new Date().toISOString())} from PocketChart fax transmission records and the client communication log. ` +
+    'Fax results are as reported by the fax service provider at the time of transmission.',
+    maxWidth,
+  );
+  doc.text(note, marginLeft, L.y);
+  L.y += note.length * 10;
+
+  addFooters(L);
+
+  const filename = `SignatureLog_${sanitizeFilename(rest.join(' ') || 'Patient')}${first ? '_' + sanitizeFilename(first) : ''}_${log.eval.eval_date || ''}.pdf`;
+  const pdfOutput = doc.output('arraybuffer');
+  return { base64Pdf: Buffer.from(pdfOutput).toString('base64'), filename };
+}
+
 // ── Evaluation builder ──
+
+export interface PhysicianInfo {
+  name?: string;
+  npi?: string;
+}
 
 export interface BuildEvalPdfArgs {
   evaluation: EvalRow;
   patient: PatientInfo | null;
   practice: PracticeInfo | null;
   goals?: GoalInfo[];
+  /** Referring / certifying physician — pre-fills the printed name + NPI under the MD signature line. */
+  physician?: PhysicianInfo | null;
   logoBase64?: string | null;
 }
 
 export function buildEvalPdf(args: BuildEvalPdfArgs): { base64Pdf: string; filename: string } {
-  const { evaluation, patient, practice, goals, logoBase64 } = args;
+  const { evaluation, patient, practice, goals, physician, logoBase64 } = args;
   const L = createLayout();
 
   let content: any = {};
@@ -710,14 +1038,7 @@ export function buildEvalPdf(args: BuildEvalPdfArgs): { base64Pdf: string; filen
 
   // Goals — prefer structured entries, fall back to legacy free-text
   if (Array.isArray(content.goal_entries) && content.goal_entries.length > 0) {
-    const goalLines = content.goal_entries
-      .map((g: any, i: number) => {
-        const text = g.composed_text || g.text || `${g.category || 'Goal'}: ${g.target || ''}`.trim();
-        const type = g.goal_type ? ` [${g.goal_type.toUpperCase()}]` : '';
-        return `${i + 1}.${type} ${text}`;
-      })
-      .join('\n\n');
-    drawSection(L, 'Goals', goalLines);
+    drawEvalGoals(L, content.goal_entries);
   } else if (content.goals && content.goals.trim()) {
     drawSection(L, 'Goals', content.goals);
   } else if (goals && goals.length > 0) {
@@ -745,6 +1066,7 @@ export function buildEvalPdf(args: BuildEvalPdfArgs): { base64Pdf: string; filen
   }
 
   drawSignatureBlock(L, evaluation.signed_at, evaluation.signature_typed, practice);
+  drawPhysicianCertification(L, physician ?? null, content.frequency_duration);
   addFooters(L);
 
   const last = sanitizeFilename(patient?.last_name || 'Patient');

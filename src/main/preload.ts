@@ -119,6 +119,9 @@ const api = {
     listIncomplete: () => ipcRenderer.invoke('evaluations:listIncomplete'),
     listAll: () => ipcRenderer.invoke('evaluations:listAll'),
     generatePdf: (evalId: number) => ipcRenderer.invoke('evaluations:generatePdf', evalId),
+    signatureLog: (evalId: number) => ipcRenderer.invoke('evaluations:signatureLog', evalId),
+    addSignatureFollowup: (data: any) => ipcRenderer.invoke('evaluations:addSignatureFollowup', data),
+    signatureLogPdf: (evalId: number) => ipcRenderer.invoke('evaluations:signatureLogPdf', evalId),
   },
 
   // Appointments
@@ -659,6 +662,8 @@ const api = {
     getOutboundByClient: (clientId: number) => ipcRenderer.invoke('faxLog:getOutboundByClient', clientId),
     saveToChart: (data: { faxLogId: number; clientId: number; category: string; linkToOutboundFaxId?: number }) => ipcRenderer.invoke('fax:saveToChart', data),
     pollStatuses: () => ipcRenderer.invoke('fax:pollStatuses'),
+    getInboundSuggestions: () => ipcRenderer.invoke('fax:getInboundSuggestions'),
+    dismissInboundSuggestion: (faxLogId: number) => ipcRenderer.invoke('fax:dismissInboundSuggestion', faxLogId),
     pollInbox: () => ipcRenderer.invoke('fax:pollInbox'),
     // Provider management
     setProvider: (type: string, credentials: Record<string, string>) => ipcRenderer.invoke('fax:setProvider', type, credentials),

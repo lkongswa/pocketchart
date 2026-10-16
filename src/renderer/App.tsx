@@ -60,6 +60,8 @@ import UpdateNotification from './components/UpdateNotification';
 import FloatingWidget from './components/FloatingWidget';
 import UnlicensedLandingPage from './components/UnlicensedLandingPage';
 import TrialBadge from './components/TrialBadge';
+import ReceivedFaxPrompt from './components/ReceivedFaxPrompt';
+import type { InboundFaxSuggestion } from '../shared/types';
 import { useTier } from './hooks/useTier';
 
 interface NavItem {
@@ -269,14 +271,15 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
           <div className="relative" ref={gearRef}>
             <button
               onClick={() => setGearOpen((o) => !o)}
-              className={`p-2 rounded-md transition-colors ${
+              className={`flex items-center justify-center w-10 h-10 rounded-lg border transition-colors ${
                 isOnSettingsRoute || gearOpen
-                  ? 'bg-gray-100 text-[var(--color-primary)]'
-                  : 'text-[var(--color-text-secondary)] hover:bg-gray-100 hover:text-[var(--color-text)]'
+                  ? 'bg-[var(--color-primary)]/10 border-[var(--color-primary)]/40 text-[var(--color-primary)]'
+                  : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]/50 hover:text-[var(--color-primary)]'
               }`}
               title="Settings & Help"
+              aria-label="Settings & Help"
             >
-              <Settings size={16} />
+              <Settings size={20} />
             </button>
             {gearOpen && (
               <div className="absolute bottom-0 left-full ml-2 w-44 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-lg overflow-hidden z-50">
@@ -434,14 +437,15 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
         <div className="relative" ref={gearRef}>
           <button
             onClick={() => setGearOpen((o) => !o)}
-            className={`w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+            className={`w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
               isOnSettingsRoute || gearOpen
-                ? 'bg-gray-100 text-[var(--color-primary)]'
-                : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)]'
+                ? 'bg-[var(--color-primary)]/10 border-[var(--color-primary)]/40 text-[var(--color-primary)]'
+                : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:border-[var(--color-primary)]/50 hover:text-[var(--color-primary)]'
             }`}
             title="Settings & Help"
           >
-            <Settings size={14} />
+            <Settings size={18} />
+            <span>Settings</span>
           </button>
           {gearOpen && (
             <div className="absolute bottom-full left-0 right-0 mb-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-lg overflow-hidden z-50">
@@ -632,6 +636,10 @@ const App: React.FC = () => {
   const lastActivityRef = useRef<number>(Date.now());
   const { tier, trialActive, trialExpired, loading: tierLoading } = useTier();
   const [globalToast, setGlobalToast] = useState<string | null>(null);
+  /** Inbound faxes that look like signed copies of something we sent, awaiting a yes/no. */
+  const [faxSuggestions, setFaxSuggestions] = useState<InboundFaxSuggestion[]>([]);
+  /** "Later" — hide these fax ids until the next launch. */
+  const snoozedFaxIds = useRef<Set<number>>(new Set());
 
   /**
    * Load PIN/security state from the database.
@@ -851,6 +859,8 @@ const App: React.FC = () => {
         if (result.newFaxes > 0) {
           setGlobalToast(`${result.newFaxes} new fax${result.newFaxes > 1 ? 'es' : ''} received`);
         }
+        const pending = (result.suggestions || []).filter(s => !snoozedFaxIds.current.has(s.faxLogId));
+        setFaxSuggestions(pending);
       } catch (err) {
         console.error('Background fax check failed:', err);
       }
@@ -1003,6 +1013,30 @@ const App: React.FC = () => {
       <RouterProvider router={router} />
       <FloatingWidget />
       <UpdateNotification />
+
+      {/* Inbound fax that looks like a signed copy of something we sent */}
+      {faxSuggestions.length > 0 && (
+        <ReceivedFaxPrompt
+          key={faxSuggestions[0].faxLogId}
+          suggestion={faxSuggestions[0]}
+          remaining={faxSuggestions.length - 1}
+          onFiled={({ clientName, label }) => {
+            setFaxSuggestions(prev => prev.slice(1));
+            setGlobalToast(`Filed to ${clientName}'s chart · ${label} marked signed`);
+          }}
+          onNotThis={async () => {
+            const id = faxSuggestions[0].faxLogId;
+            try { await window.api.fax.dismissInboundSuggestion(id); } catch (err) { console.error('dismiss suggestion failed', err); }
+            setFaxSuggestions(prev => prev.filter(s => s.faxLogId !== id));
+            setGlobalToast('Left in the Fax Center inbox for manual filing');
+          }}
+          onLater={() => {
+            const id = faxSuggestions[0].faxLogId;
+            snoozedFaxIds.current.add(id);
+            setFaxSuggestions(prev => prev.filter(s => s.faxLogId !== id));
+          }}
+        />
+      )}
 
       {/* Global payment toast */}
       {globalToast && (

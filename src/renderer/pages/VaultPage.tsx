@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Shield, Upload, Eye, Trash2, AlertTriangle, FileText,
+  Shield, Upload, Eye, Trash2, AlertTriangle, FileText, Pencil, Save,
   Calendar, Download, Search, Filter, CheckSquare, Square,
 } from 'lucide-react';
 import type { VaultDocument, VaultDocumentType } from '@shared/types';
@@ -61,6 +61,52 @@ export default function VaultPage() {
   const [filterType, setFilterType] = useState<VaultDocumentType | ''>('');
   const [showUpload, setShowUpload] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [pageError, setPageError] = useState<string | null>(null);
+
+  // Edit form state (metadata only — the file itself stays as uploaded)
+  const [editingDoc, setEditingDoc] = useState<VaultDocument | null>(null);
+  const [editType, setEditType] = useState<VaultDocumentType>('state_license');
+  const [editLabel, setEditLabel] = useState('');
+  const [editIssueDate, setEditIssueDate] = useState('');
+  const [editExpirationDate, setEditExpirationDate] = useState('');
+  const [editReminderDays, setEditReminderDays] = useState(30);
+  const [editNotes, setEditNotes] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
+
+  const startEdit = (doc: VaultDocument) => {
+    setEditingDoc(doc);
+    setEditType(doc.document_type);
+    setEditLabel(doc.custom_label || '');
+    setEditIssueDate(doc.issue_date || '');
+    setEditExpirationDate(doc.expiration_date || '');
+    setEditReminderDays(doc.reminder_days_before ?? 30);
+    setEditNotes(doc.notes || '');
+    setShowUpload(false);
+    setPageError(null);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingDoc) return;
+    try {
+      setEditSaving(true);
+      setPageError(null);
+      await window.api.vault.update(editingDoc.id, {
+        document_type: editType,
+        custom_label: editLabel.trim() || null,
+        issue_date: editIssueDate || null,
+        expiration_date: editExpirationDate || null,
+        reminder_days_before: editReminderDays,
+        notes: editNotes,
+      });
+      setEditingDoc(null);
+      loadData();
+    } catch (err: any) {
+      console.error('Failed to update document:', err);
+      setPageError(String(err?.message || '').replace(/^Error invoking remote method '[^']+': (Error: )?/, '') || 'Could not save changes.');
+    } finally {
+      setEditSaving(false);
+    }
+  };
 
   // Upload form state
   const [uploadType, setUploadType] = useState<VaultDocumentType>('state_license');
@@ -104,16 +150,18 @@ export default function VaultPage() {
       setUploadExpirationDate('');
       setUploadReminderDays(30);
       loadData();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to upload document:', err);
+      setPageError(String(err?.message || '').replace(/^Error invoking remote method '[^']+': (Error: )?/, '') || 'Upload failed.');
     }
   };
 
   const handleOpen = async (id: number) => {
     try {
       await window.api.vault.open(id);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to open document:', err);
+      setPageError(String(err?.message || '').replace(/^Error invoking remote method '[^']+': (Error: )?/, '') || 'Could not open the file.');
     }
   };
 
@@ -121,9 +169,11 @@ export default function VaultPage() {
     if (!window.confirm('Are you sure you want to delete this document?')) return;
     try {
       await window.api.vault.delete(id);
+      if (editingDoc?.id === id) setEditingDoc(null);
       loadData();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to delete document:', err);
+      setPageError(String(err?.message || '').replace(/^Error invoking remote method '[^']+': (Error: )?/, '') || 'Could not delete the document.');
     }
   };
 
@@ -185,7 +235,7 @@ export default function VaultPage() {
               <Download size={14} /> Export{selectedIds.size > 0 ? ` (${selectedIds.size})` : ' All'}
             </button>
           )}
-          <button className="btn-primary btn-sm gap-1.5" onClick={() => setShowUpload(true)}>
+          <button className="btn-primary btn-sm gap-1.5" onClick={() => { setEditingDoc(null); setShowUpload(true); }}>
             <Upload size={14} /> Upload Document
           </button>
         </div>
@@ -207,6 +257,65 @@ export default function VaultPage() {
                 {doc.expiration_date && ` — expires ${new Date(doc.expiration_date + 'T00:00:00').toLocaleDateString()}`}
               </p>
             ))}
+          </div>
+        </div>
+      )}
+
+      {pageError && (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+          <span className="flex-1">{pageError}</span>
+          <button className="text-red-500 hover:text-red-700 text-xs" onClick={() => setPageError(null)}>Dismiss</button>
+        </div>
+      )}
+
+      {/* Edit Form */}
+      {editingDoc && (
+        <div className="card p-5 mb-6 space-y-4 border-[var(--color-primary)]/40">
+          <div className="flex items-center justify-between">
+            <h3 className="section-title">Edit Document</h3>
+            <span className="text-xs text-[var(--color-text-secondary)] truncate max-w-[50%]" title={editingDoc.original_name}>
+              <FileText size={12} className="inline mr-1" />{editingDoc.original_name || editingDoc.filename}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="label">Document Type *</label>
+              <select className="select w-full" value={editType} onChange={(e) => setEditType(e.target.value as VaultDocumentType)}>
+                {DOCUMENT_TYPE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label">Custom Label</label>
+              <input className="input w-full" placeholder="e.g. 2025 State License" value={editLabel} onChange={(e) => setEditLabel(e.target.value)} />
+            </div>
+            <div>
+              <label className="label">Issue Date</label>
+              <input type="date" className="input w-full" value={editIssueDate} onChange={(e) => setEditIssueDate(e.target.value)} />
+            </div>
+            <div>
+              <label className="label">Expiration Date</label>
+              <input type="date" className="input w-full" value={editExpirationDate} onChange={(e) => setEditExpirationDate(e.target.value)} />
+            </div>
+            <div>
+              <label className="label">Reminder (days before expiration)</label>
+              <input type="number" className="input w-full" min={1} max={365} value={editReminderDays} onChange={(e) => setEditReminderDays(parseInt(e.target.value, 10) || 30)} />
+            </div>
+            <div className="md:col-span-2">
+              <label className="label">Notes</label>
+              <textarea className="textarea w-full" rows={2} placeholder="e.g. renewal submitted 3/1, confirmation #…" value={editNotes} onChange={(e) => setEditNotes(e.target.value)} />
+            </div>
+          </div>
+          <p className="text-xs text-[var(--color-text-secondary)]">
+            To swap the file itself, upload the new version and delete this one.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button className="btn-secondary btn-sm" onClick={() => setEditingDoc(null)} disabled={editSaving}>Cancel</button>
+            <button className="btn-primary btn-sm" onClick={handleSaveEdit} disabled={editSaving}>
+              <Save size={14} className="mr-1" /> {editSaving ? 'Saving…' : 'Save Changes'}
+            </button>
           </div>
         </div>
       )}
@@ -385,6 +494,9 @@ export default function VaultPage() {
               <div className="flex gap-1 flex-shrink-0">
                 <button className="btn-ghost btn-sm" onClick={() => handleOpen(doc.id)} title="View">
                   <Eye size={14} />
+                </button>
+                <button className="btn-ghost btn-sm" onClick={() => startEdit(doc)} title="Edit details">
+                  <Pencil size={14} />
                 </button>
                 <button className="btn-ghost btn-sm text-red-500" onClick={() => handleDelete(doc.id)} title="Delete">
                   <Trash2 size={14} />

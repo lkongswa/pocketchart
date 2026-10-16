@@ -19,8 +19,9 @@ interface FaxSendModalProps {
   referringPhysicianName?: string;
   /** Fallback: free-text referring fax (from client.referring_fax) */
   referringFax?: string;
-  /** Called after a fax is successfully queued (e.g., to refresh outbox) */
-  onSent?: () => void;
+  /** Called after a fax is successfully queued (e.g., to refresh outbox). Receives the recipient so
+   *  the caller can toast "Fax queued to Dr. X". */
+  onSent?: (info: { recipientName: string; faxNumber: string }) => void;
 }
 
 export default function FaxSendModal({ isOpen, onClose, clientId, documentId, docType, referringPhysicianId, referringPhysicianName, referringFax, onSent }: FaxSendModalProps) {
@@ -104,7 +105,7 @@ export default function FaxSendModal({ isOpen, onClose, clientId, documentId, do
         recipientName: recipientName.trim() || undefined,
       });
       setSent(true);
-      onSent?.();
+      onSent?.({ recipientName: recipientName.trim() || selectedPhysician?.name || '', faxNumber });
     } catch (err: any) {
       console.error('Failed to send fax:', err);
       setError(err?.message || 'Failed to send fax. Check your fax credentials in Settings.');

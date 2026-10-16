@@ -1185,6 +1185,49 @@ export interface CommunicationLogEntry {
   summary: string;
   created_at: string;
   deleted_at: string | null;
+  /** Set when the entry is a physician-signature follow-up for a specific evaluation. */
+  eval_id?: number | null;
+}
+
+// ── Physician signature tracking (per evaluation) ──
+export interface SignatureFaxAttempt {
+  id: number;
+  sent_at: string | null;
+  created_at: string;
+  fax_number: string;
+  physician_name: string | null;
+  status: string;
+  pages: number;
+  error_message: string;
+  fax_provider: string;
+  /** When an inbound fax (the signed copy) was linked back to this send. */
+  received_back_at: string | null;
+}
+
+export interface SignatureLog {
+  eval: {
+    id: number;
+    client_id: number;
+    client_name: string;
+    eval_date: string;
+    eval_type: string;
+    signed_at: string | null;
+    signature_typed: string;
+  };
+  physician: { name: string; npi: string; fax: string } | null;
+  faxAttempts: SignatureFaxAttempt[];
+  followups: CommunicationLogEntry[];
+  /** compliance_tracking.recert_md_signature_status for the client, if tracking is on. */
+  complianceStatus: string | null;
+}
+
+export interface SignatureFollowupInput {
+  evalId: number;
+  clientId: number;
+  communication_date?: string;
+  type: CommunicationType;
+  contact_name?: string;
+  summary: string;
 }
 
 // ── Physician Directory Types ──
@@ -1244,6 +1287,32 @@ export interface FaxLogEntry {
   client_name?: string;
   physician_name?: string;
   document_name?: string;
+}
+
+/** An outbound fax (eval/note awaiting MD signature) that an inbound fax might be the signed copy of. */
+export interface InboundFaxCandidate {
+  outboundFaxId: number;
+  clientId: number;
+  clientName: string;
+  evalId: number | null;
+  noteId: number | null;
+  /** e.g. "Initial evaluation (Aug 13, 2026)" */
+  label: string;
+  sentAt: string | null;
+  physicianName: string | null;
+  suggestedCategory: ClientDocumentCategory;
+  suggestedCategoryLabel: string;
+}
+
+/** An unfiled inbound fax plus the outbound sends it plausibly answers. */
+export interface InboundFaxSuggestion {
+  faxLogId: number;
+  providerFaxId: string;
+  fromFaxNumber: string;
+  physicianName: string | null;
+  receivedAt: string | null;
+  pages: number;
+  candidates: InboundFaxCandidate[];
 }
 
 export interface FaxTrackingEntry {
@@ -1931,6 +2000,9 @@ export interface PocketChartAPI {
     listIncomplete: () => Promise<any[]>;
     listAll: () => Promise<any[]>;
     generatePdf: (evalId: number) => Promise<{ base64Pdf: string; filename: string }>;
+    signatureLog: (evalId: number) => Promise<SignatureLog>;
+    addSignatureFollowup: (data: SignatureFollowupInput) => Promise<CommunicationLogEntry>;
+    signatureLogPdf: (evalId: number) => Promise<{ base64Pdf: string; filename: string }>;
   };
   appointments: {
     list: (filters?: { startDate?: string; endDate?: string; clientId?: number }) => Promise<Appointment[]>;
@@ -2532,7 +2604,11 @@ export interface PocketChartAPI {
     getOutboundByClient: (clientId: number) => Promise<FaxTrackingEntry[]>;
     saveToChart: (data: { faxLogId: number; clientId: number; category: string; linkToOutboundFaxId?: number }) => Promise<FaxLogEntry>;
     pollStatuses: () => Promise<{ updated: number }>;
-    pollInbox: () => Promise<{ newFaxes: number }>;
+    pollInbox: () => Promise<{ newFaxes: number; suggestions: InboundFaxSuggestion[] }>;
+    /** Unfiled inbound faxes that look like signed copies of something we sent. */
+    getInboundSuggestions: () => Promise<InboundFaxSuggestion[]>;
+    /** "Not this one" — stop suggesting this inbound fax as a signed copy. */
+    dismissInboundSuggestion: (faxLogId: number) => Promise<boolean>;
     // Provider management
     setProvider: (type: string, credentials: Record<string, string>) => Promise<boolean>;
     getProviderStatus: () => Promise<{ configured: boolean; provider: FaxProviderType | null; faxNumber?: string }>;

@@ -21,6 +21,13 @@ export class FaxageProvider implements FaxProvider {
     this.faxNumber = credentials.faxNumber || '';
   }
 
+  /** Faxage's sendfax reply is "JOBID: 12345". Older fax_log rows stored that whole line as the
+   *  provider id, so always reduce whatever we were given to the bare numeric job id. */
+  private static parseJobId(raw: string): string {
+    const m = String(raw || '').match(/(\d+)\s*$/);
+    return m ? m[1] : String(raw || '').trim();
+  }
+
   private getBaseParams(): Record<string, string> {
     return {
       company: this.company,
@@ -112,63 +119,83 @@ export class FaxageProvider implements FaxProvider {
         return { success: false, faxId: '', error: firstLine };
       }
 
-      // First line on success is the jobid
-      return { success: true, faxId: firstLine };
+      // Success line is "JOBID: <numeric-job-id>" — store just the number.
+      const jobId = FaxageProvider.parseJobId(firstLine);
+      if (!/^\d+$/.test(jobId)) {
+        return { success: false, faxId: '', error: `Unexpected Faxage response: ${firstLine}` };
+      }
+      return { success: true, faxId: jobId };
     } catch (err: any) {
       return { success: false, faxId: '', error: err.message };
     }
   }
 
   async checkStatus(faxId: string): Promise<FaxStatusResult> {
-    const result = await this.apiCall('status', { jobid: faxId });
+    const jobId = FaxageProvider.parseJobId(faxId);
+    const result = await this.apiCall('status', { jobid: jobId, pagecount: '1' });
     const lines = result.split('\n').map(l => l.trim()).filter(Boolean);
 
-    // Map Faxage status strings to our normalized statuses
+    const first = lines[0] || '';
+    if (!first || first.startsWith('ERR')) {
+      // ERR06 = job id not found (e.g. aged out of Faxage's history) — leave our status alone.
+      if (!first || first.startsWith('ERR06')) {
+        return { faxId, status: 'queued', toFaxNumber: '', errorMessage: first || 'No status record' };
+      }
+      throw new Error(`Faxage status error: ${first}`);
+    }
+
+    // Each status record is TAB-delimited (pipe tolerated just in case):
+    //   jobid, commid, destname, destnum, shortstatus, longstatus, sendtime, completetime, xmittime[, pagecount, ...]
+    // shortstatus is one of 'pending' | 'success' | 'failure'.
+    const records = lines.map(l => l.split(/\t|\|/).map(f => f.trim()));
+    const rec = records.find(f => f[0] === jobId) ?? records[0];
+    const shortStatus = (rec[4] || '').toLowerCase();
     const statusMap: Record<string, FaxStatusResult['status']> = {
+      pending: 'sending',
       success: 'sent',
       failure: 'failed',
-      sending: 'sending',
-      queued: 'queued',
     };
-
-    const rawStatus = lines[0]?.toLowerCase() || 'unknown';
+    const pages = parseInt(rec[9] || '', 10);
 
     return {
       faxId,
-      status: statusMap[rawStatus] || 'queued',
-      toFaxNumber: '', // Faxage status doesn't return this; we track it locally
+      status: statusMap[shortStatus] || 'queued',
+      toFaxNumber: rec[3] || '',
+      dateSent: rec[7] || rec[6] || undefined,
+      pages: Number.isFinite(pages) ? pages : undefined,
+      errorMessage: shortStatus === 'failure' ? (rec[5] || 'Fax failed') : undefined,
     };
   }
 
   async getInbox(since?: Date): Promise<InboundFax[]> {
-    const result = await this.apiCall('listfax');
+    // pagecount=1 appends the page count as the LAST field of each record.
+    const result = await this.apiCall('listfax', { pagecount: '1' });
     const lines = result.split('\n').map(l => l.trim()).filter(Boolean);
 
-    if (lines.length === 0 || lines[0].startsWith('ERR')) {
-      return [];
-    }
+    // ERR11 = "No incoming faxes available" — an empty inbox, not an error.
+    if (lines.length === 0 || lines[0].startsWith('ERR11')) return [];
+    if (lines[0].startsWith('ERR')) throw new Error(`Faxage listfax error: ${lines[0]}`);
 
-    // Faxage listfax returns pipe-delimited lines:
-    // faxid|date|callerid|pages|...
+    // Listfax records are TAB-delimited (pipe tolerated just in case):
+    //   recvid, recvdate (YYYY-MM-DD HH:MM:SS), CID "(XXX)XXX-XXXX" or "Unavailable", DNIS[, pagecount]
     const faxes: InboundFax[] = [];
-
     for (const line of lines) {
-      const parts = line.split('|');
-      if (parts.length < 4) continue;
+      const parts = line.split(/\t|\|/).map(p => p.trim());
+      if (parts.length < 4 || !/^\d+$/.test(parts[0])) continue;
 
-      const [faxId, dateStr, callerId, pagesStr] = parts;
-      const receivedDate = new Date(dateStr);
-
+      const [faxId, dateStr, callerId] = parts;
+      const receivedDate = new Date(dateStr.replace(' ', 'T'));
+      if (isNaN(receivedDate.getTime())) continue;
       if (since && receivedDate < since) continue;
 
+      const pages = parseInt(parts[parts.length - 1], 10);
       faxes.push({
         faxId,
-        fromFaxNumber: callerId,
+        fromFaxNumber: /unavailable/i.test(callerId) ? '' : callerId,
         receivedAt: receivedDate.toISOString(),
-        pages: parseInt(pagesStr, 10) || 0,
+        pages: parts.length >= 5 && Number.isFinite(pages) ? pages : 0,
       });
     }
-
     return faxes;
   }
 

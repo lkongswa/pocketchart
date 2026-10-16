@@ -21,9 +21,9 @@ import { generateCMS1500, assembleCMS1500Data, renderCMS1500Pages, generateAlign
 import type { CMS1500Options, CMS1500PrintMode } from './cms1500Generator';
 import { parseCSVFile, autoDetectColumns as autoDetectCSVColumns, matchClients as matchCSVClients, prepareImportRows, executeImport as executeCSVImport } from './csvPaymentImport';
 import type { CSVColumnMapping, CSVPaymentRow } from './csvPaymentImport';
-import type { AppTier, NoteFormat, DischargeData, DischargeGoalStatus } from '../shared/types';
+import type { AppTier, NoteFormat, DischargeData, DischargeGoalStatus, SignatureLog } from '../shared/types';
 import { generateIntakePdf } from './intakeFormGenerator';
-import { buildNotePdf, buildEvalPdf, buildBulkNotesPdf } from './notePdfGenerator';
+import { buildNotePdf, buildEvalPdf, buildBulkNotesPdf, buildSignatureLogPdf } from './notePdfGenerator';
 import type { NoteRow, EvalRow, PatientInfo, EntityInfo, GoalInfo } from './notePdfGenerator';
 import { DEFAULT_INTAKE_TEMPLATES } from '../shared/intakeTemplates';
 import { FaxRouter, matchFaxToClient, normalizeFaxNumber, type FaxProviderType } from './fax';
@@ -2195,12 +2195,123 @@ function registerIpcHandlers() {
     }
     const practice = db.prepare('SELECT * FROM practice WHERE id = 1').get() || null;
 
+    // Referring / certifying MD for the physician-signature block: eval's linked physician
+    // record → client's linked physician → free-text referring physician on client/eval.
+    let evalContent: any = {};
+    try { evalContent = JSON.parse(evaluation.content || '{}'); } catch { /* keep empty */ }
+    let physician: { name?: string; npi?: string } | null = null;
+    const lookupPhysician = (id: number | null | undefined) => {
+      if (!id) return null;
+      const row = db.prepare('SELECT name, npi FROM physicians WHERE id = ?').get(id) as { name?: string; npi?: string } | undefined;
+      return row?.name ? { name: row.name, npi: row.npi || '' } : null;
+    };
+    physician = lookupPhysician(evalContent.referral_physician_id);
+    if (evaluation.client_id) {
+      const c = db.prepare('SELECT referring_physician, referring_npi, referring_physician_id FROM clients WHERE id = ?').get(evaluation.client_id) as
+        { referring_physician?: string; referring_npi?: string; referring_physician_id?: number | null } | undefined;
+      if (!physician) physician = lookupPhysician(c?.referring_physician_id);
+      if (!physician) {
+        const name = c?.referring_physician?.trim() || String(evalContent.referral_source || '').trim();
+        if (name) physician = { name, npi: c?.referring_npi || evalContent.referral_physician_npi || '' };
+      }
+    }
+
     return buildEvalPdf({
       evaluation,
       patient,
       practice,
+      physician,
       logoBase64: getLogoBase64(),
     });
+  });
+
+  // ── Physician signature tracking (per eval): fax attempts + follow-up contacts + audit PDF ──
+  const loadSignatureLog = (evalId: number): SignatureLog => {
+    const ev = db.prepare(`
+      SELECT e.id, e.client_id, e.eval_date, e.eval_type, e.signed_at, e.signature_typed, e.content,
+             c.first_name, c.last_name, c.referring_physician, c.referring_npi, c.referring_fax, c.referring_physician_id
+      FROM evaluations e JOIN clients c ON c.id = e.client_id
+      WHERE e.id = ? AND e.deleted_at IS NULL
+    `).get(evalId) as any;
+    if (!ev) throw new Error('Evaluation not found');
+
+    let content: any = {};
+    try { content = JSON.parse(ev.content || '{}'); } catch { /* keep empty */ }
+
+    // Physician: eval's linked record → client's linked record → free text on client/eval
+    let physician: { name: string; npi: string; fax: string } | null = null;
+    const byId = (id: number | null | undefined) => {
+      if (!id) return null;
+      const p = db.prepare('SELECT name, npi, fax_number FROM physicians WHERE id = ?').get(id) as any;
+      return p?.name ? { name: p.name, npi: p.npi || '', fax: p.fax_number || '' } : null;
+    };
+    physician = byId(content.referral_physician_id) || byId(ev.referring_physician_id);
+    if (!physician) {
+      const name = (ev.referring_physician || '').trim() || String(content.referral_source || '').trim();
+      if (name) physician = { name, npi: ev.referring_npi || content.referral_physician_npi || '', fax: ev.referring_fax || '' };
+    }
+
+    const faxAttempts = db.prepare(`
+      SELECT fl.id, fl.sent_at, fl.created_at, fl.fax_number, fl.status, fl.pages, fl.error_message, fl.fax_provider,
+             p.name AS physician_name,
+             (SELECT MIN(COALESCE(inb.received_at, inb.created_at)) FROM fax_log inb
+               WHERE inb.linked_outbound_fax_id = fl.id AND inb.direction = 'inbound') AS received_back_at
+      FROM fax_log fl
+      LEFT JOIN physicians p ON p.id = fl.physician_id
+      WHERE fl.eval_id = ? AND fl.direction = 'outbound'
+      ORDER BY COALESCE(fl.sent_at, fl.created_at) ASC, fl.id ASC
+    `).all(evalId) as SignatureLog['faxAttempts'];
+
+    const followups = db.prepare(`
+      SELECT * FROM communication_log
+      WHERE eval_id = ? AND deleted_at IS NULL
+      ORDER BY communication_date ASC, id ASC
+    `).all(evalId) as SignatureLog['followups'];
+
+    let complianceStatus: string | null = null;
+    try {
+      const ct = db.prepare('SELECT recert_md_signature_status, tracking_enabled FROM compliance_tracking WHERE client_id = ?').get(ev.client_id) as any;
+      if (ct?.tracking_enabled) complianceStatus = ct.recert_md_signature_status || null;
+    } catch { /* table may not exist on very old DBs */ }
+
+    return {
+      eval: {
+        id: ev.id,
+        client_id: ev.client_id,
+        client_name: `${ev.first_name || ''} ${ev.last_name || ''}`.trim(),
+        eval_date: ev.eval_date,
+        eval_type: ev.eval_type || 'initial',
+        signed_at: ev.signed_at || null,
+        signature_typed: ev.signature_typed || '',
+      },
+      physician,
+      faxAttempts,
+      followups,
+      complianceStatus,
+    };
+  };
+
+  safeHandle('evaluations:signatureLog', (_event, evalId: number) => loadSignatureLog(evalId));
+
+  safeHandle('evaluations:addSignatureFollowup', (_event, data: {
+    evalId: number; clientId: number; communication_date?: string; type: string; contact_name?: string; summary: string;
+  }) => {
+    if (!data?.summary?.trim()) throw new Error('Follow-up summary is required');
+    const result = db.prepare(`
+      INSERT INTO communication_log (client_id, eval_id, communication_date, type, direction, contact_name, summary)
+      VALUES (?, ?, ?, ?, 'outgoing', ?, ?)
+    `).run(
+      data.clientId, data.evalId,
+      data.communication_date || new Date().toISOString(),
+      data.type || 'phone', (data.contact_name || '').trim(), data.summary.trim()
+    );
+    return db.prepare('SELECT * FROM communication_log WHERE id = ?').get(result.lastInsertRowid);
+  });
+
+  safeHandle('evaluations:signatureLogPdf', (_event, evalId: number) => {
+    const log = loadSignatureLog(evalId);
+    const practice = db.prepare('SELECT * FROM practice WHERE id = 1').get() || null;
+    return buildSignatureLogPdf({ log, practice, logoBase64: getLogoBase64() });
   });
 
   safeHandle('evaluations:create', (_event, data) => {
@@ -2317,9 +2428,23 @@ function registerIpcHandlers() {
   });
 
   // List all incomplete (unsigned) evals with client info
+  // Both eval lists carry the latest outbound fax status for the eval + whether a signed
+  // copy was linked back (inbound fax matched to that outbound) — drives the Fax column.
   safeHandle('evaluations:listIncomplete', () => {
     return db.prepare(`
-      SELECT e.*, c.first_name, c.last_name, c.discipline AS client_discipline
+      SELECT e.*, c.first_name, c.last_name, c.discipline AS client_discipline,
+        c.referring_physician_id, c.referring_physician, c.referring_fax,
+        (SELECT fl.status FROM fax_log fl WHERE fl.eval_id = e.id AND fl.direction = 'outbound'
+           ORDER BY fl.created_at DESC LIMIT 1) AS fax_status,
+        (SELECT fl.sent_at FROM fax_log fl WHERE fl.eval_id = e.id AND fl.direction = 'outbound'
+           ORDER BY fl.created_at DESC LIMIT 1) AS fax_sent_at,
+        (SELECT COUNT(*) FROM fax_log inb JOIN fax_log ob ON inb.linked_outbound_fax_id = ob.id
+           WHERE ob.eval_id = e.id AND inb.direction = 'inbound') AS fax_received_back,
+        (SELECT COUNT(*) FROM fax_log fl WHERE fl.eval_id = e.id AND fl.direction = 'outbound' AND fl.status != 'failed') AS fax_count,
+        (SELECT GROUP_CONCAT(d, ',') FROM (
+           SELECT substr(COALESCE(fl.sent_at, fl.created_at), 1, 10) AS d FROM fax_log fl
+           WHERE fl.eval_id = e.id AND fl.direction = 'outbound' AND fl.status != 'failed'
+           ORDER BY COALESCE(fl.sent_at, fl.created_at) DESC)) AS fax_sent_dates
       FROM evaluations e
       JOIN clients c ON c.id = e.client_id AND c.deleted_at IS NULL
       WHERE (e.signed_at IS NULL OR e.signed_at = '') AND e.deleted_at IS NULL
@@ -2329,7 +2454,19 @@ function registerIpcHandlers() {
 
   safeHandle('evaluations:listAll', () => {
     return db.prepare(`
-      SELECT e.*, c.first_name, c.last_name, c.discipline AS client_discipline
+      SELECT e.*, c.first_name, c.last_name, c.discipline AS client_discipline,
+        c.referring_physician_id, c.referring_physician, c.referring_fax,
+        (SELECT fl.status FROM fax_log fl WHERE fl.eval_id = e.id AND fl.direction = 'outbound'
+           ORDER BY fl.created_at DESC LIMIT 1) AS fax_status,
+        (SELECT fl.sent_at FROM fax_log fl WHERE fl.eval_id = e.id AND fl.direction = 'outbound'
+           ORDER BY fl.created_at DESC LIMIT 1) AS fax_sent_at,
+        (SELECT COUNT(*) FROM fax_log inb JOIN fax_log ob ON inb.linked_outbound_fax_id = ob.id
+           WHERE ob.eval_id = e.id AND inb.direction = 'inbound') AS fax_received_back,
+        (SELECT COUNT(*) FROM fax_log fl WHERE fl.eval_id = e.id AND fl.direction = 'outbound' AND fl.status != 'failed') AS fax_count,
+        (SELECT GROUP_CONCAT(d, ',') FROM (
+           SELECT substr(COALESCE(fl.sent_at, fl.created_at), 1, 10) AS d FROM fax_log fl
+           WHERE fl.eval_id = e.id AND fl.direction = 'outbound' AND fl.status != 'failed'
+           ORDER BY COALESCE(fl.sent_at, fl.created_at) DESC)) AS fax_sent_dates
       FROM evaluations e
       JOIN clients c ON c.id = e.client_id AND c.deleted_at IS NULL
       WHERE e.deleted_at IS NULL
@@ -9279,8 +9416,106 @@ function registerIpcHandlers() {
     return { updated };
   });
 
+  /**
+   * Smart inbound matching: for every unfiled inbound fax (no document yet, not dismissed,
+   * received in the last 90 days), find outbound evals/notes we faxed to that same number that
+   * are still waiting for their signed copy. The renderer turns these into a one-click
+   * "file to chart + mark signature received" prompt.
+   */
+  const getInboundSuggestions = (): any[] => {
+    const inbound = db.prepare(`
+      SELECT fl.id, fl.fax_number, fl.provider_fax_id, fl.srfax_id, fl.received_at, fl.created_at, fl.pages
+      FROM fax_log fl
+      WHERE fl.direction = 'inbound' AND fl.document_id IS NULL
+        AND COALESCE(fl.suggestion_dismissed, 0) = 0
+        AND fl.fax_number != ''
+        AND COALESCE(fl.received_at, fl.created_at) >= datetime('now', '-90 days')
+      ORDER BY COALESCE(fl.received_at, fl.created_at) DESC
+    `).all() as any[];
+    if (inbound.length === 0) return [];
+
+    const outbound = db.prepare(`
+      SELECT ob.id, ob.fax_number, ob.sent_at, ob.created_at, ob.client_id, ob.eval_id, ob.note_id, ob.status,
+             c.first_name, c.last_name,
+             p.name AS physician_name,
+             e.eval_date, e.eval_type,
+             n.date_of_service AS note_date, n.note_type,
+             (SELECT COUNT(*) FROM fax_log x WHERE x.linked_outbound_fax_id = ob.id AND x.direction = 'inbound') AS received_back
+      FROM fax_log ob
+      JOIN clients c ON c.id = ob.client_id AND c.deleted_at IS NULL
+      LEFT JOIN physicians p ON p.id = ob.physician_id
+      LEFT JOIN evaluations e ON e.id = ob.eval_id
+      LEFT JOIN notes n ON n.id = ob.note_id
+      WHERE ob.direction = 'outbound' AND ob.status != 'failed'
+        AND (ob.eval_id IS NOT NULL OR ob.note_id IS NOT NULL)
+    `).all() as any[];
+    const awaiting = outbound.filter(o => !o.received_back);
+    if (awaiting.length === 0) return [];
+
+    const physByFax = db.prepare("SELECT name, fax_number FROM physicians WHERE deleted_at IS NULL AND fax_number != ''").all() as Array<{ name: string; fax_number: string }>;
+    const fmt = (d?: string | null) => {
+      if (!d) return '';
+      const dt = new Date(d.length === 10 ? d + 'T12:00:00' : d.replace(' ', 'T'));
+      return isNaN(dt.getTime()) ? d : dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    };
+
+    const out: any[] = [];
+    for (const inb of inbound) {
+      const num = normalizeFaxNumber(inb.fax_number);
+      if (!num) continue;
+      const candidates = awaiting
+        .filter(o => normalizeFaxNumber(o.fax_number) === num)
+        .sort((a, b) => String(b.sent_at || b.created_at).localeCompare(String(a.sent_at || a.created_at)))
+        .map(o => {
+          let label: string;
+          let suggestedCategory: string;
+          if (o.eval_id) {
+            const kind = o.eval_type === 'reassessment' ? 'Recertification' : o.eval_type === 'discharge' ? 'Discharge' : 'Initial';
+            label = `${kind} evaluation (${fmt(o.eval_date)})`;
+            suggestedCategory = o.eval_type === 'reassessment' ? 'recertification' : 'signed_poc';
+          } else {
+            const kind = o.note_type === 'progress_report' ? 'Progress report' : o.note_type === 'recertification' ? 'Recertification' : o.note_type === 'discharge' ? 'Discharge summary' : 'Treatment note';
+            label = `${kind} (${fmt(o.note_date)})`;
+            suggestedCategory = o.note_type === 'recertification' ? 'recertification' : o.note_type === 'progress_report' ? 'signed_poc' : 'correspondence';
+          }
+          const catLabels: Record<string, string> = { signed_poc: 'Signed Plan of Care', recertification: 'Recertification', correspondence: 'Correspondence' };
+          return {
+            outboundFaxId: o.id,
+            clientId: o.client_id,
+            clientName: `${o.first_name || ''} ${o.last_name || ''}`.trim(),
+            evalId: o.eval_id ?? null,
+            noteId: o.note_id ?? null,
+            label,
+            sentAt: o.sent_at || o.created_at || null,
+            physicianName: o.physician_name || null,
+            suggestedCategory,
+            suggestedCategoryLabel: catLabels[suggestedCategory] || suggestedCategory,
+          };
+        });
+      if (candidates.length === 0) continue;
+      const phys = physByFax.find(p => normalizeFaxNumber(p.fax_number) === num);
+      out.push({
+        faxLogId: inb.id,
+        providerFaxId: inb.provider_fax_id || inb.srfax_id || '',
+        fromFaxNumber: inb.fax_number,
+        physicianName: phys?.name || candidates[0].physicianName || null,
+        receivedAt: inb.received_at || inb.created_at || null,
+        pages: inb.pages || 0,
+        candidates,
+      });
+    }
+    return out;
+  };
+
+  safeHandle('fax:getInboundSuggestions', () => getInboundSuggestions());
+
+  safeHandle('fax:dismissInboundSuggestion', (_event, faxLogId: number) => {
+    db.prepare('UPDATE fax_log SET suggestion_dismissed = 1 WHERE id = ? AND direction = \'inbound\'').run(faxLogId);
+    return true;
+  });
+
   safeHandle('fax:pollInbox', async () => {
-    if (!faxRouter.isConfigured()) return { newFaxes: 0 };
+    if (!faxRouter.isConfigured()) return { newFaxes: 0, suggestions: [] };
     const provider = faxRouter.getProvider();
     const currentProviderType = faxRouter.getProviderType() || '';
 
@@ -9314,10 +9549,10 @@ function registerIpcHandlers() {
         }
       }
 
-      return { newFaxes };
+      return { newFaxes, suggestions: getInboundSuggestions() };
     } catch (err) {
       console.error('[Fax] Failed to poll inbox:', err);
-      return { newFaxes: 0 };
+      return { newFaxes: 0, suggestions: getInboundSuggestions() };
     }
   });
 

@@ -2609,6 +2609,26 @@ function runMigrations(): void {
         }
       },
     },
+    {
+      version: 75,
+      description: 'Link communication_log entries to an evaluation (physician-signature follow-ups)',
+      up: () => {
+        // Follow-up calls/emails made to obtain the MD signature on a plan of care are logged
+        // against the eval so the Signature Log (and its audit PDF) can list them.
+        if (!columnExists('communication_log', 'eval_id')) {
+          db.prepare('ALTER TABLE communication_log ADD COLUMN eval_id INTEGER DEFAULT NULL').run();
+        }
+      },
+    },
+    {
+      version: 76,
+      description: 'fax_log.suggestion_dismissed — user said an inbound fax is NOT the signed copy we guessed',
+      up: () => {
+        if (!columnExists('fax_log', 'suggestion_dismissed')) {
+          db.prepare('ALTER TABLE fax_log ADD COLUMN suggestion_dismissed INTEGER DEFAULT 0').run();
+        }
+      },
+    },
   ];
 
   const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
@@ -2867,7 +2887,7 @@ function createTables(): void {
 // ── Backup, Restore & Integrity Functions ──
 
 // Must track the highest migration version above — used by the backup restore-compatibility check.
-const LATEST_SCHEMA_VERSION = 74;
+const LATEST_SCHEMA_VERSION = 76;
 
 /**
  * Run PRAGMA quick_check — a fast consistency check on every launch.

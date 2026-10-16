@@ -124,7 +124,7 @@ export default function FaxPage() {
       <FaxSendModal
         isOpen={showSendModal}
         onClose={() => setShowSendModal(false)}
-        onSent={refreshOutbox}
+        onSent={() => refreshOutbox(true)}
       />
     </div>
     </ProFeatureGate>

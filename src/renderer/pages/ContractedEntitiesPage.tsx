@@ -7,6 +7,7 @@ import {
   DollarSign, FileText, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import type { ContractedEntity, Appointment, Invoice, InvoiceStatus } from '@shared/types';
+import { useLocalPreference } from '../hooks/useLocalPreference';
 import EntityFormModal from '../components/EntityFormModal';
 import ProFeatureGate from '../components/ProFeatureGate';
 import BulkInvoiceSendModal, { BulkSendResult } from '../components/BulkInvoiceSendModal';
@@ -35,20 +36,51 @@ interface MonthCell {
   status: CellStatus;
 }
 
-const MONTHS_BACK = 6;
-
 const formatCurrency = (n: number) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
 
-// Trailing MONTHS_BACK months (oldest → current) as 'YYYY-MM' keys.
-function buildMonthKeys(): string[] {
+/** Revenue-matrix window: trailing N months, or a calendar year. */
+type RangeMode = '3m' | '6m' | '12m' | 'year';
+const RANGE_OPTIONS: Array<{ value: RangeMode; label: string }> = [
+  { value: '3m', label: '3 mo' },
+  { value: '6m', label: '6 mo' },
+  { value: '12m', label: '12 mo' },
+  { value: 'year', label: 'Year' },
+];
+
+const toKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+
+/** 'YYYY-MM' of the month we're in right now. */
+function thisMonthKey(): string {
+  return toKey(new Date());
+}
+
+/**
+ * Month keys (oldest → newest) for a range window.
+ *  - '3m' | '6m' | '12m': N months ending at `endKey` (default: current month); `offset` shifts the
+ *    whole window back/forward by N months.
+ *  - 'year': Jan..Dec of (current year + offset).
+ */
+function buildMonthKeys(mode: RangeMode, offset: number): string[] {
   const now = new Date();
-  const keys: string[] = [];
-  for (let i = MONTHS_BACK - 1; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    keys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  if (mode === 'year') {
+    const y = now.getFullYear() + offset;
+    return Array.from({ length: 12 }, (_, i) => toKey(new Date(y, i, 1)));
   }
+  const n = mode === '3m' ? 3 : mode === '6m' ? 6 : 12;
+  const end = new Date(now.getFullYear(), now.getMonth() + offset * n, 1);
+  const keys: string[] = [];
+  for (let i = n - 1; i >= 0; i--) keys.push(toKey(new Date(end.getFullYear(), end.getMonth() - i, 1)));
   return keys;
+}
+
+/** "May – Oct 2026" / "Nov 2025 – Apr 2026" / "2026" for the range header. */
+function rangeLabel(keys: string[], mode: RangeMode): string {
+  if (keys.length === 0) return '';
+  if (mode === 'year') return keys[0].slice(0, 4);
+  const a = monthLabel(keys[0]);
+  const b = monthLabel(keys[keys.length - 1]);
+  return a.y === b.y ? `${a.m} – ${b.m} ${b.y}` : `${a.m} ${a.y} – ${b.m} ${b.y}`;
 }
 
 function monthLabel(key: string): { m: string; y: string } {
@@ -183,8 +215,12 @@ const ContractedEntitiesPage: React.FC = () => {
   const dragCountersRef = useRef<Record<number, number>>({});
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const monthKeys = useMemo(() => buildMonthKeys(), []);
-  const currentMonthKey = monthKeys[monthKeys.length - 1];
+  // Revenue-matrix window (persisted). `rangeOffset` is "how many windows back/forward" (0 = now).
+  const [rangeMode, setRangeMode] = useLocalPreference<RangeMode>('contracts:rangeMode', '6m');
+  const [rangeOffset, setRangeOffset] = useState(0);
+  const monthKeys = useMemo(() => buildMonthKeys(rangeMode, rangeOffset), [rangeMode, rangeOffset]);
+  const currentMonthKey = useMemo(() => thisMonthKey(), []);
+  const changeRangeMode = (m: RangeMode) => { setRangeMode(m); setRangeOffset(0); };
 
   const loadEntities = useCallback(async () => {
     setLoading(true);
@@ -679,6 +715,39 @@ const ContractedEntitiesPage: React.FC = () => {
         ) : viewMode === 'revenue' ? (
           /* ── REVENUE MATRIX (per-entity months) ───────────────────── */
           <div>
+            {/* Range selector */}
+            <div className="flex flex-wrap items-center gap-3 mb-3">
+              <div className="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5">
+                {RANGE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                      rangeMode === opt.value
+                        ? 'bg-[var(--color-primary)] text-white shadow-sm'
+                        : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
+                    }`}
+                    onClick={() => changeRangeMode(opt.value)}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <div className="inline-flex items-center gap-1">
+                <button className="btn-ghost btn-sm p-1" onClick={() => setRangeOffset((o) => o - 1)} title={rangeMode === 'year' ? 'Previous year' : 'Earlier'}>
+                  <ChevronLeft size={16} />
+                </button>
+                <span className="text-sm font-semibold text-[var(--color-text)] min-w-[9rem] text-center">{rangeLabel(monthKeys, rangeMode)}</span>
+                <button className="btn-ghost btn-sm p-1" onClick={() => setRangeOffset((o) => o + 1)} title={rangeMode === 'year' ? 'Next year' : 'Later'}>
+                  <ChevronRight size={16} />
+                </button>
+                {rangeOffset !== 0 && (
+                  <button className="btn-ghost btn-sm text-xs" onClick={() => setRangeOffset(0)}>
+                    {rangeMode === 'year' ? 'This year' : 'Current'}
+                  </button>
+                )}
+              </div>
+            </div>
+
             {/* Legend */}
             <div className="flex flex-wrap items-center gap-3 mb-3 text-[11px] text-[var(--color-text-secondary)]">
               {(['unbilled', 'draft', 'sent', 'partial', 'paid', 'overdue'] as CellStatus[]).map((s) => (
@@ -702,12 +771,15 @@ const ContractedEntitiesPage: React.FC = () => {
                       const showYear = i === 0 || key.endsWith('-01');
                       const isCurrent = key === currentMonthKey;
                       return (
-                        <th key={key} className={`text-center px-3 py-3 font-semibold min-w-[110px] ${isCurrent ? 'text-[var(--color-primary)]' : 'text-[var(--color-text-secondary)]'}`}>
+                        <th key={key} className={`text-center px-2 py-3 font-semibold ${monthKeys.length > 6 ? 'min-w-[84px]' : 'min-w-[110px]'} ${isCurrent ? 'text-[var(--color-primary)]' : 'text-[var(--color-text-secondary)]'}`}>
                           {m}
                           {showYear && <span className="text-[10px] font-normal text-[var(--color-text-secondary)] ml-1">{y}</span>}
                         </th>
                       );
                     })}
+                    <th className="text-right px-3 py-3 font-semibold text-[var(--color-text-secondary)] min-w-[96px] border-l border-[var(--color-border)]" title="Earned (completed visits) in the visible range">
+                      Earned
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -767,10 +839,42 @@ const ContractedEntitiesPage: React.FC = () => {
                             </td>
                           );
                         })}
+                        {(() => {
+                          const earned = monthKeys.reduce((sum, key) => sum + (months[key]?.earned || 0), 0);
+                          const unbilled = monthKeys.reduce((sum, key) => sum + (months[key]?.unbilledValue || 0), 0);
+                          return (
+                            <td className="text-right px-3 py-2.5 border-l border-[var(--color-border)] align-middle">
+                              <div className="text-sm font-bold text-[var(--color-text)]">{earned ? formatCurrency(earned) : '·'}</div>
+                              {unbilled > 0 && <div className="text-[10px] text-amber-700">{formatCurrency(unbilled)} not invoiced</div>}
+                            </td>
+                          );
+                        })()}
                       </tr>
                     );
                   })}
                 </tbody>
+                {filtered.length > 1 && (
+                  <tfoot>
+                    <tr className="border-t-2 border-[var(--color-border)] bg-[var(--color-bg)]/60">
+                      <td className="sticky left-0 z-10 bg-[var(--color-bg)] px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-secondary)]">
+                        All agencies
+                      </td>
+                      {monthKeys.map((key) => {
+                        const earned = filtered.reduce((sum, e) => sum + (monthDataMap[e.id]?.[key]?.earned || 0), 0);
+                        const planned = filtered.reduce((sum, e) => sum + (monthDataMap[e.id]?.[key]?.planned || 0), 0);
+                        const isCurrent = key === currentMonthKey;
+                        return (
+                          <td key={key} className={`text-center px-2 py-2.5 text-xs font-semibold ${isCurrent ? 'text-[var(--color-primary)]' : 'text-[var(--color-text)]'}`}>
+                            {earned ? formatCurrency(earned) : planned ? <span className="text-[var(--color-text-secondary)]" title="Scheduled, not yet completed">{formatCurrency(planned)}</span> : '·'}
+                          </td>
+                        );
+                      })}
+                      <td className="text-right px-3 py-2.5 border-l border-[var(--color-border)] text-sm font-bold text-[var(--color-text)]">
+                        {formatCurrency(filtered.reduce((sum, e) => sum + monthKeys.reduce((m, key) => m + (monthDataMap[e.id]?.[key]?.earned || 0), 0), 0))}
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           </div>

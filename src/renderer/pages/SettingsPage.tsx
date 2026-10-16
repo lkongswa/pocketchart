@@ -1193,9 +1193,9 @@ export default function SettingsPage() {
       </div>
 
       <CollapsibleSection
-        icon={<Building2 className="w-5 h-5" />}
-        title="Practice Information"
-        description={formData.name || 'Not configured'}
+        icon={<Lock className="w-5 h-5" />}
+        title="PIN Lock"
+        description={pinEnabled ? 'PIN enabled · required on launch and after inactivity' : 'Not set — protect the app with a 4-digit PIN'}
         sectionId="settings-practice-pin"
         isOpen={openSectionId === 'practice-pin'}
         onToggle={() => toggleSection('practice-pin')}
